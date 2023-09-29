@@ -1,0 +1,25 @@
+
+namespace c2pa {
+  string version();
+  string sdk_version();
+  [Throws=Error]
+  string verify_from_file_json([ByRef] string path);
+  [Throws=Error]
+  string ingredient_from_file_json([ByRef] string path, [ByRef] string data_dir);
+  [Throws=Error]
+  sequence<u8> add_manifest_to_file_json([ByRef] string source, [ByRef] string dest, [ByRef] string manifest, SignerInfo signer_info, boolean side_car, string? remote_url);
+};
+
+[Error]
+enum Error {
+  "Json",
+  "Sdk"
+};
+
+dictionary SignerInfo {
+  sequence<u8> signcert;
+  sequence<u8> pkey;
+  string alg;
+  string? tsa_url;
+};
+
