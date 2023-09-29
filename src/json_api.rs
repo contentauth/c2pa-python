@@ -84,3 +84,25 @@ pub fn add_manifest_to_file_json(
     let signer = signer_info.signer()?;
     manifest.embed(&source, &dest, &*signer).map_err(Error::Sdk)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// returns a path to a file in the fixtures folder
+    pub fn test_path(path: &str) -> String {
+        let base = env!("CARGO_MANIFEST_DIR");
+        format!("{}/{}", base, path)
+    }
+
+    #[test]
+    fn test_verify_from_file() {
+        let path = test_path("tests/fixtures/C.jpg");
+        let result = verify_from_file_json(&path);
+        assert!(result.is_ok());
+        let json_report = result.unwrap();
+        println!("{}", json_report);
+        assert!(json_report.contains("C.jpg"));
+        //assert!(!json_report.contains("validation_status"));
+    }
+}

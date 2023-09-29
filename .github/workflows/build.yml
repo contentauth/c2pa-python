@@ -1,0 +1,54 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-nightly-only:
+    name: Build nightly only
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux2014_x86_64
+    steps:
+      - uses: actions/checkout@v1
+      - name: Install nightly rust
+        run: curl --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+      # Insert steps here to install you other dependencies. Note that you're running inside of cent os 7, not ubuntu
+      - name: Installing custom dependency
+        run: echo "Installing custom dependency"
+      - name: Build
+        run: |
+          source $HOME/.cargo/env
+          for PYBIN in /opt/python/cp3[6789]*/bin; do
+            "${PYBIN}/pip" install maturin
+            "${PYBIN}/maturin" build -m nightly-only/Cargo.toml -i "${PYBIN}/python" --release --manylinux 2014
+          done
+      # Auditwheel isn't generally necessary. This is only shown as refernce for cases where you link
+      # external libraries, in which case you have to set manylinux to off and then use auditwheel repair
+      - name: Auditwheel repair
+        run: |
+          for wheel in nightly-only/target/wheels/*.whl; do
+              auditwheel repair "${wheel}"
+          done
+
+
+  # This is similar to the above, except we're only using the lowest supported python version to build a single
+  # abi3 wheel
+  build-nightly-only-abi3:
+    name: Build nightly only abi3
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux2014_x86_64
+    steps:
+      - uses: actions/checkout@v1
+      - name: Install nightly rust
+        run: curl --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+      - name: Install maturin
+        run: /opt/python/cp36-cp36m/bin/pip install maturin
+      - name: Build with maturin
+        run: |
+          source $HOME/.cargo/env
+          /opt/python/cp36-cp36m/bin/maturin build -m nightly-only-abi3/Cargo.toml -i /opt/python/cp36-cp36m/bin/python --release --manylinux 2014
+      - name: Auditwheel repair
+        run: auditwheel repair nightly-only-abi3/target/wheels/*.whl

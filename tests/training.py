@@ -69,7 +69,8 @@ print("successfully added do not train manifest to file " + testOutputFile)
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
-    manifest_store = json.loads(c2pa.verify_from_file_json(testOutputFile))
+    json_store = c2pa.verify_from_file_json(testOutputFile)
+    manifest_store = json.loads(json_store)
 
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
     for assertion in manifest["assertions"]:
