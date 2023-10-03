@@ -57,7 +57,7 @@ try:
     test_key = open(keyFile,"rb").read()
     sign_info = c2pa.SignerInfo(test_pem, test_key, "es256", "http://timestamp.digicert.com")
 
-    result = c2pa.add_manifest_to_file_json(testFile, testOutputFile, manifest_json, sign_info, False, None)
+    result = c2pa.add_manifest_to_file_json(testFile, testOutputFile, manifest_json, sign_info, None)
     
 except Exception as err:
     sys.exit(err)
@@ -69,7 +69,7 @@ print("successfully added do not train manifest to file " + testOutputFile)
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
-    json_store = c2pa.verify_from_file_json(testOutputFile)
+    json_store = c2pa.verify_from_file_json(testOutputFile, None)
     manifest_store = json.loads(json_store)
 
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]

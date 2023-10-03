@@ -15,18 +15,18 @@ import c2pa_python as c2pa
 import pytest
 
 def test_version():
-    assert c2pa.version() == "0.1.0"
+    assert c2pa.version() == "0.1.1"
 
 def test_sdk_version():
-    assert c2pa.sdk_version() == "0.25.2"
+    assert c2pa.sdk_version() == "0.26.0"
 
 
-#def test_verify_from_file():
-#    json_store = c2pa.verify_from_file_json("tests/fixtures/A.jpg") 
-#    assert not "validation_status" in json_store
+def test_verify_from_file():
+    json_store = c2pa.verify_from_file_json("tests/fixtures/C.jpg", None) 
+    assert not "validation_status" in json_store
 
 def test_verify_from_file_no_store():
     with pytest.raises(c2pa.Error.Sdk) as err:  
-        json_store = c2pa.verify_from_file_json("tests/fixtures/A.jpg") 
+        json_store = c2pa.verify_from_file_json("tests/fixtures/A.jpg", None) 
     assert str(err.value) == "no JUMBF data found"  
  

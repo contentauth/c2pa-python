@@ -10,25 +10,27 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::PathBuf;
-
 use c2pa::{Ingredient, Manifest, ManifestStore};
 
 use crate::{Error, Result, SignerInfo};
 
 /// Returns ManifestStore JSON string from a file path.
 ///
+/// If data_dir is provided, any thumbnail or c2pa data will be written to that folder.
 /// Any Validation errors will be reported in the validation_status field.
 ///
-pub fn verify_from_file_json(path: &str) -> Result<String> {
-    Ok(ManifestStore::from_file(path)
-        .map_err(Error::Sdk)?
-        .to_string())
+pub fn verify_from_file_json(path: &str, data_dir: Option<String>) -> Result<String> {
+    Ok(match data_dir {
+        Some(dir) => ManifestStore::from_file_with_resources(path, &dir),
+        None => ManifestStore::from_file(path),
+    }
+    .map_err(Error::Sdk)?
+    .to_string())
 }
 
 /// Returns an Ingredient JSON string from a file path.
 ///
-/// Thumbnail and c2pa data written to data_dir if provided
+/// Any thumbnail or c2pa data will be written to data_dir if provided
 pub fn ingredient_from_file_json(path: &str, data_dir: &str) -> Result<String> {
     Ok(Ingredient::from_file_with_folder(path, data_dir)
         .map_err(Error::Sdk)?
@@ -46,31 +48,13 @@ pub fn add_manifest_to_file_json(
     dest: &str,
     manifest_info: &str,
     signer_info: SignerInfo,
-    side_car: bool,
-    remote_url: Option<String>,
+    data_dir: Option<String>,
 ) -> Result<Vec<u8>> {
     let mut manifest = Manifest::from_json(manifest_info).map_err(Error::Sdk)?;
 
-    // read any manifest referenced files from the source path
-    // or current folder if no path available
-    if let Some(path) = PathBuf::from(source).parent() {
+    // if data_dir is provided, set the base path for the manifest
+    if let Some(path) = data_dir {
         manifest.with_base_path(path).map_err(Error::Sdk)?;
-    } else if let Ok(path) = std::env::current_dir() {
-        manifest.with_base_path(&path).map_err(Error::Sdk)?;
-    }
-
-    // if side_car then don't embed the manifest
-    if side_car {
-        manifest.set_sidecar_manifest();
-    }
-
-    // add the remote url if provided
-    if let Some(url) = remote_url {
-        if side_car {
-            manifest.set_remote_manifest(url);
-        } else {
-            manifest.set_embedded_manifest_with_remote_ref(url);
-        }
     }
 
     // If the source file has a manifest store, and no parent is specified, treat the source's manifest store as the parent.
@@ -88,6 +72,7 @@ pub fn add_manifest_to_file_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs::remove_dir_all, path::PathBuf};
 
     /// returns a path to a file in the fixtures folder
     pub fn test_path(path: &str) -> String {
@@ -96,13 +81,27 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_from_file() {
+    fn test_verify_from_file_no_base() {
         let path = test_path("tests/fixtures/C.jpg");
-        let result = verify_from_file_json(&path);
+        let result = verify_from_file_json(&path, None);
         assert!(result.is_ok());
         let json_report = result.unwrap();
         println!("{}", json_report);
         assert!(json_report.contains("C.jpg"));
         //assert!(!json_report.contains("validation_status"));
+    }
+
+    #[test]
+    fn test_verify_from_file_with_base() {
+        let path = test_path("tests/fixtures/C.jpg");
+        let data_dir = "target/data_dir";
+        remove_dir_all(data_dir).unwrap();
+        let result = verify_from_file_json(&path, Some(data_dir.to_owned()));
+        assert!(result.is_ok());
+        let json_report = result.unwrap();
+        println!("{}", json_report);
+        assert!(json_report.contains("C.jpg"));
+        assert!(PathBuf::from(data_dir).exists());
+        assert!(json_report.contains("thumbnail"));
     }
 }
