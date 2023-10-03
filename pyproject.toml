@@ -21,7 +21,7 @@ authors = [
 maintainers = [
   {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
 ]
-urls = {homepage = "contentauthenticity.org", repository = "github.com/contentauth/c2pa-python"}
+urls = {homepage = "https://contentauthenticity.org", repository = "https://github.com/contentauth/c2pa-python"}
 
 [project.optional-dependencies]
 test = [
