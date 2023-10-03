@@ -22,7 +22,7 @@ Import the C2PA module as follows:
 import c2pa-python as c2pa
 ```
 
-### Reading and validating C2PA data in a file
+### Read and validate C2PA data in a file
 
 Use the `verify_from_file_json` function to read C2PA data from the specified file:
 
@@ -38,9 +38,9 @@ If the optional `data_dir` is provided, the function extracts any binary resourc
 
 NOTE: For a comprehensive reference to the JSON manifest structure, see the [CAI manifest store reference](https://contentauth.github.io/json-manifest-reference/manifest-reference).
 
-### Adding a signed manifest to a media file
+### Add a signed manifest to a media file
 
-The `add_manifest_to_file_json` function adds a signed manifest to a media file.
+Use the `add_manifest_to_file_json` function to add a signed manifest to a media file.
 
 ```py
 result = c2pa.add_manifest_to_file_json("path/to/source.jpg", 
@@ -51,11 +51,11 @@ result = c2pa.add_manifest_to_file_json("path/to/source.jpg",
 ```
 
 The parameters (in order) are:
-- The source media file that will receive new C2PA data.
+- The source (original) media file.
 - The destination file that will contain a copy of the source file with the manifest data added.
 - `manifest_json`, a JSON-formatted string containing the manifest data you want to add; see [Creating a manifest JSON definition file](#creating-a-manifest-json-definition-file) below.
 - `sign_info`, a `SignerInfo` object instance; see [Generating SignerInfo](#generating-signerinfo) below.
-- The optional `data_dir` enables you to load resource files referenced from `manifest_json` identifiers. When building your manifest, any files referenced by identifier fields are loaded relative to this path. This enables you to load thumbnails, icons, and manifest data for ingredients.
+- `data_dir` optionally specifies a directory path from which to load resource files referenced in the manifest JSON identifier fields; for example, thumbnails, icons, and manifest data for ingredients.
 
 ### Generating SignerInfo
 
@@ -66,7 +66,7 @@ certs = open("path/to/public_certs.pem","rb").read()
 prv_key = open("path/to/private_key.pem","rb").read()
 ```
 
-Then create a new `SignerInfo` instance using those keys as follows, specifying the signing algorithm used and optionally a time stamp authority URL:
+Then create a new `SignerInfo` instance using the keys as follows, specifying the signing algorithm used and optionally a time stamp authority URL:
 
 ```py
 sign_info = c2pa.SignerInfo(certs, priv_key, "es256", "http://timestamp.digicert.com")
