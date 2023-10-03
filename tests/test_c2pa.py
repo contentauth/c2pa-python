@@ -15,7 +15,7 @@ import c2pa_python as c2pa
 import pytest
 
 def test_version():
-    assert c2pa.version() == "0.1.1"
+    assert c2pa.version() == "0.2.0"
 
 def test_sdk_version():
     assert c2pa.sdk_version() == "0.26.0"

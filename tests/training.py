@@ -30,6 +30,8 @@ import operator
 def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
+print("version = " + c2pa.version())
+
 # first create an asset with a do not train assertion
 
 # define a manifest with the do not train assertion
