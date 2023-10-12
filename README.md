@@ -9,7 +9,7 @@ This library enables you to read and validate C2PA data in supported media files
 Install from PyPI by entering this command:
 
 ```
-pip install c2pa-python
+pip install -U c2pa-python
 ```
 
 ## Usage
@@ -19,7 +19,7 @@ pip install c2pa-python
 Import the C2PA module as follows:
 
 ```py
-import c2pa-python as c2pa
+import c2pa_python as c2pa
 ```
 
 ### Read and validate C2PA data in a file
@@ -27,7 +27,7 @@ import c2pa-python as c2pa
 Use the `verify_from_file_json` function to read C2PA data from the specified file:
 
 ```py
-json_store = c2pa.verify_from_file_json("path/to/media_file.jpg", data_dir)
+json_store = c2pa.verify_from_file_json("path/to/media_file.jpg", "path/to/data_dir")
 ```
 
 This function examines the specified media file for C2PA data and generates a JSON report of any data it finds. If there are validation errors, the report includes a `validation_status` field.  For a summary of supported media types, see [Supported file formats](#supported-file-formats).
@@ -57,7 +57,7 @@ The parameters (in order) are:
 - `sign_info`, a `SignerInfo` object instance; see [Generating SignerInfo](#generating-signerinfo) below.
 - `data_dir` optionally specifies a directory path from which to load resource files referenced in the manifest JSON identifier fields; for example, thumbnails, icons, and manifest data for ingredients.
 
-### Generating SignerInfo
+### Create a SignerInfo Instance
 
 A `SignerInfo` object contains information about a signature.  To create an instance of `SignerInfo`, first set up the signer information from the public and private key `.pem` files as follows:
 
