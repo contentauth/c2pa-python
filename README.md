@@ -4,6 +4,8 @@ Python bindings for the C2PA Content Authenticity Initiative (CAI) library.
 
 This library enables you to read and validate C2PA data in supported media files and add signed manifests to supported media files.
 
+**WARNING**: This is an early prerelease version of this library.  There may be bugs and unimplemented features, and the API is subject to change.
+
 ## Installation
 
 Install from PyPI by entering this command:
