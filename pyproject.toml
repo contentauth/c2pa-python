@@ -15,9 +15,6 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-authors = [
-  {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
-]
 maintainers = [
   {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
 ]

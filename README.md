@@ -38,25 +38,6 @@ If the optional `data_dir` is provided, the function extracts any binary resourc
 
 NOTE: For a comprehensive reference to the JSON manifest structure, see the [CAI manifest store reference](https://contentauth.github.io/json-manifest-reference/manifest-reference).
 
-### Add a signed manifest to a media file
-
-Use the `add_manifest_to_file_json` function to add a signed manifest to a media file.
-
-```py
-result = c2pa.add_manifest_to_file_json("path/to/source.jpg", 
-                                        "path/to/dest.jpg", 
-                                        manifest_json, 
-                                        sign_info, 
-                                        data_dir)
-```
-
-The parameters (in order) are:
-- The source (original) media file.
-- The destination file that will contain a copy of the source file with the manifest data added.
-- `manifest_json`, a JSON-formatted string containing the manifest data you want to add; see [Creating a manifest JSON definition file](#creating-a-manifest-json-definition-file) below.
-- `sign_info`, a `SignerInfo` object instance; see [Generating SignerInfo](#generating-signerinfo) below.
-- `data_dir` optionally specifies a directory path from which to load resource files referenced in the manifest JSON identifier fields; for example, thumbnails, icons, and manifest data for ingredients.
-
 ### Create a SignerInfo Instance
 
 A `SignerInfo` object contains information about a signature.  To create an instance of `SignerInfo`, first set up the signer information from the public and private key `.pem` files as follows:
@@ -74,7 +55,7 @@ sign_info = c2pa.SignerInfo(certs, priv_key, "es256", "http://timestamp.digicert
 
 For the list of supported signing algorithms, see [Creating and using an X.509 certificate](https://opensource.contentauthenticity.org/docs/c2patool/x_509).
 
-### Creating a manifest JSON definition file
+### Creating a manifest JSON definition
 
 The manifest JSON string defines the C2PA manifest to add to the file.
 
@@ -96,6 +77,27 @@ manifest_json = json.dumps({
   ]
  })
 ```
+
+### Add a signed manifest to a media file
+
+Use the `add_manifest_to_file_json` function to add a signed manifest to a media file.
+
+```py
+result = c2pa.add_manifest_to_file_json("path/to/source.jpg", 
+                                        "path/to/dest.jpg", 
+                                        manifest_json, 
+                                        sign_info, 
+                                        data_dir)
+```
+
+The parameters (in order) are:
+- The source (original) media file.
+- The destination file that will contain a copy of the source file with the manifest data added.
+- `manifest_json`, a JSON-formatted string containing the manifest data you want to add; see [Creating a manifest JSON definition file](#creating-a-manifest-json-definition-file) below.
+- `sign_info`, a `SignerInfo` object instance; see [Generating SignerInfo](#generating-signerinfo) below.
+- `data_dir` optionally specifies a directory path from which to load resource files referenced in the manifest JSON identifier fields; for example, thumbnails, icons, and manifest data for ingredients.
+
+See [training.py](https://github.com/contentauth/c2pa-python/blob/main/tests/training.py) for an example.
 
 ## Development
 
@@ -119,11 +121,15 @@ pip install <path-to-whl> --force-reinstall
 
 We use [PyTest](https://docs.pytest.org/) for testing.
 
-Run tests by entering this command:
-
+With a virtual environment set up, 
+run tests by entering these commands:
 ```
+source .venv/bin/activate
+maturin develop
 pytest
+deactivate
 ```
+
 
 ## Supported file formats
 
