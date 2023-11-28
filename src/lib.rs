@@ -13,22 +13,13 @@
 /// This module exports a C2PA library
 use std::env;
 
-mod error;
-mod json_api;
-mod signer_info;
-
-pub use error::{Error, Result};
-pub use json_api::*;
-pub use signer_info::SignerInfo;
+pub(crate) use c2pa_c::{
+    read_file, read_ingredient_file, sdk_version, sign_file, Error, SignerInfo,
+};
 
 /// Returns the version of this library
 fn version() -> String {
     String::from(env!("CARGO_PKG_VERSION"))
-}
-
-/// Returns the version of the c2pa SDK used in this library
-fn sdk_version() -> String {
-    String::from(c2pa::VERSION)
 }
 
 uniffi::include_scaffolding!("c2pa");

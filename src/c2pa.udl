@@ -3,23 +3,37 @@ namespace c2pa {
   string version();
   string sdk_version();
   [Throws=Error]
-  string verify_from_file_json([ByRef] string path, string? data_dir);
+  string read_file([ByRef] string path, string? data_dir);
   [Throws=Error]
-  string ingredient_from_file_json([ByRef] string path, [ByRef] string data_dir);
+  string read_ingredient_file([ByRef] string path, [ByRef] string data_dir);
   [Throws=Error]
-  sequence<u8> add_manifest_to_file_json([ByRef] string source, [ByRef] string dest, [ByRef] string manifest, SignerInfo signer_info, string? data_dir);
+  sequence<u8> sign_file([ByRef] string source, [ByRef] string dest, [ByRef] string manifest, [ByRef] SignerInfo signer_info, string? data_dir);
 };
 
 [Error]
 enum Error {
+  "Assertion",
+  "AssertionNotFound",
+  "Decoding",
+  "Encoding",
+  "FileNotFound",
+  "Io",
   "Json",
-  "Sdk"
+  "Manifest",
+  "ManifestNotFound",
+  "NotSupported",
+  "Other",
+  "NullParameter",
+  "RemoteManifest",
+  "ResourceNotFound",
+  "Signature",
+  "Verify"
 };
 
 dictionary SignerInfo {
-  sequence<u8> signcert;
-  sequence<u8> pkey;
   string alg;
-  string? tsa_url;
+  sequence<u8> sign_cert;
+  sequence<u8> private_key;
+  string? ta_url;
 };
 

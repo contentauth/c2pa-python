@@ -24,24 +24,24 @@ def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
 def test_version():
-    assert c2pa.version() == "0.2.1"
+    assert c2pa.version() == "0.3.0"
 
 def test_sdk_version():
-    assert c2pa.sdk_version() == "0.26.0"
+    assert c2pa.sdk_version() == "0.28.3"
 
 
 def test_verify_from_file():
-    json_store = c2pa.verify_from_file_json("tests/fixtures/C.jpg", None) 
+    json_store = c2pa.read_file("tests/fixtures/C.jpg", None) 
     assert not "validation_status" in json_store
 
 def test_verify_from_file_no_store():
-    with pytest.raises(c2pa.Error.Sdk) as err:  
-        json_store = c2pa.verify_from_file_json("tests/fixtures/A.jpg", None) 
-    assert str(err.value) == "no JUMBF data found"  
+    with pytest.raises(c2pa.Error.ManifestNotFound) as err:  
+        json_store = c2pa.read_file("tests/fixtures/A.jpg", None) 
+    assert str(err.value).startswith("ManifestNotFound")
 
 def test_verify_from_file_get_thumbnail():
     with tempfile.TemporaryDirectory() as data_dir:
-        store_json = c2pa.verify_from_file_json("tests/fixtures/C.jpg", data_dir)
+        store_json = c2pa.read_file("tests/fixtures/C.jpg", data_dir)
         manifest_store = json.loads(store_json)
         manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
         print (store_json)
@@ -67,18 +67,20 @@ def test_verify_from_file_get_thumbnail():
 
 def test_ingredient_from_file_get_thumbnail():
     with tempfile.TemporaryDirectory() as data_dir:
-        ingredient_json = c2pa.ingredient_from_file_json("tests/fixtures/C.jpg", data_dir)
+        ingredient_json = c2pa.read_ingredient_file("tests/fixtures/C.jpg", data_dir)
         ingredient = json.loads(ingredient_json)
         assert ingredient["title"]== "C.jpg"
         assert ingredient,["format"] == "image/jpeg"
         # read thumbnail data from file
         assert getitem(ingredient,("thumbnail","format")) == "image/jpeg"
         thumb_name = getitem(ingredient,("thumbnail","identifier"))
-        with open(data_dir + "/" + thumb_name, "rb") as thumb_file:
-            thumb_data = thumb_file.read()
-        assert len(thumb_data) == 31608
+        assert thumb_name.startswith("self#jumbf=")
+        # we won't get a thumbnail file generated if a valid one already exists in the store
+        # with open(data_dir + "/" + thumb_name, "rb") as thumb_file:
+        #     thumb_data = thumb_file.read()
+        # assert len(thumb_data) == 31608
         #read c2pa data from file
-        assert getitem(ingredient,("manifest_data","format")) == "c2pa"
+        assert getitem(ingredient,("manifest_data","format")) == "application/c2pa"
         data_name = getitem(ingredient,("manifest_data","identifier"))
         with open(data_dir + "/" + data_name, "rb") as c2pa_file:
             c2pa_data = c2pa_file.read()
@@ -88,9 +90,9 @@ def test_sign_info():
           # set up the signer info loading the pem and key files
         test_pem = open("tests/fixtures/es256_certs.pem","rb").read()
         test_key = open("tests/fixtures/es256_private.key","rb").read()
-        sign_info = c2pa.SignerInfo(test_pem, test_key, "es256", "http://timestamp.digicert.com")
+        sign_info = c2pa.SignerInfo("es256", test_pem, test_key, "http://timestamp.digicert.com")
         assert sign_info.alg == "es256"
-        assert sign_info.tsa_url == "http://timestamp.digicert.com"
+        assert sign_info.ta_url == "http://timestamp.digicert.com"
 
 def test_add_manifest_to_file():
     # define a source folder for any assets we need to read
@@ -124,14 +126,14 @@ def test_add_manifest_to_file():
         # set up the signer info loading the pem and key files
         test_pem = open("tests/fixtures/es256_certs.pem","rb").read()
         test_key = open("tests/fixtures/es256_private.key","rb").read()
-        sign_info = c2pa.SignerInfo(test_pem, test_key, "es256", "http://timestamp.digicert.com")
+        sign_info = c2pa.SignerInfo("es256", test_pem, test_key, "http://timestamp.digicert.com")
 
         # add the manifest to the asset
-        c2pa_data = c2pa.add_manifest_to_file_json(data_dir + "/A.jpg", output_dir+"/out.jpg", manifest_json, sign_info, data_dir)
+        c2pa_data = c2pa.sign_file(data_dir + "/A.jpg", output_dir+"/out.jpg", manifest_json, sign_info, data_dir)
         assert len(c2pa_data) == 75860 #check the size of returned c2pa_manifest data
 
         # verify the asset and check the manifest has what we expect
-        store_json = c2pa.verify_from_file_json(output_dir + "/out.jpg", output_dir)
+        store_json = c2pa.read_file(output_dir + "/out.jpg", output_dir)
         manifest_store = json.loads(store_json)
         manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
         print (store_json)

@@ -26,10 +26,10 @@ import c2pa_python as c2pa
 
 ### Read and validate C2PA data in a file
 
-Use the `verify_from_file_json` function to read C2PA data from the specified file:
+Use the `read_file` function to read C2PA data from the specified file:
 
 ```py
-json_store = c2pa.verify_from_file_json("path/to/media_file.jpg", "path/to/data_dir")
+json_store = c2pa.read_file("path/to/media_file.jpg", "path/to/data_dir")
 ```
 
 This function examines the specified media file for C2PA data and generates a JSON report of any data it finds. If there are validation errors, the report includes a `validation_status` field.  For a summary of supported media types, see [Supported file formats](#supported-file-formats).
@@ -42,10 +42,10 @@ NOTE: For a comprehensive reference to the JSON manifest structure, see the [CAI
 
 ### Add a signed manifest to a media file
 
-Use the `add_manifest_to_file_json` function to add a signed manifest to a media file.
+Use the `sign_file` function to add a signed manifest to a media file.
 
 ```py
-result = c2pa.add_manifest_to_file_json("path/to/source.jpg", 
+result = c2pa.sign_file("path/to/source.jpg", 
                                         "path/to/dest.jpg", 
                                         manifest_json, 
                                         sign_info, 
@@ -71,7 +71,7 @@ prv_key = open("path/to/private_key.pem","rb").read()
 Then create a new `SignerInfo` instance using the keys as follows, specifying the signing algorithm used and optionally a time stamp authority URL:
 
 ```py
-sign_info = c2pa.SignerInfo(certs, priv_key, "es256", "http://timestamp.digicert.com")
+sign_info = c2pa.SignerInfo("es256", certs, priv_key, "http://timestamp.digicert.com")
 ```
 
 For the list of supported signing algorithms, see [Creating and using an X.509 certificate](https://opensource.contentauthenticity.org/docs/c2patool/x_509).
@@ -124,7 +124,21 @@ We use [PyTest](https://docs.pytest.org/) for testing.
 Run tests by entering this command:
 
 ```
+source .venv/bin/activate
+maturin develop
 pytest
+deactivate
+```
+
+### Example 
+
+Run the example code like this:
+
+```
+source .venv/bin/activate
+maturin develop
+python3 tests/training.py
+deactivate
 ```
 
 ## Supported file formats
@@ -146,6 +160,19 @@ pytest
  | `tif`,`tiff`  | `image/tiff`                                        |
  | `wav`         | `audio/x-wav`                                       |
  | `webp`        | `image/webp`                                        |
+
+
+## Change Notes:
+
+Version 0.3.0 changes:
+There are some breaking changes to align with future APIs:
+- `C2paSignerInfo` moves the `alg` to the first parameter from the 3rd.
+- `c2pa.verify_from_file_json` is now `c2pa.read_file`.
+- `c2pa.ingredient_from_file_json` is now `c2pa.read_ingredient_file`.
+- `c2pa.add_manifest_to_file_json` is now `c2pa.sign_file`.
+- There are many more specific errors types now, and Error messages always start with the name of the error i.e (str(err.value).startswith("ManifestNotFound")).
+- The ingredient thumbnail identifier may be jumbf uri reference if a valid thumb already exists in the active manifest.
+- Extracted file paths for read_file now use a folder structure and different naming conventions.
 
 ## License
 
