@@ -14,6 +14,23 @@ Install from PyPI by entering this command:
 pip install -U c2pa-python
 ```
 
+To build from source on Linux, install curl and rustup and set up python
+
+```
+apt update
+apt install curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+apt install python3
+apt install pip
+apt install python3.11-venv
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install uniffi-bindgen
+pip install -U c2pa-python
+```
 ## Usage
 
 ### Import
