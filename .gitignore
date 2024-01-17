@@ -19,6 +19,7 @@ Cargo.lock
 # Python caches
 __pycache__/
 .pytest_cache/
+dist
 
 # Mac OS X files
 .DS_Store

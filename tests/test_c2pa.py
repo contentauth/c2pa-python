@@ -24,7 +24,7 @@ def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
 def test_version():
-    assert c2pa.version() == "0.3.0"
+    assert c2pa.version() == "0.3.2"
 
 def test_sdk_version():
     assert c2pa.sdk_version() == "0.28.3"

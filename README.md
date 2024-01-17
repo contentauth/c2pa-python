@@ -14,22 +14,9 @@ Install from PyPI by entering this command:
 pip install -U c2pa-python
 ```
 
-To build from source on Linux, install curl and rustup and set up python
+This is a platform wheel built with Rust. If your platform is not already supported,
+see the development section for info on how to build from source.
 
-```
-apt update
-apt install curl
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-apt install python3
-apt install pip
-apt install python3.11-venv
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install uniffi-bindgen
-pip install -U c2pa-python
 ```
 ## Usage
 
@@ -120,18 +107,36 @@ manifest_json = json.dumps({
 
 It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing.
 
-We use `maturin` for packaging Rust in Python. Install it as follows: 
+To build from source on Linux, install curl and rustup and set up python
 
+First update apt
 ```
+apt update
+```
+
+Install Rust
+```apt install curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+Install Python, pip and venv
+```
+apt install python3
+apt install pip
+apt install python3.11-venv
+python3 -m venv .venv
+```
+
+Build the wheel for your platform
+```
+source .venv/bin/activate
 pip install maturin
-```
-
-You also must install `uniffi`, `bindgen`, and `pytest` for testing
-
-```
-pip install uniffi_bindgen
+pip install uniffi-bindgen
+python3 -m pip install build
 pip install -U pytest
-pip install <path-to-whl> --force-reinstall
+
+python3 -m build --wheel
 ```
 
 ### Testing

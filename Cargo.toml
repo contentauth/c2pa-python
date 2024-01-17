@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-python"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com"]
 
@@ -10,8 +10,7 @@ name = "c2pa_python"
 crate-type = ["cdylib"]
 
 [dependencies]
-c2pa-c = { git = "https://github.com/contentauth/c2pa-c.git", branch = "gpeacock/rlib"}
-#c2pa = {version="0.26.0", features = ["file_io", "add_thumbnails", "fetch_remote_manifests"]}
+c2pa-c = { git = "https://github.com/contentauth/c2pa-c.git", branch = "main"}
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
