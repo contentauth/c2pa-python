@@ -34,7 +34,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          maturin-version: "1.2.0"
+          maturin-version: "1.4.0"
           args: --release --out dist --find-interpreter
           sccache: "true"
           manylinux: auto
