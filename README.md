@@ -25,7 +25,7 @@ see the development section for info on how to build from source.
 Import the C2PA module as follows:
 
 ```py
-import c2pa_python as c2pa
+import c2pa
 ```
 
 ### Read and validate C2PA data in a file

@@ -15,7 +15,7 @@
 import json
 import os
 import sys
-import c2pa_python as c2pa;
+import c2pa
 
 # set up paths to the files we we are using
 PROJECT_PATH = os.getcwd()
