@@ -41,7 +41,7 @@ jobs:
           maturin-version: "1.2.0"
           args: --release --out dist --find-interpreter
           sccache: "true"
-          manylinux: auto
+          manylinux: "2_28"
           before-script-linux: "pip install uniffi-bindgen==0.24.1"
       - name: Upload wheels
         uses: actions/upload-artifact@v3
