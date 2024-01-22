@@ -9,7 +9,6 @@ on:
   push:
     branches:
       - main
-      - ci-build
     tags:
       - "*"
   pull_request:
