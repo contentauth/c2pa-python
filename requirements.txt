@@ -1,0 +1,2 @@
+maturin==1.2.0
+uniffi-bindgen==0.24.1
