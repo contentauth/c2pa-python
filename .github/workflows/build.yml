@@ -1,4 +1,4 @@
-name: CI
+name: Build
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
       - main
     tags:
       - "*"
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -17,7 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
