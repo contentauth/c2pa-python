@@ -4,51 +4,139 @@ on:
   push:
     branches:
       - main
-  pull_request:
+    tags:
+      - "*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build-nightly-only:
-    name: Build nightly only
+  linux:
     runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux2014_x86_64
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v1
-      - name: Install nightly rust
-        run: curl --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-      # Insert steps here to install you other dependencies. Note that you're running inside of cent os 7, not ubuntu
-      - name: Installing custom dependency
-        run: echo "Installing custom dependency"
-      - name: Build
-        run: |
-          source $HOME/.cargo/env
-          for PYBIN in /opt/python/cp3[6789]*/bin; do
-            "${PYBIN}/pip" install maturin
-            "${PYBIN}/maturin" build -m nightly-only/Cargo.toml -i "${PYBIN}/python" --release --manylinux 2014
-          done
-      # Auditwheel isn't generally necessary. This is only shown as refernce for cases where you link
-      # external libraries, in which case you have to set manylinux to off and then use auditwheel repair
-      - name: Auditwheel repair
-        run: |
-          for wheel in nightly-only/target/wheels/*.whl; do
-              auditwheel repair "${wheel}"
-          done
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v1
+        if: ${{ matrix.target == 'aarch64' }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          maturin-version: "1.2.0"
+          args: --release --out dist --find-interpreter
+          sccache: "true"
+          manylinux: ${{ matrix.target == 'aarch64' && 'manylinux_2_28' || 'auto' }}
+          before-script-linux: "pip install uniffi-bindgen==0.24.1"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
 
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target: [x64, x86]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          architecture: ${{ matrix.target }}
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
 
-  # This is similar to the above, except we're only using the lowest supported python version to build a single
-  # abi3 wheel
-  build-nightly-only-abi3:
-    name: Build nightly only abi3
+  macos_x86:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+
+  macos_aarch64:
+    runs-on: macos-latest-large
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+
+  sdist:
     runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux2014_x86_64
     steps:
-      - uses: actions/checkout@v1
-      - name: Install nightly rust
-        run: curl --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-      - name: Install maturin
-        run: /opt/python/cp36-cp36m/bin/pip install maturin
-      - name: Build with maturin
-        run: |
-          source $HOME/.cargo/env
-          /opt/python/cp36-cp36m/bin/maturin build -m nightly-only-abi3/Cargo.toml -i /opt/python/cp36-cp36m/bin/python --release --manylinux 2014
-      - name: Auditwheel repair
-        run: auditwheel repair nightly-only-abi3/target/wheels/*.whl
+      - uses: actions/checkout@v3
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: "startsWith(github.ref, 'refs/tags/')"
+    needs: [linux, windows, macos_x86, macos_aarch64, sdist]
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: wheels
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --non-interactive --skip-existing *

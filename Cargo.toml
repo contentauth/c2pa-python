@@ -1,20 +1,20 @@
 [package]
 name = "c2pa-python"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "c2pa_python"
+name = "c2pa"
 crate-type = ["cdylib"]
 
 [dependencies]
-c2pa-c = { git = "https://github.com/contentauth/c2pa-c.git", branch = "main"}
+c2pa-c = { git = "https://github.com/contentauth/c2pa-c.git", branch = "main" }
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
-thiserror = "1.0.49" 
+thiserror = "1.0.49"
 uniffi = "0.24.1"
 
 [build-dependencies]

@@ -25,7 +25,7 @@ see the development section for info on how to build from source.
 Import the C2PA module as follows:
 
 ```py
-import c2pa_python as c2pa
+import c2pa
 ```
 
 ### Read and validate C2PA data in a file
@@ -137,6 +137,25 @@ python3 -m pip install build
 pip install -U pytest
 
 python3 -m build --wheel
+```
+
+### ManyLinux build
+```
+docker run -it quay.io/pypa/manylinux_2_28_aarch64 bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+export PATH=/opt/python/cp312-cp312/bin:$PATH
+pip install maturin
+pip install venv
+pip install build
+pip install -U pytest
+
+cd home
+git clone https://github.com/contentauth/c2pa-python.git 
+cd c2pa-python
+python3 -m build --wheel
+auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl 
+
 ```
 
 ### Testing

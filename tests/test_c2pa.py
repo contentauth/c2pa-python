@@ -11,7 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-import c2pa_python as c2pa
+import c2pa
 import pytest
 import json
 import tempfile
@@ -24,10 +24,10 @@ def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
 def test_version():
-    assert c2pa.version() == "0.3.2"
+    assert c2pa.version() == "0.4.0"
 
 def test_sdk_version():
-    assert c2pa.sdk_version() == "0.28.3"
+    assert c2pa.sdk_version() == "0.28.4"
 
 
 def test_verify_from_file():
