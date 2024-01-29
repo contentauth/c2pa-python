@@ -14,10 +14,8 @@ Install from PyPI by entering this command:
 pip install -U c2pa-python
 ```
 
-This is a platform wheel built with Rust. If your platform is not already supported,
-see the development section for info on how to build from source.
+This is a platform wheel built with Rust that works on Windows, macOS, and most Linux distributions (using [manylinux](https://github.com/pypa/manylinux)). If you need to run on another platform, see [Development](#development) for information on how to build from source.
 
-```
 ## Usage
 
 ### Import
@@ -42,7 +40,7 @@ A media file may contain many manifests in a manifest store. The most recent man
 
 If the optional `data_dir` is provided, the function extracts any binary resources, such as thumbnails, icons, and C2PA data into that directory. These files are referenced by the identifier fields in the manifest store report.
 
-NOTE: For a comprehensive reference to the JSON manifest structure, see the [CAI manifest store reference](https://contentauth.github.io/json-manifest-reference/manifest-reference).
+NOTE: For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
 
 ### Add a signed manifest to a media file
 
@@ -63,7 +61,7 @@ The parameters (in order) are:
 - `sign_info`, a `SignerInfo` object instance; see [Generating SignerInfo](#generating-signerinfo) below.
 - `data_dir` optionally specifies a directory path from which to load resource files referenced in the manifest JSON identifier fields; for example, thumbnails, icons, and manifest data for ingredients.
 
-### Create a SignerInfo Instance
+### Create a SignerInfo instance
 
 A `SignerInfo` object contains information about a signature.  To create an instance of `SignerInfo`, first set up the signer information from the public and private key `.pem` files as follows:
 
@@ -103,85 +101,6 @@ manifest_json = json.dumps({
  })
 ```
 
-## Development
-
-It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing.
-
-To build from source on Linux, install curl and rustup and set up python
-
-First update apt
-```
-apt update
-```
-
-Install Rust
-```apt install curl
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
-
-Install Python, pip and venv
-```
-apt install python3
-apt install pip
-apt install python3.11-venv
-python3 -m venv .venv
-```
-
-Build the wheel for your platform
-```
-source .venv/bin/activate
-pip install maturin
-pip install uniffi-bindgen
-python3 -m pip install build
-pip install -U pytest
-
-python3 -m build --wheel
-```
-
-### ManyLinux build
-```
-docker run -it quay.io/pypa/manylinux_2_28_aarch64 bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-export PATH=/opt/python/cp312-cp312/bin:$PATH
-pip install maturin
-pip install venv
-pip install build
-pip install -U pytest
-
-cd home
-git clone https://github.com/contentauth/c2pa-python.git 
-cd c2pa-python
-python3 -m build --wheel
-auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl 
-
-```
-
-### Testing
-
-We use [PyTest](https://docs.pytest.org/) for testing.
-
-Run tests by entering this command:
-
-```
-source .venv/bin/activate
-maturin develop
-pytest
-deactivate
-```
-
-### Example 
-
-Run the example code like this:
-
-```
-source .venv/bin/activate
-maturin develop
-python3 tests/training.py
-deactivate
-```
-
 ## Supported file formats
 
  | Extensions    | MIME type                                           |
@@ -203,10 +122,93 @@ deactivate
  | `webp`        | `image/webp`                                        |
 
 
-## Change Notes:
+## Development
 
-Version 0.3.0 changes:
-There are some breaking changes to align with future APIs:
+It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing. To build from source on Linux, install `curl` and `rustup` then set up Python.
+
+First update `apt` then (if needed) install `curl`:
+
+```
+apt update
+apt install curl
+```
+
+Install Rust:
+
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+Install Python, `pip`, and `venv`:
+
+```
+apt install python3
+apt install pip
+apt install python3.11-venv
+python3 -m venv .venv
+```
+
+Build the wheel for your platform:
+
+```
+source .venv/bin/activate
+pip install maturin
+pip install uniffi-bindgen
+python3 -m pip install build
+pip install -U pytest
+
+python3 -m build --wheel
+```
+
+### ManyLinux build
+
+Build using [manylinux](https://github.com/pypa/manylinux) by using a Docker image as follows:
+
+```
+docker run -it quay.io/pypa/manylinux_2_28_aarch64 bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+export PATH=/opt/python/cp312-cp312/bin:$PATH
+pip install maturin
+pip install venv
+pip install build
+pip install -U pytest
+
+cd home
+git clone https://github.com/contentauth/c2pa-python.git 
+cd c2pa-python
+python3 -m build --wheel
+auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl 
+```
+
+### Testing
+
+We use [PyTest](https://docs.pytest.org/) for testing.
+
+Run tests by entering this command:
+
+```
+source .venv/bin/activate
+maturin develop
+pytest
+deactivate
+```
+
+For example:
+
+```
+source .venv/bin/activate
+maturin develop
+python3 tests/training.py
+deactivate
+```
+
+## Release notes
+
+### Version 0.3.0
+
+This release includes some breaking changes to align with future APIs:
 - `C2paSignerInfo` moves the `alg` to the first parameter from the 3rd.
 - `c2pa.verify_from_file_json` is now `c2pa.read_file`.
 - `c2pa.ingredient_from_file_json` is now `c2pa.read_ingredient_file`.
@@ -217,12 +219,12 @@ There are some breaking changes to align with future APIs:
 
 ## License
 
-This package is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-APACHE).
+This package is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-python/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-python/blob/main/LICENSE-APACHE).
 
 Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
 
 ### Contributions and feedback
 
-We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-js/blob/main/CONTRIBUTING.md).
+We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-python/blob/main/CONTRIBUTING.md).
 
 
