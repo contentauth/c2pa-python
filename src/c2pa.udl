@@ -11,23 +11,64 @@ namespace c2pa {
 };
 
 [Error]
-enum Error {
-  "Assertion",
-  "AssertionNotFound",
-  "Decoding",
-  "Encoding",
-  "FileNotFound",
-  "Io",
-  "Json",
-  "Manifest",
-  "ManifestNotFound",
-  "NotSupported",
-  "Other",
-  "NullParameter",
-  "RemoteManifest",
-  "ResourceNotFound",
-  "Signature",
-  "Verify"
+interface Error {
+  Assertion(string reason);
+  AssertionNotFound(string reason);
+  Decoding(string reason);
+  Encoding(string reason);
+  FileNotFound(string reason);
+  Io(string reason);
+  Json(string reason);
+  Manifest(string reason);
+  ManifestNotFound(string reason);
+  NotSupported(string reason);
+  FileNotFound(string reason);
+  Other(string reason);
+  RemoteManifest(string reason);
+  ResourceNotFound(string reason);
+  RwLock();
+  Signature(string reason);
+  Verify(string reason);
+};
+
+enum SigningAlg {
+  "Es256",
+  "Es384",
+  "Es512",
+  "Ps256",
+  "Ps384",
+  "Ps512",
+  "Ed25519"
+};
+
+enum SeekMode {
+  "Start",
+  "End",
+  "Current"
+};
+
+callback interface Stream {
+  [Throws=Error]
+  bytes read_stream(u64 length);
+
+  [Throws=Error]
+  u64 seek_stream(i64 pos, SeekMode mode);
+
+  [Throws=Error]
+  u64 write_stream(bytes data);
+};
+
+interface Reader {
+  constructor();
+
+  [Throws=Error]
+  string read([ByRef] string format, [ByRef] Stream reader);
+
+  [Throws=Error]
+  string json();
+
+  [Throws=Error]
+  u64 resource([ByRef] string uri, [ByRef] Stream stream);
 };
 
 dictionary SignerInfo {
@@ -37,3 +78,31 @@ dictionary SignerInfo {
   string? ta_url;
 };
 
+dictionary SignerConfig {
+  SigningAlg alg;
+  bytes certs;
+  string? time_authority_url = null;
+  boolean use_ocsp = false;
+};
+
+callback interface SignerCallback {
+  [Throws=Error]
+  bytes sign(bytes data);
+};
+
+interface CallbackSigner {
+  constructor(SignerCallback callback,  SignerConfig config);
+};
+
+interface Builder {
+  constructor();
+  
+  [Throws=Error]
+  void with_json([ByRef] string json);
+
+  [Throws=Error]
+  void add_resource([ByRef] string uri, [ByRef] Stream stream );
+
+  [Throws=Error]
+  bytes sign([ByRef] string format, [ByRef] Stream input, [ByRef] Stream output ,[ByRef] CallbackSigner signer);
+};

@@ -17,6 +17,8 @@ import os
 import sys
 import c2pa
 
+import c2pa_api
+
 # set up paths to the files we we are using
 PROJECT_PATH = os.getcwd()
 testFile = os.path.join(PROJECT_PATH,"tests","fixtures","A.jpg")
@@ -57,6 +59,7 @@ try:
     # set up the signer info loading the pem and key files
     test_pem = open(pemFile,"rb").read()
     test_key = open(keyFile,"rb").read()
+
     sign_info = c2pa.SignerInfo("es256", test_pem, test_key, "http://timestamp.digicert.com")
 
     result = c2pa.sign_file(testFile, testOutputFile, manifest_json, sign_info, None)
@@ -65,6 +68,27 @@ except Exception as err:
     sys.exit(err)
 
 print("successfully added do not train manifest to file " + testOutputFile)
+
+
+# V2 signing api
+try:
+   # This could be implemented on a server using an HSM
+    def sign_ps256(data: bytes) -> bytes:
+        return c2pa_api.sign_ps256(data, "tests/fixtures/ps256.pem")
+    
+    pemFile = os.path.join(PROJECT_PATH,"tests","fixtures","ps256.pub")
+    certs = open(pemFile,"rb").read()
+    # Create a local signer from a certificate pem file
+    signer = c2pa_api.LocalSigner.from_settings(sign_ps256, c2pa.SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+
+    builder = c2pa_api.Builder(signer, manifest_json)
+
+    result = builder.sign_file(testFile, testOutputFile)
+    
+except Exception as err:
+    sys.exit(err)
+
+print("V2: successfully added do not train manifest to file " + testOutputFile)
 
 
 # now verify the asset and check the manifest for a do not train assertion
