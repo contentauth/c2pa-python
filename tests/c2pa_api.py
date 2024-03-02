@@ -27,27 +27,23 @@ import c2pa;
 #  ManifestStoreReader = c2pa.ManifestStoreReader
 class Reader(c2pa.Reader):
     def __init__(self, format, stream):
-        self.format = format
-        self.stream = C2paStream(stream)
         super().__init__()
+        self.read(format, C2paStream(stream))
 
-    def from_file(path: str, format=None):
+    @classmethod
+    def from_file(cls, path: str, format=None):
         file = open(path, "rb")
         if format is None:
             # determine the format from the file extension
             format = os.path.splitext(path)[1][1:]
-        reader = Reader(format, file)
-        return reader
-
-    def read(self):
-        return super().read(self.format, self.stream)
+        return cls(format, file)
     
     def resource(self, uri, stream) -> None:
-        super().resource(uri, C2paStream(stream))
+        return super().resource(uri, C2paStream(stream))
 
     def resource_file(self, uri, path) -> None:
         file = open(path, "wb")
-        self.resource(uri, file)
+        return self.resource(uri, file)
 
 
 class Builder(c2pa.Builder):
@@ -60,24 +56,34 @@ class Builder(c2pa.Builder):
     def set_manifest(self, manifest):
         if not isinstance(manifest, str):
             manifest = json.dumps(manifest)
-        self.with_json(manifest)
+        super().with_json(manifest)
         return self
     
     def add_resource(self, uri, stream):
-        return super().add_resource(uri, stream)
+        return super().add_resource(uri, C2paStream(stream))
     
     def add_resource_file(self, uri, path):
-        stream = C2paStream.open_file(path, "rb")
-        return self.add_resource(uri, stream)
+        file = open(path, "rb")
+        return self.add_resource(uri, file)
     
-    def sign_stream(self, format, input, output=None):
-        return self.sign(format, input, output, self.signer)
+    def add_ingredient(self, ingredient, format, stream):
+        if not isinstance(ingredient, str):
+            ingredient = json.dumps(ingredient)
+        return super().add_ingredient(ingredient, format, C2paStream(stream))
+    
+    def add_ingredient_file(self, ingredient, path):
+        format = os.path.splitext(path)[1][1:]
+        file = open(path, "rb")
+        return self.add_ingredient(ingredient, format, file)
+    
+    def sign(self, format, input, output=None):
+        return super().sign(format, C2paStream(input), C2paStream(output), self.signer)
 
     def sign_file(self, sourcePath, outputPath):
-        format = "image/jpeg" #sourcePath.extension[1:]
-        input = C2paStream.open_file(sourcePath, "rb")
-        output = C2paStream.open_file(outputPath, "wb")
-        return self.sign_stream(format, input, output)
+        format = os.path.splitext(outputPath)[1][1:]
+        input = open(sourcePath, "rb")
+        output = open(outputPath, "wb")
+        return self.sign(format, input, output)
 
 
 # Implements a C2paStream given a stream handle

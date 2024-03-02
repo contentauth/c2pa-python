@@ -2,12 +2,12 @@
 namespace c2pa {
   string version();
   string sdk_version();
-  [Throws=Error]
-  string read_file([ByRef] string path, string? data_dir);
-  [Throws=Error]
-  string read_ingredient_file([ByRef] string path, [ByRef] string data_dir);
-  [Throws=Error]
-  sequence<u8> sign_file([ByRef] string source, [ByRef] string dest, [ByRef] string manifest, [ByRef] SignerInfo signer_info, string? data_dir);
+ /// [Throws=Error]
+ /// string read_file([ByRef] string path, string? data_dir);
+ /// [Throws=Error]
+ /// string read_ingredient_file([ByRef] string path, [ByRef] string data_dir);
+ /// [Throws=Error]
+ /// sequence<u8> sign_file([ByRef] string source, [ByRef] string dest, [ByRef] string manifest, [ByRef] SignerInfo signer_info, string? data_dir);
 };
 
 [Error]
@@ -71,12 +71,12 @@ interface Reader {
   u64 resource([ByRef] string uri, [ByRef] Stream stream);
 };
 
-dictionary SignerInfo {
-  string alg;
-  sequence<u8> sign_cert;
-  sequence<u8> private_key;
-  string? ta_url;
-};
+///dictionary SignerInfo {
+///  string alg;
+///  sequence<u8> sign_cert;
+///  sequence<u8> private_key;
+///  string? ta_url;
+///};
 
 dictionary SignerConfig {
   SigningAlg alg;
@@ -102,6 +102,9 @@ interface Builder {
 
   [Throws=Error]
   void add_resource([ByRef] string uri, [ByRef] Stream stream );
+
+  [Throws=Error]
+  void add_ingredient([ByRef] string ingredient_json, [ByRef] string format, [ByRef] Stream stream );
 
   [Throws=Error]
   bytes sign([ByRef] string format, [ByRef] Stream input, [ByRef] Stream output ,[ByRef] CallbackSigner signer);

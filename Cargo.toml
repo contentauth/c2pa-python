@@ -9,8 +9,11 @@ authors = ["Gavin Peacock <gpeacock@adobe.com"]
 name = "c2pa"
 crate-type = ["cdylib"]
 
+[features]
+v1 = ["c2pa/file_io"]
+
 [dependencies]
-c2pa = {path="../c2pa-rs/sdk", features = ["file_io", "openssl_sign"]}
+c2pa = {git = "https://github.com/contentauth/c2pa-rs.git", branch = "gpeacock/manifest_store_builder", features = ["openssl", "openssl_sign"]}
 pem = "3.0.3"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_derive = "1.0"

@@ -14,17 +14,6 @@ use c2pa::{Ingredient, Manifest, ManifestStore};
 
 use crate::{Error, Result, SignerInfo};
 
-/// Returns the version of the C2PA library
-pub fn sdk_version() -> String {
-    format!(
-        "{}/{} {}/{}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        c2pa::NAME,
-        c2pa::VERSION
-    )
-}
-
 /// Returns ManifestStore JSON string from a file path.
 ///
 /// If data_dir is provided, any thumbnail or c2pa data will be written to that folder.

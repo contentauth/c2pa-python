@@ -19,10 +19,16 @@ pub use c2pa::SigningAlg;
 /// these all need to be public so that the uniffi macro can see them
 mod error;
 pub use error::{Error, Result};
+#[cfg(feature = "v1")]
 mod json_api;
-pub use json_api::{read_file, read_ingredient_file, sdk_version, sign_file};
+#[cfg(feature = "v1")]
+pub use json_api::{read_file, read_ingredient_file, sign_file};
+#[cfg(feature = "v1")]
 mod signer_info;
+#[cfg(feature = "v1")]
 pub use signer_info::{CallbackSigner, SignerCallback, SignerConfig, SignerInfo};
+mod callback_signer;
+pub use callback_signer::{CallbackSigner, SignerCallback, SignerConfig};
 mod streams;
 pub use streams::{SeekMode, Stream, StreamAdapter};
 
@@ -35,6 +41,18 @@ uniffi::include_scaffolding!("c2pa");
 /// Returns the version of this library
 fn version() -> String {
     String::from(env!("CARGO_PKG_VERSION"))
+}
+
+
+/// Returns the version of the C2PA library
+pub fn sdk_version() -> String {
+    format!(
+        "{}/{} {}/{}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        c2pa::NAME,
+        c2pa::VERSION
+    )
 }
 
 pub struct Reader {
@@ -111,6 +129,16 @@ impl Builder {
         if let Ok(mut builder) = self.builder.try_write() {
             let mut stream = StreamAdapter::from(stream);
             builder.add_resource(uri, &mut stream)?;
+        } else {
+            return Err(Error::RwLock);
+        };
+        Ok(())
+    }
+
+    pub fn add_ingredient(&self, ingredient_json: &str, format: &str, stream: &dyn Stream) -> Result<()> {
+        if let Ok(mut builder) = self.builder.try_write() {
+            let mut stream = StreamAdapter::from(stream);
+            builder.add_ingredient(ingredient_json, format,  &mut stream)?;
         } else {
             return Err(Error::RwLock);
         };
