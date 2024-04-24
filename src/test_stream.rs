@@ -16,7 +16,7 @@ use std::sync::RwLock;
 
 use std::io::Cursor;
 
-use crate::{SeekMode, Stream, Error, Result};
+use crate::{Error, Result, SeekMode, Stream};
 
 pub struct TestStream {
     stream: RwLock<Cursor<Vec<u8>>>,

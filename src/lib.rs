@@ -28,10 +28,9 @@ mod signer_info;
 #[cfg(feature = "v1")]
 pub use signer_info::{CallbackSigner, SignerCallback, SignerConfig, SignerInfo};
 mod callback_signer;
-pub use callback_signer::{CallbackSigner, SignerCallback, SignerConfig};
+pub use callback_signer::{CallbackSigner, SignerCallback};
 mod streams;
 pub use streams::{SeekMode, Stream, StreamAdapter};
-
 
 #[cfg(test)]
 mod test_stream;
@@ -42,7 +41,6 @@ uniffi::include_scaffolding!("c2pa");
 fn version() -> String {
     String::from(env!("CARGO_PKG_VERSION"))
 }
-
 
 /// Returns the version of the C2PA library
 pub fn sdk_version() -> String {
@@ -60,13 +58,13 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new() -> Self {    
+    pub fn new() -> Self {
         Self {
-            reader: RwLock::new(c2pa::Reader::new()),
+            reader: RwLock::new(c2pa::Reader::default()),
         }
     }
 
-    pub fn read(&self, format: &str, stream: &dyn Stream) -> Result<String> {
+    pub fn from_stream(&self, format: &str, stream: &dyn Stream) -> Result<String> {
         // uniffi doesn't allow mutable parameters, so we we use an adapter
         let mut stream = StreamAdapter::from(stream);
         let reader = c2pa::Reader::from_stream(format, &mut stream)?;
@@ -81,16 +79,16 @@ impl Reader {
 
     pub fn json(&self) -> Result<String> {
         if let Ok(st) = self.reader.try_read() {
-            Ok(st.to_string())
+            Ok(st.json())
         } else {
             Err(Error::RwLock)
         }
     }
 
-    pub fn resource(&self, uri: &str, stream: &dyn Stream) -> Result<u64> {
+    pub fn resource_to_stream(&self, uri: &str, stream: &dyn Stream) -> Result<u64> {
         if let Ok(reader) = self.reader.try_read() {
             let mut stream = StreamAdapter::from(stream);
-            let size = reader.resource(uri, &mut stream)?;
+            let size = reader.resource_to_stream(uri, &mut stream)?;
             Ok(size as u64)
         } else {
             Err(Error::RwLock)
@@ -107,12 +105,11 @@ impl Builder {
     /// Create a new builder
     ///
     /// Uniffi does not support constructors that return errors
-    pub fn new() -> Self {    
+    pub fn new() -> Self {
         Self {
-            builder: RwLock::new(c2pa::Builder::new()),
+            builder: RwLock::new(c2pa::Builder::default()),
         }
     }
-
 
     /// Create a new builder using the Json manifest definition
     pub fn with_json(&self, json: &str) -> Result<()> {
@@ -135,10 +132,37 @@ impl Builder {
         Ok(())
     }
 
-    pub fn add_ingredient(&self, ingredient_json: &str, format: &str, stream: &dyn Stream) -> Result<()> {
+    pub fn add_ingredient(
+        &self,
+        ingredient_json: &str,
+        format: &str,
+        stream: &dyn Stream,
+    ) -> Result<()> {
         if let Ok(mut builder) = self.builder.try_write() {
             let mut stream = StreamAdapter::from(stream);
-            builder.add_ingredient(ingredient_json, format,  &mut stream)?;
+            builder.add_ingredient(ingredient_json, format, &mut stream)?;
+        } else {
+            return Err(Error::RwLock);
+        };
+        Ok(())
+    }
+
+    /// Write the builder to the destination stream as an archive
+    pub fn to_archive(&self, dest: &dyn Stream) -> Result<()> {
+        if let Ok(mut builder) = self.builder.try_write() {
+            let mut dest = StreamAdapter::from(dest);
+            builder.to_archive(&mut dest)?;
+        } else {
+            return Err(Error::RwLock);
+        };
+        Ok(())
+    }
+
+    /// Create a new builder from an archive
+    pub fn from_archive(&self, source: &dyn Stream) -> Result<()> {
+        if let Ok(mut builder) = self.builder.try_write() {
+            let mut source = StreamAdapter::from(source);
+            *builder = c2pa::Builder::from_archive(&mut source)?;
         } else {
             return Err(Error::RwLock);
         };
@@ -146,11 +170,18 @@ impl Builder {
     }
 
     /// Sign an asset and write the result to the destination stream
-    pub fn sign(&self, format: &str, source: &dyn Stream, dest: &dyn Stream, signer: &CallbackSigner) -> Result<Vec<u8>> {
+    pub fn sign(
+        &self,
+        format: &str,
+        source: &dyn Stream,
+        dest: &dyn Stream,
+        signer: &CallbackSigner,
+    ) -> Result<Vec<u8>> {
         // uniffi doesn't allow mutable parameters, so we we use an adapter
         let mut source = StreamAdapter::from(source);
         let mut dest = StreamAdapter::from(dest);
         if let Ok(mut builder) = self.builder.try_write() {
+            let signer = (*signer).signer();
             Ok(builder.sign(format, &mut source, &mut dest, signer)?)
         } else {
             Err(Error::RwLock)

@@ -16,6 +16,7 @@ from unittest.mock import mock_open, patch
 import c2pa_api
 from c2pa_api import c2pa
 import os
+import io
 PROJECT_PATH = os.getcwd()
 
 testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
@@ -23,7 +24,7 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 class TestC2paSdk(unittest.TestCase):
 
     def test_version(self):
-        self.assertIn("c2pa-rs/",c2pa_api.c2pa.version())
+        self.assertIn("0.4.0",c2pa_api.c2pa.sdk_version())
 
     #def test_supported_extensions(self):
     #   self.assertIn("jpeg",c2pa_api.c2pa.supported_extensions())
@@ -34,13 +35,12 @@ class TestReader(unittest.TestCase):
     def test_normal_read(self):
         with open(testPath, "rb") as file:
             reader = c2pa_api.Reader("image/jpeg",file)
-            json = reader.read()
+            json = reader.json()
             self.assertIn("C.jpg", json)
 
     def test_normal_read_and_parse(self):
         with open(testPath, "rb") as file:
             reader = c2pa_api.Reader("image/jpeg",file)
-            reader.read()
             json = reader.json()
             self.assertIn("C.jpg", json)
             #manifest_store = c2pa_api.ManifestStore.from_json(json)
@@ -92,13 +92,16 @@ class TestBuilder(unittest.TestCase):
     certs = open(pemFile,"rb").read()
 
     # Create a local signer from a certificate pem file
-    signer = c2pa_api.LocalSigner.from_settings(sign_ps256, "ps256", certs, "http://timestamp.digicert.com")
+    signer = c2pa_api.create_signer(sign_ps256, c2pa.SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
     def test_normal_build(self):
         with open(testPath, "rb") as file:
-            builder = c2pa_api.Builder(TestBuilder.signer, TestBuilder.manifestDefinition)
-            json = builder.sign()
-            self.assertIn("C.jpg", json)
+            builder = c2pa_api.Builder(TestBuilder.manifestDefinition)
+            output = byte_array = io.BytesIO(bytearray())
+            builder.sign(TestBuilder.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = c2pa_api.Reader("image/jpeg", output)
+            self.assertIn("Python Test", reader.json())
 
 
 

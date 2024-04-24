@@ -1,4 +1,4 @@
-# Copyright 2023 Adobe. All rights reserved.
+# Copyright 2024 Adobe. All rights reserved.
 # This file is licensed to you under the Apache License,
 # Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 # or the MIT license (http://opensource.org/licenses/MIT),
@@ -23,12 +23,19 @@ sys.path.append(SOURCE_PATH)
 
 import c2pa;
 
+# This module provides a simple Python API for the C2PA library.
 
-#  ManifestStoreReader = c2pa.ManifestStoreReader
+# Reader is used to read a manifest store from a stream or file.
+# It performs full validation on the manifest store.
+# It also supports writing resources to a stream or file.
+#
+# Example:
+# reader = c2pa_api.Reader("image/jpeg", open("test.jpg", "rb"))
+# json = reader.json()
 class Reader(c2pa.Reader):
     def __init__(self, format, stream):
         super().__init__()
-        self.read(format, C2paStream(stream))
+        self.from_stream(format, C2paStream(stream))
 
     @classmethod
     def from_file(cls, path: str, format=None):
@@ -38,20 +45,39 @@ class Reader(c2pa.Reader):
             format = os.path.splitext(path)[1][1:]
         return cls(format, file)
     
-    def resource(self, uri, stream) -> None:
-        return super().resource(uri, C2paStream(stream))
+    def resource_to_stream(self, uri, stream) -> None:
+        return super().resource_to_stream(uri, C2paStream(stream))
 
-    def resource_file(self, uri, path) -> None:
+    def resource_to_file(self, uri, path) -> None:
         file = open(path, "wb")
-        return self.resource(uri, file)
+        return self.resource_to_stream(uri, file)
 
-
+# The Builder is used to construct a new Manifest and add it to a stream or file.
+# The initial manifest is defined by a Manifest Definition dictionary.
+# It supports adding resources from a stream or file.
+# It supports adding ingredients from a stream or file.
+# It supports signing the asset with a signer to a stream or file.
+#
+# Example:
+# manifest = {
+#     "claim_generator_info": [{
+#         "name": "python_test",
+#         "version": "0.1"
+#     }],
+#     "title": "My Title",
+#     "thumbnail": {
+#         "format": "image/jpeg",
+#         "identifier": "thumbnail"
+#     }
+# }
+# builder = c2pa_api.Builder(manifest)
+# builder.add_resource_file("thumbnail", "thumbnail.jpg")
+# builder.add_ingredient_file({"parentOf": true}, "B.jpg")
+# builder.sign_file(signer, "test.jpg", "signed.jpg")
 class Builder(c2pa.Builder):
-    def __init__(self, signer, manifest = None):
-        self.signer = signer
+    def __init__(self, manifest):
         super().__init__()
-        if manifest is not None:
-            self.set_manifest(manifest)
+        self.set_manifest(manifest)
 
     def set_manifest(self, manifest):
         if not isinstance(manifest, str):
@@ -76,17 +102,28 @@ class Builder(c2pa.Builder):
         file = open(path, "rb")
         return self.add_ingredient(ingredient, format, file)
     
-    def sign(self, format, input, output=None):
-        return super().sign(format, C2paStream(input), C2paStream(output), self.signer)
+    def to_archive(self, stream):
+        return super().to_archive(C2paStream(stream))
+    
+    @classmethod
+    def from_archive(cls, stream):
+        self = cls({})
+        super().from_archive(self, C2paStream(stream))
+        return self
+    
+    def sign(self, signer, format, input, output = None):
+        return super().sign(format, C2paStream(input), C2paStream(output), signer)
 
-    def sign_file(self, sourcePath, outputPath):
+    def sign_file(self, signer, sourcePath, outputPath):
         format = os.path.splitext(outputPath)[1][1:]
         input = open(sourcePath, "rb")
         output = open(outputPath, "wb")
-        return self.sign(format, input, output)
+        return self.sign(signer, format, input, output)
 
 
 # Implements a C2paStream given a stream handle
+# This is used to pass a file handle to the c2pa library
+# It is used by the Reader and Builder classes internally  
 class C2paStream(c2pa.Stream):
     def __init__(self, stream):
         self.stream = stream
@@ -115,11 +152,34 @@ class C2paStream(c2pa.Stream):
     def open_file(path: str, mode: str) -> c2pa.Stream:
         return C2paStream(open(path, mode))
 
-
+# Internal class to implement signer callbacks
+# We need this because the callback expects a class with a sign method
 class SignerCallback(c2pa.SignerCallback):
-    def __init__(self,callback):
+    def __init__(self, callback):
         self.sign = callback
-        super().__init__()
+        super().__init__() 
+
+
+# Convenience class so we can just pass in a callback function
+#class CallbackSigner(c2pa.CallbackSigner):
+#    def __init__(self, callback, alg, certs, timestamp_url=None):
+#        cb = SignerCallback(callback)
+#        super().__init__(cb, alg, certs, timestamp_url)  
+
+# Creates a Signer given a callback and configuration values
+# It is used by the Builder class to sign the asset
+#
+# Example:
+# def sign_ps256(data: bytes) -> bytes:
+#     return c2pa_api.sign_ps256_shell(data, "tests/fixtures/ps256.pem")
+#
+# certs = open("tests/fixtures/ps256.pub", "rb").read()
+# signer = c2pa_api.create_signer(sign_ps256, "ps256", certs, "http://timestamp.digicert.com")
+#
+def create_signer(callback, alg, certs, timestamp_url=None):
+    return c2pa.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)  
+
+
 
 # Example of using openssl in an os shell to sign data using Ps256
 # Note: the openssl command line tool must be installed for this to work
@@ -149,17 +209,3 @@ def sign_ps256(data: bytes, key_path: str) -> bytes:
         hashes.SHA256()
     )
     return signature
-
-
-class LocalSigner:
-
-    def __init__(self, config, sign_callback):
-        callback = SignerCallback(sign_callback)
-        self.signer = c2pa.CallbackSigner(callback, config)
-
-    def signer(self):
-        return self.signer
-    
-    def from_settings(sign_callback, alg, certs, timestamp_url=None):
-        config = c2pa.SignerConfig(alg, certs, timestamp_url)
-        return LocalSigner(config, sign_callback).signer

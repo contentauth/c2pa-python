@@ -9,7 +9,7 @@ pub enum Error {
     #[error("AssertionNotFound {reason}")]
     AssertionNotFound { reason: String },
     #[error("Decoding {reason}")]
-    Decoding{ reason: String },
+    Decoding { reason: String },
     #[error("Encoding {reason}")]
     Encoding { reason: String },
     #[error("FileNotFound{reason}")]
@@ -45,10 +45,12 @@ impl Error {
         use c2pa::Error::*;
         let err_str = err.to_string();
         match err {
-            c2pa::Error::AssertionMissing { url } => Self::AssertionNotFound{ reason: "".to_string()},
+            c2pa::Error::AssertionMissing { url } => Self::AssertionNotFound {
+                reason: "".to_string(),
+            },
             AssertionInvalidRedaction
             | AssertionRedactionNotFound
-            | AssertionUnsupportedVersion => Self::Assertion{ reason: err_str},
+            | AssertionUnsupportedVersion => Self::Assertion { reason: err_str },
             ClaimAlreadySigned
             | ClaimUnsigned
             | ClaimMissingSignatureBox
@@ -59,11 +61,11 @@ impl Error {
             | ClaimSelfRedact
             | ClaimDisallowedRedaction
             | UpdateManifestInvalid
-            | TooManyManifestStores => Self::Manifest{ reason: err_str},
-            ClaimMissing { label } => Self::ManifestNotFound{ reason: err_str},
-            AssertionDecoding(_) | ClaimDecoding => Self::Decoding{ reason: err_str},
-            AssertionEncoding | XmlWriteError | ClaimEncoding => Self::Encoding{ reason: err_str},
-            InvalidCoseSignature { coset_error } => Self::Signature{ reason: err_str},
+            | TooManyManifestStores => Self::Manifest { reason: err_str },
+            ClaimMissing { label } => Self::ManifestNotFound { reason: err_str },
+            AssertionDecoding(_) | ClaimDecoding => Self::Decoding { reason: err_str },
+            AssertionEncoding | XmlWriteError | ClaimEncoding => Self::Encoding { reason: err_str },
+            InvalidCoseSignature { coset_error } => Self::Signature { reason: err_str },
             CoseSignatureAlgorithmNotSupported
             | CoseMissingKey
             | CoseX5ChainMissing
@@ -78,19 +80,25 @@ impl Error {
             | CoseTimeStampGeneration
             | CoseTimeStampAuthority
             | CoseSigboxTooSmall
-            | InvalidEcdsaSignature => Self::Signature{ reason: err_str},
-            RemoteManifestFetch(_) | RemoteManifestUrl(_) => Self::RemoteManifest{ reason: err_str},
-            JumbfNotFound => Self::ManifestNotFound{ reason: err_str},
-            BadParam(_) | MissingFeature(_) => Self::Other{ reason: err_str},
-            IoError(_) => Self::Io{ reason: err_str},
-            JsonError(e) => Self::Json{ reason: err_str},
-            NotFound | ResourceNotFound(_) | MissingDataBox => Self::ResourceNotFound{ reason: err_str},
-            FileNotFound(_) => Self::FileNotFound{ reason: err_str},
-            UnsupportedType => Self::NotSupported{ reason: err_str},
-            ClaimVerification(_) | InvalidClaim(_) | JumbfParseError(_) => Self::Verify{ reason: err_str},
+            | InvalidEcdsaSignature => Self::Signature { reason: err_str },
+            RemoteManifestFetch(_) | RemoteManifestUrl(_) => {
+                Self::RemoteManifest { reason: err_str }
+            }
+            JumbfNotFound => Self::ManifestNotFound { reason: err_str },
+            BadParam(_) | MissingFeature(_) => Self::Other { reason: err_str },
+            IoError(_) => Self::Io { reason: err_str },
+            JsonError(e) => Self::Json { reason: err_str },
+            NotFound | ResourceNotFound(_) | MissingDataBox => {
+                Self::ResourceNotFound { reason: err_str }
+            }
+            FileNotFound(_) => Self::FileNotFound { reason: err_str },
+            UnsupportedType => Self::NotSupported { reason: err_str },
+            ClaimVerification(_) | InvalidClaim(_) | JumbfParseError(_) => {
+                Self::Verify { reason: err_str }
+            }
             #[cfg(feature = "add_thumbnails")]
             ImageError => Self::ImageError(err_str),
-            _ => Self::Other{ reason: err_str},
+            _ => Self::Other { reason: err_str },
         }
     }
 }
@@ -111,7 +119,8 @@ impl From<c2pa::Error> for Error {
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        Self::Io { reason: err.to_string()}
+        Self::Io {
+            reason: err.to_string(),
+        }
     }
 }
-

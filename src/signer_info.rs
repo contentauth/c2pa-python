@@ -10,11 +10,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{Signer, SigningAlg, create_signer};
+use c2pa::{create_signer, Signer, SigningAlg};
 use serde::Deserialize;
 
 use crate::{Error, Result};
-
 
 /// SignerInfo provides the information needed to create a signer
 /// and sign a manifest.
@@ -36,15 +35,16 @@ pub struct SignerInfo {
 impl SignerInfo {
     /// Create a SignerInfo from a JSON formatted SignerInfo string
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).map_err(|e| Error::Json { reason: e.to_string()})
+        serde_json::from_str(json).map_err(|e| Error::Json {
+            reason: e.to_string(),
+        })
     }
 
     // Returns the signing algorithm converted from string format
     fn alg(&self) -> Result<SigningAlg> {
-        self.alg
-            .to_lowercase()
-            .parse()
-            .map_err(|_| Error::Other{ reason: "Invalid signing algorithm".to_string()})
+        self.alg.to_lowercase().parse().map_err(|_| Error::Other {
+            reason: "Invalid signing algorithm".to_string(),
+        })
     }
 
     /// Create a signer from the SignerInfo
@@ -57,6 +57,4 @@ impl SignerInfo {
         )
         .map_err(Error::from_c2pa_error)
     }
-
 }
-

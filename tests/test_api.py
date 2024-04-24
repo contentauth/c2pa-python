@@ -79,11 +79,15 @@ def test_v2_read():
         assert getitem(manifest,("thumbnail","format")) == "image/jpeg"
         # check the thumbnail data
         uri = getitem(manifest,("thumbnail","identifier"))
-        reader.resource_file(uri, "target/thumbnail_read_v2.jpg")
+        reader.resource_to_file(uri, "target/thumbnail_read_v2.jpg")
 
     except Exception as e:
         print("Failed to read manifest store: " + str(e))
         exit(1)
+
+def test_reader_from_file_no_store():
+    with pytest.raises(c2pa.Error.ManifestNotFound) as err:  
+        reader = c2pa_api.Reader.from_file("tests/fixtures/A.jpg")
 
 def test_v2_sign():
     # define a source folder for any assets we need to read
@@ -94,14 +98,18 @@ def test_v2_sign():
         
         certs = open(data_dir + "ps256.pub", "rb").read()
         # Create a local signer from a certificate pem file
-        signer = c2pa_api.LocalSigner.from_settings(sign_ps256, c2pa.SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+        signer = c2pa_api.create_signer(sign_ps256, c2pa.SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
-        builder = c2pa_api.Builder(signer, manifest_def)
+        builder = c2pa_api.Builder(manifest_def)
 
         builder.add_resource_file("A.jpg", data_dir + "A.jpg")
 
+        builder.to_archive(open("target/archive.zip", "wb"))
+
+        builder = c2pa_api.Builder.from_archive(open("target/archive.zip", "rb"))
+
         with tempfile.TemporaryDirectory() as output_dir:
-            c2pa_data = builder.sign_file(data_dir + "A.jpg", output_dir + "out.jpg")
+            c2pa_data = builder.sign_file(signer, data_dir + "A.jpg", output_dir + "out.jpg")
             assert len(c2pa_data) > 0
 
         reader = c2pa_api.Reader.from_file(output_dir + "out.jpg")

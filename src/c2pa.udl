@@ -3,6 +3,8 @@ namespace c2pa {
   string version();
   string sdk_version();
  /// [Throws=Error]
+ /// CallbackSigner create_signer(SignerCallback callback, SigningAlg alg, bytes certs, string? ta_url);
+ /// [Throws=Error]
  /// string read_file([ByRef] string path, string? data_dir);
  /// [Throws=Error]
  /// string read_ingredient_file([ByRef] string path, [ByRef] string data_dir);
@@ -22,7 +24,6 @@ interface Error {
   Manifest(string reason);
   ManifestNotFound(string reason);
   NotSupported(string reason);
-  FileNotFound(string reason);
   Other(string reason);
   RemoteManifest(string reason);
   ResourceNotFound(string reason);
@@ -62,27 +63,13 @@ interface Reader {
   constructor();
 
   [Throws=Error]
-  string read([ByRef] string format, [ByRef] Stream reader);
+  string from_stream([ByRef] string format, [ByRef] Stream reader);
 
   [Throws=Error]
   string json();
 
   [Throws=Error]
-  u64 resource([ByRef] string uri, [ByRef] Stream stream);
-};
-
-///dictionary SignerInfo {
-///  string alg;
-///  sequence<u8> sign_cert;
-///  sequence<u8> private_key;
-///  string? ta_url;
-///};
-
-dictionary SignerConfig {
-  SigningAlg alg;
-  bytes certs;
-  string? time_authority_url = null;
-  boolean use_ocsp = false;
+  u64 resource_to_stream([ByRef] string uri, [ByRef] Stream stream);
 };
 
 callback interface SignerCallback {
@@ -91,7 +78,7 @@ callback interface SignerCallback {
 };
 
 interface CallbackSigner {
-  constructor(SignerCallback callback,  SignerConfig config);
+  constructor(SignerCallback callback, SigningAlg alg, bytes certs, string? ta_url);
 };
 
 interface Builder {
@@ -105,6 +92,12 @@ interface Builder {
 
   [Throws=Error]
   void add_ingredient([ByRef] string ingredient_json, [ByRef] string format, [ByRef] Stream stream );
+
+  [Throws=Error]
+  void to_archive([ByRef] Stream stream );
+
+  [Throws=Error]
+  void from_archive([ByRef] Stream stream );
 
   [Throws=Error]
   bytes sign([ByRef] string format, [ByRef] Stream input, [ByRef] Stream output ,[ByRef] CallbackSigner signer);

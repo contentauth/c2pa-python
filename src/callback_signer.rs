@@ -10,80 +10,47 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{Signer, SigningAlg};
+use c2pa::SigningAlg;
 
 use crate::Result;
 
-
 /// Defines the callback interface for a signer
 pub trait SignerCallback: Send + Sync {
-    /// Read a stream of bytes from the stream
+    /// Sign the given bytes and return the signature
     fn sign(&self, bytes: Vec<u8>) -> Result<Vec<u8>>;
 }
 
-/// Configuration for a Signer
-#[repr(C)]
-pub struct SignerConfig {
-    /// Returns the algorithm of the Signer.
-    pub alg: c2pa::SigningAlg,
-
-    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
-    pub certs: Vec<u8>,
-
-    /// URL for time authority to time stamp the signature
-    pub time_authority_url: Option<String>,
-
-    /// Try to fetch OCSP response for the signing cert if available
-    pub use_ocsp: bool,
-}
-
-/// Callback signer that uses a callback to sign data
+/// This is a wrapper around the CallbackSigner for Python
+///
+/// Uniffi callbacks are only supported as a method in a structure, so this is a workaround
 pub struct CallbackSigner {
-    callback: Box<dyn SignerCallback>,
-    alg: SigningAlg,
-    sign_certs: Vec<u8>,
-    ta_url: Option<String>,
+    signer: c2pa::CallbackSigner,
 }
 
 impl CallbackSigner {
     pub fn new(
         callback: Box<dyn SignerCallback>,
-        config: SignerConfig,
-        // alg: SigningAlg,
-        // sign_certs: Vec<u8>,
-        // ta_url: Option<String>,
+        alg: SigningAlg,
+        certs: Vec<u8>,
+        ta_url: Option<String>,
     ) -> Self {
-        Self {
-            callback,
-            alg: config.alg,
-            sign_certs: config.certs,
-            ta_url: config.time_authority_url,
+        
+        // When this closure is called it will call the sign method on the python callback
+        let python_signer = move |_context: *const (), data: &[u8]| {
+            callback
+                .sign(data.to_vec())
+                .map_err(|e| c2pa::Error::BadParam(e.to_string()))
+        };
+
+        let mut signer = c2pa::CallbackSigner::new(python_signer, alg, certs);
+        if let Some(url) = ta_url {
+            signer = signer.set_tsa_url(url);
         }
-    }
-}
-
-impl Signer for CallbackSigner {
-    fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-        self.callback
-            .sign(data.to_vec())
-            .map_err(|e| c2pa::Error::BadParam(e.to_string()))
+        Self { signer }
     }
 
-    fn alg(&self) -> SigningAlg {
-        self.alg
-    }
-
-    fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
-        let mut pems =
-            pem::parse_many(&self.sign_certs).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-        Ok(pems.drain(..).map(|p| p.into_contents()).collect())
-    }
-
-    fn reserve_size(&self) -> usize {
-        20000
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        self.ta_url.clone()
+    /// The python Builder wrapper sign function calls this
+    pub fn signer(&self) -> &c2pa::CallbackSigner {
+        &self.signer
     }
 }
