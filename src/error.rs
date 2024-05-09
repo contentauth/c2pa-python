@@ -34,7 +34,7 @@ pub enum Error {
     RwLock,
     #[error("Signature {reason}")]
     Signature { reason: String },
-    #[error("Verify{reason}")]
+    #[error("Verify {reason}")]
     Verify { reason: String },
 }
 
