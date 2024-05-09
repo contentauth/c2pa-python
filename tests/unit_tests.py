@@ -11,12 +11,14 @@
 # specific language governing permissions and limitations under
 # each license.import unittest
 
-import unittest
-from unittest.mock import mock_open, patch
-import c2pa_api
-from c2pa_api import c2pa
 import os
 import io
+import json
+import unittest
+from unittest.mock import mock_open, patch
+
+from c2pa_api import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256
+
 PROJECT_PATH = os.getcwd()
 
 testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
@@ -24,38 +26,33 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 class TestC2paSdk(unittest.TestCase):
 
     def test_version(self):
-        self.assertIn("0.4.0",c2pa_api.c2pa.sdk_version())
-
-    #def test_supported_extensions(self):
-    #   self.assertIn("jpeg",c2pa_api.c2pa.supported_extensions())
+        self.assertIn("0.4.0", sdk_version())
 
 
 class TestReader(unittest.TestCase):
 
-    def test_normal_read(self):
+    def test_stream_read(self):
         with open(testPath, "rb") as file:
-            reader = c2pa_api.Reader("image/jpeg",file)
+            reader = Reader("image/jpeg",file)
             json = reader.json()
             self.assertIn("C.jpg", json)
 
-    def test_normal_read_and_parse(self):
+    def test_stream_read_and_parse(self):
         with open(testPath, "rb") as file:
-            reader = c2pa_api.Reader("image/jpeg",file)
-            json = reader.json()
-            self.assertIn("C.jpg", json)
-            #manifest_store = c2pa_api.ManifestStore.from_json(json)
-            #title= manifest_store.manifests[manifest_store.activeManifest].title
-            #self.assertEqual(title, "C.jpg")
+            reader = Reader("image/jpeg",file)
+            manifest_store = json.loads(reader.json())
+            title = manifest = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+            self.assertEqual(title, "C.jpg")
 
-    #def test_json_decode_err(self):
-    #    with self.assertRaises(c2pa_api.json.decoder.JSONDecodeError):
-    #        manifest_store = c2pa_api.ManifestStore.from_json("foo")
+    def test_json_decode_err(self):
+        with self.assertRaises(Error.Io):
+            manifest_store = Reader("image/jpeg","foo")
 
-    #def test_reader_bad_format(self):
-    #    with self.assertRaises(c2pa_api.c2pa.StreamError.Other):
-    #        with open(testPath, "rb") as file:
-    #            manifestStore = c2pa_api.ManifestStoreReader("badFormat",file)
-    #            json = manifestStore.read()
+    def test_reader_bad_format(self):
+        with self.assertRaises(Error.NotSupported):
+            with open(testPath, "rb") as file:
+                reader = Reader("badFormat",file)
+
 
 class TestBuilder(unittest.TestCase):
     # Define a manifest as a dictionary
@@ -84,26 +81,36 @@ class TestBuilder(unittest.TestCase):
         ]
     }
 
-    def sign_ps256(data: bytes) -> bytes:
-        return c2pa_api.sign_ps256_shell(data, "tests/fixtures/ps256.pem")
+    # Define a function that signs data with PS256 using a private key
+    def sign(data: bytes) -> bytes:
+        return sign_ps256(data, "tests/fixtures/ps256.pem")
 
     # load the public keys from a pem file
-    pemFile = os.path.join(PROJECT_PATH,"tests","fixtures","ps256.pub")
-    certs = open(pemFile,"rb").read()
+    certs = open("tests/fixtures/ps256.pub","rb").read()
 
-    # Create a local signer from a certificate pem file
-    signer = c2pa_api.create_signer(sign_ps256, c2pa.SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+    # Create a local Ps256 signer with certs and a timestamp server
+    signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
-    def test_normal_build(self):
+    def test_streams_build(self):
         with open(testPath, "rb") as file:
-            builder = c2pa_api.Builder(TestBuilder.manifestDefinition)
+            builder = Builder(TestBuilder.manifestDefinition)
             output = byte_array = io.BytesIO(bytearray())
             builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = c2pa_api.Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output)
             self.assertIn("Python Test", reader.json())
 
-
+    def test_streams_build(self):
+        with open(testPath, "rb") as file:
+            builder = Builder(TestBuilder.manifestDefinition)
+            archive = byte_array = io.BytesIO(bytearray())
+            builder.to_archive(archive)
+            builder = Builder.from_archive(archive)
+            output = byte_array = io.BytesIO(bytearray())
+            builder.sign(TestBuilder.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            self.assertIn("Python Test", reader.json())
 
 if __name__ == '__main__':
     unittest.main()

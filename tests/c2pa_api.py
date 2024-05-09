@@ -23,6 +23,8 @@ sys.path.append(SOURCE_PATH)
 
 import c2pa;
 
+from c2pa import Error, SigningAlg, version, sdk_version
+
 # This module provides a simple Python API for the C2PA library.
 
 # Reader is used to read a manifest store from a stream or file.
@@ -186,9 +188,9 @@ def create_signer(callback, alg, certs, timestamp_url=None):
 def sign_ps256_shell(data: bytes, key_path: str) -> bytes:
     with tempfile.NamedTemporaryFile() as bytes:
         bytes.write(data)
-    signature = tempfile.NamedTemporaryFile()
-    os.system("openssl dgst -sha256 -sign {} -out {} {}".format(key_path, signature.name, bytes.name))
-    return signature.read()
+        signature = tempfile.NamedTemporaryFile()
+        os.system("openssl dgst -sha256 -sign {} -out {} {}".format(key_path, signature.name, bytes.name))
+        return signature.read()
 
 # Example of using python crypto to sign data using openssl with Ps256
 from cryptography.hazmat.primitives import hashes, serialization

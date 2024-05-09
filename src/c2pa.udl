@@ -2,14 +2,6 @@
 namespace c2pa {
   string version();
   string sdk_version();
- /// [Throws=Error]
- /// CallbackSigner create_signer(SignerCallback callback, SigningAlg alg, bytes certs, string? ta_url);
- /// [Throws=Error]
- /// string read_file([ByRef] string path, string? data_dir);
- /// [Throws=Error]
- /// string read_ingredient_file([ByRef] string path, [ByRef] string data_dir);
- /// [Throws=Error]
- /// sequence<u8> sign_file([ByRef] string source, [ByRef] string dest, [ByRef] string manifest, [ByRef] SignerInfo signer_info, string? data_dir);
 };
 
 [Error]

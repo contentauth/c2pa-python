@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-python"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com"]
 
@@ -9,8 +9,6 @@ authors = ["Gavin Peacock <gpeacock@adobe.com"]
 name = "c2pa"
 crate-type = ["cdylib"]
 
-[features]
-v1 = ["c2pa/file_io"]
 
 [dependencies]
 c2pa = {version = "0.32.0", features = ["unstable_api", "openssl"]}

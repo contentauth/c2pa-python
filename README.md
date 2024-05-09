@@ -214,6 +214,20 @@ deactivate
 
 ## Release notes
 
+### Version 0.5.0
+
+- This release rewrites the API to be stream based using a Builder and Reader model.
+- The functions now support throwing c2pa.Error values, caught with try/except.
+- Instead of `c2pa.read_file` you now call `c2pa_api.Reader.from_file` and `reader.json`.
+- Read thumbnails and other resources use `reader.resource_to_stream` or `reader.resource.to_file`.
+- Instead of `c2pa.sign_file` use `c2pa_api.Builder.from_json` and `builder.sign` or `builder.sign_file`.
+- Add thumbnails or other resources with `builder.add_resource` or `builder.add_resource_file`.
+- Add Ingredients with `builder.add_ingredient` or `builder.add_ingredient_file`.
+- You can archive a `Builder` using `builder.to_archive` and reconstruct it with `builder.from_archive`.
+- Signers can be constructed with `c2pa_api.create_signer`.
+- The signer now requires a signing function to keep private keys private.
+- Example signing functions are provided in c2pa_api.py
+
 ### Version 0.4.0
 
 This release:

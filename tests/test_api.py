@@ -1,4 +1,3 @@
-
 # Copyright 2023 Adobe. All rights reserved.
 # This file is licensed to you under the Apache License,
 # Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
@@ -11,16 +10,21 @@
 # specific language governing permissions and limitations under
 # each license.
 
-import c2pa
-import pytest
+
 import json
+import pytest
 import tempfile
-import c2pa_api
+
+from c2pa_api import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256, version
 
 # a little helper function to get a value from a nested dictionary
 from functools import reduce
 import operator
 
+def getitem(d, key):
+    return reduce(operator.getitem, key, d)
+
+# define the manifest we will use for testing
 manifest_def = {
     "claim_generator_info": [{
         "name": "python test",
@@ -46,19 +50,16 @@ manifest_def = {
     ]
 }
 
-def getitem(d, key):
-    return reduce(operator.getitem, key, d)
-
 def test_version():
-    assert c2pa.version() == "0.4.0"
+    assert version() == "0.5.0"
 
 def test_sdk_version():
-    assert "c2pa-rs/" in c2pa.sdk_version()
+    assert "c2pa-rs/" in sdk_version()
 
 def test_v2_read():
      #example of reading a manifest store from a file
     try:
-        reader = c2pa_api.Reader.from_file("tests/fixtures/C.jpg")
+        reader = Reader.from_file("tests/fixtures/C.jpg")
         jsonReport = reader.json()
         manifest_store = json.loads(jsonReport)
         manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -86,33 +87,33 @@ def test_v2_read():
         exit(1)
 
 def test_reader_from_file_no_store():
-    with pytest.raises(c2pa.Error.ManifestNotFound) as err:  
-        reader = c2pa_api.Reader.from_file("tests/fixtures/A.jpg")
+    with pytest.raises(Error.ManifestNotFound) as err:  
+        reader = Reader.from_file("tests/fixtures/A.jpg")
 
 def test_v2_sign():
     # define a source folder for any assets we need to read
     data_dir = "tests/fixtures/"
     try:
-        def sign_ps256(data: bytes) -> bytes:
-            return c2pa_api.sign_ps256(data, data_dir+"ps256.pem")
+        def sign(data: bytes) -> bytes:
+            return sign_ps256(data, data_dir+"ps256.pem")
         
         certs = open(data_dir + "ps256.pub", "rb").read()
         # Create a local signer from a certificate pem file
-        signer = c2pa_api.create_signer(sign_ps256, c2pa.SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+        signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
-        builder = c2pa_api.Builder(manifest_def)
+        builder = Builder(manifest_def)
 
         builder.add_resource_file("A.jpg", data_dir + "A.jpg")
 
         builder.to_archive(open("target/archive.zip", "wb"))
 
-        builder = c2pa_api.Builder.from_archive(open("target/archive.zip", "rb"))
+        builder = Builder.from_archive(open("target/archive.zip", "rb"))
 
         with tempfile.TemporaryDirectory() as output_dir:
             c2pa_data = builder.sign_file(signer, data_dir + "A.jpg", output_dir + "out.jpg")
             assert len(c2pa_data) > 0
 
-        reader = c2pa_api.Reader.from_file(output_dir + "out.jpg")
+        reader = Reader.from_file(output_dir + "out.jpg")
         print(reader.json())
         manifest_store = json.loads(reader.json())
         manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
