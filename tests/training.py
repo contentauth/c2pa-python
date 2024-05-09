@@ -42,6 +42,11 @@ manifest_json = {
         "name": "python_test",
         "version": "0.1"
     }],
+    "title": "Do Not Train Example",
+    "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "thumbnail"
+    },
     "assertions": [
     {
       "label": "c2pa.training-mining",

@@ -182,7 +182,7 @@ impl Builder {
         let mut dest = StreamAdapter::from(dest);
         if let Ok(mut builder) = self.builder.try_write() {
             let signer = (*signer).signer();
-            Ok(builder.sign(format, &mut source, &mut dest, signer)?)
+            Ok(builder.sign(signer, format, &mut source, &mut dest)?)
         } else {
             Err(Error::RwLock)
         }
