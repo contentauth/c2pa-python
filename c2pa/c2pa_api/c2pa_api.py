@@ -21,9 +21,9 @@ SOURCE_PATH = os.path.join(
 )
 sys.path.append(SOURCE_PATH)
 
-import c2pa;
+import c2pa.c2pa as api
 
-from c2pa import Error, SigningAlg, version, sdk_version
+#from c2pa import Error, SigningAlg, version, sdk_version
 
 # This module provides a simple Python API for the C2PA library.
 
@@ -32,9 +32,9 @@ from c2pa import Error, SigningAlg, version, sdk_version
 # It also supports writing resources to a stream or file.
 #
 # Example:
-# reader = c2pa_api.Reader("image/jpeg", open("test.jpg", "rb"))
+# reader = Reader("image/jpeg", open("test.jpg", "rb"))
 # json = reader.json()
-class Reader(c2pa.Reader):
+class Reader(api.Reader):
     def __init__(self, format, stream):
         super().__init__()
         self.from_stream(format, C2paStream(stream))
@@ -46,6 +46,17 @@ class Reader(c2pa.Reader):
             # determine the format from the file extension
             format = os.path.splitext(path)[1][1:]
         return cls(format, file)
+    
+    def get_manifest(self, label):
+        manifest_store = json.loads(self.json())
+        return manifest_store["manifests"].get(label)
+        return json.loads(self.json())
+    def get_active_manifest(self):
+        manifest_store = json.loads(self.json())
+        active_label = manifest_store.get("active_manifest")
+        if active_label:
+            return manifest_store["manifests"].get(active_label)
+        return None
     
     def resource_to_stream(self, uri, stream) -> None:
         return super().resource_to_stream(uri, C2paStream(stream))
@@ -72,11 +83,11 @@ class Reader(c2pa.Reader):
 #         "identifier": "thumbnail"
 #     }
 # }
-# builder = c2pa_api.Builder(manifest)
+# builder = Builder(manifest)
 # builder.add_resource_file("thumbnail", "thumbnail.jpg")
 # builder.add_ingredient_file({"parentOf": true}, "B.jpg")
 # builder.sign_file(signer, "test.jpg", "signed.jpg")
-class Builder(c2pa.Builder):
+class Builder(api.Builder):
     def __init__(self, manifest):
         super().__init__()
         self.set_manifest(manifest)
@@ -126,7 +137,7 @@ class Builder(c2pa.Builder):
 # Implements a C2paStream given a stream handle
 # This is used to pass a file handle to the c2pa library
 # It is used by the Reader and Builder classes internally  
-class C2paStream(c2pa.Stream):
+class C2paStream(api.Stream):
     def __init__(self, stream):
         self.stream = stream
     
@@ -134,11 +145,11 @@ class C2paStream(c2pa.Stream):
         #print("Reading " + str(length) + " bytes")
         return self.stream.read(length)
 
-    def seek_stream(self, pos: int, mode: c2pa.SeekMode) -> int:
+    def seek_stream(self, pos: int, mode: api.SeekMode) -> int:
         whence = 0
-        if mode is c2pa.SeekMode.CURRENT:
+        if mode is api.SeekMode.CURRENT:
             whence = 1
-        elif mode is c2pa.SeekMode.END:
+        elif mode is api.SeekMode.END:
             whence = 2
         #print("Seeking to " + str(pos) + " with whence " + str(whence))
         return self.stream.seek(pos, whence)
@@ -151,12 +162,12 @@ class C2paStream(c2pa.Stream):
         self.stream.flush()
 
     # A shortcut method to open a C2paStream from a path/mode
-    def open_file(path: str, mode: str) -> c2pa.Stream:
+    def open_file(path: str, mode: str) -> api.Stream:
         return C2paStream(open(path, mode))
 
 # Internal class to implement signer callbacks
 # We need this because the callback expects a class with a sign method
-class SignerCallback(c2pa.SignerCallback):
+class SignerCallback(api.SignerCallback):
     def __init__(self, callback):
         self.sign = callback
         super().__init__() 
@@ -179,7 +190,7 @@ class SignerCallback(c2pa.SignerCallback):
 # signer = c2pa_api.create_signer(sign_ps256, "ps256", certs, "http://timestamp.digicert.com")
 #
 def create_signer(callback, alg, certs, timestamp_url=None):
-    return c2pa.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)  
+    return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)  
 
 
 

@@ -10,12 +10,11 @@
 # specific language governing permissions and limitations under
 # each license.
 
-
 import json
 import pytest
 import tempfile
 
-from c2pa_api import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256, version
+from c2pa import Builder, Error, Reader, SigningAlg, create_signer, sdk_version, sign_ps256, version
 
 # a little helper function to get a value from a nested dictionary
 from functools import reduce
@@ -60,12 +59,16 @@ def test_v2_read():
      #example of reading a manifest store from a file
     try:
         reader = Reader.from_file("tests/fixtures/C.jpg")
-        jsonReport = reader.json()
-        manifest_store = json.loads(jsonReport)
-        manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+        manifest = reader.get_active_manifest()
+        if manifest is None:
+            print("No active manifest found")
+            exit(1)
+        #jsonReport = reader.json()
+        #manifest_store = json.loads(jsonReport)
+        #manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
         assert "make_test_images" in manifest["claim_generator"]
         assert manifest["title"]== "C.jpg"
-        assert manifest,["format"] == "image/jpeg"
+        assert manifest["format"] == "image/jpeg"
         # There should be no validation status errors
         assert manifest.get("validation_status") == None
         # read creative work assertion (author name)

@@ -16,7 +16,7 @@ import json
 import os
 import sys
 
-from c2pa_api import Builder, Reader, create_signer, SigningAlg, sign_ps256, version
+from c2pa import *
 
 # set up paths to the files we we are using
 PROJECT_PATH = os.getcwd()

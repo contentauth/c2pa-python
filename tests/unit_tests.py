@@ -17,7 +17,7 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 
-from c2pa_api import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256
+from c2pa import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256
 
 PROJECT_PATH = os.getcwd()
 
@@ -26,7 +26,7 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 class TestC2paSdk(unittest.TestCase):
 
     def test_version(self):
-        self.assertIn("0.4.0", sdk_version())
+        self.assertIn("0.5.0", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -94,7 +94,7 @@ class TestBuilder(unittest.TestCase):
     def test_streams_build(self):
         with open(testPath, "rb") as file:
             builder = Builder(TestBuilder.manifestDefinition)
-            output = byte_array = io.BytesIO(bytearray())
+            output = io.BytesIO(bytearray())
             builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output)
