@@ -60,12 +60,7 @@ def test_v2_read():
     try:
         reader = Reader.from_file("tests/fixtures/C.jpg")
         manifest = reader.get_active_manifest()
-        if manifest is None:
-            print("No active manifest found")
-            exit(1)
-        #jsonReport = reader.json()
-        #manifest_store = json.loads(jsonReport)
-        #manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+        assert manifest is not None
         assert "make_test_images" in manifest["claim_generator"]
         assert manifest["title"]== "C.jpg"
         assert manifest["format"] == "image/jpeg"
