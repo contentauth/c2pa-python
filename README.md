@@ -4,7 +4,9 @@ Python bindings for the C2PA Content Authenticity Initiative (CAI) library.
 
 This library enables you to read and validate C2PA data in supported media files and add signed manifests to supported media files.
 
-**WARNING**: This is an early prerelease version of this library.  There may be bugs and unimplemented features, and the API is subject to change.
+**NOTE**: This is a completely different API from 0.4.0. Check [Release notes](#release-notes) for changes.
+
+**WARNING**: This is an prerelease version of this library.  There may be bugs and unimplemented features, and the API is subject to change.
 
 ## Installation
 
@@ -28,63 +30,119 @@ pip install --upgrade --force-reinstall c2pa-python
 
 ### Import
 
-Import the C2PA module as follows:
+Import the API as follows:
 
 ```py
-import c2pa
+from c2pa import *
 ```
 
 ### Read and validate C2PA data in a file
 
-Use the `read_file` function to read C2PA data from the specified file:
-
-```py
-json_store = c2pa.read_file("path/to/media_file.jpg", "path/to/data_dir")
-```
-
-This function examines the specified media file for C2PA data and generates a JSON report of any data it finds. If there are validation errors, the report includes a `validation_status` field.  For a summary of supported media types, see [Supported file formats](#supported-file-formats).
+Use the `Reader` to read C2PA data from the specified file.
+This  examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.  For a summary of supported media types, see [Supported file formats](#supported-file-formats).
 
 A media file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map.
 
-If the optional `data_dir` is provided, the function extracts any binary resources, such as thumbnails, icons, and C2PA data into that directory. These files are referenced by the identifier fields in the manifest store report.
+The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream` or `resource_to_file` using the associated `identifier` field values and a `uri`.
 
 NOTE: For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
+```py
+try:
+  reader = c2pa.Reader("path/to/media_file.jpg")
+
+  # Print the JSON for a manifest. 
+  print("manifest store:", reader.json())
+
+  # Get the active manifest.
+  manifest = reader.get_active_manifest()
+  if manifest != None:
+
+    # get the uri to the manifest's thumbnail and write it to a file
+    uri = manifest["thumbnail"]["identifier"]
+    reader.resource_to_file(uri, "thumbnail_v2.jpg") 
+
+except Exception as err:
+    print(err)
+```
 
 ### Add a signed manifest to a media file
 
-Use the `sign_file` function to add a signed manifest to a media file.
+Use a `Builder` to add a manifest to an asset.
 
 ```py
-result = c2pa.sign_file("path/to/source.jpg", 
-                                        "path/to/dest.jpg", 
-                                        manifest_json, 
-                                        sign_info, 
-                                        data_dir)
-```
+try:
+  # Define a function to sign the claim bytes
+  # In this case we are using a pre-defined sign_ps256 method, passing in our private cert
+  # Normally this cert would be kept safe in some other location
+  def private_sign(data: bytes) -> bytes:
+    return sign_ps256(data, "tests/fixtures/ps256.pem")
 
-The parameters (in order) are:
-- The source (original) media file.
-- The destination file that will contain a copy of the source file with the manifest data added.
-- `manifest_json`, a JSON-formatted string containing the manifest data you want to add; see [Creating a manifest JSON definition file](#creating-a-manifest-json-definition-file) below.
-- `sign_info`, a `SignerInfo` object instance; see [Generating SignerInfo](#generating-signerinfo) below.
-- `data_dir` optionally specifies a directory path from which to load resource files referenced in the manifest JSON identifier fields; for example, thumbnails, icons, and manifest data for ingredients.
+  # read our public certs into memory    
+  certs = open(data_dir + "ps256.pub", "rb").read()
+  
+  # Create a signer from the private signer, certs and a time stamp service url
+  signer = create_signer(private_sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
-### Create a SignerInfo instance
+  # Define a manifest with thumbnail and an assertion.
+  manifest_json = {
+      "claim_generator_info": [{
+          "name": "python_test",
+          "version": "0.1"
+      }],
+      "title": "Do Not Train Example",
+      "thumbnail": {
+          "format": "image/jpeg",
+          "identifier": "thumbnail"
+      },
+      "assertions": [
+      {
+        "label": "c2pa.training-mining",
+        "data": {
+          "entries": {
+            "c2pa.ai_generative_training": { "use": "notAllowed" },
+            "c2pa.ai_inference": { "use": "notAllowed" },
+            "c2pa.ai_training": { "use": "notAllowed" },
+            "c2pa.data_mining": { "use": "notAllowed" }
+          }
+        }
+      }
+    ]
+  }
 
-A `SignerInfo` object contains information about a signature.  To create an instance of `SignerInfo`, first set up the signer information from the public and private key `.pem` files as follows:
+  # Create a builder add a thumbnail resource and an ingredient file.
+  builder = Builder(manifest_json)
 
-```py
-certs = open("path/to/public_certs.pem","rb").read()
-prv_key = open("path/to/private_key.pem","rb").read()
-```
+  # The uri provided here "thumbnail" must match an identifier in the manifest definition.
+  builder.add_resource_file("thumbnail", "tests/fixtures/A_thumbnail.jpg")
 
-Then create a new `SignerInfo` instance using the keys as follows, specifying the signing algorithm used and optionally a time stamp authority URL:
+  # Define an ingredient, in this case a parent ingredient named A.jpg, with a thumbnail
+  ingredient_json = {
+    "title": "A.jpg",
+    "relationship": "parentOf", # "parentOf", "componentOf" or "inputTo"
+    "thumbnail": {
+        "identifier": "thumbnail",
+        "format": "image/jpeg"
+    }
+  }
 
-```py
-sign_info = c2pa.SignerInfo("es256", certs, priv_key, "http://timestamp.digicert.com")
-```
+  # Add the ingredient to the builder loading information  from a source file.
+  builder.add_ingredient_file(ingredient_json, "tests/fixtures/A.jpg")
 
-For the list of supported signing algorithms, see [Creating and using an X.509 certificate](https://opensource.contentauthenticity.org/docs/c2patool/x_509).
+  # At this point we could archive or unarchive our Builder to continue later.
+  # In this example we use a bytearray for the archive stream.
+  # all ingredients and resources will be saved in the archive
+  archive = io.BytesIO(bytearray())
+  builder.to_archive(archive)
+  archive.seek()
+  builder = builder.from_archive(archive)
+
+  # Sign and add our manifest to a source file, writing it to an output file.
+  # This returns the binary manifest data that could be uploaded to cloud storage.
+  c2pa_data = builder.sign_file(signer, "tests/fixtures/A.jpg", "target/out.jpg")
+
+except Exception as err:
+    print(err)
+ ```
 
 ### Creating a manifest JSON definition file
 
@@ -213,6 +271,20 @@ deactivate
 ```
 
 ## Release notes
+
+### Version 0.5.0
+
+- This release rewrites the API to be stream based using a Builder and Reader model.
+- The functions now support throwing c2pa.Error values, caught with try/except.
+- Instead of `c2pa.read_file` you now call `c2pa_api.Reader.from_file` and `reader.json`.
+- Read thumbnails and other resources use `reader.resource_to_stream` or `reader.resource.to_file`.
+- Instead of `c2pa.sign_file` use `c2pa_api.Builder.from_json` and `builder.sign` or `builder.sign_file`.
+- Add thumbnails or other resources with `builder.add_resource` or `builder.add_resource_file`.
+- Add Ingredients with `builder.add_ingredient` or `builder.add_ingredient_file`.
+- You can archive a `Builder` using `builder.to_archive` and reconstruct it with `builder.from_archive`.
+- Signers can be constructed with `c2pa_api.create_signer`.
+- The signer now requires a signing function to keep private keys private.
+- Example signing functions are provided in c2pa_api.py
 
 ### Version 0.4.0
 

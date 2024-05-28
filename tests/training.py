@@ -15,7 +15,8 @@
 import json
 import os
 import sys
-import c2pa
+
+from c2pa import *
 
 # set up paths to the files we we are using
 PROJECT_PATH = os.getcwd()
@@ -30,13 +31,21 @@ import operator
 def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
-print("version = " + c2pa.version())
+print("version = " + version())
 
 # first create an asset with a do not train assertion
 
 # define a manifest with the do not train assertion
-manifest_json = json.dumps({
-    "claim_generator": "python_test/0.1",
+manifest_json = {
+    "claim_generator_info": [{
+        "name": "python_test",
+        "version": "0.1"
+    }],
+    "title": "Do Not Train Example",
+    "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "thumbnail"
+    },
     "assertions": [
     {
       "label": "c2pa.training-mining",
@@ -50,29 +59,48 @@ manifest_json = json.dumps({
       }
     }
   ]
- })
+ }
 
-# add the manifest to the asset
-try: 
-    # set up the signer info loading the pem and key files
-    test_pem = open(pemFile,"rb").read()
-    test_key = open(keyFile,"rb").read()
-    sign_info = c2pa.SignerInfo("es256", test_pem, test_key, "http://timestamp.digicert.com")
+ingredient_json = {
+    "title": "A.jpg",
+    "relationship": "parentOf",
+    "thumbnail": {
+        "identifier": "thumbnail",
+        "format": "image/jpeg"
+    }
+}
 
-    result = c2pa.sign_file(testFile, testOutputFile, manifest_json, sign_info, None)
+# V2 signing api
+try:
+   # This could be implemented on a server using an HSM
+    def sign(data: bytes) -> bytes:
+        return sign_ps256(data, "tests/fixtures/ps256.pem")
+    
+    certs = open("tests/fixtures/ps256.pub","rb").read()
+
+    # Create a signer from a certificate pem file
+    signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+
+    builder = Builder(manifest_json)
+
+    builder.add_resource_file("thumbnail", "tests/fixtures/A_thumbnail.jpg")
+
+    builder.add_ingredient_file(ingredient_json, "tests/fixtures/A.jpg")
+
+    result = builder.sign_file(signer, testFile, testOutputFile)
     
 except Exception as err:
     sys.exit(err)
 
-print("successfully added do not train manifest to file " + testOutputFile)
+print("V2: successfully added do not train manifest to file " + testOutputFile)
 
 
 # now verify the asset and check the manifest for a do not train assertion
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
-    json_store = c2pa.read_file(testOutputFile, None)
-    manifest_store = json.loads(json_store)
+    reader = Reader.from_file(testOutputFile)
+    manifest_store = json.loads(reader.json())
 
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
     for assertion in manifest["assertions"]:
@@ -80,6 +108,9 @@ try:
             if getitem(assertion, ("data","entries","c2pa.ai_training","use")) == "notAllowed":
                 allowed = False
 
+    # get the ingredient thumbnail            
+    uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
+    reader.resource_to_file(uri, "target/thumbnail_v2.jpg")
 except Exception as err:
     sys.exit(err)
 

@@ -21,5 +21,7 @@ __pycache__/
 .pytest_cache/
 dist
 
+c2pa/c2pa/
+
 # Mac OS X files
 .DS_Store
