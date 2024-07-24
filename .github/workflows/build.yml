@@ -18,7 +18,7 @@ jobs:
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: "3.10"
@@ -35,7 +35,10 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: "true"
           manylinux: ${{ matrix.target == 'aarch64' && 'manylinux_2_28' || 'auto' }}
-          before-script-linux: "pip install uniffi-bindgen==0.24.1"
+          before-script-linux: |
+            pip install uniffi-bindgen==0.24.1
+            # https://github.com/sfackler/rust-openssl/issues/2036#issuecomment-1724324145
+            apt update -y && apt-get install -y libssl-dev openssl pkg-config
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -48,7 +51,7 @@ jobs:
       matrix:
         target: [x64, x86]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -70,7 +73,7 @@ jobs:
   macos_x86:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -91,7 +94,7 @@ jobs:
   macos_aarch64:
     runs-on: macos-latest-large
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -112,7 +115,7 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
