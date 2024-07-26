@@ -1,7 +1,18 @@
 name: Build
 
 on:
-  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish'
+        required: true
+        default: 'false'
 
 jobs:
   linux:
@@ -133,3 +144,20 @@ jobs:
           name: wheels
           path: dist
 
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    environment: Publish
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
+    needs: [linux, windows, macos_x86, macos_aarch64, sdist]
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: wheels
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --non-interactive --skip-existing *
