@@ -120,7 +120,7 @@ try:
   # The uri provided here "thumbnail" must match an identifier in the manifest definition.
   builder.add_resource_file("thumbnail", "tests/fixtures/A_thumbnail.jpg")
 
-  # Or we can add the resource from a stream
+  # Or add the resource from a stream
   a_thumbnail_jpg_stream = open("tests/fixtures/A_thumbnail.jpg", "rb")
   builder.add_resource("image/jpeg", a_thumbnail_jpg_stream)
 
@@ -137,7 +137,7 @@ try:
   # Add the ingredient to the builder loading information  from a source file.
   builder.add_ingredient_file(ingredient_json, "tests/fixtures/A.jpg")
 
-  # Or we can add the ingredient from a stream
+  # Or add the ingredient from a stream
   a_jpg_stream = open("tests/fixtures/A.jpg", "rb")
   builder.add_ingredient("image/jpeg", a_jpg_stream)
 
@@ -153,7 +153,7 @@ try:
   # This returns the binary manifest data that could be uploaded to cloud storage.
   c2pa_data = builder.sign_file(signer, "tests/fixtures/A.jpg", "target/out.jpg")
 
-  # Or we can sign the builder with a stream and output it to a stream
+  # Or sign the builder with a stream and output it to a stream
   input_stream = open("tests/fixtures/A.jpg", "rb")
   output_stream = open("target/out.jpg", "wb")
   c2pa_data = builder.sign(signer, "image/jpeg", input_stream, output_stream)
