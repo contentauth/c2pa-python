@@ -36,7 +36,7 @@ Import the API as follows:
 from c2pa import *
 ```
 
-### Read and validate C2PA data in a file
+### Read and validate C2PA data in a file or stream
 
 Use the `Reader` to read C2PA data from the specified file.
 This  examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.  For a summary of supported media types, see [Supported file formats](#supported-file-formats).
@@ -48,7 +48,12 @@ The manifests may contain binary resources such as thumbnails which can be retri
 NOTE: For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
 ```py
 try:
-  reader = c2pa.Reader("path/to/media_file.jpg")
+  # Create a reader from a file path
+  reader = c2pa.Reader.from_file("path/to/media_file.jpg")
+  # It's also possible to create a reader from a format and stream
+  # Note that these two readers are functionally equivalent
+  stream = open("path/to/media_file.jpg", "rb")
+  reader = c2pa.Reader("image/jpeg", stream)
 
   # Print the JSON for a manifest. 
   print("manifest store:", reader.json())
@@ -65,7 +70,7 @@ except Exception as err:
     print(err)
 ```
 
-### Add a signed manifest to a media file
+### Add a signed manifest to a media file or stream
 
 Use a `Builder` to add a manifest to an asset.
 
@@ -115,6 +120,10 @@ try:
   # The uri provided here "thumbnail" must match an identifier in the manifest definition.
   builder.add_resource_file("thumbnail", "tests/fixtures/A_thumbnail.jpg")
 
+  # Or we can add the resource from a stream
+  a_thumbnail_jpg_stream = open("tests/fixtures/A_thumbnail.jpg", "rb")
+  builder.add_resource("image/jpeg", a_thumbnail_jpg_stream)
+
   # Define an ingredient, in this case a parent ingredient named A.jpg, with a thumbnail
   ingredient_json = {
     "title": "A.jpg",
@@ -128,6 +137,10 @@ try:
   # Add the ingredient to the builder loading information  from a source file.
   builder.add_ingredient_file(ingredient_json, "tests/fixtures/A.jpg")
 
+  # Or we can add the ingredient from a stream
+  a_jpg_stream = open("tests/fixtures/A.jpg", "rb")
+  builder.add_ingredient("image/jpeg", a_jpg_stream)
+
   # At this point we could archive or unarchive our Builder to continue later.
   # In this example we use a bytearray for the archive stream.
   # all ingredients and resources will be saved in the archive
@@ -139,6 +152,11 @@ try:
   # Sign and add our manifest to a source file, writing it to an output file.
   # This returns the binary manifest data that could be uploaded to cloud storage.
   c2pa_data = builder.sign_file(signer, "tests/fixtures/A.jpg", "target/out.jpg")
+
+  # Or we can sign the builder with a stream and output it to a stream
+  a_jpg_stream = open("tests/fixtures/A.jpg", "rb")
+  out_stream = open("tests/fixtures/A.jpg", "wb")
+  c2pa_data = builder.sign(signer, "image/jpeg", a_jpg_stream, out_stream)
 
 except Exception as err:
     print(err)
