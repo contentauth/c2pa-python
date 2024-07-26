@@ -154,9 +154,9 @@ try:
   c2pa_data = builder.sign_file(signer, "tests/fixtures/A.jpg", "target/out.jpg")
 
   # Or we can sign the builder with a stream and output it to a stream
-  a_jpg_stream = open("tests/fixtures/A.jpg", "rb")
-  out_stream = open("tests/fixtures/A.jpg", "wb")
-  c2pa_data = builder.sign(signer, "image/jpeg", a_jpg_stream, out_stream)
+  input_stream = open("tests/fixtures/A.jpg", "rb")
+  out_stream = open("target/out.jpg", "wb")
+  c2pa_data = builder.sign(signer, "image/jpeg", input_stream, out_stream)
 
 except Exception as err:
     print(err)
