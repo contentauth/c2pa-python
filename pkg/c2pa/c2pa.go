@@ -11,6 +11,7 @@ import (
 )
 
 // #cgo LDFLAGS: -L../../target/release -lc2pa -lm
+// #cgo darwin LDFLAGS: -framework Security
 import "C"
 
 func GetManifest(target io.ReadWriteSeeker, mType string) (string, error) {
