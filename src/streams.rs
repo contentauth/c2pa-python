@@ -51,6 +51,10 @@ impl Stream for Box<dyn Stream> {
     }
 }
 
+unsafe impl uniffi::LiftRef<crate::UniFfiTag> for Box<dyn Stream> {
+    type LiftType = Box<dyn Stream>;
+}
+
 impl AsMut<dyn Stream> for dyn Stream {
     fn as_mut(&mut self) -> &mut Self {
         self
