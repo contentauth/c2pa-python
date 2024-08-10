@@ -17,7 +17,7 @@ import "C"
 func GetManifest(target io.ReadWriteSeeker, mType string) (string, error) {
 	stream := C2PAStream{target}
 	r := rustC2PA.NewReader()
-	r.FromStream("image/jpeg", &stream)
+	r.FromStream(mType, &stream)
 	ret, err := r.Json()
 	if err != nil {
 		return "", err
