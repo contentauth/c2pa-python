@@ -50,7 +50,7 @@ class Reader(api.Reader):
     def get_manifest(self, label):
         manifest_store = json.loads(self.json())
         return manifest_store["manifests"].get(label)
-        return json.loads(self.json())
+
     def get_active_manifest(self):
         manifest_store = json.loads(self.json())
         active_label = manifest_store.get("active_manifest")
