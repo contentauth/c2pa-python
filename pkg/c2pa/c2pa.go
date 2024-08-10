@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"os"
+	"path/filepath"
 
 	rustC2PA "git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/c2pa"
 	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/manifeststore"
@@ -16,7 +19,12 @@ import (
 // #cgo darwin LDFLAGS: -framework Security
 import "C"
 
-func GetManifest(target io.ReadWriteSeeker, mType string) (*manifeststore.ManifestStoreSchemaJson, error) {
+type Reader interface {
+	GetManifest(label string) *manifeststore.Manifest
+	GetActiveManifest() *manifeststore.Manifest
+}
+
+func FromStream(target io.ReadWriteSeeker, mType string) (Reader, error) {
 	stream := C2PAStream{target}
 	r := rustC2PA.NewReader()
 	r.FromStream(mType, &stream)
@@ -29,7 +37,39 @@ func GetManifest(target io.ReadWriteSeeker, mType string) (*manifeststore.Manife
 	if err != nil {
 		return nil, err
 	}
-	return &store, nil
+	return &C2PAReader{store: &store}, nil
+}
+
+func FromFile(fname string) (Reader, error) {
+	mType := mime.TypeByExtension(filepath.Ext(fname))
+	if mType == "" {
+		return nil, fmt.Errorf("couldn't find MIME type for filename %s", fname)
+	}
+	f, err := os.Open(fname)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return FromStream(f, mType)
+}
+
+type C2PAReader struct {
+	store *manifeststore.ManifestStoreSchemaJson
+}
+
+func (r *C2PAReader) GetManifest(label string) *manifeststore.Manifest {
+	m, ok := r.store.Manifests[label]
+	if !ok {
+		return nil
+	}
+	return &m
+}
+
+func (r *C2PAReader) GetActiveManifest() *manifeststore.Manifest {
+	if r.store.ActiveManifest == nil {
+		return nil
+	}
+	return r.GetManifest(*r.store.ActiveManifest)
 }
 
 type C2PAStream struct {

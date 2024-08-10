@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"mime"
 	"os"
-	"path/filepath"
 
 	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa"
 )
@@ -20,21 +18,17 @@ func Start() error {
 		return nil
 	}
 	fname := args[1]
-	f, err := os.Open(fname)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	mType := mime.TypeByExtension(filepath.Ext(fname))
-	if mType == "" {
-		return fmt.Errorf("couldn't find MIME type for filename %s", fname)
-	}
-	manifest, err := c2pa.GetManifest(f, mType)
+	reader, err := c2pa.FromFile(fname)
 	if err != nil {
 		return err
 	}
 
-	bs, err := json.MarshalIndent(manifest, "", "  ")
+	activeManifest := reader.GetActiveManifest()
+	if activeManifest == nil {
+		return fmt.Errorf("could not find active manifest")
+	}
+
+	bs, err := json.MarshalIndent(activeManifest, "", "  ")
 	if err != nil {
 		return err
 	}
