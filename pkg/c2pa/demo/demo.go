@@ -11,13 +11,30 @@ import (
 
 func Start() error {
 	fs := flag.NewFlagSet("c2pa-go-demo", flag.ExitOnError)
-	fs.Parse(os.Args)
+	manifest := fs.String("manifest", "", "manifest file for signing")
+	output := fs.String("output", "", "output file for signing")
+	pass := os.Args[1:]
+	err := fs.Parse(pass)
+	if err != nil {
+		return err
+	}
+	if *manifest != "" || *output != "" {
+		if *manifest == "" {
+			return fmt.Errorf("missing --manifest")
+		}
+		if *output == "" {
+			return fmt.Errorf("missing --output")
+		}
+		c2pa.NewBuilder()
+		return nil
+	}
 	args := fs.Args()
-	if len(args) != 2 {
+	if len(args) != 1 {
+		fs.Usage()
 		fmt.Printf("usage: %s [target-file]\n", os.Args[0])
 		return nil
 	}
-	fname := args[1]
+	fname := args[0]
 	reader, err := c2pa.FromFile(fname)
 	if err != nil {
 		return err
