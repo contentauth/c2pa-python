@@ -3,26 +3,33 @@
 package c2pa
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 
 	rustC2PA "git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/c2pa"
+	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/manifeststore"
 )
 
 // #cgo LDFLAGS: -L../../target/release -lc2pa -lm
 // #cgo darwin LDFLAGS: -framework Security
 import "C"
 
-func GetManifest(target io.ReadWriteSeeker, mType string) (string, error) {
+func GetManifest(target io.ReadWriteSeeker, mType string) (*manifeststore.ManifestStoreSchemaJson, error) {
 	stream := C2PAStream{target}
 	r := rustC2PA.NewReader()
 	r.FromStream(mType, &stream)
 	ret, err := r.Json()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return ret, nil
+	var store manifeststore.ManifestStoreSchemaJson
+	err = json.Unmarshal([]byte(ret), &store)
+	if err != nil {
+		return nil, err
+	}
+	return &store, nil
 }
 
 type C2PAStream struct {

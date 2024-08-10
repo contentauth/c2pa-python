@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"mime"
@@ -32,7 +33,13 @@ func Start() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(manifest)
+
+	bs, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(bs))
 	return nil
 }
 
