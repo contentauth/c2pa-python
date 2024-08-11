@@ -9,6 +9,8 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -21,6 +23,7 @@ import (
 	rustC2PA "git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/c2pa"
 	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/manifestdefinition"
 	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/manifeststore"
+	"github.com/decred/dcrd/dcrec/secp256k1"
 )
 
 // #cgo LDFLAGS: -L../../target/release -lc2pa -lm
@@ -174,9 +177,9 @@ func NewBuilder(manifest *ManifestDefinition, params *BuilderParams) (Builder, e
 
 func (b *C2PABuilder) Sign(input, output io.ReadWriteSeeker, mimeType string) error {
 	mySigner := &C2PACallbackSigner{
-		key: b.params.Key,
+		params: b.params,
 	}
-	signer := rustC2PA.NewCallbackSigner(mySigner, rustC2PA.SigningAlgEs256, b.params.Cert, &b.params.TAURL)
+	signer := rustC2PA.NewCallbackSigner(mySigner, rustC2PA.SigningAlgEs256k, b.params.Cert, &b.params.TAURL)
 	_, err := b.builder.Sign(mimeType, &C2PAStream{input}, &C2PAStream{output}, signer)
 	if err != nil {
 		return err
@@ -205,30 +208,52 @@ func (b *C2PABuilder) SignFile(infile, outfile string) error {
 }
 
 type C2PACallbackSigner struct {
-	key []byte
+	params *BuilderParams
+}
+
+type pkcs8 struct {
+	Version    int
+	Algo       pkix.AlgorithmIdentifier
+	PrivateKey []byte
 }
 
 func (s *C2PACallbackSigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
-	block, _ := pem.Decode(s.key)
-	if block == nil {
-		return []byte{}, rustC2PA.NewErrorOther("failed to parse PEM block containing the private key")
-	}
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		fmt.Println(err.Error())
-		return []byte{}, rustC2PA.NewErrorOther(err.Error())
-	}
-
 	h := sha256.New()
 
 	h.Write(data)
 
 	hashbs := h.Sum(nil)
+	block, _ := pem.Decode(s.params.Key)
+
+	if block == nil {
+		return []byte{}, rustC2PA.NewErrorOther("failed to parse PEM block containing the private key")
+	}
+	if s.params.Algorithm == "es256k" {
+		var privKey pkcs8
+		_, err := asn1.Unmarshal(block.Bytes, &privKey)
+		if err != nil {
+			return nil, rustC2PA.NewErrorOther(fmt.Sprintf("asn1.Unmarshal failed: %s", err.Error()))
+		}
+		var curvePrivateKey []byte
+		asn1.Unmarshal(privKey.PrivateKey, &curvePrivateKey)
+		if err != nil {
+			return nil, rustC2PA.NewErrorOther(fmt.Sprintf("asn1.Unmarshal for private key failed: %s", err.Error()))
+		}
+		priv, _ := secp256k1.PrivKeyFromBytes(curvePrivateKey)
+		bs, err := ecdsa.SignASN1(rand.Reader, priv.ToECDSA(), hashbs)
+		if err != nil {
+			return []byte{}, rustC2PA.NewErrorOther(fmt.Sprintf("ecdsa.SignASN1 failed: %s", err.Error()))
+		}
+		return bs, nil
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return []byte{}, rustC2PA.NewErrorOther(fmt.Sprintf("x509.ParsePKCS8PrivateKey failed: %s", err.Error()))
+	}
 
 	bs, err := ecdsa.SignASN1(rand.Reader, key.(*ecdsa.PrivateKey), hashbs)
 	if err != nil {
-		fmt.Println(err.Error())
-		return []byte{}, rustC2PA.NewErrorOther(err.Error())
+		return []byte{}, rustC2PA.NewErrorOther(fmt.Sprintf("ecdsa.SignASN1 failed: %s", err.Error()))
 	}
 	return bs, nil
 }

@@ -16,6 +16,7 @@ func Start() error {
 	key := fs.String("key", "", "private key file to use")
 	input := fs.String("input", "", "input file for signing")
 	output := fs.String("output", "", "output file for signing")
+	alg := fs.String("alg", "", "algorithm to use to sign (es256, es256k, es384, es512, ps256, ps384, ps512, ed25519)")
 	pass := os.Args[1:]
 	err := fs.Parse(pass)
 	if err != nil {
@@ -37,6 +38,9 @@ func Start() error {
 		if *key == "" {
 			return fmt.Errorf("missing --key")
 		}
+		if *alg == "" {
+			return fmt.Errorf("missing --alg")
+		}
 		certBytes, err := os.ReadFile(*cert)
 		if err != nil {
 			return err
@@ -57,8 +61,8 @@ func Start() error {
 		b, err := c2pa.NewBuilder(&manifest, &c2pa.BuilderParams{
 			Cert:      certBytes,
 			Key:       keyBytes,
+			Algorithm: *alg,
 			TAURL:     "http://timestamp.digicert.com",
-			Algorithm: "es256",
 		})
 		if err != nil {
 			return err
