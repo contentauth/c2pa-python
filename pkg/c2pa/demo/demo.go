@@ -12,6 +12,9 @@ import (
 func Start() error {
 	fs := flag.NewFlagSet("c2pa-go-demo", flag.ExitOnError)
 	manifest := fs.String("manifest", "", "manifest file for signing")
+	cert := fs.String("cert", "", "certificate file to use")
+	key := fs.String("key", "", "private key file to use")
+	input := fs.String("input", "", "input file for signing")
 	output := fs.String("output", "", "output file for signing")
 	pass := os.Args[1:]
 	err := fs.Parse(pass)
@@ -25,7 +28,45 @@ func Start() error {
 		if *output == "" {
 			return fmt.Errorf("missing --output")
 		}
-		c2pa.NewBuilder()
+		if *input == "" {
+			return fmt.Errorf("missing --input")
+		}
+		if *cert == "" {
+			return fmt.Errorf("missing --cert")
+		}
+		if *key == "" {
+			return fmt.Errorf("missing --key")
+		}
+		certBytes, err := os.ReadFile(*cert)
+		if err != nil {
+			return err
+		}
+		keyBytes, err := os.ReadFile(*key)
+		if err != nil {
+			return err
+		}
+		manifestBytes, err := os.ReadFile(*manifest)
+		if err != nil {
+			return err
+		}
+		var manifest c2pa.ManifestDefinition
+		err = json.Unmarshal(manifestBytes, &manifest)
+		if err != nil {
+			return err
+		}
+		b, err := c2pa.NewBuilder(&manifest, &c2pa.BuilderParams{
+			Cert:      certBytes,
+			Key:       keyBytes,
+			TAURL:     "http://timestamp.digicert.com",
+			Algorithm: "es256",
+		})
+		if err != nil {
+			return err
+		}
+		err = b.SignFile(*input, *output)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 	args := fs.Args()

@@ -10,7 +10,10 @@ name = "c2pa"
 crate-type = ["staticlib"]
 
 [dependencies]
-c2pa = { version = "0.32.0", features = ["unstable_api", "openssl"] }
+c2pa = { git = "https://git.aquareum.tv/aquareum-tv/c2pa-rs.git", branch = "es256k", features = [
+  "unstable_api",
+  "openssl",
+] }
 pem = "3.0.3"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_derive = "1.0"

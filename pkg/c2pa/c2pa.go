@@ -3,8 +3,10 @@
 package c2pa
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
@@ -17,6 +19,7 @@ import (
 	"path/filepath"
 
 	rustC2PA "git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/c2pa"
+	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/manifestdefinition"
 	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/manifeststore"
 )
 
@@ -136,98 +139,77 @@ func (s *C2PAStream) WriteStream(data []byte) (uint64, *rustC2PA.Error) {
 }
 
 type Builder interface {
-	GetManifest(label string) *manifeststore.Manifest
-	GetActiveManifest() *manifeststore.Manifest
+	Sign(input, output io.ReadWriteSeeker, mimeType string) error
+	SignFile(infile, outfile string) error
+}
+
+type BuilderParams struct {
+	Cert      []byte
+	Key       []byte
+	TAURL     string
+	Algorithm string
 }
 
 type C2PABuilder struct {
-	builder *rustC2PA.Builder
+	builder  *rustC2PA.Builder
+	manifest *ManifestDefinition
+	params   *BuilderParams
 }
 
-var certs = []byte(`-----BEGIN CERTIFICATE-----
-MIIChzCCAi6gAwIBAgIUcCTmJHYF8dZfG0d1UdT6/LXtkeYwCgYIKoZIzj0EAwIw
-gYwxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJl
-MScwJQYDVQQKDB5DMlBBIFRlc3QgSW50ZXJtZWRpYXRlIFJvb3QgQ0ExGTAXBgNV
-BAsMEEZPUiBURVNUSU5HX09OTFkxGDAWBgNVBAMMD0ludGVybWVkaWF0ZSBDQTAe
-Fw0yMjA2MTAxODQ2NDBaFw0zMDA4MjYxODQ2NDBaMIGAMQswCQYDVQQGEwJVUzEL
-MAkGA1UECAwCQ0ExEjAQBgNVBAcMCVNvbWV3aGVyZTEfMB0GA1UECgwWQzJQQSBU
-ZXN0IFNpZ25pbmcgQ2VydDEZMBcGA1UECwwQRk9SIFRFU1RJTkdfT05MWTEUMBIG
-A1UEAwwLQzJQQSBTaWduZXIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQPaL6R
-kAkYkKU4+IryBSYxJM3h77sFiMrbvbI8fG7w2Bbl9otNG/cch3DAw5rGAPV7NWky
-l3QGuV/wt0MrAPDoo3gwdjAMBgNVHRMBAf8EAjAAMBYGA1UdJQEB/wQMMAoGCCsG
-AQUFBwMEMA4GA1UdDwEB/wQEAwIGwDAdBgNVHQ4EFgQUFznP0y83joiNOCedQkxT
-tAMyNcowHwYDVR0jBBgwFoAUDnyNcma/osnlAJTvtW6A4rYOL2swCgYIKoZIzj0E
-AwIDRwAwRAIgOY/2szXjslg/MyJFZ2y7OH8giPYTsvS7UPRP9GI9NgICIDQPMKrE
-LQUJEtipZ0TqvI/4mieoyRCeIiQtyuS0LACz
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIICajCCAg+gAwIBAgIUfXDXHH+6GtA2QEBX2IvJ2YnGMnUwCgYIKoZIzj0EAwIw
-dzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRIwEAYDVQQHDAlTb21ld2hlcmUx
-GjAYBgNVBAoMEUMyUEEgVGVzdCBSb290IENBMRkwFwYDVQQLDBBGT1IgVEVTVElO
-R19PTkxZMRAwDgYDVQQDDAdSb290IENBMB4XDTIyMDYxMDE4NDY0MFoXDTMwMDgy
-NzE4NDY0MFowgYwxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJ
-U29tZXdoZXJlMScwJQYDVQQKDB5DMlBBIFRlc3QgSW50ZXJtZWRpYXRlIFJvb3Qg
-Q0ExGTAXBgNVBAsMEEZPUiBURVNUSU5HX09OTFkxGDAWBgNVBAMMD0ludGVybWVk
-aWF0ZSBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABHllI4O7a0EkpTYAWfPM
-D6Rnfk9iqhEmCQKMOR6J47Rvh2GGjUw4CS+aLT89ySukPTnzGsMQ4jK9d3V4Aq4Q
-LsOjYzBhMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgGGMB0GA1UdDgQW
-BBQOfI1yZr+iyeUAlO+1boDitg4vazAfBgNVHSMEGDAWgBRembiG4Xgb2VcVWnUA
-UrYpDsuojDAKBggqhkjOPQQDAgNJADBGAiEAtdZ3+05CzFo90fWeZ4woeJcNQC4B
-84Ill3YeZVvR8ZECIQDVRdha1xEDKuNTAManY0zthSosfXcvLnZui1A/y/DYeg==
------END CERTIFICATE-----
-`)
+type ManifestDefinition manifestdefinition.ManifestDefinitionSchemaJson
 
-var priv = []byte(`-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgfNJBsaRLSeHizv0m
-GL+gcn78QmtfLSm+n+qG9veC2W2hRANCAAQPaL6RkAkYkKU4+IryBSYxJM3h77sF
-iMrbvbI8fG7w2Bbl9otNG/cch3DAw5rGAPV7NWkyl3QGuV/wt0MrAPDo
------END PRIVATE KEY-----
-`)
-
-func NewBuilder() *C2PABuilder {
+func NewBuilder(manifest *ManifestDefinition, params *BuilderParams) (Builder, error) {
 	b := rustC2PA.NewBuilder()
-	str := `{
-		"alg": "ES256",
-		"private_key": "/home/iameli/testvids/cert.key",
-		"sign_cert": "/home/iameli/testvids/cert.crt",
-		"ta_url": "http://timestamp.digicert.com",
-		"claim_generator": "Aquareum",
-		"title": "Image File",
-		"assertions": [
-			{
-				"label": "c2pa.actions",
-				"data": { "actions": [{ "action": "c2pa.published" }] }
-			}
-		]
-	}`
-	err := b.WithJson(str)
+	bs, err := json.Marshal(manifest)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	infile, err := os.Open("/home/iameli/testvids/screenshot.jpg")
+	err = b.WithJson(string(bs))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	outfile, err := os.Create("/home/iameli/code/c2pa-go/screenshot-signed-go.jpg")
-	if err != nil {
-		panic(err)
-	}
-	mySigner := &C2PASigner{}
-	taUrl := "http://timestamp.digicert.com"
-	signer := rustC2PA.NewCallbackSigner(mySigner, rustC2PA.SigningAlgEs256, certs, &taUrl)
-	bs, err := b.Sign("image/jpeg", &C2PAStream{infile}, &C2PAStream{outfile}, signer)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("got %d bytes\n", len(bs))
-	return &C2PABuilder{b}
+
+	return &C2PABuilder{builder: b, manifest: manifest, params: params}, nil
 }
 
-type C2PASigner struct{}
+func (b *C2PABuilder) Sign(input, output io.ReadWriteSeeker, mimeType string) error {
+	mySigner := &C2PACallbackSigner{
+		key: b.params.Key,
+	}
+	signer := rustC2PA.NewCallbackSigner(mySigner, rustC2PA.SigningAlgEs256, b.params.Cert, &b.params.TAURL)
+	_, err := b.builder.Sign(mimeType, &C2PAStream{input}, &C2PAStream{output}, signer)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
-func (s *C2PASigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
-	// fmt.Printf("Sign called len(data)=%d\n", len(data))
-	block, _ := pem.Decode(priv)
+// helper function for operating on files
+func (b *C2PABuilder) SignFile(infile, outfile string) error {
+	mimeType := mime.TypeByExtension(filepath.Ext(infile))
+	if mimeType == "" {
+		return fmt.Errorf("couldn't find MIME type for filename %s", infile)
+	}
+	input, err := os.Open(infile)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+
+	output, err := os.Create(outfile)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+	return b.Sign(input, output, mimeType)
+}
+
+type C2PACallbackSigner struct {
+	key []byte
+}
+
+func (s *C2PACallbackSigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
+	block, _ := pem.Decode(s.key)
 	if block == nil {
 		return []byte{}, rustC2PA.NewErrorOther("failed to parse PEM block containing the private key")
 	}
@@ -242,7 +224,6 @@ func (s *C2PASigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
 	h.Write(data)
 
 	hashbs := h.Sum(nil)
-	// fmt.Printf("len(hashbs)=%d\n", len(hashbs))
 
 	bs, err := ecdsa.SignASN1(rand.Reader, key.(*ecdsa.PrivateKey), hashbs)
 	if err != nil {
@@ -250,4 +231,25 @@ func (s *C2PASigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
 		return []byte{}, rustC2PA.NewErrorOther(err.Error())
 	}
 	return bs, nil
+}
+
+func parsePrivateKey(der []byte) (crypto.Signer, error) {
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		switch key := key.(type) {
+		case *rsa.PrivateKey:
+			return key, nil
+		case *ecdsa.PrivateKey:
+			return key, nil
+		default:
+			return nil, errors.New("crypto/tls: found unknown private key type in PKCS#8 wrapping")
+		}
+	}
+	if key, err := x509.ParseECPrivateKey(der); err == nil {
+		return key, nil
+	}
+
+	return nil, errors.New("crypto/tls: failed to parse private key")
 }
