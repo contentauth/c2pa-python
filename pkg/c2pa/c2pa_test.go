@@ -40,6 +40,13 @@ func TestSigning(t *testing.T) {
 	}{
 		{"es256"},
 		{"es256k"},
+		{"es384"},
+		{"es512"},
+		{"ed25519"},
+		{"ps256"},
+		{"ps384"},
+		{"ps512"},
+		{"rs256"},
 	}
 
 	dname, err := os.MkdirTemp("", "c2pa-go-test")
