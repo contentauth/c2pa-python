@@ -217,6 +217,13 @@ type pkcs8 struct {
 	PrivateKey []byte
 }
 
+type ecPrivateKey struct {
+	Version       int
+	PrivateKey    []byte
+	NamedCurveOID asn1.ObjectIdentifier `asn1:"optional,explicit,tag:0"`
+	PublicKey     asn1.BitString        `asn1:"optional,explicit,tag:1"`
+}
+
 func (s *C2PACallbackSigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
 	h := sha256.New()
 
@@ -234,12 +241,16 @@ func (s *C2PACallbackSigner) Sign(data []byte) ([]byte, *rustC2PA.Error) {
 		if err != nil {
 			return nil, rustC2PA.NewErrorOther(fmt.Sprintf("asn1.Unmarshal failed: %s", err.Error()))
 		}
-		var curvePrivateKey []byte
-		asn1.Unmarshal(privKey.PrivateKey, &curvePrivateKey)
+		namedCurveOID := new(asn1.ObjectIdentifier)
+		if _, err := asn1.Unmarshal(privKey.Algo.Parameters.FullBytes, namedCurveOID); err != nil {
+			return nil, rustC2PA.NewErrorOther(fmt.Sprintf("asn1.Unmarshal for oid failed: %s", err.Error()))
+		}
+		var curveKey ecPrivateKey
+		_, err = asn1.Unmarshal(privKey.PrivateKey, &curveKey)
 		if err != nil {
 			return nil, rustC2PA.NewErrorOther(fmt.Sprintf("asn1.Unmarshal for private key failed: %s", err.Error()))
 		}
-		priv, _ := secp256k1.PrivKeyFromBytes(curvePrivateKey)
+		priv, _ := secp256k1.PrivKeyFromBytes(curveKey.PrivateKey)
 		bs, err := ecdsa.SignASN1(rand.Reader, priv.ToECDSA(), hashbs)
 		if err != nil {
 			return []byte{}, rustC2PA.NewErrorOther(fmt.Sprintf("ecdsa.SignASN1 failed: %s", err.Error()))
