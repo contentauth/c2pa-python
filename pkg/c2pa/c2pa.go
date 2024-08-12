@@ -370,21 +370,3 @@ func parseES256KPrivateKey(privKey pkcs8) (crypto.Signer, error) {
 	key, _ := secp256k1.PrivKeyFromBytes(curveKey.PrivateKey)
 	return key.ToECDSA(), nil
 }
-
-// func parseRSAPSSPrivateKey(privKey pkcs8) (crypto.Signer, error) {
-
-// 	var namedCurveOID asn1.ObjectIdentifier
-// 	if _, err := asn1.Unmarshal(privKey.Algo.Parameters.FullBytes, &namedCurveOID); err != nil {
-// 		return nil, fmt.Errorf("asn1.Unmarshal for oid failed: %w", err)
-// 	}
-// 	if !reflect.DeepEqual(namedCurveOID, OID_SECP256K1) {
-// 		return nil, fmt.Errorf("unknown named curve OID: %s", namedCurveOID.String())
-// 	}
-// 	var curveKey ecPrivateKey
-// 	_, err := asn1.Unmarshal(privKey.PrivateKey, &curveKey)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("asn1.Unmarshal for private key failed: %w", err)
-// 	}
-// 	key, _ := secp256k1.PrivKeyFromBytes(curveKey.PrivateKey)
-// 	return key.ToECDSA(), nil
-// }
