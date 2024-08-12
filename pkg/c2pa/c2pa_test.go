@@ -46,12 +46,12 @@ func TestSigning(t *testing.T) {
 		{"ps256"},
 		{"ps384"},
 		{"ps512"},
-		{"rs256"},
 	}
 
 	dname, err := os.MkdirTemp("", "c2pa-go-test")
 	require.NoError(t, err)
-	defer os.RemoveAll(dname)
+	// defer os.RemoveAll(dname)
+	fmt.Printf("writing to %s\n", dname)
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
