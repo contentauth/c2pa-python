@@ -5,7 +5,7 @@ project(
 
 prog_cargo = find_program('cargo')
 
-lib = custom_target(
+c2pa_go_dep = custom_target(
   'libc2pa',
   input: [],
   output: ['libc2pa.a'],
@@ -13,7 +13,7 @@ lib = custom_target(
   command: [
     'sh',
     '-c',
-    '@0@ build --release --target-dir @1@ && cp @1@/release/libc2pa.a @1@/libc2pa.a'.format(prog_cargo.full_path(), meson.current_build_dir()),
+    'cd @2@ && @0@ build --release --target-dir @1@ && cp @1@/release/libc2pa.a @1@/libc2pa.a'.format(prog_cargo.full_path(), meson.current_build_dir(), meson.current_source_dir()),
   ],
   build_by_default: true,
 )
