@@ -37,7 +37,7 @@ type Reader interface {
 }
 
 func FromStream(target io.ReadWriteSeeker, mType string) (Reader, error) {
-	stream := C2PAStream{target}
+	stream := C2PAStreamReader{target}
 	r := rustC2PA.NewReader()
 	r.FromStream(mType, &stream)
 	ret, err := r.Json()
@@ -85,65 +85,8 @@ func (r *C2PAReader) GetActiveManifest() *manifeststore.Manifest {
 	return r.GetManifest(*r.store.ActiveManifest)
 }
 
-type C2PAStream struct {
-	io.ReadWriteSeeker
-}
-
-func (s *C2PAStream) ReadStream(length uint64) ([]byte, *rustC2PA.Error) {
-	// fmt.Printf("read length=%d\n", length)
-	bs := make([]byte, length)
-	read, err := s.ReadWriteSeeker.Read(bs)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			if read == 0 {
-				// fmt.Printf("read EOF read=%d returning empty?", read)
-				return []byte{}, nil
-			}
-			// partial := bs[read:]
-			// return partial, nil
-		}
-		// fmt.Printf("io error=%s\n", err)
-		return []byte{}, rustC2PA.NewErrorIo(err.Error())
-	}
-	if uint64(read) < length {
-		partial := bs[read:]
-		// fmt.Printf("read returning partial read=%d len=%d\n", read, len(partial))
-		return partial, nil
-	}
-	// fmt.Printf("read returning full read=%d len=%d\n", read, len(bs))
-	return bs, nil
-}
-
-func (s *C2PAStream) SeekStream(pos int64, mode rustC2PA.SeekMode) (uint64, *rustC2PA.Error) {
-	// fmt.Printf("seek pos=%d\n", pos)
-	var seekMode int
-	if mode == rustC2PA.SeekModeCurrent {
-		seekMode = io.SeekCurrent
-	} else if mode == rustC2PA.SeekModeStart {
-		seekMode = io.SeekStart
-	} else if mode == rustC2PA.SeekModeEnd {
-		seekMode = io.SeekEnd
-	} else {
-		// fmt.Printf("seek mode unsupported mode=%d\n", mode)
-		return 0, rustC2PA.NewErrorNotSupported(fmt.Sprintf("unknown seek mode: %d", mode))
-	}
-	newPos, err := s.ReadWriteSeeker.Seek(pos, seekMode)
-	if err != nil {
-		return 0, rustC2PA.NewErrorIo(err.Error())
-	}
-	return uint64(newPos), nil
-}
-
-func (s *C2PAStream) WriteStream(data []byte) (uint64, *rustC2PA.Error) {
-	wrote, err := s.ReadWriteSeeker.Write(data)
-	if err != nil {
-		return uint64(wrote), rustC2PA.NewErrorIo(err.Error())
-	}
-	return uint64(wrote), nil
-}
-
 type Builder interface {
-	Sign(input, output io.ReadWriteSeeker, mimeType string) error
+	Sign(input io.ReadSeeker, output io.Writer, mimeType string) error
 	SignFile(infile, outfile string) error
 }
 
@@ -198,7 +141,7 @@ var hashMap = map[string]crypto.Hash{
 	"ps512":   crypto.SHA512,
 }
 
-func (b *C2PABuilder) Sign(input, output io.ReadWriteSeeker, mimeType string) error {
+func (b *C2PABuilder) Sign(input io.ReadSeeker, output io.Writer, mimeType string) error {
 	mySigner := &C2PACallbackSigner{
 		params: b.params,
 	}
@@ -207,7 +150,7 @@ func (b *C2PABuilder) Sign(input, output io.ReadWriteSeeker, mimeType string) er
 		return fmt.Errorf("unknown algorithm: %s", b.params.Algorithm)
 	}
 	signer := rustC2PA.NewCallbackSigner(mySigner, alg, b.params.Cert, &b.params.TAURL)
-	_, err := b.builder.Sign(mimeType, &C2PAStream{input}, &C2PAStream{output}, signer)
+	_, err := b.builder.Sign(mimeType, &C2PAStreamReader{input}, &C2PAStreamWriter{output}, signer)
 	if err != nil {
 		return err
 	}
