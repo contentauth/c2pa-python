@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import tempfile
+import shutil
 PROJECT_PATH = os.getcwd()
 SOURCE_PATH = os.path.join(
     PROJECT_PATH,"target","python"
@@ -50,7 +51,7 @@ class Reader(api.Reader):
     def get_manifest(self, label):
         manifest_store = json.loads(self.json())
         return manifest_store["manifests"].get(label)
-        return json.loads(self.json())
+    
     def get_active_manifest(self):
         manifest_store = json.loads(self.json())
         active_label = manifest_store.get("active_manifest")
@@ -128,10 +129,27 @@ class Builder(api.Builder):
         return super().sign(format, C2paStream(input), C2paStream(output), signer)
 
     def sign_file(self, signer, sourcePath, outputPath):
-        format = os.path.splitext(outputPath)[1][1:]
+        extension = os.path.splitext(outputPath)[1][1:]
         input = open(sourcePath, "rb")
-        output = open(outputPath, "wb")
-        return self.sign(signer, format, input, output)
+        # Check if outputPath is the same as sourcePath
+        if outputPath == sourcePath:
+            # Create a temporary file with the same extension as sourcePath
+            temp_output = tempfile.NamedTemporaryFile(suffix='.' + extension, delete=False)
+            temp_output_path = temp_output.name
+            temp_output.close()
+        else:
+            temp_output_path = outputPath
+        
+        output = open(temp_output_path, "wb")
+        result = self.sign(signer, extension, input, output)
+        output.close()
+        input.close()
+
+        # If a temporary file was used, rename or copy it to the outputPath
+        if outputPath == sourcePath:
+            shutil.move(temp_output_path, outputPath)
+
+        return result
 
 
 # Implements a C2paStream given a stream handle

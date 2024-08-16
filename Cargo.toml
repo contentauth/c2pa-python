@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-python"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com"]
 
@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 
 [dependencies]
-c2pa = {version = "0.32.0", features = ["unstable_api", "openssl"]}
+c2pa = {version = "0.32.2", features = ["unstable_api", "openssl"]}
 pem = "3.0.3"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_derive = "1.0"

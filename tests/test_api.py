@@ -13,6 +13,7 @@
 import json
 import pytest
 import tempfile
+import shutil
 
 from c2pa import Builder, Error, Reader, SigningAlg, create_signer, sdk_version, sign_ps256, version
 
@@ -50,7 +51,7 @@ manifest_def = {
 }
 
 def test_version():
-    assert version() == "0.5.0"
+    assert version() == "0.5.1"
 
 def test_sdk_version():
     assert "c2pa-rs/" in sdk_version()
@@ -121,6 +122,40 @@ def test_v2_sign():
         assert manifest,["format"] == "image/jpeg"
         # There should be no validation status errors
         assert manifest.get("validation_status") == None
+    except Exception as e:
+        print("Failed to sign manifest store: " + str(e))
+        exit(1)
+
+# Test signing the same source and destination file
+def test_v2_sign_file_same():
+    data_dir = "tests/fixtures/"
+    try:
+        def sign(data: bytes) -> bytes:
+            return sign_ps256(data, data_dir+"ps256.pem")
+        
+        certs = open(data_dir + "ps256.pub", "rb").read()
+        # Create a local signer from a certificate pem file
+        signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+
+        builder = Builder(manifest_def)
+
+        builder.add_resource_file("A.jpg", data_dir + "A.jpg")
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            path = output_dir + "/A.jpg"
+            # Copy the file from data_dir to output_dir
+            shutil.copy(data_dir + "A.jpg", path)
+            c2pa_data = builder.sign_file(signer, path, path)
+            assert len(c2pa_data) > 0
+
+            reader = Reader.from_file(path)
+            manifest = reader.get_active_manifest()
+
+            # check custom title and format
+            assert manifest["title"]== "My Title" 
+            assert manifest["format"] == "image/jpeg"
+            # There should be no validation status errors
+            assert manifest.get("validation_status") == None
     except Exception as e:
         print("Failed to sign manifest store: " + str(e))
         exit(1)
