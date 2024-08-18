@@ -1,5 +1,3 @@
-//go:build (darwin && cgo) || (dragonfly && cgo) || (freebsd && cgo) || (linux && cgo) || (netbsd && cgo) || (openbsd && cgo)
-
 package c2pa
 
 import (
