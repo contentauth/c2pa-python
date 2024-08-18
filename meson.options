@@ -1,0 +1,1 @@
+option('RUST_TRIPLE', type : 'string', description : 'Rust triple for cross-compilation')

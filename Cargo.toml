@@ -1,23 +1,27 @@
 [package]
-name = "c2pa-python"
+name = "c2pa-go"
 version = "0.5.0"
 edition = "2021"
-authors = ["Gavin Peacock <gpeacock@adobe.com"]
+authors = ["Eli Mallon <eli@aquareum.tv>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "c2pa"
-crate-type = ["cdylib"]
-
+crate-type = ["staticlib"]
 
 [dependencies]
-c2pa = {version = "0.32.0", features = ["unstable_api", "openssl"]}
+c2pa = { git = "https://git.aquareum.tv/aquareum-tv/c2pa-rs.git", rev = "a0b0d3298ae14c4fd71413232eff159cda8d7bcb", features = [
+  "unstable_api",
+  "openssl",
+] }
+# c2pa = { path = "../c2pa-rs/sdk", features = ["unstable_api", "openssl"] }
+# c2pa = { version = "0.33.3", features = ["unstable_api", "openssl"] }
 pem = "3.0.3"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 thiserror = "1.0.49"
-uniffi = "0.24.1"
+uniffi = "= 0.25.0"
 
 [build-dependencies]
-uniffi = { version = "0.24.1", features = ["build"] }
+uniffi = { version = "= 0.25.0", features = ["build"] }

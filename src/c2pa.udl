@@ -26,6 +26,7 @@ interface Error {
 
 enum SigningAlg {
   "Es256",
+  "Es256k",
   "Es384",
   "Es512",
   "Ps256",
