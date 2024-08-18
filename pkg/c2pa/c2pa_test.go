@@ -80,14 +80,16 @@ func TestSigning(t *testing.T) {
 			require.NoError(t, err)
 
 			fixtures := getFixtures()
-			input := filepath.Join(fixtures, "A.jpg")
-			output := filepath.Join(dname, fmt.Sprintf("A-signed-%s.jpg", test.name))
+			for _, fname := range []string{"A.jpg", "video.mp4"} {
+				input := filepath.Join(fixtures, fname)
+				output := filepath.Join(dname, fmt.Sprintf("signed-%s-%s", test.name, fname))
 
-			err = b.SignFile(input, output)
-			require.NoError(t, err)
+				err = b.SignFile(input, output)
+				require.NoError(t, err)
 
-			err = c2patool(output)
-			require.NoError(t, err)
+				err = c2patool(output)
+				require.NoError(t, err)
+			}
 		})
 	}
 }

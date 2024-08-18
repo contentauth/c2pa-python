@@ -86,7 +86,7 @@ func (r *C2PAReader) GetActiveManifest() *manifeststore.Manifest {
 }
 
 type Builder interface {
-	Sign(input io.ReadSeeker, output io.Writer, mimeType string) error
+	Sign(input io.ReadSeeker, output io.ReadWriteSeeker, mimeType string) error
 	SignFile(infile, outfile string) error
 }
 
@@ -141,7 +141,7 @@ var hashMap = map[string]crypto.Hash{
 	"ps512":   crypto.SHA512,
 }
 
-func (b *C2PABuilder) Sign(input io.ReadSeeker, output io.Writer, mimeType string) error {
+func (b *C2PABuilder) Sign(input io.ReadSeeker, output io.ReadWriteSeeker, mimeType string) error {
 	mySigner := &C2PACallbackSigner{
 		params: b.params,
 	}
