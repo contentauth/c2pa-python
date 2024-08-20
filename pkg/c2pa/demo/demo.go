@@ -62,7 +62,7 @@ func Start() error {
 		if err != nil {
 			return err
 		}
-		signer := c2pa.MakeStaticSigner(certBytes, keyBytes, alg)
+		signer := c2pa.MakeStaticSigner(certBytes, keyBytes)
 		if err != nil {
 			return err
 		}

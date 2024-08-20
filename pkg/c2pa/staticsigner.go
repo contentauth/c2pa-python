@@ -19,16 +19,14 @@ import (
 
 // helper signer for when you have cert and key as PEM-encoded bytes
 type StaticSigner struct {
-	Cert      []byte
-	Key       []byte
-	Algorithm *SigningAlgorithm
+	Cert []byte
+	Key  []byte
 }
 
-func MakeStaticSigner(cert, key []byte, alg *SigningAlgorithm) crypto.Signer {
+func MakeStaticSigner(cert, key []byte) crypto.Signer {
 	return &StaticSigner{
-		Cert:      cert,
-		Key:       key,
-		Algorithm: alg,
+		Cert: cert,
+		Key:  key,
 	}
 }
 
