@@ -58,10 +58,18 @@ func Start() error {
 		if err != nil {
 			return err
 		}
+		alg, err := c2pa.GetSigningAlgorithm(*alg)
+		if err != nil {
+			return err
+		}
+		signer := c2pa.MakeStaticSigner(certBytes, keyBytes, alg)
+		if err != nil {
+			return err
+		}
 		b, err := c2pa.NewBuilder(&manifest, &c2pa.BuilderParams{
 			Cert:      certBytes,
-			Key:       keyBytes,
-			Algorithm: *alg,
+			Signer:    signer,
+			Algorithm: alg,
 			TAURL:     "http://timestamp.digicert.com",
 		})
 		if err != nil {

@@ -71,10 +71,13 @@ func TestSigning(t *testing.T) {
 			var manifest ManifestDefinition
 			err = json.Unmarshal(manifestBs, &manifest)
 			require.NoError(t, err)
+			alg, err := GetSigningAlgorithm(test.name)
+			require.NoError(t, err)
+			signer := MakeStaticSigner(certBytes, keyBytes, alg)
 			b, err := NewBuilder(&manifest, &BuilderParams{
 				Cert:      certBytes,
-				Key:       keyBytes,
-				Algorithm: test.name,
+				Signer:    signer,
+				Algorithm: alg,
 				TAURL:     "http://timestamp.digicert.com",
 			})
 			require.NoError(t, err)
