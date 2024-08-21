@@ -37,6 +37,13 @@ func FromStream(target io.ReadWriteSeeker, mType string) (Reader, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(store.ValidationStatus) > 0 {
+		errBs, err := json.Marshal(store.ValidationStatus)
+		if err != nil {
+			return nil, err
+		}
+		return &C2PAReader{store: &store}, fmt.Errorf("validation error: %s", string(errBs))
+	}
 	return &C2PAReader{store: &store}, nil
 }
 
@@ -115,6 +122,10 @@ func (b *C2PABuilder) Sign(input io.ReadSeeker, output io.ReadWriteSeeker, mimeT
 	_, err := b.builder.Sign(mimeType, &C2PAStreamReader{input}, &C2PAStreamWriter{output}, signer)
 	if err != nil {
 		return err
+	}
+	_, err = FromStream(output, mimeType)
+	if err != nil {
+		return fmt.Errorf("unable to validate newly-signed file: %w", err)
 	}
 	return nil
 }
