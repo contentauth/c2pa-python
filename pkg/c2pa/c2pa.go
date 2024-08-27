@@ -28,7 +28,6 @@ func FromStream(target io.ReadWriteSeeker, mType string) (Reader, error) {
 	r := rustC2PA.NewReader()
 	r.FromStream(mType, &stream)
 	ret, err := r.Json()
-	fmt.Println(ret)
 	if err != nil {
 		return nil, err
 	}
