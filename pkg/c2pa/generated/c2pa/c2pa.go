@@ -430,6 +430,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain(uniffiStatus)
+		})
+		if checksum != 38020 {
+			// If this happens try cleaning and rebuilding your project
+			panic("c2pa: uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_c2pa_checksum_method_reader_json(uniffiStatus)
 		})
 		if checksum != 33242 {
@@ -902,6 +911,21 @@ func (_self *Reader) FromStream(format string, reader Stream) (string, error) {
 	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
 		return C.uniffi_c2pa_fn_method_reader_from_stream(
 			_pointer, FfiConverterStringINSTANCE.Lower(format), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(reader), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue string
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterStringINSTANCE.Lift(_uniffiRV), _uniffiErr
+	}
+}
+
+func (_self *Reader) GetProvenanceCertChain() (string, error) {
+	_pointer := _self.ffiObject.incrementPointer("*Reader")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return C.uniffi_c2pa_fn_method_reader_get_provenance_cert_chain(
+			_pointer, _uniffiStatus)
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue string

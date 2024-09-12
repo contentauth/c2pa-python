@@ -85,6 +85,14 @@ impl Reader {
         }
     }
 
+    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+        if let Ok(st) = self.reader.try_read() {
+            Ok(st.get_provenance_cert_chain()?)
+        } else {
+            Err(Error::RwLock)
+        }
+    }
+
     pub fn resource_to_stream(&self, uri: &str, stream: &dyn Stream) -> Result<u64> {
         if let Ok(reader) = self.reader.try_read() {
             let mut stream = StreamAdapter::from(stream);

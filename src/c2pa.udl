@@ -62,6 +62,9 @@ interface Reader {
   string json();
 
   [Throws=Error]
+  string get_provenance_cert_chain();
+
+  [Throws=Error]
   u64 resource_to_stream([ByRef] string uri, [ByRef] Stream stream);
 };
 
@@ -76,7 +79,7 @@ interface CallbackSigner {
 
 interface Builder {
   constructor();
-  
+
   [Throws=Error]
   void with_json([ByRef] string json);
 

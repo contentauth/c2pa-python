@@ -21,13 +21,18 @@ import "C"
 type Reader interface {
 	GetManifest(label string) *manifeststore.Manifest
 	GetActiveManifest() *manifeststore.Manifest
+	GetProvenanceCertChain() string
 }
 
-func FromStream(target io.ReadWriteSeeker, mType string) (Reader, error) {
+func FromStream(target io.ReadSeeker, mType string) (Reader, error) {
 	stream := C2PAStreamReader{target}
 	r := rustC2PA.NewReader()
 	r.FromStream(mType, &stream)
 	ret, err := r.Json()
+	if err != nil {
+		return nil, err
+	}
+	certs, err := r.GetProvenanceCertChain()
 	if err != nil {
 		return nil, err
 	}
@@ -41,9 +46,9 @@ func FromStream(target io.ReadWriteSeeker, mType string) (Reader, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &C2PAReader{store: &store}, fmt.Errorf("validation error: %s", string(errBs))
+		return &C2PAReader{store: &store, certs: certs}, fmt.Errorf("validation error: %s", string(errBs))
 	}
-	return &C2PAReader{store: &store}, nil
+	return &C2PAReader{store: &store, certs: certs}, nil
 }
 
 func FromFile(fname string) (Reader, error) {
@@ -61,6 +66,7 @@ func FromFile(fname string) (Reader, error) {
 
 type C2PAReader struct {
 	store *manifeststore.ManifestStoreSchemaJson
+	certs string
 }
 
 func (r *C2PAReader) GetManifest(label string) *manifeststore.Manifest {
@@ -76,6 +82,10 @@ func (r *C2PAReader) GetActiveManifest() *manifeststore.Manifest {
 		return nil
 	}
 	return r.GetManifest(*r.store.ActiveManifest)
+}
+
+func (r *C2PAReader) GetProvenanceCertChain() string {
+	return r.certs
 }
 
 type Builder interface {

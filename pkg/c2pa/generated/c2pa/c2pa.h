@@ -148,6 +148,11 @@ RustBuffer uniffi_c2pa_fn_method_reader_from_stream(
 	RustCallStatus* out_status
 );
 
+RustBuffer uniffi_c2pa_fn_method_reader_get_provenance_cert_chain(
+	void* ptr,
+	RustCallStatus* out_status
+);
+
 RustBuffer uniffi_c2pa_fn_method_reader_json(
 	void* ptr,
 	RustCallStatus* out_status
@@ -510,6 +515,10 @@ uint16_t uniffi_c2pa_checksum_method_builder_with_json(
 );
 
 uint16_t uniffi_c2pa_checksum_method_reader_from_stream(
+	RustCallStatus* out_status
+);
+
+uint16_t uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain(
 	RustCallStatus* out_status
 );
 
