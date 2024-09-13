@@ -11,46 +11,22 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 
 	"github.com/decred/dcrd/dcrec/secp256k1"
 )
 
-// helper signer for when you have cert and key as PEM-encoded bytes
-type StaticSigner struct {
-	Cert []byte
-	Key  []byte
-}
-
-func MakeStaticSigner(cert, key []byte) crypto.Signer {
-	return &StaticSigner{
-		Cert: cert,
-		Key:  key,
-	}
-}
-
-func (s *StaticSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error) {
-	block, _ := pem.Decode(s.Key)
+func MakeStaticSigner(keybs []byte) (crypto.Signer, error) {
+	block, _ := pem.Decode(keybs)
 
 	if block == nil {
-		return []byte{}, fmt.Errorf("failed to parse PEM block containing the private key")
+		return nil, fmt.Errorf("failed to parse PEM block containing the private key")
 	}
 	key, err := parsePrivateKey(block.Bytes)
 	if err != nil {
-		return []byte{}, fmt.Errorf("parsePrivateKey failed: %s", err.Error())
+		return nil, fmt.Errorf("parsePrivateKey failed: %s", err.Error())
 	}
-
-	bs, err := key.Sign(rand, digest, opts)
-
-	if err != nil {
-		return []byte{}, fmt.Errorf("ecdsa.SignASN1 failed: %s", err.Error())
-	}
-	return bs, nil
-}
-
-func (s *StaticSigner) Public() crypto.PublicKey {
-	panic("not implemented")
+	return key, nil
 }
 
 func parsePrivateKey(der []byte) (crypto.Signer, error) {

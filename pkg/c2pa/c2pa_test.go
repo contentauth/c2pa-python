@@ -73,7 +73,8 @@ func TestSigning(t *testing.T) {
 			require.NoError(t, err)
 			alg, err := GetSigningAlgorithm(test.name)
 			require.NoError(t, err)
-			signer := MakeStaticSigner(certBytes, keyBytes)
+			signer, err := MakeStaticSigner(keyBytes)
+			require.NoError(t, err)
 			b, err := NewBuilder(&manifest, &BuilderParams{
 				Cert:      certBytes,
 				Signer:    signer,
