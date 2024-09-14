@@ -83,7 +83,8 @@ class TestBuilder(unittest.TestCase):
 
     # Define a function that signs data with PS256 using a private key
     def sign(data: bytes) -> bytes:
-        return sign_ps256(data, "tests/fixtures/ps256.pem")
+        key = open("tests/fixtures/ps256.pem","rb").read()
+        return sign_ps256(data, key)
 
     # load the public keys from a pem file
     certs = open("tests/fixtures/ps256.pub","rb").read()

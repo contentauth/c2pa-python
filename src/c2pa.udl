@@ -92,5 +92,8 @@ interface Builder {
   void from_archive([ByRef] Stream stream );
 
   [Throws=Error]
-  bytes sign([ByRef] string format, [ByRef] Stream input, [ByRef] Stream output ,[ByRef] CallbackSigner signer);
+  bytes sign([ByRef] CallbackSigner signer, [ByRef] string format, [ByRef] Stream input, [ByRef] Stream output);
+
+  [Throws=Error]
+  bytes sign_file([ByRef] CallbackSigner signer, [ByRef] string input, [ByRef] string output);
 };

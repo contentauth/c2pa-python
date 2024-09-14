@@ -73,8 +73,9 @@ ingredient_json = {
 # V2 signing api
 try:
    # This could be implemented on a server using an HSM
+    key = open("tests/fixtures/ps256.pem","rb").read()
     def sign(data: bytes) -> bytes:
-        return sign_ps256(data, "tests/fixtures/ps256.pem")
+        return sign_ps256(data, key)
     
     certs = open("tests/fixtures/ps256.pub","rb").read()
 
@@ -86,6 +87,9 @@ try:
     builder.add_resource_file("thumbnail", "tests/fixtures/A_thumbnail.jpg")
 
     builder.add_ingredient_file(ingredient_json, "tests/fixtures/A.jpg")
+
+    if os.path.exists(testOutputFile):
+        os.remove(testOutputFile)
 
     result = builder.sign_file(signer, testFile, testOutputFile)
     

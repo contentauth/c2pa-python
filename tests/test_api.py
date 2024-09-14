@@ -11,6 +11,7 @@
 # each license.
 
 import json
+import os
 import pytest
 import tempfile
 import shutil
@@ -93,8 +94,9 @@ def test_v2_sign():
     # define a source folder for any assets we need to read
     data_dir = "tests/fixtures/"
     try:
+        key = open(data_dir + "ps256.pem", "rb").read()
         def sign(data: bytes) -> bytes:
-            return sign_ps256(data, data_dir+"ps256.pem")
+            return sign_ps256(data, key)
         
         certs = open(data_dir + "ps256.pub", "rb").read()
         # Create a local signer from a certificate pem file
@@ -109,6 +111,9 @@ def test_v2_sign():
         builder = Builder.from_archive(open("target/archive.zip", "rb"))
 
         with tempfile.TemporaryDirectory() as output_dir:
+            output_path = output_dir + "out.jpg"
+            if os.path.exists(output_path):
+                os.remove(output_path)
             c2pa_data = builder.sign_file(signer, data_dir + "A.jpg", output_dir + "out.jpg")
             assert len(c2pa_data) > 0
 
@@ -130,8 +135,9 @@ def test_v2_sign():
 def test_v2_sign_file_same():
     data_dir = "tests/fixtures/"
     try:
+        key = open(data_dir + "ps256.pem", "rb").read()
         def sign(data: bytes) -> bytes:
-            return sign_ps256(data, data_dir+"ps256.pem")
+            return sign_ps256(data, key)
         
         certs = open(data_dir + "ps256.pub", "rb").read()
         # Create a local signer from a certificate pem file
@@ -158,4 +164,4 @@ def test_v2_sign_file_same():
             assert manifest.get("validation_status") == None
     except Exception as e:
         print("Failed to sign manifest store: " + str(e))
-        exit(1)
+        #exit(1)

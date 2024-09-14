@@ -172,10 +172,10 @@ impl Builder {
     /// Sign an asset and write the result to the destination stream
     pub fn sign(
         &self,
+        signer: &CallbackSigner,
         format: &str,
         source: &dyn Stream,
         dest: &dyn Stream,
-        signer: &CallbackSigner,
     ) -> Result<Vec<u8>> {
         // uniffi doesn't allow mutable parameters, so we we use an adapter
         let mut source = StreamAdapter::from(source);
@@ -183,6 +183,16 @@ impl Builder {
         if let Ok(mut builder) = self.builder.try_write() {
             let signer = (*signer).signer();
             Ok(builder.sign(signer, format, &mut source, &mut dest)?)
+        } else {
+            Err(Error::RwLock)
+        }
+    }
+
+    /// Sign an asset and write the result to the destination stream
+    pub fn sign_file(&self, signer: &CallbackSigner, source: &str, dest: &str) -> Result<Vec<u8>> {
+        if let Ok(mut builder) = self.builder.try_write() {
+            let signer = (*signer).signer();
+            Ok(builder.sign_file(signer, source, dest)?)
         } else {
             Err(Error::RwLock)
         }
