@@ -140,7 +140,7 @@ impl Builder {
     ) -> Result<()> {
         if let Ok(mut builder) = self.builder.try_write() {
             let mut stream = StreamAdapter::from(stream);
-            builder.add_ingredient(ingredient_json, format, &mut stream)?;
+            builder.add_ingredient_from_stream(ingredient_json, format, &mut stream)?;
         } else {
             return Err(Error::RwLock);
         };
