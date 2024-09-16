@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 
 [dependencies]
-c2pa = {version = "0.32.4", features = ["unstable_api", "file_io", "openssl", "fetch_remote_manifests"]}
+c2pa = {version = "0.35.0", features = ["unstable_api", "file_io", "openssl", "pdf", "fetch_remote_manifests"]}
 pem = "3.0.3"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_derive = "1.0"

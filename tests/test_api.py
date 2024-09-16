@@ -51,6 +51,11 @@ manifest_def = {
     ]
 }
 
+def test_v2_read_cloud_manifest():
+    reader = Reader.from_file("tests/fixtures/cloud.jpg")
+    manifest = reader.get_active_manifest()
+    assert manifest is not None
+
 def test_version():
     assert version() == "0.5.1"
 
