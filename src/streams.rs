@@ -82,14 +82,12 @@ impl<'a> From<&'a dyn Stream> for StreamAdapter<'a> {
 
 impl<'a> Read for StreamAdapter<'a> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut bytes = self
+        let bytes = self
             .stream
             .read_stream(buf.len() as u64)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let len = bytes.len();
-        buf.iter_mut().zip(bytes.drain(..)).for_each(|(dest, src)| {
-            *dest = src;
-        });
+        buf[..len].copy_from_slice(&bytes);
         //println!("read: {:?}", len);
         Ok(len)
     }

@@ -34,7 +34,6 @@ impl CallbackSigner {
         certs: Vec<u8>,
         ta_url: Option<String>,
     ) -> Self {
-        
         // When this closure is called it will call the sign method on the python callback
         let python_signer = move |_context: *const (), data: &[u8]| {
             callback

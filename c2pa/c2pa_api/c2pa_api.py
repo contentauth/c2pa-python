@@ -126,30 +126,11 @@ class Builder(api.Builder):
         return self
     
     def sign(self, signer, format, input, output = None):
-        return super().sign(format, C2paStream(input), C2paStream(output), signer)
+        return super().sign(signer, format, C2paStream(input), C2paStream(output))
 
     def sign_file(self, signer, sourcePath, outputPath):
-        extension = os.path.splitext(outputPath)[1][1:]
-        input = open(sourcePath, "rb")
-        # Check if outputPath is the same as sourcePath
-        if outputPath == sourcePath:
-            # Create a temporary file with the same extension as sourcePath
-            temp_output = tempfile.NamedTemporaryFile(suffix='.' + extension, delete=False)
-            temp_output_path = temp_output.name
-            temp_output.close()
-        else:
-            temp_output_path = outputPath
-        
-        output = open(temp_output_path, "wb")
-        result = self.sign(signer, extension, input, output)
-        output.close()
-        input.close()
-
-        # If a temporary file was used, rename or copy it to the outputPath
-        if outputPath == sourcePath:
-            shutil.move(temp_output_path, outputPath)
-
-        return result
+        return super().sign_file(signer, sourcePath, outputPath)
+    
 
 
 # Implements a C2paStream given a stream handle
@@ -225,12 +206,12 @@ def sign_ps256_shell(data: bytes, key_path: str) -> bytes:
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-def sign_ps256(data: bytes, key_path: str) -> bytes:
-    with open(key_path, "rb") as key_file:
-        private_key = serialization.load_pem_private_key(
-            key_file.read(),
-            password=None,
-        )
+def sign_ps256(data: bytes, key: bytes) -> bytes:
+
+    private_key = serialization.load_pem_private_key(
+        key,
+        password=None,
+    )
     signature = private_key.sign(
         data,
         padding.PSS(
