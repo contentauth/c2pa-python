@@ -18,6 +18,16 @@ pip install -U c2pa-python
 
 This is a platform wheel built with Rust that works on Windows, macOS, and most Linux distributions (using [manylinux](https://github.com/pypa/manylinux)). If you need to run on another platform, see [Development](#development) for information on how to build from source.
 
+### Updating
+
+Determine what version you've got by entering this command:
+
+```
+pip list | grep c2pa-python
+```
+
+If the version shown is lower than the most recent version, then update by [reinstalling](#installation).
+
 ### Reinstalling 
 
 If you tried unsuccessfully to install this package before the [0.40 release](https://github.com/contentauth/c2pa-python/releases/tag/v0.4), then use this command to reinstall: 
