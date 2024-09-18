@@ -1,10 +1,10 @@
 # C2PA Python
 
-Python bindings for the C2PA Content Authenticity Initiative (CAI) library.
+This repository implements Python bindings for the Content Authenticity Initiative (CAI) library.
 
 This library enables you to read and validate C2PA data in supported media files and add signed manifests to supported media files.
 
-**NOTE**: This is a completely different API from 0.4.0. Check [Release notes](#release-notes) for changes.
+**NOTE**: Starting with version 0.5.0, this package has a completely different API from version 0.4.0. See [Release notes](#release-notes) for more information.
 
 **WARNING**: This is an prerelease version of this library.  There may be bugs and unimplemented features, and the API is subject to change.
 
@@ -292,10 +292,22 @@ deactivate
 
 ## Release notes
 
+### Version 0.5.2
+
+New features:
+
+- DER fix
+- Remote manifest fetch
+- BMFF signing
+- Ability to read PDFs
+- ... and more!
+
 ### Version 0.5.0
 
-- This release rewrites the API to be stream based using a Builder and Reader model.
-- The functions now support throwing c2pa.Error values, caught with try/except.
+New features in this release:
+
+- Rewrites the API to be stream-based using a Builder / Reader model.
+- The functions now support throwing `c2pa.Error` values, caught with `try`/`except`.
 - Instead of `c2pa.read_file` you now call `c2pa_api.Reader.from_file` and `reader.json`.
 - Read thumbnails and other resources use `reader.resource_to_stream` or `reader.resource.to_file`.
 - Instead of `c2pa.sign_file` use `c2pa_api.Builder.from_json` and `builder.sign` or `builder.sign_file`.
