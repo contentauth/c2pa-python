@@ -306,11 +306,11 @@ deactivate
 
 New features:
 
-- DER fix
-- Remote manifest fetch
-- BMFF signing
-- Ability to read PDFs
-- ... and more!
+- Allow EC signatures in DER format from signers and verify signature format during validation.
+- Fix bug in signing audio and video files in ISO Base Media File Format (BMFF).
+- Add the ability to verify PDF files (but not to sign them).
+- Increase speed of `sign_file` by 2x or more, when using file paths (uses native Rust file I/O).
+- Fixes for RIFF and GIF formats.
 
 ### Version 0.5.0
 
