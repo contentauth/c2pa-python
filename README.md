@@ -126,6 +126,26 @@ try:
     ]
   }
 
+# Example of using Python crypto to sign data using openssl with Ps256
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+
+def sign_ps256(data: bytes, key_path: str) -> bytes:
+    with open(key_path, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=None,
+        )
+    signature = private_key.sign(
+        data,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+    return signature
+
   # Create a builder add a thumbnail resource and an ingredient file.
   builder = Builder(manifest_json)
 
