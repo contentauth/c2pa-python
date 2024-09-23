@@ -5,7 +5,7 @@ project(
 
 prog_cargo = find_program('cargo')
 
-cargo_cmd = '@0@ build --release --target-dir @1@'.format(prog_cargo.full_path(), meson.current_build_dir())
+cargo_cmd = '@0@ build --release --target-dir "@1@"'.format(prog_cargo.full_path(), meson.current_build_dir())
 archive_dir = meson.current_build_dir()
 
 triple = get_option('RUST_TRIPLE')
