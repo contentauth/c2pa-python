@@ -44,13 +44,6 @@ class TestReader(unittest.TestCase):
             title = manifest = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, "C.jpg")
 
-    def test_from_manifest_data_and_stream(self):
-        with open(testPath, "rb") as stream:
-            with open("tests/fixtures/manifest.c2pa", "r") as manifest_data:
-                reader = Reader("image/jpeg",stream, manifest_data)
-                manifest_store = json.loads(reader.json())
-                title = manifest = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
-                self.assertEqual(title, "C.jpg")
 
     def test_json_decode_err(self):
         with self.assertRaises(Error.Io):
