@@ -82,9 +82,11 @@ interface Builder {
   [Throws=Error]
   void with_json([ByRef] string json);
 
+  [Throws=Error]
   void set_no_embed();
 
-  void set_remote_url([ByRef] string url)
+  [Throws=Error]
+  void set_remote_url([ByRef] string url);
 
   [Throws=Error]
   void add_resource([ByRef] string uri, [ByRef] Stream stream );
