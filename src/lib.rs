@@ -77,6 +77,19 @@ impl Reader {
         Ok(json)
     }
 
+    pub fn from_manifest_data_and_stream(&self, manifest_data: &[u8], format: &str, stream: &dyn Stream) -> Result<String> {
+        // uniffi doesn't allow mutable parameters, so we we use an adapter
+        let mut stream = StreamAdapter::from(stream);
+        let reader = c2pa::Reader::from_manifest_data_and_stream(manifest_data, format, &mut stream)?;
+        let json = reader.to_string();
+        if let Ok(mut st) = self.reader.try_write() {
+            *st = reader;
+        } else {
+            return Err(Error::RwLock);
+        };
+        Ok(json)
+    }
+
     pub fn json(&self) -> Result<String> {
         if let Ok(st) = self.reader.try_read() {
             Ok(st.json())
@@ -115,6 +128,25 @@ impl Builder {
     pub fn with_json(&self, json: &str) -> Result<()> {
         if let Ok(mut builder) = self.builder.try_write() {
             *builder = c2pa::Builder::from_json(json)?;
+        } else {
+            return Err(Error::RwLock);
+        };
+        Ok(())
+    }
+
+    /// Set to true to disable embedding a manifest 
+    pub fn set_no_embed(&self) -> Result<()> {
+        if let Ok(mut builder) = self.builder.try_write() {
+            builder.set_no_embed(true);
+        } else {
+            return Err(Error::RwLock);
+        };
+        Ok(())
+    }
+
+    pub fn set_remote_url(&self, remote_url: &str) -> Result<()> {
+        if let Ok(mut builder) = self.builder.try_write() {
+            builder.set_remote_url(remote_url);
         } else {
             return Err(Error::RwLock);
         };

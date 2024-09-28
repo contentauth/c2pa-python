@@ -44,6 +44,14 @@ class TestReader(unittest.TestCase):
             title = manifest = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, "C.jpg")
 
+    def test_from_manifest_data_and_stream(self):
+        with open(testPath, "rb") as stream:
+            with open("tests/fixtures/manifest.c2pa", "r") as manifest_data:
+                reader = Reader("image/jpeg",stream, manifest_data)
+                manifest_store = json.loads(reader.json())
+                title = manifest = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+                self.assertEqual(title, "C.jpg")
+
     def test_json_decode_err(self):
         with self.assertRaises(Error.Io):
             manifest_store = Reader("image/jpeg","foo")
@@ -92,7 +100,7 @@ class TestBuilder(unittest.TestCase):
     # Create a local Ps256 signer with certs and a timestamp server
     signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
-    def test_streams_build(self):
+    def test_streams_sign(self):
         with open(testPath, "rb") as file:
             builder = Builder(TestBuilder.manifestDefinition)
             output = io.BytesIO(bytearray())
@@ -101,7 +109,7 @@ class TestBuilder(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             self.assertIn("Python Test", reader.json())
 
-    def test_streams_build(self):
+    def test_archive_sign(self):
         with open(testPath, "rb") as file:
             builder = Builder(TestBuilder.manifestDefinition)
             archive = byte_array = io.BytesIO(bytearray())
@@ -111,6 +119,16 @@ class TestBuilder(unittest.TestCase):
             builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output)
+            self.assertIn("Python Test", reader.json())
+
+    def test_remote_sign(self):
+        with open(testPath, "rb") as file:
+            builder = Builder(TestBuilder.manifestDefinition)
+            builder.set_no_embed()
+            output = io.BytesIO(bytearray())
+            manifest_data = builder.sign(TestBuilder.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader.from_manifest_data_and_stream(manifest_data, "image/jpeg", output)
             self.assertIn("Python Test", reader.json())
 
 if __name__ == '__main__':
