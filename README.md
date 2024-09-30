@@ -278,10 +278,12 @@ except Exception as err:
  | `avif`        | `image/avif`                                        |
  | `c2pa`        | `application/x-c2pa-manifest-store`                 |
  | `dng`         | `image/x-adobe-dng`                                 |
+ | `gif`         | `image/gif`                                         |
  | `heic`        | `image/heic`                                        |
  | `heif`        | `image/heif`                                        |
  | `jpg`, `jpeg` | `image/jpeg`                                        |
  | `m4a`         | `audio/mp4`                                         |
+ | `mp3`         | `audio/mpeg`                                        |
  | `mp4`         | `video/mp4`, `application/mp4`                      |
  | `mov`         | `video/quicktime`                                   |
  | `png`         | `image/png`                                         |
