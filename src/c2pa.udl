@@ -58,6 +58,9 @@ interface Reader {
   string from_stream([ByRef] string format, [ByRef] Stream reader);
 
   [Throws=Error]
+  string from_manifest_data_and_stream([ByRef] bytes manifest_data, [ByRef] string format, [ByRef] Stream reader);
+
+  [Throws=Error]
   string json();
 
   [Throws=Error]
@@ -78,6 +81,12 @@ interface Builder {
   
   [Throws=Error]
   void with_json([ByRef] string json);
+
+  [Throws=Error]
+  void set_no_embed();
+
+  [Throws=Error]
+  void set_remote_url([ByRef] string url);
 
   [Throws=Error]
   void add_resource([ByRef] string uri, [ByRef] Stream stream );

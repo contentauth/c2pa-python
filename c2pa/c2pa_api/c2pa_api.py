@@ -36,9 +36,12 @@ import c2pa.c2pa as api
 # reader = Reader("image/jpeg", open("test.jpg", "rb"))
 # json = reader.json()
 class Reader(api.Reader):
-    def __init__(self, format, stream):
+    def __init__(self, format, stream, manifest_data=None):
         super().__init__()
-        self.from_stream(format, C2paStream(stream))
+        if manifest_data is not None:
+            self.from_manifest_data_and_stream(format, manifest_data, stream)
+        else:
+            self.from_stream(format, C2paStream(stream))
 
     @classmethod
     def from_file(cls, path: str, format=None):
