@@ -39,7 +39,7 @@ class Reader(api.Reader):
     def __init__(self, format, stream, manifest_data=None):
         super().__init__()
         if manifest_data is not None:
-            self.from_manifest_data_and_stream(manifest_data, format, stream)
+            self.from_manifest_data_and_stream(manifest_data, format, C2paStream(stream))
         else:
             self.from_stream(format, C2paStream(stream))
 
