@@ -106,7 +106,7 @@ class Builder(api.Builder):
 
     def add_resource_file(self, uri, path):
         with open(path, "rb") as file:
-          return self.add_resource(uri, file)
+            return self.add_resource(uri, file)
 
     def add_ingredient(self, ingredient, format, stream):
         if not isinstance(ingredient, str):
@@ -116,7 +116,7 @@ class Builder(api.Builder):
     def add_ingredient_file(self, ingredient, path):
         format = os.path.splitext(path)[1][1:]
         with open(path, "rb") as file:
-          return self.add_ingredient(ingredient, format, file)
+            return self.add_ingredient(ingredient, format, file)
 
     def to_archive(self, stream):
         return super().to_archive(C2paStream(stream))
@@ -171,7 +171,7 @@ class C2paStream(api.Stream):
 class SignerCallback(api.SignerCallback):
     def __init__(self, callback):
         self.sign = callback
-        super().__init__() 
+        super().__init__()
 
 
 # Convenience class so we can just pass in a callback function
