@@ -24,7 +24,6 @@ PROJECT_PATH = os.getcwd()
 testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 class TestC2paSdk(unittest.TestCase):
-
     def test_version(self):
         self.assertIn("0.5.2", sdk_version())
 
@@ -39,11 +38,10 @@ class TestReader(unittest.TestCase):
 
     def test_stream_read_and_parse(self):
         with open(testPath, "rb") as file:
-            reader = Reader("image/jpeg",file)
+            reader = Reader("image/jpeg", file)
             manifest_store = json.loads(reader.json())
-            title = manifest = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+            title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, "C.jpg")
-
 
     def test_json_decode_err(self):
         with self.assertRaises(Error.Io):
@@ -52,7 +50,7 @@ class TestReader(unittest.TestCase):
     def test_reader_bad_format(self):
         with self.assertRaises(Error.NotSupported):
             with open(testPath, "rb") as file:
-                reader = Reader("badFormat",file)
+                reader = Reader("badFormat", file)
 
 
 class TestBuilder(unittest.TestCase):

@@ -63,7 +63,7 @@ def test_sdk_version():
     assert "c2pa-rs/" in sdk_version()
 
 def test_v2_read():
-     #example of reading a manifest store from a file
+    #example of reading a manifest store from a file
     try:
         reader = Reader.from_file("tests/fixtures/C.jpg")
         manifest = reader.get_active_manifest()
@@ -92,7 +92,7 @@ def test_v2_read():
         exit(1)
 
 def test_reader_from_file_no_store():
-    with pytest.raises(Error.ManifestNotFound) as err:  
+    with pytest.raises(Error.ManifestNotFound) as err:
         reader = Reader.from_file("tests/fixtures/A.jpg")
 
 def test_v2_sign():
@@ -102,7 +102,7 @@ def test_v2_sign():
         key = open(data_dir + "ps256.pem", "rb").read()
         def sign(data: bytes) -> bytes:
             return sign_ps256(data, key)
-        
+
         certs = open(data_dir + "ps256.pub", "rb").read()
         # Create a local signer from a certificate pem file
         signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
@@ -143,7 +143,7 @@ def test_v2_sign_file_same():
         key = open(data_dir + "ps256.pem", "rb").read()
         def sign(data: bytes) -> bytes:
             return sign_ps256(data, key)
-        
+
         certs = open(data_dir + "ps256.pub", "rb").read()
         # Create a local signer from a certificate pem file
         signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")

@@ -65,8 +65,8 @@ class Reader(api.Reader):
         return super().resource_to_stream(uri, C2paStream(stream))
 
     def resource_to_file(self, uri, path) -> None:
-        file = open(path, "wb")
-        return self.resource_to_stream(uri, file)
+        with open(path, "wb") as file:
+            return self.resource_to_stream(uri, file)
 
 # The Builder is used to construct a new Manifest and add it to a stream or file.
 # The initial manifest is defined by a Manifest Definition dictionary.
@@ -105,8 +105,8 @@ class Builder(api.Builder):
         return super().add_resource(uri, C2paStream(stream))
 
     def add_resource_file(self, uri, path):
-        file = open(path, "rb")
-        return self.add_resource(uri, file)
+        with open(path, "rb") as file:
+          return self.add_resource(uri, file)
 
     def add_ingredient(self, ingredient, format, stream):
         if not isinstance(ingredient, str):
@@ -115,8 +115,8 @@ class Builder(api.Builder):
 
     def add_ingredient_file(self, ingredient, path):
         format = os.path.splitext(path)[1][1:]
-        file = open(path, "rb")
-        return self.add_ingredient(ingredient, format, file)
+        with open(path, "rb") as file:
+          return self.add_ingredient(ingredient, format, file)
 
     def to_archive(self, stream):
         return super().to_archive(C2paStream(stream))
@@ -209,7 +209,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 def sign_ps256(data: bytes, key: bytes) -> bytes:
-
     private_key = serialization.load_pem_private_key(
         key,
         password=None,
