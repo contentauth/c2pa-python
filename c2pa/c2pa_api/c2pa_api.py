@@ -15,7 +15,7 @@ import json
 import os
 import sys
 import tempfile
-import shutil
+
 PROJECT_PATH = os.getcwd()
 SOURCE_PATH = os.path.join(
     PROJECT_PATH,"target","python"
@@ -23,7 +23,6 @@ SOURCE_PATH = os.path.join(
 sys.path.append(SOURCE_PATH)
 
 import c2pa.c2pa as api
-
 #from c2pa import Error, SigningAlg, version, sdk_version
 
 # This module provides a simple Python API for the C2PA library.
@@ -50,18 +49,18 @@ class Reader(api.Reader):
               # determine the format from the file extension
               format = os.path.splitext(path)[1][1:]
           return cls(format, file)
-    
+
     def get_manifest(self, label):
         manifest_store = json.loads(self.json())
         return manifest_store["manifests"].get(label)
-    
+
     def get_active_manifest(self):
         manifest_store = json.loads(self.json())
         active_label = manifest_store.get("active_manifest")
         if active_label:
             return manifest_store["manifests"].get(active_label)
         return None
-    
+
     def resource_to_stream(self, uri, stream) -> None:
         return super().resource_to_stream(uri, C2paStream(stream))
 
@@ -101,49 +100,49 @@ class Builder(api.Builder):
             manifest = json.dumps(manifest)
         super().with_json(manifest)
         return self
-    
+
     def add_resource(self, uri, stream):
         return super().add_resource(uri, C2paStream(stream))
-    
+
     def add_resource_file(self, uri, path):
         file = open(path, "rb")
         return self.add_resource(uri, file)
-    
+
     def add_ingredient(self, ingredient, format, stream):
         if not isinstance(ingredient, str):
             ingredient = json.dumps(ingredient)
         return super().add_ingredient(ingredient, format, C2paStream(stream))
-    
+
     def add_ingredient_file(self, ingredient, path):
         format = os.path.splitext(path)[1][1:]
         file = open(path, "rb")
         return self.add_ingredient(ingredient, format, file)
-    
+
     def to_archive(self, stream):
         return super().to_archive(C2paStream(stream))
-    
+
     @classmethod
     def from_archive(cls, stream):
         self = cls({})
         super().from_archive(self, C2paStream(stream))
         return self
-    
+
     def sign(self, signer, format, input, output = None):
         return super().sign(signer, format, C2paStream(input), C2paStream(output))
 
     def sign_file(self, signer, sourcePath, outputPath):
         return super().sign_file(signer, sourcePath, outputPath)
-    
+
 
 
 # Implements a C2paStream given a stream handle
 # This is used to pass a file handle to the c2pa library
-# It is used by the Reader and Builder classes internally  
+# It is used by the Reader and Builder classes internally
 class C2paStream(api.Stream):
     def __init__(self, stream):
         self.stream = stream
-    
-    def read_stream(self, length: int) -> bytes:   
+
+    def read_stream(self, length: int) -> bytes:
         #print("Reading " + str(length) + " bytes")
         return self.stream.read(length)
 
@@ -179,7 +178,7 @@ class SignerCallback(api.SignerCallback):
 #class CallbackSigner(c2pa.CallbackSigner):
 #    def __init__(self, callback, alg, certs, timestamp_url=None):
 #        cb = SignerCallback(callback)
-#        super().__init__(cb, alg, certs, timestamp_url)  
+#        super().__init__(cb, alg, certs, timestamp_url)
 
 # Creates a Signer given a callback and configuration values
 # It is used by the Builder class to sign the asset
@@ -192,7 +191,7 @@ class SignerCallback(api.SignerCallback):
 # signer = c2pa_api.create_signer(sign_ps256, "ps256", certs, "http://timestamp.digicert.com")
 #
 def create_signer(callback, alg, certs, timestamp_url=None):
-    return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)  
+    return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
 
 
 
