@@ -45,11 +45,11 @@ class Reader(api.Reader):
 
     @classmethod
     def from_file(cls, path: str, format=None):
-        file = open(path, "rb")
-        if format is None:
-            # determine the format from the file extension
-            format = os.path.splitext(path)[1][1:]
-        return cls(format, file)
+        with open(path, "rb") as file:
+          if format is None:
+              # determine the format from the file extension
+              format = os.path.splitext(path)[1][1:]
+          return cls(format, file)
     
     def get_manifest(self, label):
         manifest_store = json.loads(self.json())
