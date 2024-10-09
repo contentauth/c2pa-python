@@ -320,12 +320,11 @@ apt install python3.11-venv
 python3 -m venv .venv
 ```
 
-Build the wheel for your platform:
+Build the wheel for your platform (from the root of the repository):
 
 ```
 source .venv/bin/activate
-pip install maturin
-pip install uniffi-bindgen
+pip install -r requirements.txt
 python3 -m pip install build
 pip install -U pytest
 
@@ -347,24 +346,23 @@ pip install build
 pip install -U pytest
 
 cd home
-git clone https://github.com/contentauth/c2pa-python.git 
+git clone https://github.com/contentauth/c2pa-python.git
 cd c2pa-python
 python3 -m build --wheel
-auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl 
+auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl
 ```
 
 ### Testing
 
 We use [PyTest](https://docs.pytest.org/) for testing.
 
-Run tests by entering this command:
+Run tests by fllowing these steps:
 
-```
-source .venv/bin/activate
-maturin develop
-pytest
-deactivate
-```
+1. Activate the virtual environment: `source .venv/bin/activate`
+2. (optional) Install dependencies: `pip install -r requirements.txt`
+3. Setup the virtual environment with local changes: `maturin develop`
+4. Run the tests: `pytest`
+5. Deactivate the virtual environment: `deactivate`
 
 For example:
 
