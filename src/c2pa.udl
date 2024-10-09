@@ -78,7 +78,7 @@ interface CallbackSigner {
 
 interface Builder {
   constructor();
-  
+
   [Throws=Error]
   void with_json([ByRef] string json);
 

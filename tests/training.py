@@ -59,7 +59,7 @@ manifest_json = {
       }
     }
   ]
- }
+}
 
 ingredient_json = {
     "title": "A.jpg",
@@ -72,11 +72,11 @@ ingredient_json = {
 
 # V2 signing api
 try:
-   # This could be implemented on a server using an HSM
+    # This could be implemented on a server using an HSM
     key = open("tests/fixtures/ps256.pem","rb").read()
     def sign(data: bytes) -> bytes:
         return sign_ps256(data, key)
-    
+
     certs = open("tests/fixtures/ps256.pub","rb").read()
 
     # Create a signer from a certificate pem file
@@ -92,7 +92,7 @@ try:
         os.remove(testOutputFile)
 
     result = builder.sign_file(signer, testFile, testOutputFile)
-    
+
 except Exception as err:
     sys.exit(err)
 
@@ -112,7 +112,7 @@ try:
             if getitem(assertion, ("data","entries","c2pa.ai_training","use")) == "notAllowed":
                 allowed = False
 
-    # get the ingredient thumbnail            
+    # get the ingredient thumbnail
     uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
     reader.resource_to_file(uri, "target/thumbnail_v2.jpg")
 except Exception as err:
@@ -122,4 +122,3 @@ if allowed:
     print("Training is allowed")
 else:
     print("Training is not allowed")
-
