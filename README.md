@@ -28,9 +28,9 @@ pip list | grep c2pa-python
 
 If the version shown is lower than the most recent version, then update by [reinstalling](#installation).
 
-### Reinstalling 
+### Reinstalling
 
-If you tried unsuccessfully to install this package before the [0.40 release](https://github.com/contentauth/c2pa-python/releases/tag/v0.4), then use this command to reinstall: 
+If you tried unsuccessfully to install this package before the [0.40 release](https://github.com/contentauth/c2pa-python/releases/tag/v0.4), then use this command to reinstall:
 
 ```
 pip install --upgrade --force-reinstall c2pa-python
@@ -142,9 +142,9 @@ try:
   def private_sign(data: bytes) -> bytes:
     return sign_ps256(data, "tests/fixtures/ps256.pem")
 
-  # read our public certs into memory    
+  # read our public certs into memory
   certs = open(data_dir + "ps256.pub", "rb").read()
-  
+
   # Create a signer from the private signer, certs and a time stamp service url
   signer = create_signer(private_sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
@@ -225,9 +225,9 @@ try:
   def private_sign(data: bytes) -> bytes:
     return sign_ps256(data, "tests/fixtures/ps256.pem")
 
-  # read our public certs into memory    
+  # read our public certs into memory
   certs = open(data_dir + "ps256.pub", "rb").read()
-  
+
   # Create a signer from the private signer, certs and a time stamp service url
   signer = create_signer(private_sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
@@ -295,7 +295,9 @@ except Exception as err:
 
 ## Development
 
-It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing. To build from source on Linux, install `curl` and `rustup` then set up Python.
+It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing.
+
+To build from source on Linux, install `curl` and `rustup` then set up Python.
 
 First update `apt` then (if needed) install `curl`:
 
@@ -356,7 +358,7 @@ auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl
 
 We use [PyTest](https://docs.pytest.org/) for testing.
 
-Run tests by fllowing these steps:
+Run tests by following these steps:
 
 1. Activate the virtual environment: `source .venv/bin/activate`
 2. (optional) Install dependencies: `pip install -r requirements.txt`
@@ -366,7 +368,7 @@ Run tests by fllowing these steps:
 
 For example:
 
-```
+```bash
 source .venv/bin/activate
 maturin develop
 python3 tests/training.py
