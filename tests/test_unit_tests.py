@@ -121,7 +121,7 @@ class TestBuilder(unittest.TestCase):
             output = io.BytesIO(bytearray())
             manifest_data = builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader.from_manifest_data_and_stream(manifest_data, "image/jpeg", output)
+            reader = Reader("image/jpeg", output, manifest_data)
             self.assertIn("Python Test", reader.json())
 
 if __name__ == '__main__':
