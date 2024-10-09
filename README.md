@@ -12,7 +12,7 @@ This library enables you to read and validate C2PA data in supported media files
 
 Install from PyPI by entering this command:
 
-```
+```bash
 pip install -U c2pa-python
 ```
 
@@ -22,7 +22,7 @@ This is a platform wheel built with Rust that works on Windows, macOS, and most 
 
 Determine what version you've got by entering this command:
 
-```
+```bash
 pip list | grep c2pa-python
 ```
 
@@ -32,7 +32,7 @@ If the version shown is lower than the most recent version, then update by [rein
 
 If you tried unsuccessfully to install this package before the [0.40 release](https://github.com/contentauth/c2pa-python/releases/tag/v0.4), then use this command to reinstall:
 
-```
+```bash
 pip install --upgrade --force-reinstall c2pa-python
 ```
 
@@ -98,11 +98,11 @@ def sign_ps256(data: bytes, key_path: str) -> bytes:
 
 ### File-based operation
 
-**Read and validate C2PA data from an asset file** 
+**Read and validate C2PA data from an asset file**
 
 Use the `Reader` to read C2PA data from the specified asset file (see [supported file formats](#supported-file-formats)).
 
-This examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.  
+This examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.
 
 An asset file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map. The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream` or `resource_to_file` using the associated `identifier` field values and a `uri`.
 
@@ -301,21 +301,21 @@ To build from source on Linux, install `curl` and `rustup` then set up Python.
 
 First update `apt` then (if needed) install `curl`:
 
-```
+```bash
 apt update
 apt install curl
 ```
 
 Install Rust:
 
-```
+```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
 
 Install Python, `pip`, and `venv`:
 
-```
+```bash
 apt install python3
 apt install pip
 apt install python3.11-venv
@@ -324,7 +324,7 @@ python3 -m venv .venv
 
 Build the wheel for your platform (from the root of the repository):
 
-```
+```bash
 source .venv/bin/activate
 pip install -r requirements.txt
 python3 -m pip install build
@@ -337,7 +337,7 @@ python3 -m build --wheel
 
 Build using [manylinux](https://github.com/pypa/manylinux) by using a Docker image as follows:
 
-```
+```bash
 docker run -it quay.io/pypa/manylinux_2_28_aarch64 bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
@@ -413,6 +413,7 @@ This release:
 ### Version 0.3.0
 
 This release includes some breaking changes to align with future APIs:
+
 - `C2paSignerInfo` moves the `alg` to the first parameter from the 3rd.
 - `c2pa.verify_from_file_json` is now `c2pa.read_file`.
 - `c2pa.ingredient_from_file_json` is now `c2pa.read_ingredient_file`.
@@ -430,5 +431,3 @@ Note that some components and dependent crates are licensed under different term
 ### Contributions and feedback
 
 We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-python/blob/main/CONTRIBUTING.md).
-
-
