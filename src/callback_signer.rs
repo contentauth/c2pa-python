@@ -24,7 +24,7 @@ pub trait SignerCallback: Send + Sync {
 ///
 /// Uniffi callbacks are only supported as a method in a structure, so this is a workaround
 pub struct CallbackSigner {
-    signer: Box<c2pa::CallbackSigner>,
+    signer: Box<dyn c2pa::Signer + Sync + Send>,
 }
 
 impl CallbackSigner {
@@ -49,7 +49,7 @@ impl CallbackSigner {
     }
 
     /// The python Builder wrapper sign function calls this
-    pub fn signer(&self) -> &c2pa::CallbackSigner {
+    pub fn signer(&self) -> &Box<dyn c2pa::Signer + Sync + Send> {
         &self.signer
     }
 }
