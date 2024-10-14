@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::SigningAlg;
+use c2pa::{SigningAlg, Signer};
 
 use crate::Result;
 
@@ -24,7 +24,7 @@ pub trait SignerCallback: Send + Sync {
 ///
 /// Uniffi callbacks are only supported as a method in a structure, so this is a workaround
 pub struct CallbackSigner {
-    signer: Box<dyn c2pa::Signer + Sync + Send>,
+    signer: Box<dyn Signer + Sync + Send>,
 }
 
 impl CallbackSigner {
