@@ -214,8 +214,7 @@ impl Builder {
         let mut dest = StreamAdapter::from(dest);
         if let Ok(mut builder) = self.builder.try_write() {
             let signer = (*signer).signer();
-            let signer = signer.as_ref();
-            Ok(builder.sign(signer, format, &mut source, &mut dest)?)
+            Ok(builder.sign(signer.as_ref(), format, &mut source, &mut dest)?)
         } else {
             Err(Error::RwLock)
         }
@@ -225,8 +224,7 @@ impl Builder {
     pub fn sign_file(&self, signer: &CallbackSigner, source: &str, dest: &str) -> Result<Vec<u8>> {
         if let Ok(mut builder) = self.builder.try_write() {
             let signer = (*signer).signer();
-            let signer = signer.as_ref();
-            Ok(builder.sign_file(signer, source, dest)?)
+            Ok(builder.sign_file(signer.as_ref(), source, dest)?)
         } else {
             Err(Error::RwLock)
         }
