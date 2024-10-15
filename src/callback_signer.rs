@@ -45,11 +45,16 @@ impl CallbackSigner {
         if let Some(url) = ta_url {
             signer = signer.set_tsa_url(url);
         }
+
         Self { signer: Box::new(signer)}
     }
 
     /// The python Builder wrapper sign function calls this
     pub fn signer(&self) -> &Box<dyn c2pa::Signer + Sync + Send> {
         &self.signer
+    }
+
+    pub fn direct_cose_handling(&self) -> bool {
+      self.signer.direct_cose_handling()
     }
 }
