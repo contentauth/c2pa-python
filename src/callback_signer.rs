@@ -46,7 +46,7 @@ impl CallbackSigner {
             signer = signer.set_tsa_url(url);
         }
 
-        Self { signer: Box::new(signer)}
+        Self { signer: Box::new(signer) }
     }
 
     /// The python Builder wrapper sign function calls this
