@@ -13,6 +13,7 @@
 /// This module exports a C2PA library
 use std::env;
 use std::sync::RwLock;
+use log::{debug, info};
 
 pub use c2pa::SigningAlg;
 
@@ -134,7 +135,7 @@ impl Builder {
         Ok(())
     }
 
-    /// Set to true to disable embedding a manifest 
+    /// Set to true to disable embedding a manifest
     pub fn set_no_embed(&self) -> Result<()> {
         if let Ok(mut builder) = self.builder.try_write() {
             builder.set_no_embed(true);
@@ -224,6 +225,8 @@ impl Builder {
     pub fn sign_file(&self, signer: &CallbackSigner, source: &str, dest: &str) -> Result<Vec<u8>> {
         if let Ok(mut builder) = self.builder.try_write() {
             let signer = (*signer).signer();
+
+            debug!("Builder c2pa-python -> sign_file");
             Ok(builder.sign_file(signer.as_ref(), source, dest)?)
         } else {
             Err(Error::RwLock)
