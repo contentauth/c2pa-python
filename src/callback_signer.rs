@@ -54,7 +54,7 @@ impl CallbackSigner {
         &self.signer
     }
 
-    pub fn direct_cose_handling(&self) -> bool {
-      self.signer.direct_cose_handling()
-    }
+    // pub fn direct_cose_handling(&self) -> bool {
+    //   (&self.signer).direct_cose_handling()
+    // }
 }
