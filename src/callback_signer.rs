@@ -53,8 +53,4 @@ impl CallbackSigner {
     pub fn signer(&self) -> &Box<dyn c2pa::Signer + Sync + Send> {
         &self.signer
     }
-
-    // pub fn direct_cose_handling(&self) -> bool {
-    //   (&self.signer).direct_cose_handling()
-    // }
 }
