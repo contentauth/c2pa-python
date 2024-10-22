@@ -11,7 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-from .c2pa_api import Reader, Builder, create_signer, sign_ps256
+from .c2pa_api import Reader, Builder, create_signer, create_remote_signer, sign_ps256
 from .c2pa import Error, SigningAlg, CallbackSigner, sdk_version, version
 
-__all__ = ['Reader', 'Builder', 'create_signer', 'sign_ps256', 'Error', 'SigningAlg', 'sdk_version', 'version', 'CallbackSigner']
+__all__ = ['Reader', 'Builder', 'create_signer', 'sign_ps256', 'Error', 'SigningAlg', 'sdk_version', 'version', 'CallbackSigner', 'create_remote_signer']
