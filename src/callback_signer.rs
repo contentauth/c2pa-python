@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{SigningAlg, Signer};
+use c2pa::{SigningAlg, Signer, Error};
 
 use crate::Result;
 
@@ -25,6 +25,35 @@ pub trait SignerCallback: Send + Sync {
 /// Uniffi callbacks are only supported as a method in a structure, so this is a workaround
 pub struct CallbackSigner {
     signer: Box<dyn Signer + Sync + Send>,
+}
+
+pub struct RemoteSigner {
+    signer_callback : Box<dyn SignerCallback>,
+    // TODO: add alg here
+    // TODO: add reserve_size here somehow
+}
+
+impl c2pa::Signer for RemoteSigner {
+  fn alg(&self) -> SigningAlg {
+      c2pa::SigningAlg::Ps256
+  }
+
+  fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
+      Ok(Vec::new())
+  }
+
+  // signer will return a COSE structure
+  fn direct_cose_handling(&self) -> bool {
+      true
+  }
+
+  fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+      self.signer_callback.sign(data.to_vec()).map_err(|e| c2pa::Error::BadParam(e.to_string()))
+  }
+
+  fn reserve_size(&self) -> usize {
+      12448
+  }
 }
 
 impl CallbackSigner {
@@ -45,6 +74,20 @@ impl CallbackSigner {
         if let Some(url) = ta_url {
             signer = signer.set_tsa_url(url);
         }
+
+        Self { signer: Box::new(signer) }
+    }
+
+    pub fn new_from_signer(
+      callback: Box<dyn SignerCallback>,
+      _alg: SigningAlg,
+      _reserve_size: u64,
+    ) -> Self {
+        let signer = RemoteSigner {
+            signer_callback: callback,
+            // alg
+            // reserve_size
+        };
 
         Self { signer: Box::new(signer) }
     }

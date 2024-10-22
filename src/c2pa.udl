@@ -74,6 +74,9 @@ callback interface SignerCallback {
 
 interface CallbackSigner {
   constructor(SignerCallback callback, SigningAlg alg, bytes certs, string? ta_url);
+
+  [Name=new_from_signer]
+  constructor(SignerCallback callback, SigningAlg _alg, u64 _reserve_size);
 };
 
 interface Builder {
