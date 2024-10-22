@@ -194,7 +194,7 @@ def create_signer(callback, alg, certs, timestamp_url=None):
     return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
 
 def create_remote_signer(callback, alg, reserve_size):
-    return api.CallbackSigner.new_from_signer(callback, alg, reserve_size)
+    return api.CallbackSigner.new_from_signer(SignerCallback(callback), alg, reserve_size)
 
 
 # Example of using openssl in an os shell to sign data using Ps256
