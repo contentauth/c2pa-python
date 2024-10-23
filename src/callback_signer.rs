@@ -10,7 +10,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{SigningAlg, Signer, Error};
+use c2pa::{SigningAlg, Signer};
+use log::debug;
 
 use crate::Result;
 
@@ -35,24 +36,29 @@ pub struct RemoteSigner {
 
 impl c2pa::Signer for RemoteSigner {
   fn alg(&self) -> SigningAlg {
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> alg");
       c2pa::SigningAlg::Ps256
   }
 
   fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> certs");
       Ok(Vec::new())
   }
 
   // signer will return a COSE structure
   fn direct_cose_handling(&self) -> bool {
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> direct_cose_handling");
       true
   }
 
   fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> sign");
       self.signer_callback.sign(data.to_vec()).map_err(|e| c2pa::Error::BadParam(e.to_string()))
   }
 
   fn reserve_size(&self) -> usize {
-      12448
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> reserve_size");
+      50000
   }
 }
 
