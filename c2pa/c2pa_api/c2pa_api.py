@@ -23,7 +23,6 @@ SOURCE_PATH = os.path.join(
 sys.path.append(SOURCE_PATH)
 
 import c2pa.c2pa as api
-#from c2pa import Error, SigningAlg, version, sdk_version
 
 # This module provides a simple Python API for the C2PA library.
 
@@ -195,7 +194,12 @@ def create_signer(callback, alg, certs, timestamp_url=None):
     return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
 
 def create_remote_signer(callback, alg, reserve_size):
-    return api.CallbackSigner.new_from_signer(callback, alg, reserve_size)
+    alg_to_use = alg
+    if alg_to_use is None:
+        print("Using default signing algorithm PS256")
+        alg_to_use = api.SigningAlg.PS256
+
+    return api.CallbackSigner.new_from_signer(callback, alg_to_use, reserve_size)
 
 
 # Example of using openssl in an os shell to sign data using Ps256

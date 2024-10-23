@@ -31,7 +31,7 @@ pub struct CallbackSigner {
 pub struct RemoteSigner {
     signer_callback : Box<dyn SignerCallback>,
     alg: SigningAlg,
-    // TODO: add reserve_size here somehow
+    reserve_size: u32,
 }
 
 impl c2pa::Signer for RemoteSigner {
@@ -58,7 +58,7 @@ impl c2pa::Signer for RemoteSigner {
 
   fn reserve_size(&self) -> usize {
       debug!("c2pa-python: c2pa::Signer for RemoteSigner -> reserve_size: 12248");
-      12248
+      self.reserve_size as usize // TODO: Find better conversion for usize
   }
 }
 
@@ -87,13 +87,13 @@ impl CallbackSigner {
     pub fn new_from_signer(
       callback: Box<dyn SignerCallback>,
       alg: SigningAlg,
-      _reserve_size: u64,
+      reserve_size: u32,
     ) -> Self {
         debug!("c2pa-python: CallbackSigner -> new_from_signer");
         let signer = RemoteSigner {
             signer_callback: callback,
-            alg
-            // reserve_size
+            alg,
+            reserve_size
         };
 
         Self { signer: Box::new(signer) }
