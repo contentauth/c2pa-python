@@ -36,18 +36,18 @@ pub struct RemoteSigner {
 
 impl c2pa::Signer for RemoteSigner {
   fn alg(&self) -> SigningAlg {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> alg: Ps256");
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> alg");
       self.alg
   }
 
   fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> certs: none");
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> certs: none (empty array)");
       Ok(Vec::new())
   }
 
   // signer will return a COSE structure
   fn direct_cose_handling(&self) -> bool {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> direct_cose_handling; true");
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> direct_cose_handling: true");
       true
   }
 
@@ -57,7 +57,7 @@ impl c2pa::Signer for RemoteSigner {
   }
 
   fn reserve_size(&self) -> usize {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> reserve_size: 12248");
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> reserve_size: {}", self.reserve_size);
       self.reserve_size as usize // TODO: Find better conversion for usize
   }
 }

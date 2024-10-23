@@ -105,7 +105,6 @@ class Builder(api.Builder):
 
     def add_resource_file(self, uri, path):
         with open(path, "rb") as file:
-            print("## Opening file at " + path)
             return self.add_resource(uri, file)
 
     def add_ingredient(self, ingredient, format, stream):
@@ -132,7 +131,6 @@ class Builder(api.Builder):
 
     def sign_file(self, signer, sourcePath, outputPath):
         return super().sign_file(signer, sourcePath, outputPath)
-
 
 
 # Implements a C2paStream given a stream handle
@@ -166,6 +164,7 @@ class C2paStream(api.Stream):
     def open_file(path: str, mode: str) -> api.Stream:
         return C2paStream(open(path, mode))
 
+
 # Internal class to implement signer callbacks
 # We need this because the callback expects a class with a sign method
 class SignerCallback(api.SignerCallback):
@@ -193,14 +192,36 @@ class SignerCallback(api.SignerCallback):
 def create_signer(callback, alg, certs, timestamp_url=None):
     return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
 
-def create_remote_signer(callback, alg, reserve_size):
+# Because we "share" SigningAlg enum, seems we need to manually
+# coerce the enum types, as unffi itself does too
+def convert_to_alg(alg):
+    match str(alg):
+        case "SigningAlg.ES256":
+            return api.SigningAlg.ES256
+        case "SigningAlg.ES384":
+            return api.SigningAlg.ES384
+        case "SigningAlg.ES512":
+            return api.SigningAlg.ES512
+        case "SigningAlg.PS256":
+            return api.SigningAlg.PS256
+        case "SigningAlg.PS384":
+            return api.SigningAlg.PS384
+        case "SigningAlg.PS512":
+            return api.SigningAlg.PS512
+        case "SigningAlg.ED25519":
+            return api.SigningAlg.ED25519
+        case _:
+            raise ValueError("Unsupported signing algorithm: " + str(alg))
+
+def create_remote_signer(callback, alg=None):
     alg_to_use = alg
-    if alg_to_use is None:
-        print("Using default signing algorithm PS256")
+    if alg_to_use is not None:
         alg_to_use = api.SigningAlg.PS256
+    else:
+        alg_to_use = convert_to_alg(callback.alg())
 
+    reserve_size = callback.reserve_size()
     return api.CallbackSigner.new_from_signer(callback, alg_to_use, reserve_size)
-
 
 # Example of using openssl in an os shell to sign data using Ps256
 # Note: the openssl command line tool must be installed for this to work

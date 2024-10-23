@@ -212,7 +212,6 @@ impl Builder {
         source: &dyn Stream,
         dest: &dyn Stream,
     ) -> Result<Vec<u8>> {
-        debug!("Builder c2pa-python -> sign");
         // uniffi doesn't allow mutable parameters, so we we use an adapter
         let mut source = StreamAdapter::from(source);
         let mut dest = StreamAdapter::from(dest);
