@@ -333,6 +333,8 @@ pip install -U pytest
 python3 -m build --wheel
 ```
 
+Note: To peek at the Python code (uniffi generated and non-generated), run `maturin develop` and look in the c2pa folder.
+
 ### ManyLinux build
 
 Build using [manylinux](https://github.com/pypa/manylinux) by using a Docker image as follows:
