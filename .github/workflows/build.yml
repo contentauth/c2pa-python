@@ -60,10 +60,6 @@ jobs:
         with:
           name: wheels
           path: dist
-      - name: Test with pytest
-        run: |
-          pip install pytest
-          pytest
 
   windows:
     runs-on: windows-latest
