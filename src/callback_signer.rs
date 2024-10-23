@@ -30,24 +30,24 @@ pub struct CallbackSigner {
 
 pub struct RemoteSigner {
     signer_callback : Box<dyn SignerCallback>,
-    // TODO: add alg here
+    alg: SigningAlg,
     // TODO: add reserve_size here somehow
 }
 
 impl c2pa::Signer for RemoteSigner {
   fn alg(&self) -> SigningAlg {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> alg");
-      c2pa::SigningAlg::Ps256
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> alg: Ps256");
+      self.alg
   }
 
   fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> certs");
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> certs: none");
       Ok(Vec::new())
   }
 
   // signer will return a COSE structure
   fn direct_cose_handling(&self) -> bool {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> direct_cose_handling");
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> direct_cose_handling; true");
       true
   }
 
@@ -57,8 +57,8 @@ impl c2pa::Signer for RemoteSigner {
   }
 
   fn reserve_size(&self) -> usize {
-      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> reserve_size");
-      50000
+      debug!("c2pa-python: c2pa::Signer for RemoteSigner -> reserve_size: 12248");
+      12248
   }
 }
 
@@ -86,12 +86,13 @@ impl CallbackSigner {
 
     pub fn new_from_signer(
       callback: Box<dyn SignerCallback>,
-      _alg: SigningAlg,
+      alg: SigningAlg,
       _reserve_size: u64,
     ) -> Self {
+        debug!("c2pa-python: CallbackSigner -> new_from_signer");
         let signer = RemoteSigner {
             signer_callback: callback,
-            // alg
+            alg
             // reserve_size
         };
 

@@ -106,6 +106,7 @@ class Builder(api.Builder):
 
     def add_resource_file(self, uri, path):
         with open(path, "rb") as file:
+            print("## Opening file at " + path)
             return self.add_resource(uri, file)
 
     def add_ingredient(self, ingredient, format, stream):
