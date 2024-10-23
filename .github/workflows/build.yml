@@ -89,6 +89,11 @@ jobs:
         with:
           name: wheels
           path: dist
+      - name: Install built wheel
+        run: |
+          pip install dissimilar --no-index --find-links dist --force-reinstall
+          pip install pytest
+          pytest
 
   macos_x86:
     runs-on: macos-latest
