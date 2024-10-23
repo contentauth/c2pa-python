@@ -13,7 +13,6 @@
 /// This module exports a C2PA library
 use std::env;
 use std::sync::RwLock;
-use log::debug;
 
 pub use c2pa::SigningAlg;
 
@@ -120,7 +119,6 @@ impl Builder {
     ///
     /// Uniffi does not support constructors that return errors
     pub fn new() -> Self {
-        debug!("Builder c2pa-python -> new");
         Self {
             builder: RwLock::new(c2pa::Builder::default()),
         }
@@ -226,8 +224,6 @@ impl Builder {
     pub fn sign_file(&self, signer: &CallbackSigner, source: &str, dest: &str) -> Result<Vec<u8>> {
         if let Ok(mut builder) = self.builder.try_write() {
             let signer = (*signer).signer();
-
-            debug!("Builder c2pa-python -> sign_file");
             Ok(builder.sign_file(signer.as_ref(), source, dest)?)
         } else {
             Err(Error::RwLock)
