@@ -120,7 +120,6 @@ impl Builder {
     ///
     /// Uniffi does not support constructors that return errors
     pub fn new() -> Self {
-        env_logger::init();
         debug!("Builder c2pa-python -> new");
         Self {
             builder: RwLock::new(c2pa::Builder::default()),

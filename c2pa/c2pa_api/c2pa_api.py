@@ -213,15 +213,12 @@ def convert_to_alg(alg):
         case _:
             raise ValueError("Unsupported signing algorithm: " + str(alg))
 
-def create_remote_signer(callback, alg=None):
-    alg_to_use = alg
-    if alg_to_use is not None:
-        alg_to_use = api.SigningAlg.PS256
-    else:
-        alg_to_use = convert_to_alg(callback.alg())
-
-    reserve_size = callback.reserve_size()
-    return api.CallbackSigner.new_from_signer(callback, alg_to_use, reserve_size)
+def create_remote_signer(callback):
+    return api.CallbackSigner.new_from_signer(
+        callback,
+        convert_to_alg(callback.alg()),
+        callback.reserve_size()
+    )
 
 # Example of using openssl in an os shell to sign data using Ps256
 # Note: the openssl command line tool must be installed for this to work
