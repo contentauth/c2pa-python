@@ -10,7 +10,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::SigningAlg;
+use c2pa::{SigningAlg, Signer};
+use log::debug;
 
 use crate::Result;
 
@@ -24,7 +25,36 @@ pub trait SignerCallback: Send + Sync {
 ///
 /// Uniffi callbacks are only supported as a method in a structure, so this is a workaround
 pub struct CallbackSigner {
-    signer: c2pa::CallbackSigner,
+    signer: Box<dyn Signer + Sync + Send>,
+}
+
+pub struct RemoteSigner {
+    signer_callback : Box<dyn SignerCallback>,
+    alg: SigningAlg,
+    reserve_size: u32,
+}
+
+impl c2pa::Signer for RemoteSigner {
+  fn alg(&self) -> SigningAlg {
+      self.alg
+  }
+
+  fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
+      Ok(Vec::new())
+  }
+
+  // signer will return a COSE structure
+  fn direct_cose_handling(&self) -> bool {
+      true
+  }
+
+  fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+      self.signer_callback.sign(data.to_vec()).map_err(|e| c2pa::Error::BadParam(e.to_string()))
+  }
+
+  fn reserve_size(&self) -> usize {
+      self.reserve_size as usize // TODO: Find better conversion for usize
+  }
 }
 
 impl CallbackSigner {
@@ -45,11 +75,27 @@ impl CallbackSigner {
         if let Some(url) = ta_url {
             signer = signer.set_tsa_url(url);
         }
-        Self { signer }
+
+        Self { signer: Box::new(signer) }
+    }
+
+    pub fn new_from_signer(
+      callback: Box<dyn SignerCallback>,
+      alg: SigningAlg,
+      reserve_size: u32,
+    ) -> Self {
+        debug!("c2pa-python: CallbackSigner -> new_from_signer");
+        let signer = RemoteSigner {
+            signer_callback: callback,
+            alg,
+            reserve_size
+        };
+
+        Self { signer: Box::new(signer) }
     }
 
     /// The python Builder wrapper sign function calls this
-    pub fn signer(&self) -> &c2pa::CallbackSigner {
+    pub fn signer(&self) -> &Box<dyn c2pa::Signer + Sync + Send> {
         &self.signer
     }
 }

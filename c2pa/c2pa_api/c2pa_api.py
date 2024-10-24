@@ -23,7 +23,6 @@ SOURCE_PATH = os.path.join(
 sys.path.append(SOURCE_PATH)
 
 import c2pa.c2pa as api
-#from c2pa import Error, SigningAlg, version, sdk_version
 
 # This module provides a simple Python API for the C2PA library.
 
@@ -134,7 +133,6 @@ class Builder(api.Builder):
         return super().sign_file(signer, sourcePath, outputPath)
 
 
-
 # Implements a C2paStream given a stream handle
 # This is used to pass a file handle to the c2pa library
 # It is used by the Reader and Builder classes internally
@@ -166,6 +164,7 @@ class C2paStream(api.Stream):
     def open_file(path: str, mode: str) -> api.Stream:
         return C2paStream(open(path, mode))
 
+
 # Internal class to implement signer callbacks
 # We need this because the callback expects a class with a sign method
 class SignerCallback(api.SignerCallback):
@@ -193,7 +192,37 @@ class SignerCallback(api.SignerCallback):
 def create_signer(callback, alg, certs, timestamp_url=None):
     return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
 
+# Because we "share" SigningAlg enum in-between bindings,
+# seems we need to manually coerce the enum types,
+# like unffi itself does too
+def convert_to_alg(alg):
+    match str(alg):
+        case "SigningAlg.ES256":
+            return api.SigningAlg.ES256
+        case "SigningAlg.ES384":
+            return api.SigningAlg.ES384
+        case "SigningAlg.ES512":
+            return api.SigningAlg.ES512
+        case "SigningAlg.PS256":
+            return api.SigningAlg.PS256
+        case "SigningAlg.PS384":
+            return api.SigningAlg.PS384
+        case "SigningAlg.PS512":
+            return api.SigningAlg.PS512
+        case "SigningAlg.ED25519":
+            return api.SigningAlg.ED25519
+        case _:
+            raise ValueError("Unsupported signing algorithm: " + str(alg))
 
+# Creates a special case signer that uses direct COSE handling
+# The callback signer should also define the signing algorithm to use
+# And a way to find out the needed reserve size
+def create_remote_signer(callback):
+    return api.CallbackSigner.new_from_signer(
+        callback,
+        convert_to_alg(callback.alg()),
+        callback.reserve_size()
+    )
 
 # Example of using openssl in an os shell to sign data using Ps256
 # Note: the openssl command line tool must be installed for this to work
