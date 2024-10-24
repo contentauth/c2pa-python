@@ -192,8 +192,9 @@ class SignerCallback(api.SignerCallback):
 def create_signer(callback, alg, certs, timestamp_url=None):
     return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
 
-# Because we "share" SigningAlg enum, seems we need to manually
-# coerce the enum types, as unffi itself does too
+# Because we "share" SigningAlg enum in-between bindings,
+# seems we need to manually coerce the enum types,
+# like unffi itself does too
 def convert_to_alg(alg):
     match str(alg):
         case "SigningAlg.ES256":
@@ -213,6 +214,10 @@ def convert_to_alg(alg):
         case _:
             raise ValueError("Unsupported signing algorithm: " + str(alg))
 
+# Crate a remote signer from a callback signer
+# The callback signer should define the algorithm to use
+# And also a way to find out the needed reserve size
+# The callback used would have all signing happen on server
 def create_remote_signer(callback):
     return api.CallbackSigner.new_from_signer(
         callback,
