@@ -98,19 +98,23 @@ class TestBuilder(unittest.TestCase):
             builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output)
-            self.assertIn("Python Test", reader.json())
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
 
     def test_archive_sign(self):
         with open(testPath, "rb") as file:
             builder = Builder(TestBuilder.manifestDefinition)
-            archive = byte_array = io.BytesIO(bytearray())
+            archive = io.BytesIO(bytearray())
             builder.to_archive(archive)
             builder = Builder.from_archive(archive)
-            output = byte_array = io.BytesIO(bytearray())
+            output = io.BytesIO(bytearray())
             builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output)
-            self.assertIn("Python Test", reader.json())
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
 
     def test_remote_sign(self):
         with open(testPath, "rb") as file:
@@ -120,7 +124,9 @@ class TestBuilder(unittest.TestCase):
             manifest_data = builder.sign(TestBuilder.signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output, manifest_data)
-            self.assertIn("Python Test", reader.json())
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
 
 if __name__ == '__main__':
     unittest.main()
