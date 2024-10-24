@@ -214,10 +214,9 @@ def convert_to_alg(alg):
         case _:
             raise ValueError("Unsupported signing algorithm: " + str(alg))
 
-# Crate a remote signer from a callback signer
-# The callback signer should define the algorithm to use
-# And also a way to find out the needed reserve size
-# The callback used would have all signing happen on server
+# Creates a special case signer that uses direct COSE handling
+# The callback signer should also define the signing algorithm to use
+# And a way to find out the needed reserve size
 def create_remote_signer(callback):
     return api.CallbackSigner.new_from_signer(
         callback,
