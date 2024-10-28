@@ -96,8 +96,6 @@ impl Error {
             ClaimVerification(_) | InvalidClaim(_) | JumbfParseError(_) => {
                 Self::Verify { reason: err_str }
             }
-            #[cfg(feature = "add_thumbnails")]
-            ImageError => Self::ImageError(err_str),
             _ => Self::Other { reason: err_str },
         }
     }

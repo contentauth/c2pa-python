@@ -19,14 +19,6 @@ pub use c2pa::SigningAlg;
 /// these all need to be public so that the uniffi macro can see them
 mod error;
 pub use error::{Error, Result};
-#[cfg(feature = "v1")]
-mod json_api;
-#[cfg(feature = "v1")]
-pub use json_api::{read_file, read_ingredient_file, sign_file};
-#[cfg(feature = "v1")]
-mod signer_info;
-#[cfg(feature = "v1")]
-pub use signer_info::{CallbackSigner, SignerCallback, SignerConfig, SignerInfo};
 mod callback_signer;
 pub use callback_signer::{CallbackSigner, SignerCallback};
 mod streams;
@@ -57,6 +49,12 @@ pub struct Reader {
     reader: RwLock<c2pa::Reader>,
 }
 
+impl Default for Reader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Reader {
     pub fn new() -> Self {
         Self {
@@ -77,10 +75,16 @@ impl Reader {
         Ok(json)
     }
 
-    pub fn from_manifest_data_and_stream(&self, manifest_data: &[u8], format: &str, stream: &dyn Stream) -> Result<String> {
+    pub fn from_manifest_data_and_stream(
+        &self,
+        manifest_data: &[u8],
+        format: &str,
+        stream: &dyn Stream,
+    ) -> Result<String> {
         // uniffi doesn't allow mutable parameters, so we we use an adapter
         let mut stream = StreamAdapter::from(stream);
-        let reader = c2pa::Reader::from_manifest_data_and_stream(manifest_data, format, &mut stream)?;
+        let reader =
+            c2pa::Reader::from_manifest_data_and_stream(manifest_data, format, &mut stream)?;
         let json = reader.to_string();
         if let Ok(mut st) = self.reader.try_write() {
             *st = reader;
@@ -112,6 +116,12 @@ impl Reader {
 pub struct Builder {
     // The RwLock is needed because uniffi doesn't allow a mutable self parameter
     builder: RwLock<c2pa::Builder>,
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Builder {

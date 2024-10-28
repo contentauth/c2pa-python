@@ -57,8 +57,8 @@ impl Stream for TestStream {
             //stream.seek(SeekFrom::Start(pos as u64)).map_err(|e| StreamError::Io{ reason: e.to_string()})?;
             let whence = match mode {
                 SeekMode::Start => SeekFrom::Start(pos as u64),
-                SeekMode::End => SeekFrom::End(pos as i64),
-                SeekMode::Current => SeekFrom::Current(pos as i64),
+                SeekMode::End => SeekFrom::End(pos),
+                SeekMode::Current => SeekFrom::Current(pos),
             };
             stream.seek(whence).map_err(|e| Error::Io {
                 reason: e.to_string(),
