@@ -9,6 +9,8 @@ authors = ["Gavin Peacock <gpeacock@adobe.com"]
 name = "c2pa"
 crate-type = ["cdylib"]
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["openssl-src"]
 
 [dependencies]
 c2pa = {version = "0.35.0", features = ["unstable_api", "file_io", "openssl", "pdf", "fetch_remote_manifests"]}
@@ -20,7 +22,6 @@ thiserror = "1.0.49"
 uniffi = "0.24.1"
 openssl-src = "=300.3.1" # Required for openssl-sys
 log = "0.4.21"
-env_logger = "0.11.3"
 
 [build-dependencies]
 uniffi = { version = "0.24.1", features = ["build"] }
