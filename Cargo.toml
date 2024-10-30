@@ -6,9 +6,7 @@ authors = ["Gavin Peacock <gpeacock@adobe.com"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "c2pa"
 crate-type = ["cdylib"]
-
 
 [dependencies]
 c2pa = {version = "0.35.0", features = ["unstable_api", "file_io", "openssl", "pdf", "fetch_remote_manifests"]}
