@@ -24,7 +24,6 @@ pub extern "C" fn ffi_c2pa_uniffi_contract_version() -> u32 {
 
 #[::uniffi::ffi_converter_error(
     tag = crate::UniFfiTag,
-    
     handle_unknown_callback_error,
 )]
 enum r#Error {
@@ -816,6 +815,13 @@ impl r#Stream for UniFFICallbackHandlerStream {
     UniFFICallbackHandlerStream,
     "Stream",
     crate::UniFfiTag
+);
+
+::uniffi::ffi_converter_callback_interface!(
+  dyn r#Stream,
+  UniFFICallbackHandlerStream,
+  "Stream",
+  crate::UniFfiTag
 );
 
 // Register a foreign callback for getting across the FFI.
