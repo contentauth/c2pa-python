@@ -817,13 +817,6 @@ impl r#Stream for UniFFICallbackHandlerStream {
     crate::UniFfiTag
 );
 
-::uniffi::ffi_converter_callback_interface!(
-  dyn r#Stream,
-  UniFFICallbackHandlerStream,
-  "Stream",
-  crate::UniFfiTag
-);
-
 // Register a foreign callback for getting across the FFI.
 #[doc(hidden)]
 static FOREIGN_CALLBACK_SIGNERCALLBACK_INTERNALS: uniffi::ForeignCallbackInternals =
