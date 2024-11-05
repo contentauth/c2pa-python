@@ -114,6 +114,10 @@ class Builder(api.Builder):
 
     def add_ingredient_file(self, ingredient, path):
         format = os.path.splitext(path)[1][1:]
+        if "title" not in ingredient:
+            if isinstance(ingredient, str):
+                ingredient = json.loads(ingredient)
+            ingredient["title"] = os.path.basename(path)
         with open(path, "rb") as file:
             return self.add_ingredient(ingredient, format, file)
 
