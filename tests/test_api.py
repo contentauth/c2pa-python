@@ -51,6 +51,14 @@ manifest_def = {
     ]
 }
 
+ingredient_def = {
+    "relationship": "parentOf",
+    "thumbnail": {
+        "identifier": "A.jpg",
+        "format": "image/jpeg"
+    }
+}
+
 def test_v2_read_cloud_manifest():
     reader = Reader.from_file("tests/fixtures/cloud.jpg")
     manifest = reader.get_active_manifest()
@@ -108,6 +116,8 @@ def test_v2_sign():
         signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
         builder = Builder(manifest_def)
+        
+        builder.add_ingredient_file(ingredient_def, data_dir + "A.jpg")
 
         builder.add_resource_file("A.jpg", data_dir + "A.jpg")
 
@@ -132,6 +142,8 @@ def test_v2_sign():
         assert manifest,["format"] == "image/jpeg"
         # There should be no validation status errors
         assert manifest.get("validation_status") == None
+        assert manifest["ingredients"][0]["relationship"] == "parentOf"
+        assert manifest["ingredients"][0]["title"] == "A.jpg"
     except Exception as e:
         print("Failed to sign manifest store: " + str(e))
         exit(1)
