@@ -65,7 +65,7 @@ def test_v2_read_cloud_manifest():
     assert manifest is not None
 
 def test_version():
-    assert version() == "0.6.0"
+    assert version() == "0.6.1"
 
 def test_sdk_version():
     assert "c2pa-rs/" in sdk_version()
