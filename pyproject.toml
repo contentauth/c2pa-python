@@ -3,7 +3,7 @@ requires = ["maturin>=1.7.4,<2.0","uniffi_bindgen>=0.24,<0.25"]
 build-backend = "maturin"
 
 [project]
-name = "c2pa_python"
+name = "c2pa"
 dependencies = ["cffi"]
 requires-python = ">=3.7"
 description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
