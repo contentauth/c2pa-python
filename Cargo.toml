@@ -6,8 +6,8 @@ authors = ["Gavin Peacock <gpeacock@adobe.com"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "c2pa"
-crate-type = ["cdylib"]
+crate-type = ["lib", "cdylib"]
+name = "c2pa_python"
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["openssl-src"]
