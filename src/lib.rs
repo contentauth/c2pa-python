@@ -49,6 +49,18 @@ pub struct Reader {
     reader: RwLock<c2pa::Reader>,
 }
 
+impl From<c2pa::Reader> for Reader {
+    fn from(reader: c2pa::Reader) -> Self {
+        Self { reader: RwLock::new(reader) }
+    }
+}
+
+impl Into<c2pa::Reader> for Reader {
+    fn into(self) -> c2pa::Reader {
+        self.reader.into_inner().unwrap()
+    }
+}
+
 impl Default for Reader {
     fn default() -> Self {
         Self::new()
