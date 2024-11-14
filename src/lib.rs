@@ -14,7 +14,7 @@
 use std::env;
 use std::sync::RwLock;
 
-pub use c2pa::SigningAlg;
+pub use c2pa::{Signer, SigningAlg};
 
 /// these all need to be public so that the uniffi macro can see them
 mod error;
