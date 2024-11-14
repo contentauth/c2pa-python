@@ -4,9 +4,9 @@
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
 build-python: release
 	python3 -m venv .venv
+	source .venv/bin/activate
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
-	python3 -m pip install -U c2pa-python
 	cargo run --features=uniffi/cli --bin uniffi-bindgen generate src/adobe_api.udl -n --language python -o target/python
 	maturin develop
 	python3 ./tests/test_api.py
