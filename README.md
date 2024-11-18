@@ -1,12 +1,17 @@
 # C2PA Python
 
-This repository implements Python bindings for the Content Authenticity Initiative (CAI) library.
+This package implements Python bindings for the Content Authenticity Initiative (CAI) SDK.
+It enables you to read and validate C2PA manifest data from and add signed manifests to media files in the [supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md).
 
-This library enables you to read and validate C2PA data in supported media files and add signed manifests to supported media files.
-
-**NOTE**: Starting with version 0.5.0, this package has a completely different API from version 0.4.0. See [Release notes](#release-notes) for more information.
+**NOTE**: Starting with version 0.5.0, this package has a completely different API from version 0.4.0. See [Release notes](docs/release-notes.md) for more information.
 
 **WARNING**: This is an prerelease version of this library.  There may be bugs and unimplemented features, and the API is subject to change.
+
+<div style={{display: 'none'}}>
+
+For information on what's in the current release, see the [Release notes](docs/release-notes.md).
+
+</div>
 
 ## Installation
 
@@ -36,7 +41,13 @@ If you tried unsuccessfully to install this package before the [0.40 release](ht
 pip install --upgrade --force-reinstall c2pa-python
 ```
 
+## Supported formats
+
+The Python library [supports the same media file formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md) as the Rust library. 
+
 ## Usage
+
+This package works with media files in the [supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md).
 
 ### Import
 
@@ -100,7 +111,7 @@ def sign_ps256(data: bytes, key_path: str) -> bytes:
 
 **Read and validate C2PA data from an asset file**
 
-Use the `Reader` to read C2PA data from the specified asset file (see [supported file formats](#supported-file-formats)).
+Use the `Reader` to read C2PA data from the specified asset file. 
 
 This examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.
 
@@ -270,29 +281,6 @@ except Exception as err:
     print(err)
  ```
 
-## Supported file formats
-
- | Extensions    | MIME type                                           |
- | ------------- | --------------------------------------------------- |
- | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
- | `avif`        | `image/avif`                                        |
- | `c2pa`        | `application/x-c2pa-manifest-store`                 |
- | `dng`         | `image/x-adobe-dng`                                 |
- | `gif`         | `image/gif`                                         |
- | `heic`        | `image/heic`                                        |
- | `heif`        | `image/heif`                                        |
- | `jpg`, `jpeg` | `image/jpeg`                                        |
- | `m4a`         | `audio/mp4`                                         |
- | `mp3`         | `audio/mpeg`                                        |
- | `mp4`         | `video/mp4`, `application/mp4`                      |
- | `mov`         | `video/quicktime`                                   |
- | `png`         | `image/png`                                         |
- | `svg`         | `image/svg+xml`                                     |
- | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/x-wav`                                       |
- | `webp`        | `image/webp`                                        |
-
-
 ## Development
 
 It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing.
@@ -376,53 +364,6 @@ maturin develop
 python3 tests/training.py
 deactivate
 ```
-
-## Release notes
-
-### Version 0.5.2
-
-New features:
-
-- Allow EC signatures in DER format from signers and verify signature format during validation.
-- Fix bug in signing audio and video files in ISO Base Media File Format (BMFF).
-- Add the ability to verify PDF files (but not to sign them).
-- Increase speed of `sign_file` by 2x or more, when using file paths (uses native Rust file I/O).
-- Fixes for RIFF and GIF formats.
-
-### Version 0.5.0
-
-New features in this release:
-
-- Rewrites the API to be stream-based using a Builder / Reader model.
-- The functions now support throwing `c2pa.Error` values, caught with `try`/`except`.
-- Instead of `c2pa.read_file` you now call `c2pa_api.Reader.from_file` and `reader.json`.
-- Read thumbnails and other resources use `reader.resource_to_stream` or `reader.resource.to_file`.
-- Instead of `c2pa.sign_file` use `c2pa_api.Builder.from_json` and `builder.sign` or `builder.sign_file`.
-- Add thumbnails or other resources with `builder.add_resource` or `builder.add_resource_file`.
-- Add Ingredients with `builder.add_ingredient` or `builder.add_ingredient_file`.
-- You can archive a `Builder` using `builder.to_archive` and reconstruct it with `builder.from_archive`.
-- Signers can be constructed with `c2pa_api.create_signer`.
-- The signer now requires a signing function to keep private keys private.
-- Example signing functions are provided in c2pa_api.py
-
-### Version 0.4.0
-
-This release:
-
-- Changes the name of the import from `c2pa-python` to `c2pa`.
-- Supports pre-built platform wheels for macOS, Windows and [manylinux](https://github.com/pypa/manylinux).
-
-### Version 0.3.0
-
-This release includes some breaking changes to align with future APIs:
-
-- `C2paSignerInfo` moves the `alg` to the first parameter from the 3rd.
-- `c2pa.verify_from_file_json` is now `c2pa.read_file`.
-- `c2pa.ingredient_from_file_json` is now `c2pa.read_ingredient_file`.
-- `c2pa.add_manifest_to_file_json` is now `c2pa.sign_file`.
-- There are many more specific errors types now, and Error messages always start with the name of the error i.e (str(err.value).startswith("ManifestNotFound")).
-- The ingredient thumbnail identifier may be jumbf uri reference if a valid thumb already exists in the active manifest.
-- Extracted file paths for read_file now use a folder structure and different naming conventions.
 
 ## License
 
