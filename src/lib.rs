@@ -111,10 +111,6 @@ impl Reader {
             Err(Error::RwLock)
         }
     }
-
-    pub fn get_reader(&self) -> &Reader {
-        self
-    }
 }
 
 pub struct Builder {
