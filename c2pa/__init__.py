@@ -13,5 +13,6 @@
 
 from .c2pa_api import Reader, Builder, create_signer, create_remote_signer, sign_ps256
 from .c2pa import Error, SigningAlg, CallbackSigner, sdk_version, version
+from .c2pa.c2pa import _UniffiConverterTypeSigningAlg, _UniffiRustBuffer
 
-__all__ = ['Reader', 'Builder', 'CallbackSigner', 'create_signer', 'sign_ps256', 'Error', 'SigningAlg', 'sdk_version', 'version', 'create_remote_signer']
+__all__ = ['Reader', 'Builder', 'CallbackSigner', 'create_signer', 'sign_ps256', 'Error', 'SigningAlg', 'sdk_version', 'version', 'create_remote_signer', '_UniffiConverterTypeSigningAlg', '_UniffiRustBuffer']
