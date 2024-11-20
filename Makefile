@@ -3,6 +3,9 @@
 # Start from clean env: Delete `.venv`, then `python3 -m venv .venv`
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
 
+release:
+	cargo build --release
+
 build-python:
 	rm -rf c2pa/c2pa
 	python3 -m pip uninstall -y maturin
