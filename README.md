@@ -83,7 +83,7 @@ manifest_json = json.dumps({
 
 ### Signing function
 
-The `sign_ps256` function is [defined in the library](https://github.com/contentauth/c2pa-python/blob/main/c2pa/c2pa_api/c2pa_api.py#L209) and is reproduced here to show how signing is performed.
+The `sign_ps256` function is [defined in the library](https://github.com/contentauth/c2pa-python/blob/main/c2pa/c2pa_api/c2pa_api.py#L209) is used in both file-based and stream-based methods and is reproduced here to show how signing is performed.
 
 ```py
 # Example of using Python crypto to sign data using openssl with Ps256
