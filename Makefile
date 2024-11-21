@@ -12,3 +12,7 @@ build-python:
 	python3 -m pip uninstall -y uniffi
 	python3 -m pip install -r requirements.txt
 	maturin develop
+
+test:
+	python3 ./tests/test_unit_tests.py
+	python3 ./tests/test_api.py
