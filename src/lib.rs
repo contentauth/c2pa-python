@@ -112,7 +112,7 @@ impl Reader {
         }
     }
 
-    pub fn get_raw_reader(&self) -> &RwLock<c2pa::Reader>{
+    pub fn get_raw_reader(&self) -> &RwLock<c2pa::Reader> {
         &self.reader
     }
 }
