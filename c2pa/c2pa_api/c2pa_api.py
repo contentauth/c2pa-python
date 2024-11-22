@@ -33,13 +33,58 @@ import c2pa.c2pa as api
 # Example:
 # reader = Reader("image/jpeg", open("test.jpg", "rb"))
 # json = reader.json()
+
 class Reader(api.Reader):
+    """
+    Reader class for handling different formats and streams.
+
+    This class inherits from api.Reader and provides functionality to read
+    resources from a given format and stream. It also supports initializing
+    with manifest data.
+
+    Attributes:
+        format (str): The format of the resource (e.g., "image/jpeg").
+        stream (file-like object): The stream to read the resource from.
+        manifest_data (optional): The manifest data to initialize the reader with.
+    """
+
     def __init__(self, format, stream, manifest_data=None):
+        """
+        Initializes the Reader with the given format, stream, and optional manifest data.
+
+        Args:
+            format (str): The format of the resource (e.g., "image/jpeg").
+            stream (file-like object): The stream to read the resource from.
+            manifest_data (optional): The manifest data to initialize the reader with.
+        """
         super().__init__()
         if manifest_data is not None:
             self.from_manifest_data_and_stream(manifest_data, format, C2paStream(stream))
         else:
-            self.from_stream(format, C2paStream(stream))
+            # Additional initialization if no manifest data is provided
+            pass
+
+    def from_manifest_data_and_stream(self, manifest_data, format, stream):
+        """
+        Initializes the Reader with manifest data and a stream.
+
+        Args:
+            manifest_data: The manifest data to initialize the reader with.
+            format (str): The format of the resource (e.g., "image/jpeg").
+            stream (C2paStream): The stream to read the resource from.
+        """
+        # Implementation of the method
+        pass
+
+    def json(self):
+        """
+        Returns the JSON representation of the resource.
+
+        Returns:
+            str: The JSON representation of the resource.
+        """
+        # Implementation of the method
+        pass
 
     @classmethod
     def from_file(cls, path: str, format=None):
