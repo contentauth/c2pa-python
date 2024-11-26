@@ -67,7 +67,7 @@ auditwheel repair target/wheels/c2pa_python-0.4.0-py3-none-linux_aarch64.whl
 
 ## Testing
 
-We use [PyTest](https://docs.pytest.org/) for testing.
+We use [PyTest](https://docs.pytest.org/) and [unittest](https://docs.python.org/3/library/unittest.html) for testing.
 
 Run tests by following these steps:
 
@@ -85,3 +85,21 @@ maturin develop
 python3 tests/training.py
 deactivate
 ```
+
+### Testing during bindings development
+
+While developing bindings locally, we use [unittest](https://docs.python.org/3/library/unittest.html), since [PyTest](https://docs.pytest.org/) can get confused by virtual environment re-deployments (especially if you bump the version number).
+
+To run tests while developing bindings, enter this command:
+
+```sh
+make test
+```
+
+To rebuild and test, enter these commands:
+
+```sh
+make build-python
+make test
+```
+
