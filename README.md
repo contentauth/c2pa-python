@@ -1,7 +1,7 @@
-# C2PA Python
+# C2PA Python library
 
-This package implements Python bindings for the Content Authenticity Initiative (CAI) SDK.
-It enables you to read and validate C2PA manifest data from and add signed manifests to media files in the [supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md).
+The [c2pa-python](https://github.com/contentauth/c2pa-python) repository implements Python bindings for the Content Authenticity Initiative (CAI) SDK.
+It enables you to read and validate C2PA manifest data from and add signed manifests to media files in supported formats.
 
 **NOTE**: Starting with version 0.5.0, this package has a completely different API from version 0.4.0. See [Release notes](docs/release-notes.md) for more information.
 
