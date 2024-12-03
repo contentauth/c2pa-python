@@ -17,14 +17,13 @@ import sys
 import tempfile
 
 PROJECT_PATH = os.getcwd()
-SOURCE_PATH = os.path.join(
-    PROJECT_PATH,"target","python"
-)
+SOURCE_PATH = os.path.join(PROJECT_PATH, "target", "python")
 sys.path.append(SOURCE_PATH)
 
 import c2pa.c2pa as api
 
 # This module provides a simple Python API for the C2PA library.
+
 
 # Reader is used to read a manifest store from a stream or file.
 # It performs full validation on the manifest store.
@@ -37,7 +36,9 @@ class Reader(api.Reader):
     def __init__(self, format, stream, manifest_data=None):
         super().__init__()
         if manifest_data is not None:
-            self.from_manifest_data_and_stream(manifest_data, format, C2paStream(stream))
+            self.from_manifest_data_and_stream(
+                manifest_data, format, C2paStream(stream)
+            )
         else:
             self.from_stream(format, C2paStream(stream))
 
@@ -66,6 +67,7 @@ class Reader(api.Reader):
     def resource_to_file(self, uri, path) -> None:
         with open(path, "wb") as file:
             return self.resource_to_stream(uri, file)
+
 
 # The Builder is used to construct a new Manifest and add it to a stream or file.
 # The initial manifest is defined by a Manifest Definition dictionary.
@@ -130,7 +132,7 @@ class Builder(api.Builder):
         super().from_archive(self, C2paStream(stream))
         return self
 
-    def sign(self, signer, format, input, output = None):
+    def sign(self, signer, format, input, output=None):
         return super().sign(signer, format, C2paStream(input), C2paStream(output))
 
     def sign_file(self, signer, sourcePath, outputPath):
@@ -145,7 +147,7 @@ class C2paStream(api.Stream):
         self.stream = stream
 
     def read_stream(self, length: int) -> bytes:
-        #print("Reading " + str(length) + " bytes")
+        # print("Reading " + str(length) + " bytes")
         return self.stream.read(length)
 
     def seek_stream(self, pos: int, mode: api.SeekMode) -> int:
@@ -154,11 +156,11 @@ class C2paStream(api.Stream):
             whence = 1
         elif mode is api.SeekMode.END:
             whence = 2
-        #print("Seeking to " + str(pos) + " with whence " + str(whence))
+        # print("Seeking to " + str(pos) + " with whence " + str(whence))
         return self.stream.seek(pos, whence)
 
     def write_stream(self, data: str) -> int:
-        #print("Writing " + str(len(data)) + " bytes")
+        # print("Writing " + str(len(data)) + " bytes")
         return self.stream.write(data)
 
     def flush_stream(self) -> None:
@@ -178,10 +180,11 @@ class SignerCallback(api.SignerCallback):
 
 
 # Convenience class so we can just pass in a callback function
-#class CallbackSigner(c2pa.CallbackSigner):
+# class CallbackSigner(c2pa.CallbackSigner):
 #    def __init__(self, callback, alg, certs, timestamp_url=None):
 #        cb = SignerCallback(callback)
 #        super().__init__(cb, alg, certs, timestamp_url)
+
 
 # Creates a Signer given a callback and configuration values
 # It is used by the Builder class to sign the asset
@@ -195,6 +198,7 @@ class SignerCallback(api.SignerCallback):
 #
 def create_signer(callback, alg, certs, timestamp_url=None):
     return api.CallbackSigner(SignerCallback(callback), alg, certs, timestamp_url)
+
 
 # Because we "share" SigningAlg enum in-between bindings,
 # seems we need to manually coerce the enum types,
@@ -218,15 +222,15 @@ def convert_to_alg(alg):
         case _:
             raise ValueError("Unsupported signing algorithm: " + str(alg))
 
+
 # Creates a special case signer that uses direct COSE handling
 # The callback signer should also define the signing algorithm to use
 # And a way to find out the needed reserve size
 def create_remote_signer(callback):
     return api.CallbackSigner.new_from_signer(
-        callback,
-        convert_to_alg(callback.alg()),
-        callback.reserve_size()
+        callback, convert_to_alg(callback.alg()), callback.reserve_size()
     )
+
 
 # Example of using openssl in an os shell to sign data using Ps256
 # Note: the openssl command line tool must be installed for this to work
@@ -234,12 +238,18 @@ def sign_ps256_shell(data: bytes, key_path: str) -> bytes:
     with tempfile.NamedTemporaryFile() as bytes:
         bytes.write(data)
         signature = tempfile.NamedTemporaryFile()
-        os.system("openssl dgst -sha256 -sign {} -out {} {}".format(key_path, signature.name, bytes.name))
+        os.system(
+            "openssl dgst -sha256 -sign {} -out {} {}".format(
+                key_path, signature.name, bytes.name
+            )
+        )
         return signature.read()
+
 
 # Example of using python crypto to sign data using openssl with Ps256
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+
 
 def sign_ps256(data: bytes, key: bytes) -> bytes:
     private_key = serialization.load_pem_private_key(
@@ -249,12 +259,12 @@ def sign_ps256(data: bytes, key: bytes) -> bytes:
     signature = private_key.sign(
         data,
         padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH
+            mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
         ),
-        hashes.SHA256()
+        hashes.SHA256(),
     )
     return signature
+
 
 def load_settings_file(path: str, format=None):
     with open(path, "r") as file:
