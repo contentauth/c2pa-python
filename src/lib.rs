@@ -14,7 +14,7 @@
 use std::env;
 use std::sync::RwLock;
 
-pub use c2pa::{Signer, SigningAlg};
+pub use c2pa::{Signer, SigningAlg, settings::load_settings_from_str};
 
 /// these all need to be public so that the uniffi macro can see them
 mod error;
@@ -43,6 +43,11 @@ pub fn sdk_version() -> String {
         c2pa::NAME,
         c2pa::VERSION
     )
+}
+
+pub fn load_settings(settings: &str, format: &str) -> Result<()> {
+    load_settings_from_str(settings, format)?;
+    Ok(())
 }
 
 pub struct Reader {
@@ -101,6 +106,14 @@ impl Reader {
             Err(Error::RwLock)
         }
     }
+
+    // pub fn validation_state(&self) -> Result<ValidationState> {
+    //     if let Ok(st) = self.reader.validation_state() {
+    //         Ok(st.validation_state())
+    //     } else {
+    //         Err(Error::RwLock)
+    //     }
+    // }   
 
     pub fn resource_to_stream(&self, uri: &str, stream: &dyn Stream) -> Result<u64> {
         if let Ok(reader) = self.reader.try_read() {
