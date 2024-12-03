@@ -255,3 +255,11 @@ def sign_ps256(data: bytes, key: bytes) -> bytes:
         hashes.SHA256()
     )
     return signature
+
+def load_settings_file(path: str, format=None):
+    with open(path, "r") as file:
+        if format is None:
+            # determine the format from the file extension
+            format = os.path.splitext(path)[1][1:]
+        settings = file.read()
+    api.load_settings(settings, format)

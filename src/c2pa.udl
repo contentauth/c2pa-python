@@ -2,6 +2,8 @@
 namespace c2pa {
   string version();
   string sdk_version();
+  [Throws=Error]
+  void load_settings([ByRef] string format, [ByRef] string settings);
 };
 
 [Error]

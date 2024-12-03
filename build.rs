@@ -1,3 +1,4 @@
+// Purpose: Generate the scaffolding for the uniffi library.
 fn main() {
-    uniffi::generate_scaffolding("./src/c2pa.udl").unwrap();
+    let _result = uniffi::generate_scaffolding("./src/c2pa.udl");
 }
