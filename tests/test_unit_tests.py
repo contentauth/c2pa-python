@@ -25,11 +25,10 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_version(self):
-        self.assertIn("0.6.1", sdk_version())
+        self.assertIn("0.6.2", sdk_version())
 
 
 class TestReader(unittest.TestCase):
-
     def test_stream_read(self):
         with open(testPath, "rb") as file:
             reader = Reader("image/jpeg",file)
