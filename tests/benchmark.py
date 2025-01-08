@@ -1,43 +1,65 @@
-from c2pa import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256
+# Copyright 2024 Adobe. All rights reserved.
+# This file is licensed to you under the Apache License,
+# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+# or the MIT license (http://opensource.org/licenses/MIT),
+# at your option.
+# Unless required by applicable law or agreed to in writing,
+# this software is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+# specific language governing permissions and limitations under
+# each license.
+
+from c2pa import (
+    Builder,
+    Error,
+    Reader,
+    SigningAlg,
+    create_signer,
+    sdk_version,
+    sign_ps256,
+)
 import os
 import io
+
 PROJECT_PATH = os.getcwd()
 
 testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 manifestDefinition = {
     "claim_generator": "python_test",
-    "claim_generator_info": [{
-        "name": "python_test",
-        "version": "0.0.1",
-    }],
+    "claim_generator_info": [
+        {
+            "name": "python_test",
+            "version": "0.0.1",
+        }
+    ],
     "format": "image/jpeg",
     "title": "Python Test Image",
     "ingredients": [],
     "assertions": [
-        {   'label': 'stds.schema-org.CreativeWork',
-            'data': {
-                '@context': 'http://schema.org/',
-                '@type': 'CreativeWork',
-                'author': [
-                    {   '@type': 'Person',
-                        'name': 'Gavin Peacock'
-                    }
-                ]
+        {
+            "label": "stds.schema-org.CreativeWork",
+            "data": {
+                "@context": "http://schema.org/",
+                "@type": "CreativeWork",
+                "author": [{"@type": "Person", "name": "Gavin Peacock"}],
             },
-            'kind': 'Json'
+            "kind": "Json",
         }
-    ]
+    ],
 }
-private_key = open("tests/fixtures/ps256.pem","rb").read()
+private_key = open("tests/fixtures/ps256.pem", "rb").read()
+
 
 # Define a function that signs data with PS256 using a private key
 def sign(data: bytes) -> bytes:
     print("date len = ", len(data))
     return sign_ps256(data, private_key)
 
+
 # load the public keys from a pem file
-certs = open("tests/fixtures/ps256.pub","rb").read()
+certs = open("tests/fixtures/ps256.pub", "rb").read()
 
 # Create a local Ps256 signer with certs and a timestamp server
 signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
@@ -50,22 +72,27 @@ testPath = "/Users/gpeacock/Pictures/Lightroom Saved Photos/IMG_0483.jpg"
 testPath = "tests/fixtures/c.jpg"
 outputPath = "target/python_out.jpg"
 
+
 def test_files_build():
-        # Delete the output file if it exists
+    # Delete the output file if it exists
     if os.path.exists(outputPath):
         os.remove(outputPath)
     builder.sign_file(signer, testPath, outputPath)
 
+
 def test_streams_build():
-    #with open(testPath, "rb") as file:
+    # with open(testPath, "rb") as file:
     output = io.BytesIO(bytearray())
     builder.sign(signer, "image/jpeg", io.BytesIO(source), output)
+
 
 def test_func(benchmark):
     benchmark(test_files_build)
 
+
 def test_streams(benchmark):
     benchmark(test_streams_build)
 
-#def test_signer(benchmark):
+
+# def test_signer(benchmark):
 #    benchmark(sign_ps256, data, private_key)
