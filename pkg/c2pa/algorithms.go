@@ -5,7 +5,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 
-	rustC2PA "git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa/generated/c2pa"
+	rustC2PA "git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
 )
 
 type SigningAlgorithmName string

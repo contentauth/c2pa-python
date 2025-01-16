@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"git.aquareum.tv/aquareum-tv/c2pa-go/pkg/c2pa"
+	"git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa"
 )
 
 func Start() error {

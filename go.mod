@@ -1,4 +1,4 @@
-module git.aquareum.tv/aquareum-tv/c2pa-go
+module git.aquareum.tv/streamplace/c2pa-go
 
 go 1.22.2
 
