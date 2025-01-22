@@ -52,6 +52,7 @@ manifest_def = {
     ]
 }
 
+# ingredient we will use for testing
 ingredient_def = {
     "relationship": "parentOf",
     "thumbnail": {
