@@ -12,10 +12,7 @@
 
 use c2pa::{Signer, SigningAlg};
 // RawSigner is currently used only fully qualified
-use c2pa_crypto::{
-    raw_signature::RawSignerError,
-    time_stamp::TimeStampProvider,
-};
+use c2pa_crypto::{raw_signature::RawSignerError, time_stamp::TimeStampProvider};
 use log::debug;
 
 use crate::Result;
