@@ -11,7 +11,10 @@
 // each license.
 
 use c2pa::{Signer, SigningAlg};
-use c2pa_crypto::raw_signature::RawSigner;
+use c2pa_crypto::{
+  raw_signature::{RawSigner, RawSignerError},
+  time_stamp::TimeStampProvider,
+};
 use log::debug;
 
 use crate::Result;
@@ -33,6 +36,46 @@ pub struct RemoteSigner {
     signer_callback: Box<dyn SignerCallback>,
     alg: SigningAlg,
     reserve_size: u32,
+}
+
+impl TimeStampProvider for RemoteSigner {}
+
+impl c2pa_crypto::raw_signature::RawSigner for RemoteSigner {
+    fn sign(
+        &self,
+        data: &[u8],
+    ) -> std::result::Result<Vec<u8>, RawSignerError> {
+        let signature_result = self.signer_callback.sign(data.to_vec());
+
+        match signature_result {
+            Ok(signature) => Ok(signature),
+            Err(e) => Err(c2pa_crypto::raw_signature::RawSignerError::IoError(
+                e.to_string(),
+            )),
+        }
+    }
+
+    fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
+        match self.alg {
+            SigningAlg::Es256 => c2pa_crypto::raw_signature::SigningAlg::Es256,
+            SigningAlg::Es384 => c2pa_crypto::raw_signature::SigningAlg::Es384,
+            SigningAlg::Es512 => c2pa_crypto::raw_signature::SigningAlg::Es512,
+            SigningAlg::Ps256 => c2pa_crypto::raw_signature::SigningAlg::Ps256,
+            SigningAlg::Ps384 => c2pa_crypto::raw_signature::SigningAlg::Ps384,
+            SigningAlg::Ps512 => c2pa_crypto::raw_signature::SigningAlg::Ps512,
+            SigningAlg::Ed25519 => c2pa_crypto::raw_signature::SigningAlg::Ed25519,
+        }
+    }
+
+    fn cert_chain(
+        &self,
+    ) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.reserve_size as usize
+    }
 }
 
 impl Signer for RemoteSigner {
