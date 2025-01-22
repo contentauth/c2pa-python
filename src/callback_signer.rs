@@ -13,7 +13,7 @@
 use c2pa::{Signer, SigningAlg};
 // RawSigner is currently used only fully qualified
 use c2pa_crypto::{
-    raw_signature::{RawSigner, RawSignerError},
+    raw_signature::RawSignerError,
     time_stamp::TimeStampProvider,
 };
 use log::debug;
@@ -34,12 +34,6 @@ pub struct CallbackSigner {
 }
 
 pub struct RemoteSigner {
-    signer_callback: Box<dyn SignerCallback>,
-    alg: SigningAlg,
-    reserve_size: u32,
-}
-
-pub struct RawRemoteSigner {
     signer_callback: Box<dyn SignerCallback>,
     alg: SigningAlg,
     reserve_size: u32,
