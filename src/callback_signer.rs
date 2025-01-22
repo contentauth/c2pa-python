@@ -11,6 +11,7 @@
 // each license.
 
 use c2pa::{Signer, SigningAlg};
+use c2pa_crypto::raw_signature::RawSigner;
 use log::debug;
 
 use crate::Result;
@@ -56,6 +57,10 @@ impl Signer for RemoteSigner {
     // signer will return a COSE structure
     fn direct_cose_handling(&self) -> bool {
         true
+    }
+
+    fn raw_signer(&self) -> Box<&dyn RawSigner> {
+        todo!()
     }
 }
 
