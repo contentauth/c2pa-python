@@ -12,8 +12,8 @@
 
 use c2pa::{Signer, SigningAlg};
 use c2pa_crypto::{
-  raw_signature::{RawSigner, RawSignerError},
-  time_stamp::TimeStampProvider,
+    raw_signature::{RawSigner, RawSignerError},
+    time_stamp::TimeStampProvider,
 };
 use log::debug;
 
@@ -38,13 +38,16 @@ pub struct RemoteSigner {
     reserve_size: u32,
 }
 
+pub struct RawRemoteSigner {
+    signer_callback: Box<dyn SignerCallback>,
+    alg: SigningAlg,
+    reserve_size: u32,
+}
+
 impl TimeStampProvider for RemoteSigner {}
 
 impl c2pa_crypto::raw_signature::RawSigner for RemoteSigner {
-    fn sign(
-        &self,
-        data: &[u8],
-    ) -> std::result::Result<Vec<u8>, RawSignerError> {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         let signature_result = self.signer_callback.sign(data.to_vec());
 
         match signature_result {
@@ -64,12 +67,11 @@ impl c2pa_crypto::raw_signature::RawSigner for RemoteSigner {
             SigningAlg::Ps384 => c2pa_crypto::raw_signature::SigningAlg::Ps384,
             SigningAlg::Ps512 => c2pa_crypto::raw_signature::SigningAlg::Ps512,
             SigningAlg::Ed25519 => c2pa_crypto::raw_signature::SigningAlg::Ed25519,
+            _ => c2pa_crypto::raw_signature::SigningAlg::Es256,
         }
     }
 
-    fn cert_chain(
-        &self,
-    ) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
         Ok(Vec::new())
     }
 
@@ -102,8 +104,8 @@ impl Signer for RemoteSigner {
         true
     }
 
-    fn raw_signer(&self) -> Box<&dyn RawSigner> {
-        todo!()
+    fn raw_signer(&self) -> Box<&dyn c2pa_crypto::raw_signature::RawSigner> {
+        Box::new(self)
     }
 }
 
