@@ -64,7 +64,7 @@ impl Error {
             | TooManyManifestStores => Self::Manifest { reason: err_str },
             ClaimMissing { label } => Self::ManifestNotFound { reason: err_str },
             AssertionDecoding(_) | ClaimDecoding => Self::Decoding { reason: err_str },
-            AssertionEncoding | XmlWriteError | ClaimEncoding => Self::Encoding { reason: err_str },
+            AssertionEncoding(_) | XmlWriteError | ClaimEncoding => Self::Encoding { reason: err_str },
             InvalidCoseSignature { coset_error } => Self::Signature { reason: err_str },
             CoseSignatureAlgorithmNotSupported
             | CoseMissingKey
