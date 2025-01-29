@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"crypto/rand"
 
-	rustC2PA "git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
+	rustC2PA "git.stream.place/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
 )
 
 type C2PACallbackSigner struct {

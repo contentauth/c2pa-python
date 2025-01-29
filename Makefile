@@ -25,5 +25,5 @@ go:
 # need es256k-enabled c2patool
 .PHONY: test
 test:
-	cargo install --git https://git.aquareum.tv/aquareum-tv/c2patool.git
+	cargo install --git https://git.stream.place/aquareum-tv/c2patool.git
 	go test ./pkg/...

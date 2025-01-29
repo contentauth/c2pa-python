@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	rustC2PA "git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
-	"git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa/generated/manifestdefinition"
-	"git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa/generated/manifeststore"
+	rustC2PA "git.stream.place/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
+	"git.stream.place/streamplace/c2pa-go/pkg/c2pa/generated/manifestdefinition"
+	"git.stream.place/streamplace/c2pa-go/pkg/c2pa/generated/manifeststore"
 )
 
 // #cgo LDFLAGS: -L../../target/release -lc2pa -lm

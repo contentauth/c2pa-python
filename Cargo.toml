@@ -10,7 +10,7 @@ name = "c2pa"
 crate-type = ["staticlib"]
 
 [dependencies]
-c2pa = { git = "https://git.aquareum.tv/aquareum-tv/c2pa-rs.git", rev = "5ca8c085a05daa36a91fb9edfdee6098cffac69b", features = [
+c2pa = { git = "https://git.stream.place/aquareum-tv/c2pa-rs.git", rev = "5ca8c085a05daa36a91fb9edfdee6098cffac69b", features = [
   "unstable_api",
   "openssl",
 ] }

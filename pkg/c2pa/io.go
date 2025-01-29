@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	rustC2PA "git.aquareum.tv/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
+	rustC2PA "git.stream.place/streamplace/c2pa-go/pkg/c2pa/generated/c2pa"
 )
 
 // Wrapped io.ReadSeeker for passing to Rust. Doesn't write.
