@@ -17,7 +17,7 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 
-from c2pa import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256
+from c2pa import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256, load_settings_file
 
 PROJECT_PATH = os.getcwd()
 
@@ -51,6 +51,12 @@ class TestReader(unittest.TestCase):
             with open(testPath, "rb") as file:
                 reader = Reader("badFormat", file)
 
+    def test_settings_trust(self):
+        load_settings_file("tests/fixtures/settings.toml")
+        with open(testPath, "rb") as file:
+            reader = Reader("image/jpeg",file)
+            json = reader.json()
+            self.assertIn("C.jpg", json)
 
 class TestBuilder(unittest.TestCase):
     # Define a manifest as a dictionary
