@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-python"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com"]
 

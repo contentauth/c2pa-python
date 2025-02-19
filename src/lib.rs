@@ -17,7 +17,7 @@
 use std::env;
 use std::sync::RwLock;
 
-pub use c2pa::{Signer, SigningAlg};
+pub use c2pa::{settings::load_settings_from_str, Signer, SigningAlg};
 
 /// these all need to be public so that the uniffi macro can see them
 mod error;
@@ -46,6 +46,11 @@ pub fn sdk_version() -> String {
         c2pa::NAME,
         c2pa::VERSION
     )
+}
+
+pub fn load_settings(settings: &str, format: &str) -> Result<()> {
+    load_settings_from_str(settings, format)?;
+    Ok(())
 }
 
 pub struct Reader {
