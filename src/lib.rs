@@ -110,14 +110,6 @@ impl Reader {
         }
     }
 
-    // pub fn validation_state(&self) -> Result<ValidationState> {
-    //     if let Ok(st) = self.reader.validation_state() {
-    //         Ok(st.validation_state())
-    //     } else {
-    //         Err(Error::RwLock)
-    //     }
-    // }   
-
     pub fn resource_to_stream(&self, uri: &str, stream: &dyn Stream) -> Result<u64> {
         if let Ok(reader) = self.reader.try_read() {
             let mut stream = StreamAdapter::from(stream);

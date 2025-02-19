@@ -1,4 +1,5 @@
 # This sample c2pa settings file enables a trust list. 
+# We use the toml format here because it does a good job of containing the PEM formatted certificates.
 # In practice you should update the trust anchors from a remote source as needed.
 # Many other settings are available, see the c2pa documentation for more information.
 [verify]
