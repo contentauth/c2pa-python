@@ -302,7 +302,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-mac-x86_64
           path: dist
 
   macos_aarch64:
@@ -331,7 +331,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-mac-aarch64
           path: dist
 
   sdist:
