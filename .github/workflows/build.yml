@@ -2,6 +2,11 @@ name: Build
 
 on:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
   push:
     branches:
       - main
@@ -233,9 +238,9 @@ jobs:
                 apt update -y && apt-get install -y libssl-dev openssl pkg-config
             fi
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-${{ matrix.target }}
           path: dist
 
   windows:
@@ -266,9 +271,9 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-${{ matrix.target }}
           path: dist
 
   macos_x86:
@@ -295,9 +300,9 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-mac-x86_64
           path: dist
 
   macos_aarch64:
@@ -324,9 +329,9 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-mac-aarch64
           path: dist
 
   sdist:
@@ -347,7 +352,7 @@ jobs:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: dist
@@ -361,8 +366,9 @@ jobs:
     environment: Publish
     needs: [linux, windows, macos_x86, macos_aarch64, sdist]
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
+          pattern: wheels-*
           name: wheels
       - name: Publish to PyPI
         uses: PyO3/maturin-action@v1

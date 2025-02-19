@@ -80,7 +80,7 @@ impl<'a> From<&'a dyn Stream> for StreamAdapter<'a> {
 
 // impl<'a> c2pa::CAIReadWrite for StreamAdapter<'a> {}
 
-impl<'a> Read for StreamAdapter<'a> {
+impl Read for StreamAdapter<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let bytes = self
             .stream
@@ -93,7 +93,7 @@ impl<'a> Read for StreamAdapter<'a> {
     }
 }
 
-impl<'a> Seek for StreamAdapter<'a> {
+impl Seek for StreamAdapter<'_> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         let (pos, mode) = match pos {
             SeekFrom::Current(pos) => (pos, SeekMode::Current),
@@ -107,7 +107,7 @@ impl<'a> Seek for StreamAdapter<'a> {
     }
 }
 
-impl<'a> Write for StreamAdapter<'a> {
+impl Write for StreamAdapter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let len = self
             .stream

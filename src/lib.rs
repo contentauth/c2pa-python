@@ -10,6 +10,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// Uniffi is generating a clippy error in their output. This ignores that error.
+#![allow(clippy::empty_line_after_doc_comments)]
+
 /// This module exports a C2PA library
 use std::env;
 use std::sync::RwLock;
@@ -125,7 +128,7 @@ impl Reader {
         }
     }
 
-    pub fn get_raw_reader(&self) -> &RwLock<c2pa::Reader>{
+    pub fn get_raw_reader(&self) -> &RwLock<c2pa::Reader> {
         &self.reader
     }
 }
