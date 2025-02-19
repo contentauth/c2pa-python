@@ -17,7 +17,7 @@
 use std::env;
 use std::sync::RwLock;
 
-pub use c2pa::{Signer, SigningAlg, settings::load_settings_from_str};
+pub use c2pa::{settings::load_settings_from_str, Signer, SigningAlg};
 
 /// these all need to be public so that the uniffi macro can see them
 mod error;
