@@ -6,6 +6,10 @@
 
 See [Release tag 0.6.0](https://github.com/contentauth/c2pa-python/releases/tag/v0.6.0).
 
+### Breaking changes
+
+The signature of the `c2pa.sign_ps256()` method changed.  Previously, the argument was a file path but now its the PEM certificate string. 
+
 ## Version 0.5.2
 
 New features:
