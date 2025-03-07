@@ -180,54 +180,39 @@ except Exception as err:
 Use a `Builder` to add a manifest to an asset:
 
 ```py
+from c2pa import Builder, Error, Reader, SigningAlg, create_signer, sdk_version, sign_ps256, version
+...
+data_dir = "tests/fixtures/"
 try:
-  # Define a function to sign the claim bytes
-  # In this case we are using a pre-defined sign_ps256 method, passing in our private cert
-  # Normally this cert would be kept safe in some other location
-  def private_sign(data: bytes) -> bytes:
-    return sign_ps256(data, "tests/fixtures/ps256.pem")
+    key = open(data_dir + "ps256.pem", "rb").read()
+    def sign(data: bytes) -> bytes:
+        return sign_ps256(data, key)
 
-  # read our public certs into memory
-  certs = open(data_dir + "ps256.pub", "rb").read()
+    certs = open(data_dir + "ps256.pub", "rb").read()
+    # Create a local signer from a certificate pem file
+    signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
 
-  # Create a signer from the private signer, certs and a time stamp service url
-  signer = create_signer(private_sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
+    builder = Builder(manifest_def)
 
-  # Create a builder add a thumbnail resource and an ingredient file.
-  builder = Builder(manifest_json)
+    builder.add_ingredient_file(ingredient_def, data_dir + "A.jpg")
+    builder.add_resource_file("A.jpg", data_dir + "A.jpg")
+    builder.to_archive(open("target/archive.zip", "wb"))
+    
+    builder = Builder.from_archive(open("target/archive.zip", "rb"))
 
-  # Add the resource from a stream
-  a_thumbnail_jpg_stream = open("tests/fixtures/A_thumbnail.jpg", "rb")
-  builder.add_resource("image/jpeg", a_thumbnail_jpg_stream)
+    with tempfile.TemporaryDirectory() as output_dir:
+        output_path = output_dir + "out.jpg"
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        c2pa_data = builder.sign_file(signer, data_dir + "A.jpg", output_dir + "out.jpg")
+        assert len(c2pa_data) > 0
 
-  # Define an ingredient, in this case a parent ingredient named A.jpg, with a thumbnail
-  ingredient_json = {
-    "title": "A.jpg",
-    "relationship": "parentOf", # "parentOf", "componentOf" or "inputTo"
-    "thumbnail": {
-        "identifier": "thumbnail",
-        "format": "image/jpeg"
-    }
-  }
+    reader = Reader.from_file(output_dir + "out.jpg")
+    print(reader.json())
+    manifest_store = json.loads(reader.json())
+    manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
-  # Add the ingredient from a stream
-  a_jpg_stream = open("tests/fixtures/A.jpg", "rb")
-  builder.add_ingredient("image/jpeg", a_jpg_stream)
-
-  # At this point we could archive or unarchive our Builder to continue later.
-  # In this example we use a bytearray for the archive stream.
-  # all ingredients and resources will be saved in the archive
-  archive = io.BytesIO(bytearray())
-  builder.to_archive(archive)
-  archive.seek()
-  builder = builder.from_archive(archive)
-
-  # Sign the builder with a stream and output it to a stream
-  # This returns the binary manifest data that could be uploaded to cloud storage.
-  input_stream = open("tests/fixtures/A.jpg", "rb")
-  output_stream = open("target/out.jpg", "wb")
-  c2pa_data = builder.sign(signer, "image/jpeg", input_stream, output_stream)
-
-except Exception as err:
-    print(err)
+except Exception as e:
+    print("Failed to sign manifest store: " + str(e))
+    exit(1)
  ```
