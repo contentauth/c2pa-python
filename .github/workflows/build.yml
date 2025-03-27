@@ -369,10 +369,16 @@ jobs:
       # IMPORTANT: this permission is mandatory for Trusted Publishing
       id-token: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
-          name: wheels
-      - name: Publish to PyPI
+          path: dist
+          merge-multiple: true
+      - name: List contents of dist directory
+        run: ls -la dist/
+      - name: Publish to PyPi
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages_dir: dist
 
