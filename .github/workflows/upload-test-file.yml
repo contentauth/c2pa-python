@@ -6,7 +6,7 @@ on:
       file_path:
         description: 'Path to the file to upload'
         required: true
-        default: 'dist/test-file-0.1-py3-none-any.whl'
+        default: 'dist/c2pa_python-0.4.0-py3-none-macosx_11_0_arm64.whl'
 
 jobs:
   upload:
