@@ -1,0 +1,33 @@
+name: Upload Test File
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_path:
+        description: 'Path to the file to upload'
+        required: true
+        default: 'dist/test-file-0.1-py3-none-any.whl'
+
+jobs:
+  upload:
+    name: Upload Test File to PyPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Twine
+        run: pip install twine
+
+      - name: Upload file to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          twine upload --non-interactive --skip-existing ${{ github.event.inputs.file_path }}
