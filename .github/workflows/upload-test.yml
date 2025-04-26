@@ -74,27 +74,17 @@ jobs:
   pypi-publish:
     name: upload release to PyPI
     runs-on: ubuntu-latest
-    needs: [linux, sdist]
-
     # Specifying a GitHub environment is optional, but strongly encouraged
     environment: testpublish
     permissions:
       # IMPORTANT: this permission is mandatory for Trusted Publishing
-      id-token: write
+        id-token: write
+    needs: [linux, sdist]
     steps:
-      # retrieve your distributions here
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download aarch64 wheels artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: wheels-aarch64
-
-      - name: Download sdist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sdist
+          pattern: wheels-*
+          name: wheels
 
       # Add a step to list the contents of the dist directory
       - name: List dist directory contents
