@@ -82,8 +82,25 @@ jobs:
       id-token: write
     steps:
       # retrieve your distributions here
-      - name: Download wheels artifact
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download x86_64 wheels artifact
         uses: actions/download-artifact@v4
+        with:
+          name: wheels-x86_64
+
+      - name: Download aarch64 wheels artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-aarch64
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
