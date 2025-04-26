@@ -89,18 +89,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wheels-aarch64
+          path: dist
 
       - name: Download sdist artifact
         uses: actions/download-artifact@v4
         with:
          name: sdist
+         path: dist
 
-      # Combine all artifacts into the dist directory
-      - name: Create dist directory and move artifacts
-        run: |
-          mkdir -p dist
-          mv wheels-aarch64/* dist/
-          mv sdist/* dist/
+      - name: Check working directory
+        run: pwd
+       
+      - name: List all files and directories
+        run: ls -R
 
       # List the contents of the dist directory for debugging
       - name: List final dist directory contents
