@@ -2,11 +2,6 @@ name: Upload Test File to Test PyPI
 
 on:
   workflow_dispatch:
-    inputs:
-      file_path:
-        description: 'Path to the file to upload'
-        required: true
-        default: 'dist/c2pa_python-0.4.0-py3-none-macosx_11_0_arm64.whl'
 
 jobs:
   linux:
@@ -14,7 +9,7 @@ jobs:
 
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        target: [aarch64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -84,11 +79,6 @@ jobs:
       # retrieve your distributions here
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Download x86_64 wheels artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: wheels-x86_64
 
       - name: Download aarch64 wheels artifact
         uses: actions/download-artifact@v4
