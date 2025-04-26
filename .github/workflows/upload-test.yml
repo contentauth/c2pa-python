@@ -66,6 +66,10 @@ jobs:
         with:
           name: wheels
           path: dist
+              # Add a step to list the contents of the dist directory
+      - name: List dist directory contents
+        run: ls -l dist || echo "dist directory does not exist or is empty"
+
   
   pypi-publish:
     name: upload release to PyPI
@@ -91,6 +95,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: sdist
+
+      # Add a step to list the contents of the dist directory
+      - name: List dist directory contents
+        run: ls -l dist || echo "dist directory does not exist or is empty"
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
