@@ -1,4 +1,4 @@
-name: Upload Test File to Test PyPI
+name: Upload Test for Pypi.
 
 on:
   workflow_dispatch:
@@ -70,6 +70,8 @@ jobs:
   pypi-publish:
     name: upload release to PyPI
     runs-on: ubuntu-latest
+    needs: [linux, sdist]
+
     # Specifying a GitHub environment is optional, but strongly encouraged
     environment: testpublish
     permissions:
