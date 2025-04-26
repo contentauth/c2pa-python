@@ -83,13 +83,13 @@ jobs:
     permissions:
       # IMPORTANT: this permission is mandatory for Trusted Publishing
         id-token: write
-    needs: [sdist]
+    needs: [linux, sdist]
     steps:
-      #- name: Download aarch64 wheels artifact
-      #  uses: actions/download-artifact@v4
-      #  with:
-      #    name: wheels-aarch64
-      #    path: dist
+      - name: Download aarch64 wheels artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-aarch64
+          path: dist
 
       - name: Download sdist artifact
         uses: actions/download-artifact@v4
