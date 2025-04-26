@@ -50,6 +50,11 @@ jobs:
         with:
           name: wheels-${{ matrix.target }}
           path: dist
+      # Add a step to list the contents of the dist directory
+      - name: List linux dist directory contents
+        run: ls -l dist || echo "dist directory does not exist or is empty"
+            
+
 
   sdist:
     runs-on: ubuntu-latest
@@ -64,13 +69,12 @@ jobs:
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: sdist
           path: dist
-              # Add a step to list the contents of the dist directory
-      - name: List dist directory contents
+      # Add a step to list the contents of the dist directory
+      - name: List sdist dist directory contents
         run: ls -l dist || echo "dist directory does not exist or is empty"
 
-  
   pypi-publish:
     name: upload release to PyPI
     runs-on: ubuntu-latest
@@ -81,13 +85,25 @@ jobs:
         id-token: write
     needs: [linux, sdist]
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download aarch64 wheels artifact
+        uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          name: wheels
+          name: wheels-aarch64
 
-      # Add a step to list the contents of the dist directory
-      - name: List dist directory contents
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+         name: sdist
+
+      # Combine all artifacts into the dist directory
+      - name: Create dist directory and move artifacts
+        run: |
+          mkdir -p dist
+          mv wheels-aarch64/* dist/
+          mv sdist/* dist/
+
+      # List the contents of the dist directory for debugging
+      - name: List final dist directory contents
         run: ls -l dist || echo "dist directory does not exist or is empty"
 
       - name: Publish package distributions to PyPI
