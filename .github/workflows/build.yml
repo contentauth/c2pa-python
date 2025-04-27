@@ -366,14 +366,19 @@ jobs:
     environment: Publish
     needs: [linux, windows, macos_x86, macos_aarch64, sdist]
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download wheels
+        uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          name: wheels
+          pattern: "*"
+          merge_multiple: true
+          path: dist
 
       # List the contents of the dist directory for debugging
-      - name: List final dist directory contents
+      - name: List final contents
         run:  ls -R
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
