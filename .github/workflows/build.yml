@@ -240,8 +240,13 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.target }}
+          name: wheels
           path: dist/*.whl
+          if-no-files-found: error
+
+      # List the contents of the dist directory for debugging
+      - name: List final linux dist directory contents
+        run:  ls -l dist || echo "dist directory does not exist or is empty"
 
   windows:
     runs-on: windows-latest
@@ -273,8 +278,9 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.target }}
+          name: wheels
           path: dist/*.whl
+          if-no-files-found: error
 
   macos_x86:
     runs-on: macos-latest
@@ -302,8 +308,9 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-mac-x86_64
+          name: wheels
           path: dist/*.whl
+          if-no-files-found: error
 
   macos_aarch64:
     runs-on: macos-latest-large
@@ -331,8 +338,13 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-mac-aarch64
+          name: wheels
           path: dist/*.whl
+          if-no-files-found: error
+
+      # List the contents of the dist directory for debugging
+      - name: List final  macos_aarch64 dist directory contents
+        run:  ls -l dist || echo "dist directory does not exist or is empty"
 
   sdist:
     runs-on: ubuntu-latest
@@ -371,7 +383,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
+          name: wheels
           path: dist
 
       - name: Download sdist artifact
