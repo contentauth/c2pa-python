@@ -382,9 +382,7 @@ jobs:
 
       # List the contents of the dist directory for debugging
       - name: List final dist directory contents
-        run:  |
-          run: ls -R
-          ls -l dist || echo "dist directory does not exist or is empty"
+        run:  ls -l dist || echo "dist directory does not exist or is empty"
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
