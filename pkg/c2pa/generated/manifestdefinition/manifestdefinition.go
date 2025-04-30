@@ -46,7 +46,7 @@ type ClaimGeneratorInfo struct {
 	// A human readable string of the product's version
 	Version *string `json:"version,omitempty" yaml:"version,omitempty" mapstructure:"version,omitempty"`
 
-	AdditionalProperties interface{}
+	AdditionalProperties interface{} `mapstructure:",remain"`
 }
 
 // An x, y coordinate used for specifying vertices in polygons.
@@ -224,7 +224,7 @@ type Metadata struct {
 	// ReviewRatings corresponds to the JSON schema field "reviewRatings".
 	ReviewRatings []ReviewRating `json:"reviewRatings,omitempty" yaml:"reviewRatings,omitempty" mapstructure:"reviewRatings,omitempty"`
 
-	AdditionalProperties interface{}
+	AdditionalProperties interface{} `mapstructure:",remain"`
 }
 
 // A spatial, temporal, frame, or textual range describing the region of interest.

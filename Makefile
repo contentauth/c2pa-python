@@ -4,12 +4,12 @@ all: rust types go
 
 .PHONY: rust
 rust:
-	cargo install uniffi-bindgen-go --git https://github.com/NordSecurity/uniffi-bindgen-go --tag v0.2.1+v0.25.0
+	cargo install uniffi-bindgen-go --git https://github.com/NordSecurity/uniffi-bindgen-go --tag v0.3.0+v0.28.3
 	cargo build --release
 
 .PHONY: types
 types:
-	go install github.com/atombender/go-jsonschema@latest
+	go install github.com/atombender/go-jsonschema@v0.17.0
 	cargo install --git https://github.com/aquareum-tv/c2pa-rs export_schema
 	export_schema
 	go-jsonschema --only-models -p manifeststore ./target/schema/ManifestStore.schema.json -o pkg/c2pa/generated/manifeststore/manifeststore.go

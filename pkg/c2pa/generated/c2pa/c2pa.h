@@ -24,24 +24,10 @@
 // ⚠️ increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V6 in this file.           ⚠️
 
 typedef struct RustBuffer {
-	int32_t capacity;
-	int32_t len;
+	uint64_t capacity;
+	uint64_t len;
 	uint8_t *data;
 } RustBuffer;
-
-typedef int32_t (*ForeignCallback)(uint64_t, int32_t, uint8_t *, int32_t, RustBuffer *);
-
-// Task defined in Rust that Go executes
-typedef void (*RustTaskCallback)(const void *, int8_t);
-
-// Callback to execute Rust tasks using a Go routine
-//
-// Args:
-//   executor: ForeignExecutor lowered into a uint64_t value
-//   delay: Delay in MS
-//   task: RustTaskCallback to call
-//   task_data: data to pass the task callback
-typedef int8_t (*ForeignExecutorCallback)(uint64_t, uint32_t, RustTaskCallback, void *);
 
 typedef struct ForeignBytes {
 	int32_t len;
@@ -54,515 +40,941 @@ typedef struct RustCallStatus {
 	RustBuffer errorBuf;
 } RustCallStatus;
 
-// Continuation callback for UniFFI Futures
-typedef void (*RustFutureContinuation)(void * , int8_t);
-
-// ⚠️ Attention: If you change this #else block (ending in `#endif // def UNIFFI_SHARED_H`) you *must* ⚠️
-// ⚠️ increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V6 in this file.           ⚠️
-#endif // def UNIFFI_SHARED_H
-
-// Needed because we can't execute the callback directly from go.
-void cgo_rust_task_callback_bridge_c2pa(RustTaskCallback, const void *, int8_t);
-
-int8_t uniffiForeignExecutorCallbackc2pa(uint64_t, uint32_t, RustTaskCallback, void*);
-
-void uniffiFutureContinuationCallbackc2pa(void*, int8_t);
-
-void uniffi_c2pa_fn_free_builder(
-	void* ptr,
-	RustCallStatus* out_status
-);
-
-void* uniffi_c2pa_fn_constructor_builder_new(
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_method_builder_add_ingredient(
-	void* ptr,
-	RustBuffer ingredient_json,
-	RustBuffer format,
-	uint64_t stream,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_method_builder_add_resource(
-	void* ptr,
-	RustBuffer uri,
-	uint64_t stream,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_method_builder_from_archive(
-	void* ptr,
-	uint64_t stream,
-	RustCallStatus* out_status
-);
-
-RustBuffer uniffi_c2pa_fn_method_builder_sign(
-	void* ptr,
-	RustBuffer format,
-	uint64_t input,
-	uint64_t output,
-	void* signer,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_method_builder_to_archive(
-	void* ptr,
-	uint64_t stream,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_method_builder_with_json(
-	void* ptr,
-	RustBuffer json,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_free_callbacksigner(
-	void* ptr,
-	RustCallStatus* out_status
-);
-
-void* uniffi_c2pa_fn_constructor_callbacksigner_new(
-	uint64_t callback,
-	RustBuffer alg,
-	RustBuffer certs,
-	RustBuffer ta_url,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_free_reader(
-	void* ptr,
-	RustCallStatus* out_status
-);
-
-void* uniffi_c2pa_fn_constructor_reader_new(
-	RustCallStatus* out_status
-);
-
-RustBuffer uniffi_c2pa_fn_method_reader_from_stream(
-	void* ptr,
-	RustBuffer format,
-	uint64_t reader,
-	RustCallStatus* out_status
-);
-
-RustBuffer uniffi_c2pa_fn_method_reader_get_provenance_cert_chain(
-	void* ptr,
-	RustCallStatus* out_status
-);
-
-RustBuffer uniffi_c2pa_fn_method_reader_json(
-	void* ptr,
-	RustCallStatus* out_status
-);
-
-uint64_t uniffi_c2pa_fn_method_reader_resource_to_stream(
-	void* ptr,
-	RustBuffer uri,
-	uint64_t stream,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_init_callback_signercallback(
-	ForeignCallback callback_stub,
-	RustCallStatus* out_status
-);
-
-void uniffi_c2pa_fn_init_callback_stream(
-	ForeignCallback callback_stub,
-	RustCallStatus* out_status
-);
-
-RustBuffer uniffi_c2pa_fn_func_sdk_version(
-	RustCallStatus* out_status
-);
-
-RustBuffer uniffi_c2pa_fn_func_version(
-	RustCallStatus* out_status
-);
-
-RustBuffer ffi_c2pa_rustbuffer_alloc(
-	int32_t size,
-	RustCallStatus* out_status
-);
-
-RustBuffer ffi_c2pa_rustbuffer_from_bytes(
-	ForeignBytes bytes,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rustbuffer_free(
-	RustBuffer buf,
-	RustCallStatus* out_status
-);
-
-RustBuffer ffi_c2pa_rustbuffer_reserve(
-	RustBuffer buf,
-	int32_t additional,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_continuation_callback_set(
-	RustFutureContinuation callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_u8(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_u8(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_u8(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-uint8_t ffi_c2pa_rust_future_complete_u8(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_i8(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_i8(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_i8(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-int8_t ffi_c2pa_rust_future_complete_i8(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_u16(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_u16(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_u16(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-uint16_t ffi_c2pa_rust_future_complete_u16(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_i16(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_i16(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_i16(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-int16_t ffi_c2pa_rust_future_complete_i16(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_u32(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_u32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_u32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-uint32_t ffi_c2pa_rust_future_complete_u32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_i32(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_i32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_i32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-int32_t ffi_c2pa_rust_future_complete_i32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_u64(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_u64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_u64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-uint64_t ffi_c2pa_rust_future_complete_u64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_i64(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_i64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_i64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-int64_t ffi_c2pa_rust_future_complete_i64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_f32(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_f32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_f32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-float ffi_c2pa_rust_future_complete_f32(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_f64(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_f64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_f64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-double ffi_c2pa_rust_future_complete_f64(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_pointer(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_pointer(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_pointer(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void* ffi_c2pa_rust_future_complete_pointer(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_rust_buffer(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_rust_buffer(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_rust_buffer(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-RustBuffer ffi_c2pa_rust_future_complete_rust_buffer(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_poll_void(
-	void* handle,
-	void* uniffi_callback,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_cancel_void(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_free_void(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-void ffi_c2pa_rust_future_complete_void(
-	void* handle,
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_func_sdk_version(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_func_version(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_builder_add_ingredient(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_builder_add_resource(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_builder_from_archive(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_builder_sign(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_builder_to_archive(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_builder_with_json(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_reader_from_stream(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_reader_json(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_reader_resource_to_stream(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_constructor_builder_new(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_constructor_callbacksigner_new(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_constructor_reader_new(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_signercallback_sign(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_stream_read_stream(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_stream_seek_stream(
-	RustCallStatus* out_status
-);
-
-uint16_t uniffi_c2pa_checksum_method_stream_write_stream(
-	RustCallStatus* out_status
-);
-
-uint32_t ffi_c2pa_uniffi_contract_version(
-	RustCallStatus* out_status
-);
-
-
-int32_t c2pa_cgo_SignerCallback(uint64_t, int32_t, uint8_t *, int32_t, RustBuffer *);
-int32_t c2pa_cgo_Stream(uint64_t, int32_t, uint8_t *, int32_t, RustBuffer *);
-
+#endif // UNIFFI_SHARED_H
+
+
+#ifndef UNIFFI_FFIDEF_RUST_FUTURE_CONTINUATION_CALLBACK
+#define UNIFFI_FFIDEF_RUST_FUTURE_CONTINUATION_CALLBACK
+typedef void (*UniffiRustFutureContinuationCallback)(uint64_t data, int8_t poll_result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiRustFutureContinuationCallback(
+				UniffiRustFutureContinuationCallback cb, uint64_t data, int8_t poll_result)
+{
+	return cb(data, poll_result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_FREE
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_FREE
+typedef void (*UniffiForeignFutureFree)(uint64_t handle);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureFree(
+				UniffiForeignFutureFree cb, uint64_t handle)
+{
+	return cb(handle);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_FREE
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_FREE
+typedef void (*UniffiCallbackInterfaceFree)(uint64_t handle);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiCallbackInterfaceFree(
+				UniffiCallbackInterfaceFree cb, uint64_t handle)
+{
+	return cb(handle);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE
+typedef struct UniffiForeignFuture {
+    uint64_t handle;
+    UniffiForeignFutureFree free;
+} UniffiForeignFuture;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U8
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U8
+typedef struct UniffiForeignFutureStructU8 {
+    uint8_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructU8;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U8
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U8
+typedef void (*UniffiForeignFutureCompleteU8)(uint64_t callback_data, UniffiForeignFutureStructU8 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteU8(
+				UniffiForeignFutureCompleteU8 cb, uint64_t callback_data, UniffiForeignFutureStructU8 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I8
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I8
+typedef struct UniffiForeignFutureStructI8 {
+    int8_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructI8;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I8
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I8
+typedef void (*UniffiForeignFutureCompleteI8)(uint64_t callback_data, UniffiForeignFutureStructI8 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteI8(
+				UniffiForeignFutureCompleteI8 cb, uint64_t callback_data, UniffiForeignFutureStructI8 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U16
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U16
+typedef struct UniffiForeignFutureStructU16 {
+    uint16_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructU16;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U16
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U16
+typedef void (*UniffiForeignFutureCompleteU16)(uint64_t callback_data, UniffiForeignFutureStructU16 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteU16(
+				UniffiForeignFutureCompleteU16 cb, uint64_t callback_data, UniffiForeignFutureStructU16 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I16
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I16
+typedef struct UniffiForeignFutureStructI16 {
+    int16_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructI16;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I16
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I16
+typedef void (*UniffiForeignFutureCompleteI16)(uint64_t callback_data, UniffiForeignFutureStructI16 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteI16(
+				UniffiForeignFutureCompleteI16 cb, uint64_t callback_data, UniffiForeignFutureStructI16 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U32
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U32
+typedef struct UniffiForeignFutureStructU32 {
+    uint32_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructU32;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U32
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U32
+typedef void (*UniffiForeignFutureCompleteU32)(uint64_t callback_data, UniffiForeignFutureStructU32 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteU32(
+				UniffiForeignFutureCompleteU32 cb, uint64_t callback_data, UniffiForeignFutureStructU32 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I32
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I32
+typedef struct UniffiForeignFutureStructI32 {
+    int32_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructI32;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I32
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I32
+typedef void (*UniffiForeignFutureCompleteI32)(uint64_t callback_data, UniffiForeignFutureStructI32 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteI32(
+				UniffiForeignFutureCompleteI32 cb, uint64_t callback_data, UniffiForeignFutureStructI32 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U64
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_U64
+typedef struct UniffiForeignFutureStructU64 {
+    uint64_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructU64;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U64
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_U64
+typedef void (*UniffiForeignFutureCompleteU64)(uint64_t callback_data, UniffiForeignFutureStructU64 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteU64(
+				UniffiForeignFutureCompleteU64 cb, uint64_t callback_data, UniffiForeignFutureStructU64 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I64
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_I64
+typedef struct UniffiForeignFutureStructI64 {
+    int64_t returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructI64;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I64
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_I64
+typedef void (*UniffiForeignFutureCompleteI64)(uint64_t callback_data, UniffiForeignFutureStructI64 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteI64(
+				UniffiForeignFutureCompleteI64 cb, uint64_t callback_data, UniffiForeignFutureStructI64 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_F32
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_F32
+typedef struct UniffiForeignFutureStructF32 {
+    float returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructF32;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_F32
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_F32
+typedef void (*UniffiForeignFutureCompleteF32)(uint64_t callback_data, UniffiForeignFutureStructF32 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteF32(
+				UniffiForeignFutureCompleteF32 cb, uint64_t callback_data, UniffiForeignFutureStructF32 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_F64
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_F64
+typedef struct UniffiForeignFutureStructF64 {
+    double returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructF64;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_F64
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_F64
+typedef void (*UniffiForeignFutureCompleteF64)(uint64_t callback_data, UniffiForeignFutureStructF64 result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteF64(
+				UniffiForeignFutureCompleteF64 cb, uint64_t callback_data, UniffiForeignFutureStructF64 result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_POINTER
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_POINTER
+typedef struct UniffiForeignFutureStructPointer {
+    void* returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructPointer;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_POINTER
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_POINTER
+typedef void (*UniffiForeignFutureCompletePointer)(uint64_t callback_data, UniffiForeignFutureStructPointer result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompletePointer(
+				UniffiForeignFutureCompletePointer cb, uint64_t callback_data, UniffiForeignFutureStructPointer result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_RUST_BUFFER
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_RUST_BUFFER
+typedef struct UniffiForeignFutureStructRustBuffer {
+    RustBuffer returnValue;
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructRustBuffer;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_RUST_BUFFER
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_RUST_BUFFER
+typedef void (*UniffiForeignFutureCompleteRustBuffer)(uint64_t callback_data, UniffiForeignFutureStructRustBuffer result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteRustBuffer(
+				UniffiForeignFutureCompleteRustBuffer cb, uint64_t callback_data, UniffiForeignFutureStructRustBuffer result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_VOID
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_STRUCT_VOID
+typedef struct UniffiForeignFutureStructVoid {
+    RustCallStatus callStatus;
+} UniffiForeignFutureStructVoid;
+
+#endif
+#ifndef UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_VOID
+#define UNIFFI_FFIDEF_FOREIGN_FUTURE_COMPLETE_VOID
+typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t callback_data, UniffiForeignFutureStructVoid result);
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiForeignFutureCompleteVoid(
+				UniffiForeignFutureCompleteVoid cb, uint64_t callback_data, UniffiForeignFutureStructVoid result)
+{
+	return cb(callback_data, result);
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_SIGNER_CALLBACK_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_SIGNER_CALLBACK_METHOD0
+typedef void (*UniffiCallbackInterfaceSignerCallbackMethod0)(uint64_t uniffi_handle, RustBuffer data, RustBuffer* uniffi_out_return, RustCallStatus* callStatus );
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiCallbackInterfaceSignerCallbackMethod0(
+				UniffiCallbackInterfaceSignerCallbackMethod0 cb, uint64_t uniffi_handle, RustBuffer data, RustBuffer* uniffi_out_return, RustCallStatus* callStatus )
+{
+	return cb(uniffi_handle, data, uniffi_out_return, callStatus );
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_STREAM_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_STREAM_METHOD0
+typedef void (*UniffiCallbackInterfaceStreamMethod0)(uint64_t uniffi_handle, uint64_t length, RustBuffer* uniffi_out_return, RustCallStatus* callStatus );
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiCallbackInterfaceStreamMethod0(
+				UniffiCallbackInterfaceStreamMethod0 cb, uint64_t uniffi_handle, uint64_t length, RustBuffer* uniffi_out_return, RustCallStatus* callStatus )
+{
+	return cb(uniffi_handle, length, uniffi_out_return, callStatus );
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_STREAM_METHOD1
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_STREAM_METHOD1
+typedef void (*UniffiCallbackInterfaceStreamMethod1)(uint64_t uniffi_handle, int64_t pos, RustBuffer mode, uint64_t* uniffi_out_return, RustCallStatus* callStatus );
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiCallbackInterfaceStreamMethod1(
+				UniffiCallbackInterfaceStreamMethod1 cb, uint64_t uniffi_handle, int64_t pos, RustBuffer mode, uint64_t* uniffi_out_return, RustCallStatus* callStatus )
+{
+	return cb(uniffi_handle, pos, mode, uniffi_out_return, callStatus );
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_STREAM_METHOD2
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_STREAM_METHOD2
+typedef void (*UniffiCallbackInterfaceStreamMethod2)(uint64_t uniffi_handle, RustBuffer data, uint64_t* uniffi_out_return, RustCallStatus* callStatus );
+
+// Making function static works arround:
+// https://github.com/golang/go/issues/11263
+static void call_UniffiCallbackInterfaceStreamMethod2(
+				UniffiCallbackInterfaceStreamMethod2 cb, uint64_t uniffi_handle, RustBuffer data, uint64_t* uniffi_out_return, RustCallStatus* callStatus )
+{
+	return cb(uniffi_handle, data, uniffi_out_return, callStatus );
+}
+
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_SIGNER_CALLBACK
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_SIGNER_CALLBACK
+typedef struct UniffiVTableCallbackInterfaceSignerCallback {
+    UniffiCallbackInterfaceSignerCallbackMethod0 sign;
+    UniffiCallbackInterfaceFree uniffiFree;
+} UniffiVTableCallbackInterfaceSignerCallback;
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_STREAM
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_STREAM
+typedef struct UniffiVTableCallbackInterfaceStream {
+    UniffiCallbackInterfaceStreamMethod0 readStream;
+    UniffiCallbackInterfaceStreamMethod1 seekStream;
+    UniffiCallbackInterfaceStreamMethod2 writeStream;
+    UniffiCallbackInterfaceFree uniffiFree;
+} UniffiVTableCallbackInterfaceStream;
+
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CLONE_BUILDER
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CLONE_BUILDER
+void* uniffi_c2pa_fn_clone_builder(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FREE_BUILDER
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FREE_BUILDER
+void uniffi_c2pa_fn_free_builder(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CONSTRUCTOR_BUILDER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CONSTRUCTOR_BUILDER_NEW
+void* uniffi_c2pa_fn_constructor_builder_new(RustCallStatus *out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_ADD_INGREDIENT
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_ADD_INGREDIENT
+void uniffi_c2pa_fn_method_builder_add_ingredient(void* ptr, RustBuffer ingredient_json, RustBuffer format, uint64_t stream, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_ADD_RESOURCE
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_ADD_RESOURCE
+void uniffi_c2pa_fn_method_builder_add_resource(void* ptr, RustBuffer uri, uint64_t stream, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_FROM_ARCHIVE
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_FROM_ARCHIVE
+void uniffi_c2pa_fn_method_builder_from_archive(void* ptr, uint64_t stream, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_SIGN
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_SIGN
+RustBuffer uniffi_c2pa_fn_method_builder_sign(void* ptr, RustBuffer format, uint64_t input, uint64_t output, void* signer, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_TO_ARCHIVE
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_TO_ARCHIVE
+void uniffi_c2pa_fn_method_builder_to_archive(void* ptr, uint64_t stream, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_WITH_JSON
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_BUILDER_WITH_JSON
+void uniffi_c2pa_fn_method_builder_with_json(void* ptr, RustBuffer json, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CLONE_CALLBACKSIGNER
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CLONE_CALLBACKSIGNER
+void* uniffi_c2pa_fn_clone_callbacksigner(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FREE_CALLBACKSIGNER
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FREE_CALLBACKSIGNER
+void uniffi_c2pa_fn_free_callbacksigner(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CONSTRUCTOR_CALLBACKSIGNER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CONSTRUCTOR_CALLBACKSIGNER_NEW
+void* uniffi_c2pa_fn_constructor_callbacksigner_new(uint64_t callback, RustBuffer alg, RustBuffer certs, RustBuffer ta_url, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CLONE_READER
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CLONE_READER
+void* uniffi_c2pa_fn_clone_reader(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FREE_READER
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FREE_READER
+void uniffi_c2pa_fn_free_reader(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CONSTRUCTOR_READER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_CONSTRUCTOR_READER_NEW
+void* uniffi_c2pa_fn_constructor_reader_new(RustCallStatus *out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_FROM_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_FROM_STREAM
+RustBuffer uniffi_c2pa_fn_method_reader_from_stream(void* ptr, RustBuffer format, uint64_t reader, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_GET_PROVENANCE_CERT_CHAIN
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_GET_PROVENANCE_CERT_CHAIN
+RustBuffer uniffi_c2pa_fn_method_reader_get_provenance_cert_chain(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_JSON
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_JSON
+RustBuffer uniffi_c2pa_fn_method_reader_json(void* ptr, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_RESOURCE_TO_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_METHOD_READER_RESOURCE_TO_STREAM
+uint64_t uniffi_c2pa_fn_method_reader_resource_to_stream(void* ptr, RustBuffer uri, uint64_t stream, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_INIT_CALLBACK_VTABLE_SIGNERCALLBACK
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_INIT_CALLBACK_VTABLE_SIGNERCALLBACK
+void uniffi_c2pa_fn_init_callback_vtable_signercallback(UniffiVTableCallbackInterfaceSignerCallback* vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_INIT_CALLBACK_VTABLE_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_INIT_CALLBACK_VTABLE_STREAM
+void uniffi_c2pa_fn_init_callback_vtable_stream(UniffiVTableCallbackInterfaceStream* vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FUNC_SDK_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FUNC_SDK_VERSION
+RustBuffer uniffi_c2pa_fn_func_sdk_version(RustCallStatus *out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FUNC_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_FN_FUNC_VERSION
+RustBuffer uniffi_c2pa_fn_func_version(RustCallStatus *out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_ALLOC
+#define UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_ALLOC
+RustBuffer ffi_c2pa_rustbuffer_alloc(uint64_t size, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_FROM_BYTES
+#define UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_FROM_BYTES
+RustBuffer ffi_c2pa_rustbuffer_from_bytes(ForeignBytes bytes, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_FREE
+#define UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_FREE
+void ffi_c2pa_rustbuffer_free(RustBuffer buf, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_RESERVE
+#define UNIFFI_FFIDEF_FFI_C2PA_RUSTBUFFER_RESERVE
+RustBuffer ffi_c2pa_rustbuffer_reserve(RustBuffer buf, uint64_t additional, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U8
+void ffi_c2pa_rust_future_poll_u8(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U8
+void ffi_c2pa_rust_future_cancel_u8(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U8
+void ffi_c2pa_rust_future_free_u8(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U8
+uint8_t ffi_c2pa_rust_future_complete_u8(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I8
+void ffi_c2pa_rust_future_poll_i8(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I8
+void ffi_c2pa_rust_future_cancel_i8(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I8
+void ffi_c2pa_rust_future_free_i8(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I8
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I8
+int8_t ffi_c2pa_rust_future_complete_i8(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U16
+void ffi_c2pa_rust_future_poll_u16(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U16
+void ffi_c2pa_rust_future_cancel_u16(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U16
+void ffi_c2pa_rust_future_free_u16(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U16
+uint16_t ffi_c2pa_rust_future_complete_u16(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I16
+void ffi_c2pa_rust_future_poll_i16(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I16
+void ffi_c2pa_rust_future_cancel_i16(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I16
+void ffi_c2pa_rust_future_free_i16(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I16
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I16
+int16_t ffi_c2pa_rust_future_complete_i16(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U32
+void ffi_c2pa_rust_future_poll_u32(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U32
+void ffi_c2pa_rust_future_cancel_u32(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U32
+void ffi_c2pa_rust_future_free_u32(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U32
+uint32_t ffi_c2pa_rust_future_complete_u32(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I32
+void ffi_c2pa_rust_future_poll_i32(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I32
+void ffi_c2pa_rust_future_cancel_i32(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I32
+void ffi_c2pa_rust_future_free_i32(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I32
+int32_t ffi_c2pa_rust_future_complete_i32(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_U64
+void ffi_c2pa_rust_future_poll_u64(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_U64
+void ffi_c2pa_rust_future_cancel_u64(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_U64
+void ffi_c2pa_rust_future_free_u64(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_U64
+uint64_t ffi_c2pa_rust_future_complete_u64(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_I64
+void ffi_c2pa_rust_future_poll_i64(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_I64
+void ffi_c2pa_rust_future_cancel_i64(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_I64
+void ffi_c2pa_rust_future_free_i64(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_I64
+int64_t ffi_c2pa_rust_future_complete_i64(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_F32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_F32
+void ffi_c2pa_rust_future_poll_f32(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_F32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_F32
+void ffi_c2pa_rust_future_cancel_f32(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_F32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_F32
+void ffi_c2pa_rust_future_free_f32(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_F32
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_F32
+float ffi_c2pa_rust_future_complete_f32(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_F64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_F64
+void ffi_c2pa_rust_future_poll_f64(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_F64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_F64
+void ffi_c2pa_rust_future_cancel_f64(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_F64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_F64
+void ffi_c2pa_rust_future_free_f64(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_F64
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_F64
+double ffi_c2pa_rust_future_complete_f64(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_POINTER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_POINTER
+void ffi_c2pa_rust_future_poll_pointer(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_POINTER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_POINTER
+void ffi_c2pa_rust_future_cancel_pointer(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_POINTER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_POINTER
+void ffi_c2pa_rust_future_free_pointer(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_POINTER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_POINTER
+void* ffi_c2pa_rust_future_complete_pointer(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_RUST_BUFFER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_RUST_BUFFER
+void ffi_c2pa_rust_future_poll_rust_buffer(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_RUST_BUFFER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_RUST_BUFFER
+void ffi_c2pa_rust_future_cancel_rust_buffer(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_RUST_BUFFER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_RUST_BUFFER
+void ffi_c2pa_rust_future_free_rust_buffer(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_RUST_BUFFER
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_RUST_BUFFER
+RustBuffer ffi_c2pa_rust_future_complete_rust_buffer(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_VOID
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_POLL_VOID
+void ffi_c2pa_rust_future_poll_void(uint64_t handle, UniffiRustFutureContinuationCallback callback, uint64_t callback_data
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_VOID
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_CANCEL_VOID
+void ffi_c2pa_rust_future_cancel_void(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_VOID
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_FREE_VOID
+void ffi_c2pa_rust_future_free_void(uint64_t handle
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_VOID
+#define UNIFFI_FFIDEF_FFI_C2PA_RUST_FUTURE_COMPLETE_VOID
+void ffi_c2pa_rust_future_complete_void(uint64_t handle, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_FUNC_SDK_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_FUNC_SDK_VERSION
+uint16_t uniffi_c2pa_checksum_func_sdk_version(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_FUNC_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_FUNC_VERSION
+uint16_t uniffi_c2pa_checksum_func_version(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_ADD_INGREDIENT
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_ADD_INGREDIENT
+uint16_t uniffi_c2pa_checksum_method_builder_add_ingredient(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_ADD_RESOURCE
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_ADD_RESOURCE
+uint16_t uniffi_c2pa_checksum_method_builder_add_resource(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_FROM_ARCHIVE
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_FROM_ARCHIVE
+uint16_t uniffi_c2pa_checksum_method_builder_from_archive(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_SIGN
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_SIGN
+uint16_t uniffi_c2pa_checksum_method_builder_sign(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_TO_ARCHIVE
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_TO_ARCHIVE
+uint16_t uniffi_c2pa_checksum_method_builder_to_archive(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_WITH_JSON
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_BUILDER_WITH_JSON
+uint16_t uniffi_c2pa_checksum_method_builder_with_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_FROM_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_FROM_STREAM
+uint16_t uniffi_c2pa_checksum_method_reader_from_stream(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_GET_PROVENANCE_CERT_CHAIN
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_GET_PROVENANCE_CERT_CHAIN
+uint16_t uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_JSON
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_JSON
+uint16_t uniffi_c2pa_checksum_method_reader_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_RESOURCE_TO_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_READER_RESOURCE_TO_STREAM
+uint16_t uniffi_c2pa_checksum_method_reader_resource_to_stream(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_CONSTRUCTOR_BUILDER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_CONSTRUCTOR_BUILDER_NEW
+uint16_t uniffi_c2pa_checksum_constructor_builder_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_CONSTRUCTOR_CALLBACKSIGNER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_CONSTRUCTOR_CALLBACKSIGNER_NEW
+uint16_t uniffi_c2pa_checksum_constructor_callbacksigner_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_CONSTRUCTOR_READER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_CONSTRUCTOR_READER_NEW
+uint16_t uniffi_c2pa_checksum_constructor_reader_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_SIGNERCALLBACK_SIGN
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_SIGNERCALLBACK_SIGN
+uint16_t uniffi_c2pa_checksum_method_signercallback_sign(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_STREAM_READ_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_STREAM_READ_STREAM
+uint16_t uniffi_c2pa_checksum_method_stream_read_stream(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_STREAM_SEEK_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_STREAM_SEEK_STREAM
+uint16_t uniffi_c2pa_checksum_method_stream_seek_stream(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_STREAM_WRITE_STREAM
+#define UNIFFI_FFIDEF_UNIFFI_C2PA_CHECKSUM_METHOD_STREAM_WRITE_STREAM
+uint16_t uniffi_c2pa_checksum_method_stream_write_stream(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_FFI_C2PA_UNIFFI_CONTRACT_VERSION
+#define UNIFFI_FFIDEF_FFI_C2PA_UNIFFI_CONTRACT_VERSION
+uint32_t ffi_c2pa_uniffi_contract_version(void
+    
+);
+#endif
+
+ void c2pa_cgo_dispatchCallbackInterfaceSignerCallbackMethod0(uint64_t uniffi_handle, RustBuffer data, RustBuffer* uniffi_out_return, RustCallStatus* callStatus );
+ void c2pa_cgo_dispatchCallbackInterfaceSignerCallbackFree(uint64_t handle);
+ void c2pa_cgo_dispatchCallbackInterfaceStreamMethod0(uint64_t uniffi_handle, uint64_t length, RustBuffer* uniffi_out_return, RustCallStatus* callStatus );
+ void c2pa_cgo_dispatchCallbackInterfaceStreamMethod1(uint64_t uniffi_handle, int64_t pos, RustBuffer mode, uint64_t* uniffi_out_return, RustCallStatus* callStatus );
+ void c2pa_cgo_dispatchCallbackInterfaceStreamMethod2(uint64_t uniffi_handle, RustBuffer data, uint64_t* uniffi_out_return, RustCallStatus* callStatus );
+ void c2pa_cgo_dispatchCallbackInterfaceStreamFree(uint64_t handle);

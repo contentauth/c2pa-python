@@ -60,10 +60,6 @@ type Trust struct {
 }
 
 type Verify struct {
-	// CheckIngredientTrust corresponds to the JSON schema field
-	// "check_ingredient_trust".
-	CheckIngredientTrust bool `json:"check_ingredient_trust" yaml:"check_ingredient_trust" mapstructure:"check_ingredient_trust"`
-
 	// OcspFetch corresponds to the JSON schema field "ocsp_fetch".
 	OcspFetch bool `json:"ocsp_fetch" yaml:"ocsp_fetch" mapstructure:"ocsp_fetch"`
 

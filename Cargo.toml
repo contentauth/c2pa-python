@@ -2,7 +2,7 @@
 name = "c2pa-go"
 version = "0.5.0"
 edition = "2021"
-authors = ["Eli Mallon <eli@aquareum.tv>"]
+authors = ["Eli Mallon <eli@stream.place>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -21,7 +21,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 thiserror = "1.0.49"
-uniffi = "= 0.25.0"
+uniffi = "= 0.28.3"
 
 [build-dependencies]
-uniffi = { version = "= 0.25.0", features = ["build"] }
+uniffi = { version = "= 0.28.3", features = ["build"] }

@@ -15,60 +15,67 @@ import (
 	"unsafe"
 )
 
-type RustBuffer = C.RustBuffer
+// This is needed, because as of go 1.24
+// type RustBuffer C.RustBuffer cannot have methods,
+// RustBuffer is treated as non-local type
+type GoRustBuffer struct {
+	inner C.RustBuffer
+}
 
 type RustBufferI interface {
 	AsReader() *bytes.Reader
 	Free()
 	ToGoBytes() []byte
 	Data() unsafe.Pointer
-	Len() int
-	Capacity() int
+	Len() uint64
+	Capacity() uint64
 }
 
-func RustBufferFromExternal(b RustBufferI) RustBuffer {
-	return RustBuffer{
-		capacity: C.int(b.Capacity()),
-		len:      C.int(b.Len()),
-		data:     (*C.uchar)(b.Data()),
+func RustBufferFromExternal(b RustBufferI) GoRustBuffer {
+	return GoRustBuffer{
+		inner: C.RustBuffer{
+			capacity: C.uint64_t(b.Capacity()),
+			len:      C.uint64_t(b.Len()),
+			data:     (*C.uchar)(b.Data()),
+		},
 	}
 }
 
-func (cb RustBuffer) Capacity() int {
-	return int(cb.capacity)
+func (cb GoRustBuffer) Capacity() uint64 {
+	return uint64(cb.inner.capacity)
 }
 
-func (cb RustBuffer) Len() int {
-	return int(cb.len)
+func (cb GoRustBuffer) Len() uint64 {
+	return uint64(cb.inner.len)
 }
 
-func (cb RustBuffer) Data() unsafe.Pointer {
-	return unsafe.Pointer(cb.data)
+func (cb GoRustBuffer) Data() unsafe.Pointer {
+	return unsafe.Pointer(cb.inner.data)
 }
 
-func (cb RustBuffer) AsReader() *bytes.Reader {
-	b := unsafe.Slice((*byte)(cb.data), C.int(cb.len))
+func (cb GoRustBuffer) AsReader() *bytes.Reader {
+	b := unsafe.Slice((*byte)(cb.inner.data), C.uint64_t(cb.inner.len))
 	return bytes.NewReader(b)
 }
 
-func (cb RustBuffer) Free() {
+func (cb GoRustBuffer) Free() {
 	rustCall(func(status *C.RustCallStatus) bool {
-		C.ffi_c2pa_rustbuffer_free(cb, status)
+		C.ffi_c2pa_rustbuffer_free(cb.inner, status)
 		return false
 	})
 }
 
-func (cb RustBuffer) ToGoBytes() []byte {
-	return C.GoBytes(unsafe.Pointer(cb.data), C.int(cb.len))
+func (cb GoRustBuffer) ToGoBytes() []byte {
+	return C.GoBytes(unsafe.Pointer(cb.inner.data), C.int(cb.inner.len))
 }
 
-func stringToRustBuffer(str string) RustBuffer {
+func stringToRustBuffer(str string) C.RustBuffer {
 	return bytesToRustBuffer([]byte(str))
 }
 
-func bytesToRustBuffer(b []byte) RustBuffer {
+func bytesToRustBuffer(b []byte) C.RustBuffer {
 	if len(b) == 0 {
-		return RustBuffer{}
+		return C.RustBuffer{}
 	}
 	// We can pass the pointer along here, as it is pinned
 	// for the duration of this call
@@ -77,7 +84,7 @@ func bytesToRustBuffer(b []byte) RustBuffer {
 		data: (*C.uchar)(unsafe.Pointer(&b[0])),
 	}
 
-	return rustCall(func(status *C.RustCallStatus) RustBuffer {
+	return rustCall(func(status *C.RustCallStatus) C.RustBuffer {
 		return C.ffi_c2pa_rustbuffer_from_bytes(foreign, status)
 	})
 }
@@ -87,12 +94,7 @@ type BufLifter[GoType any] interface {
 }
 
 type BufLowerer[GoType any] interface {
-	Lower(value GoType) RustBuffer
-}
-
-type FfiConverter[GoType any, FfiType any] interface {
-	Lift(value FfiType) GoType
-	Lower(value GoType) FfiType
+	Lower(value GoType) C.RustBuffer
 }
 
 type BufReader[GoType any] interface {
@@ -103,12 +105,7 @@ type BufWriter[GoType any] interface {
 	Write(writer io.Writer, value GoType)
 }
 
-type FfiRustBufConverter[GoType any, FfiType any] interface {
-	FfiConverter[GoType, FfiType]
-	BufReader[GoType]
-}
-
-func LowerIntoRustBuffer[GoType any](bufWriter BufWriter[GoType], value GoType) RustBuffer {
+func LowerIntoRustBuffer[GoType any](bufWriter BufWriter[GoType], value GoType) C.RustBuffer {
 	// This might be not the most efficient way but it does not require knowing allocation size
 	// beforehand
 	var buffer bytes.Buffer
@@ -133,31 +130,30 @@ func LiftFromRustBuffer[GoType any](bufReader BufReader[GoType], rbuf RustBuffer
 	return item
 }
 
-func rustCallWithError[U any](converter BufLifter[error], callback func(*C.RustCallStatus) U) (U, error) {
+func rustCallWithError[E any, U any](converter BufReader[*E], callback func(*C.RustCallStatus) U) (U, *E) {
 	var status C.RustCallStatus
 	returnValue := callback(&status)
 	err := checkCallStatus(converter, status)
-
 	return returnValue, err
 }
 
-func checkCallStatus(converter BufLifter[error], status C.RustCallStatus) error {
+func checkCallStatus[E any](converter BufReader[*E], status C.RustCallStatus) *E {
 	switch status.code {
 	case 0:
 		return nil
 	case 1:
-		return converter.Lift(status.errorBuf)
+		return LiftFromRustBuffer(converter, GoRustBuffer{inner: status.errorBuf})
 	case 2:
-		// when the rust code sees a panic, it tries to construct a rustbuffer
+		// when the rust code sees a panic, it tries to construct a rustBuffer
 		// with the message.  but if that code panics, then it just sends back
 		// an empty buffer.
 		if status.errorBuf.len > 0 {
-			panic(fmt.Errorf("%s", FfiConverterStringINSTANCE.Lift(status.errorBuf)))
+			panic(fmt.Errorf("%s", FfiConverterStringINSTANCE.Lift(GoRustBuffer{inner: status.errorBuf})))
 		} else {
 			panic(fmt.Errorf("Rust panicked while handling Rust panic"))
 		}
 	default:
-		return fmt.Errorf("unknown status code: %d", status.code)
+		panic(fmt.Errorf("unknown status code: %d", status.code))
 	}
 }
 
@@ -168,11 +164,13 @@ func checkCallStatusUnknown(status C.RustCallStatus) error {
 	case 1:
 		panic(fmt.Errorf("function not returning an error returned an error"))
 	case 2:
-		// when the rust code sees a panic, it tries to construct a rustbuffer
+		// when the rust code sees a panic, it tries to construct a C.RustBuffer
 		// with the message.  but if that code panics, then it just sends back
 		// an empty buffer.
 		if status.errorBuf.len > 0 {
-			panic(fmt.Errorf("%s", FfiConverterStringINSTANCE.Lift(status.errorBuf)))
+			panic(fmt.Errorf("%s", FfiConverterStringINSTANCE.Lift(GoRustBuffer{
+				inner: status.errorBuf,
+			})))
 		} else {
 			panic(fmt.Errorf("Rust panicked while handling Rust panic"))
 		}
@@ -182,11 +180,15 @@ func checkCallStatusUnknown(status C.RustCallStatus) error {
 }
 
 func rustCall[U any](callback func(*C.RustCallStatus) U) U {
-	returnValue, err := rustCallWithError(nil, callback)
+	returnValue, err := rustCallWithError[error](nil, callback)
 	if err != nil {
 		panic(err)
 	}
 	return returnValue
+}
+
+type NativeError interface {
+	AsError() error
 }
 
 func writeInt8(writer io.Writer, value int8) {
@@ -331,25 +333,25 @@ func readFloat64(reader io.Reader) float64 {
 
 func init() {
 
-	(&FfiConverterCallbackInterfaceSignerCallback{}).register()
-	(&FfiConverterCallbackInterfaceStream{}).register()
+	FfiConverterCallbackInterfaceSignerCallbackINSTANCE.register()
+	FfiConverterCallbackInterfaceStreamINSTANCE.register()
 	uniffiCheckChecksums()
 }
 
 func uniffiCheckChecksums() {
 	// Get the bindings contract version from our ComponentInterface
-	bindingsContractVersion := 24
+	bindingsContractVersion := 26
 	// Get the scaffolding contract version by calling the into the dylib
-	scaffoldingContractVersion := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint32_t {
-		return C.ffi_c2pa_uniffi_contract_version(uniffiStatus)
+	scaffoldingContractVersion := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint32_t {
+		return C.ffi_c2pa_uniffi_contract_version()
 	})
 	if bindingsContractVersion != int(scaffoldingContractVersion) {
 		// If this happens try cleaning and rebuilding your project
 		panic("c2pa: UniFFI contract version mismatch")
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_func_sdk_version(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_func_sdk_version()
 		})
 		if checksum != 37245 {
 			// If this happens try cleaning and rebuilding your project
@@ -357,8 +359,8 @@ func uniffiCheckChecksums() {
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_func_version(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_func_version()
 		})
 		if checksum != 61576 {
 			// If this happens try cleaning and rebuilding your project
@@ -366,154 +368,154 @@ func uniffiCheckChecksums() {
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_builder_add_ingredient(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_builder_add_ingredient()
 		})
-		if checksum != 54967 {
+		if checksum != 56163 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_builder_add_ingredient: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_builder_add_resource(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_builder_add_resource()
 		})
-		if checksum != 12018 {
+		if checksum != 52123 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_builder_add_resource: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_builder_from_archive(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_builder_from_archive()
 		})
-		if checksum != 17341 {
+		if checksum != 45068 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_builder_from_archive: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_builder_sign(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_builder_sign()
 		})
-		if checksum != 8729 {
+		if checksum != 31394 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_builder_sign: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_builder_to_archive(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_builder_to_archive()
 		})
-		if checksum != 44718 {
+		if checksum != 56076 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_builder_to_archive: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_builder_with_json(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_builder_with_json()
 		})
-		if checksum != 29392 {
+		if checksum != 60973 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_builder_with_json: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_reader_from_stream(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_reader_from_stream()
 		})
-		if checksum != 3255 {
+		if checksum != 62816 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_reader_from_stream: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain()
 		})
-		if checksum != 38020 {
+		if checksum != 22683 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_reader_get_provenance_cert_chain: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_reader_json(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_reader_json()
 		})
-		if checksum != 33242 {
+		if checksum != 25079 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_reader_json: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_reader_resource_to_stream(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_reader_resource_to_stream()
 		})
-		if checksum != 44049 {
+		if checksum != 32633 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_reader_resource_to_stream: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_constructor_builder_new(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_constructor_builder_new()
 		})
-		if checksum != 8924 {
+		if checksum != 43948 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_constructor_builder_new: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_constructor_callbacksigner_new(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_constructor_callbacksigner_new()
 		})
-		if checksum != 51503 {
+		if checksum != 65452 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_constructor_callbacksigner_new: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_constructor_reader_new(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_constructor_reader_new()
 		})
-		if checksum != 7340 {
+		if checksum != 19939 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_constructor_reader_new: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_signercallback_sign(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_signercallback_sign()
 		})
-		if checksum != 15928 {
+		if checksum != 64776 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_signercallback_sign: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_stream_read_stream(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_stream_read_stream()
 		})
-		if checksum != 4594 {
+		if checksum != 16779 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_stream_read_stream: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_stream_seek_stream(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_stream_seek_stream()
 		})
-		if checksum != 32219 {
+		if checksum != 39220 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_stream_seek_stream: UniFFI API checksum mismatch")
 		}
 	}
 	{
-		checksum := rustCall(func(uniffiStatus *C.RustCallStatus) C.uint16_t {
-			return C.uniffi_c2pa_checksum_method_stream_write_stream(uniffiStatus)
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_c2pa_checksum_method_stream_write_stream()
 		})
-		if checksum != 37641 {
+		if checksum != 63217 {
 			// If this happens try cleaning and rebuilding your project
 			panic("c2pa: uniffi_c2pa_checksum_method_stream_write_stream: UniFFI API checksum mismatch")
 		}
@@ -595,7 +597,7 @@ func (FfiConverterString) Read(reader io.Reader) string {
 	return string(buffer)
 }
 
-func (FfiConverterString) Lower(value string) RustBuffer {
+func (FfiConverterString) Lower(value string) C.RustBuffer {
 	return stringToRustBuffer(value)
 }
 
@@ -622,7 +624,7 @@ type FfiConverterBytes struct{}
 
 var FfiConverterBytesINSTANCE = FfiConverterBytes{}
 
-func (c FfiConverterBytes) Lower(value []byte) RustBuffer {
+func (c FfiConverterBytes) Lower(value []byte) C.RustBuffer {
 	return LowerIntoRustBuffer[[]byte](c, value)
 }
 
@@ -666,16 +668,22 @@ func (FfiDestroyerBytes) Destroy(_ []byte) {}
 // https://github.com/mozilla/uniffi-rs/blob/0dc031132d9493ca812c3af6e7dd60ad2ea95bf0/uniffi_bindgen/src/bindings/kotlin/templates/ObjectRuntime.kt#L31
 
 type FfiObject struct {
-	pointer      unsafe.Pointer
-	callCounter  atomic.Int64
-	freeFunction func(unsafe.Pointer, *C.RustCallStatus)
-	destroyed    atomic.Bool
+	pointer       unsafe.Pointer
+	callCounter   atomic.Int64
+	cloneFunction func(unsafe.Pointer, *C.RustCallStatus) unsafe.Pointer
+	freeFunction  func(unsafe.Pointer, *C.RustCallStatus)
+	destroyed     atomic.Bool
 }
 
-func newFfiObject(pointer unsafe.Pointer, freeFunction func(unsafe.Pointer, *C.RustCallStatus)) FfiObject {
+func newFfiObject(
+	pointer unsafe.Pointer,
+	cloneFunction func(unsafe.Pointer, *C.RustCallStatus) unsafe.Pointer,
+	freeFunction func(unsafe.Pointer, *C.RustCallStatus),
+) FfiObject {
 	return FfiObject{
-		pointer:      pointer,
-		freeFunction: freeFunction,
+		pointer:       pointer,
+		cloneFunction: cloneFunction,
+		freeFunction:  freeFunction,
 	}
 }
 
@@ -693,7 +701,9 @@ func (ffiObject *FfiObject) incrementPointer(debugName string) unsafe.Pointer {
 		}
 	}
 
-	return ffiObject.pointer
+	return rustCall(func(status *C.RustCallStatus) unsafe.Pointer {
+		return ffiObject.cloneFunction(ffiObject.pointer, status)
+	})
 }
 
 func (ffiObject *FfiObject) decrementPointer() {
@@ -717,6 +727,14 @@ func (ffiObject *FfiObject) freeRustArcPtr() {
 	})
 }
 
+type BuilderInterface interface {
+	AddIngredient(ingredientJson string, format string, stream Stream) *Error
+	AddResource(uri string, stream Stream) *Error
+	FromArchive(stream Stream) *Error
+	Sign(format string, input Stream, output Stream, signer *CallbackSigner) ([]byte, *Error)
+	ToArchive(stream Stream) *Error
+	WithJson(json string) *Error
+}
 type Builder struct {
 	ffiObject FfiObject
 }
@@ -727,10 +745,10 @@ func NewBuilder() *Builder {
 	}))
 }
 
-func (_self *Builder) AddIngredient(ingredientJson string, format string, stream Stream) error {
+func (_self *Builder) AddIngredient(ingredientJson string, format string, stream Stream) *Error {
 	_pointer := _self.ffiObject.incrementPointer("*Builder")
 	defer _self.ffiObject.decrementPointer()
-	_, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) bool {
+	_, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) bool {
 		C.uniffi_c2pa_fn_method_builder_add_ingredient(
 			_pointer, FfiConverterStringINSTANCE.Lower(ingredientJson), FfiConverterStringINSTANCE.Lower(format), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(stream), _uniffiStatus)
 		return false
@@ -738,10 +756,10 @@ func (_self *Builder) AddIngredient(ingredientJson string, format string, stream
 	return _uniffiErr
 }
 
-func (_self *Builder) AddResource(uri string, stream Stream) error {
+func (_self *Builder) AddResource(uri string, stream Stream) *Error {
 	_pointer := _self.ffiObject.incrementPointer("*Builder")
 	defer _self.ffiObject.decrementPointer()
-	_, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) bool {
+	_, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) bool {
 		C.uniffi_c2pa_fn_method_builder_add_resource(
 			_pointer, FfiConverterStringINSTANCE.Lower(uri), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(stream), _uniffiStatus)
 		return false
@@ -749,10 +767,10 @@ func (_self *Builder) AddResource(uri string, stream Stream) error {
 	return _uniffiErr
 }
 
-func (_self *Builder) FromArchive(stream Stream) error {
+func (_self *Builder) FromArchive(stream Stream) *Error {
 	_pointer := _self.ffiObject.incrementPointer("*Builder")
 	defer _self.ffiObject.decrementPointer()
-	_, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) bool {
+	_, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) bool {
 		C.uniffi_c2pa_fn_method_builder_from_archive(
 			_pointer, FfiConverterCallbackInterfaceStreamINSTANCE.Lower(stream), _uniffiStatus)
 		return false
@@ -760,12 +778,14 @@ func (_self *Builder) FromArchive(stream Stream) error {
 	return _uniffiErr
 }
 
-func (_self *Builder) Sign(format string, input Stream, output Stream, signer *CallbackSigner) ([]byte, error) {
+func (_self *Builder) Sign(format string, input Stream, output Stream, signer *CallbackSigner) ([]byte, *Error) {
 	_pointer := _self.ffiObject.incrementPointer("*Builder")
 	defer _self.ffiObject.decrementPointer()
-	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
-		return C.uniffi_c2pa_fn_method_builder_sign(
-			_pointer, FfiConverterStringINSTANCE.Lower(format), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(input), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(output), FfiConverterCallbackSignerINSTANCE.Lower(signer), _uniffiStatus)
+	_uniffiRV, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_c2pa_fn_method_builder_sign(
+				_pointer, FfiConverterStringINSTANCE.Lower(format), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(input), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(output), FfiConverterCallbackSignerINSTANCE.Lower(signer), _uniffiStatus),
+		}
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue []byte
@@ -775,10 +795,10 @@ func (_self *Builder) Sign(format string, input Stream, output Stream, signer *C
 	}
 }
 
-func (_self *Builder) ToArchive(stream Stream) error {
+func (_self *Builder) ToArchive(stream Stream) *Error {
 	_pointer := _self.ffiObject.incrementPointer("*Builder")
 	defer _self.ffiObject.decrementPointer()
-	_, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) bool {
+	_, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) bool {
 		C.uniffi_c2pa_fn_method_builder_to_archive(
 			_pointer, FfiConverterCallbackInterfaceStreamINSTANCE.Lower(stream), _uniffiStatus)
 		return false
@@ -786,17 +806,16 @@ func (_self *Builder) ToArchive(stream Stream) error {
 	return _uniffiErr
 }
 
-func (_self *Builder) WithJson(json string) error {
+func (_self *Builder) WithJson(json string) *Error {
 	_pointer := _self.ffiObject.incrementPointer("*Builder")
 	defer _self.ffiObject.decrementPointer()
-	_, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) bool {
+	_, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) bool {
 		C.uniffi_c2pa_fn_method_builder_with_json(
 			_pointer, FfiConverterStringINSTANCE.Lower(json), _uniffiStatus)
 		return false
 	})
 	return _uniffiErr
 }
-
 func (object *Builder) Destroy() {
 	runtime.SetFinalizer(object, nil)
 	object.ffiObject.destroy()
@@ -810,9 +829,13 @@ func (c FfiConverterBuilder) Lift(pointer unsafe.Pointer) *Builder {
 	result := &Builder{
 		newFfiObject(
 			pointer,
+			func(pointer unsafe.Pointer, status *C.RustCallStatus) unsafe.Pointer {
+				return C.uniffi_c2pa_fn_clone_builder(pointer, status)
+			},
 			func(pointer unsafe.Pointer, status *C.RustCallStatus) {
 				C.uniffi_c2pa_fn_free_builder(pointer, status)
-			}),
+			},
+		),
 	}
 	runtime.SetFinalizer(result, (*Builder).Destroy)
 	return result
@@ -829,6 +852,7 @@ func (c FfiConverterBuilder) Lower(value *Builder) unsafe.Pointer {
 	pointer := value.ffiObject.incrementPointer("*Builder")
 	defer value.ffiObject.decrementPointer()
 	return pointer
+
 }
 
 func (c FfiConverterBuilder) Write(writer io.Writer, value *Builder) {
@@ -841,13 +865,15 @@ func (_ FfiDestroyerBuilder) Destroy(value *Builder) {
 	value.Destroy()
 }
 
+type CallbackSignerInterface interface {
+}
 type CallbackSigner struct {
 	ffiObject FfiObject
 }
 
 func NewCallbackSigner(callback SignerCallback, alg SigningAlg, certs []byte, taUrl *string) *CallbackSigner {
 	return FfiConverterCallbackSignerINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) unsafe.Pointer {
-		return C.uniffi_c2pa_fn_constructor_callbacksigner_new(FfiConverterCallbackInterfaceSignerCallbackINSTANCE.Lower(callback), FfiConverterTypeSigningAlgINSTANCE.Lower(alg), FfiConverterBytesINSTANCE.Lower(certs), FfiConverterOptionalStringINSTANCE.Lower(taUrl), _uniffiStatus)
+		return C.uniffi_c2pa_fn_constructor_callbacksigner_new(FfiConverterCallbackInterfaceSignerCallbackINSTANCE.Lower(callback), FfiConverterSigningAlgINSTANCE.Lower(alg), FfiConverterBytesINSTANCE.Lower(certs), FfiConverterOptionalStringINSTANCE.Lower(taUrl), _uniffiStatus)
 	}))
 }
 
@@ -864,9 +890,13 @@ func (c FfiConverterCallbackSigner) Lift(pointer unsafe.Pointer) *CallbackSigner
 	result := &CallbackSigner{
 		newFfiObject(
 			pointer,
+			func(pointer unsafe.Pointer, status *C.RustCallStatus) unsafe.Pointer {
+				return C.uniffi_c2pa_fn_clone_callbacksigner(pointer, status)
+			},
 			func(pointer unsafe.Pointer, status *C.RustCallStatus) {
 				C.uniffi_c2pa_fn_free_callbacksigner(pointer, status)
-			}),
+			},
+		),
 	}
 	runtime.SetFinalizer(result, (*CallbackSigner).Destroy)
 	return result
@@ -883,6 +913,7 @@ func (c FfiConverterCallbackSigner) Lower(value *CallbackSigner) unsafe.Pointer 
 	pointer := value.ffiObject.incrementPointer("*CallbackSigner")
 	defer value.ffiObject.decrementPointer()
 	return pointer
+
 }
 
 func (c FfiConverterCallbackSigner) Write(writer io.Writer, value *CallbackSigner) {
@@ -895,6 +926,12 @@ func (_ FfiDestroyerCallbackSigner) Destroy(value *CallbackSigner) {
 	value.Destroy()
 }
 
+type ReaderInterface interface {
+	FromStream(format string, reader Stream) (string, *Error)
+	GetProvenanceCertChain() (string, *Error)
+	Json() (string, *Error)
+	ResourceToStream(uri string, stream Stream) (uint64, *Error)
+}
 type Reader struct {
 	ffiObject FfiObject
 }
@@ -905,12 +942,14 @@ func NewReader() *Reader {
 	}))
 }
 
-func (_self *Reader) FromStream(format string, reader Stream) (string, error) {
+func (_self *Reader) FromStream(format string, reader Stream) (string, *Error) {
 	_pointer := _self.ffiObject.incrementPointer("*Reader")
 	defer _self.ffiObject.decrementPointer()
-	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
-		return C.uniffi_c2pa_fn_method_reader_from_stream(
-			_pointer, FfiConverterStringINSTANCE.Lower(format), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(reader), _uniffiStatus)
+	_uniffiRV, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_c2pa_fn_method_reader_from_stream(
+				_pointer, FfiConverterStringINSTANCE.Lower(format), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(reader), _uniffiStatus),
+		}
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue string
@@ -920,12 +959,14 @@ func (_self *Reader) FromStream(format string, reader Stream) (string, error) {
 	}
 }
 
-func (_self *Reader) GetProvenanceCertChain() (string, error) {
+func (_self *Reader) GetProvenanceCertChain() (string, *Error) {
 	_pointer := _self.ffiObject.incrementPointer("*Reader")
 	defer _self.ffiObject.decrementPointer()
-	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
-		return C.uniffi_c2pa_fn_method_reader_get_provenance_cert_chain(
-			_pointer, _uniffiStatus)
+	_uniffiRV, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_c2pa_fn_method_reader_get_provenance_cert_chain(
+				_pointer, _uniffiStatus),
+		}
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue string
@@ -935,12 +976,14 @@ func (_self *Reader) GetProvenanceCertChain() (string, error) {
 	}
 }
 
-func (_self *Reader) Json() (string, error) {
+func (_self *Reader) Json() (string, *Error) {
 	_pointer := _self.ffiObject.incrementPointer("*Reader")
 	defer _self.ffiObject.decrementPointer()
-	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
-		return C.uniffi_c2pa_fn_method_reader_json(
-			_pointer, _uniffiStatus)
+	_uniffiRV, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_c2pa_fn_method_reader_json(
+				_pointer, _uniffiStatus),
+		}
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue string
@@ -950,10 +993,10 @@ func (_self *Reader) Json() (string, error) {
 	}
 }
 
-func (_self *Reader) ResourceToStream(uri string, stream Stream) (uint64, error) {
+func (_self *Reader) ResourceToStream(uri string, stream Stream) (uint64, *Error) {
 	_pointer := _self.ffiObject.incrementPointer("*Reader")
 	defer _self.ffiObject.decrementPointer()
-	_uniffiRV, _uniffiErr := rustCallWithError(FfiConverterTypeError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+	_uniffiRV, _uniffiErr := rustCallWithError[Error](FfiConverterError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
 		return C.uniffi_c2pa_fn_method_reader_resource_to_stream(
 			_pointer, FfiConverterStringINSTANCE.Lower(uri), FfiConverterCallbackInterfaceStreamINSTANCE.Lower(stream), _uniffiStatus)
 	})
@@ -964,7 +1007,6 @@ func (_self *Reader) ResourceToStream(uri string, stream Stream) (uint64, error)
 		return FfiConverterUint64INSTANCE.Lift(_uniffiRV), _uniffiErr
 	}
 }
-
 func (object *Reader) Destroy() {
 	runtime.SetFinalizer(object, nil)
 	object.ffiObject.destroy()
@@ -978,9 +1020,13 @@ func (c FfiConverterReader) Lift(pointer unsafe.Pointer) *Reader {
 	result := &Reader{
 		newFfiObject(
 			pointer,
+			func(pointer unsafe.Pointer, status *C.RustCallStatus) unsafe.Pointer {
+				return C.uniffi_c2pa_fn_clone_reader(pointer, status)
+			},
 			func(pointer unsafe.Pointer, status *C.RustCallStatus) {
 				C.uniffi_c2pa_fn_free_reader(pointer, status)
-			}),
+			},
+		),
 	}
 	runtime.SetFinalizer(result, (*Reader).Destroy)
 	return result
@@ -997,6 +1043,7 @@ func (c FfiConverterReader) Lower(value *Reader) unsafe.Pointer {
 	pointer := value.ffiObject.incrementPointer("*Reader")
 	defer value.ffiObject.decrementPointer()
 	return pointer
+
 }
 
 func (c FfiConverterReader) Write(writer io.Writer, value *Reader) {
@@ -1011,6 +1058,16 @@ func (_ FfiDestroyerReader) Destroy(value *Reader) {
 
 type Error struct {
 	err error
+}
+
+// Convience method to turn *Error into error
+// Avoiding treating nil pointer as non nil error interface
+func (err *Error) AsError() error {
+	if err == nil {
+		return nil
+	} else {
+		return err
+	}
 }
 
 func (err Error) Error() string {
@@ -1047,11 +1104,12 @@ type ErrorAssertion struct {
 func NewErrorAssertion(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorAssertion{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorAssertion{
+		Reason: reason}}
+}
+
+func (e ErrorAssertion) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorAssertion) Error() string {
@@ -1074,11 +1132,12 @@ type ErrorAssertionNotFound struct {
 func NewErrorAssertionNotFound(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorAssertionNotFound{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorAssertionNotFound{
+		Reason: reason}}
+}
+
+func (e ErrorAssertionNotFound) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorAssertionNotFound) Error() string {
@@ -1101,11 +1160,12 @@ type ErrorDecoding struct {
 func NewErrorDecoding(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorDecoding{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorDecoding{
+		Reason: reason}}
+}
+
+func (e ErrorDecoding) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorDecoding) Error() string {
@@ -1128,11 +1188,12 @@ type ErrorEncoding struct {
 func NewErrorEncoding(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorEncoding{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorEncoding{
+		Reason: reason}}
+}
+
+func (e ErrorEncoding) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorEncoding) Error() string {
@@ -1155,11 +1216,12 @@ type ErrorFileNotFound struct {
 func NewErrorFileNotFound(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorFileNotFound{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorFileNotFound{
+		Reason: reason}}
+}
+
+func (e ErrorFileNotFound) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorFileNotFound) Error() string {
@@ -1182,11 +1244,12 @@ type ErrorIo struct {
 func NewErrorIo(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorIo{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorIo{
+		Reason: reason}}
+}
+
+func (e ErrorIo) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorIo) Error() string {
@@ -1209,11 +1272,12 @@ type ErrorJson struct {
 func NewErrorJson(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorJson{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorJson{
+		Reason: reason}}
+}
+
+func (e ErrorJson) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorJson) Error() string {
@@ -1236,11 +1300,12 @@ type ErrorManifest struct {
 func NewErrorManifest(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorManifest{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorManifest{
+		Reason: reason}}
+}
+
+func (e ErrorManifest) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorManifest) Error() string {
@@ -1263,11 +1328,12 @@ type ErrorManifestNotFound struct {
 func NewErrorManifestNotFound(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorManifestNotFound{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorManifestNotFound{
+		Reason: reason}}
+}
+
+func (e ErrorManifestNotFound) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorManifestNotFound) Error() string {
@@ -1290,11 +1356,12 @@ type ErrorNotSupported struct {
 func NewErrorNotSupported(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorNotSupported{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorNotSupported{
+		Reason: reason}}
+}
+
+func (e ErrorNotSupported) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorNotSupported) Error() string {
@@ -1317,11 +1384,12 @@ type ErrorOther struct {
 func NewErrorOther(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorOther{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorOther{
+		Reason: reason}}
+}
+
+func (e ErrorOther) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorOther) Error() string {
@@ -1344,11 +1412,12 @@ type ErrorRemoteManifest struct {
 func NewErrorRemoteManifest(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorRemoteManifest{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorRemoteManifest{
+		Reason: reason}}
+}
+
+func (e ErrorRemoteManifest) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorRemoteManifest) Error() string {
@@ -1371,11 +1440,12 @@ type ErrorResourceNotFound struct {
 func NewErrorResourceNotFound(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorResourceNotFound{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorResourceNotFound{
+		Reason: reason}}
+}
+
+func (e ErrorResourceNotFound) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorResourceNotFound) Error() string {
@@ -1395,9 +1465,10 @@ type ErrorRwLock struct {
 }
 
 func NewErrorRwLock() *Error {
-	return &Error{
-		err: &ErrorRwLock{},
-	}
+	return &Error{err: &ErrorRwLock{}}
+}
+
+func (e ErrorRwLock) destroy() {
 }
 
 func (err ErrorRwLock) Error() string {
@@ -1415,11 +1486,12 @@ type ErrorSignature struct {
 func NewErrorSignature(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorSignature{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorSignature{
+		Reason: reason}}
+}
+
+func (e ErrorSignature) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorSignature) Error() string {
@@ -1442,11 +1514,12 @@ type ErrorVerify struct {
 func NewErrorVerify(
 	reason string,
 ) *Error {
-	return &Error{
-		err: &ErrorVerify{
-			Reason: reason,
-		},
-	}
+	return &Error{err: &ErrorVerify{
+		Reason: reason}}
+}
+
+func (e ErrorVerify) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
 }
 
 func (err ErrorVerify) Error() string {
@@ -1462,19 +1535,19 @@ func (self ErrorVerify) Is(target error) bool {
 	return target == ErrErrorVerify
 }
 
-type FfiConverterTypeError struct{}
+type FfiConverterError struct{}
 
-var FfiConverterTypeErrorINSTANCE = FfiConverterTypeError{}
+var FfiConverterErrorINSTANCE = FfiConverterError{}
 
-func (c FfiConverterTypeError) Lift(eb RustBufferI) error {
-	return LiftFromRustBuffer[error](c, eb)
+func (c FfiConverterError) Lift(eb RustBufferI) *Error {
+	return LiftFromRustBuffer[*Error](c, eb)
 }
 
-func (c FfiConverterTypeError) Lower(value *Error) RustBuffer {
+func (c FfiConverterError) Lower(value *Error) C.RustBuffer {
 	return LowerIntoRustBuffer[*Error](c, value)
 }
 
-func (c FfiConverterTypeError) Read(reader io.Reader) error {
+func (c FfiConverterError) Read(reader io.Reader) *Error {
 	errorID := readUint32(reader)
 
 	switch errorID {
@@ -1541,11 +1614,11 @@ func (c FfiConverterTypeError) Read(reader io.Reader) error {
 			Reason: FfiConverterStringINSTANCE.Read(reader),
 		}}
 	default:
-		panic(fmt.Sprintf("Unknown error code %d in FfiConverterTypeError.Read()", errorID))
+		panic(fmt.Sprintf("Unknown error code %d in FfiConverterError.Read()", errorID))
 	}
 }
 
-func (c FfiConverterTypeError) Write(writer io.Writer, value *Error) {
+func (c FfiConverterError) Write(writer io.Writer, value *Error) {
 	switch variantValue := value.err.(type) {
 	case *ErrorAssertion:
 		writeInt32(writer, 1)
@@ -1596,7 +1669,49 @@ func (c FfiConverterTypeError) Write(writer io.Writer, value *Error) {
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Reason)
 	default:
 		_ = variantValue
-		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterTypeError.Write", value))
+		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterError.Write", value))
+	}
+}
+
+type FfiDestroyerError struct{}
+
+func (_ FfiDestroyerError) Destroy(value *Error) {
+	switch variantValue := value.err.(type) {
+	case ErrorAssertion:
+		variantValue.destroy()
+	case ErrorAssertionNotFound:
+		variantValue.destroy()
+	case ErrorDecoding:
+		variantValue.destroy()
+	case ErrorEncoding:
+		variantValue.destroy()
+	case ErrorFileNotFound:
+		variantValue.destroy()
+	case ErrorIo:
+		variantValue.destroy()
+	case ErrorJson:
+		variantValue.destroy()
+	case ErrorManifest:
+		variantValue.destroy()
+	case ErrorManifestNotFound:
+		variantValue.destroy()
+	case ErrorNotSupported:
+		variantValue.destroy()
+	case ErrorOther:
+		variantValue.destroy()
+	case ErrorRemoteManifest:
+		variantValue.destroy()
+	case ErrorResourceNotFound:
+		variantValue.destroy()
+	case ErrorRwLock:
+		variantValue.destroy()
+	case ErrorSignature:
+		variantValue.destroy()
+	case ErrorVerify:
+		variantValue.destroy()
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerError.Destroy", value))
 	}
 }
 
@@ -1608,29 +1723,29 @@ const (
 	SeekModeCurrent SeekMode = 3
 )
 
-type FfiConverterTypeSeekMode struct{}
+type FfiConverterSeekMode struct{}
 
-var FfiConverterTypeSeekModeINSTANCE = FfiConverterTypeSeekMode{}
+var FfiConverterSeekModeINSTANCE = FfiConverterSeekMode{}
 
-func (c FfiConverterTypeSeekMode) Lift(rb RustBufferI) SeekMode {
+func (c FfiConverterSeekMode) Lift(rb RustBufferI) SeekMode {
 	return LiftFromRustBuffer[SeekMode](c, rb)
 }
 
-func (c FfiConverterTypeSeekMode) Lower(value SeekMode) RustBuffer {
+func (c FfiConverterSeekMode) Lower(value SeekMode) C.RustBuffer {
 	return LowerIntoRustBuffer[SeekMode](c, value)
 }
-func (FfiConverterTypeSeekMode) Read(reader io.Reader) SeekMode {
+func (FfiConverterSeekMode) Read(reader io.Reader) SeekMode {
 	id := readInt32(reader)
 	return SeekMode(id)
 }
 
-func (FfiConverterTypeSeekMode) Write(writer io.Writer, value SeekMode) {
+func (FfiConverterSeekMode) Write(writer io.Writer, value SeekMode) {
 	writeInt32(writer, int32(value))
 }
 
-type FfiDestroyerTypeSeekMode struct{}
+type FfiDestroyerSeekMode struct{}
 
-func (_ FfiDestroyerTypeSeekMode) Destroy(value SeekMode) {
+func (_ FfiDestroyerSeekMode) Destroy(value SeekMode) {
 }
 
 type SigningAlg uint
@@ -1646,32 +1761,68 @@ const (
 	SigningAlgEd25519 SigningAlg = 8
 )
 
-type FfiConverterTypeSigningAlg struct{}
+type FfiConverterSigningAlg struct{}
 
-var FfiConverterTypeSigningAlgINSTANCE = FfiConverterTypeSigningAlg{}
+var FfiConverterSigningAlgINSTANCE = FfiConverterSigningAlg{}
 
-func (c FfiConverterTypeSigningAlg) Lift(rb RustBufferI) SigningAlg {
+func (c FfiConverterSigningAlg) Lift(rb RustBufferI) SigningAlg {
 	return LiftFromRustBuffer[SigningAlg](c, rb)
 }
 
-func (c FfiConverterTypeSigningAlg) Lower(value SigningAlg) RustBuffer {
+func (c FfiConverterSigningAlg) Lower(value SigningAlg) C.RustBuffer {
 	return LowerIntoRustBuffer[SigningAlg](c, value)
 }
-func (FfiConverterTypeSigningAlg) Read(reader io.Reader) SigningAlg {
+func (FfiConverterSigningAlg) Read(reader io.Reader) SigningAlg {
 	id := readInt32(reader)
 	return SigningAlg(id)
 }
 
-func (FfiConverterTypeSigningAlg) Write(writer io.Writer, value SigningAlg) {
+func (FfiConverterSigningAlg) Write(writer io.Writer, value SigningAlg) {
 	writeInt32(writer, int32(value))
 }
 
-type FfiDestroyerTypeSigningAlg struct{}
+type FfiDestroyerSigningAlg struct{}
 
-func (_ FfiDestroyerTypeSigningAlg) Destroy(value SigningAlg) {
+func (_ FfiDestroyerSigningAlg) Destroy(value SigningAlg) {
 }
 
-type uniffiCallbackResult C.int32_t
+type SignerCallback interface {
+	Sign(data []byte) ([]byte, *Error)
+}
+
+type FfiConverterCallbackInterfaceSignerCallback struct {
+	handleMap *concurrentHandleMap[SignerCallback]
+}
+
+var FfiConverterCallbackInterfaceSignerCallbackINSTANCE = FfiConverterCallbackInterfaceSignerCallback{
+	handleMap: newConcurrentHandleMap[SignerCallback](),
+}
+
+func (c FfiConverterCallbackInterfaceSignerCallback) Lift(handle uint64) SignerCallback {
+	val, ok := c.handleMap.tryGet(handle)
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+	return val
+}
+
+func (c FfiConverterCallbackInterfaceSignerCallback) Read(reader io.Reader) SignerCallback {
+	return c.Lift(readUint64(reader))
+}
+
+func (c FfiConverterCallbackInterfaceSignerCallback) Lower(value SignerCallback) C.uint64_t {
+	return C.uint64_t(c.handleMap.insert(value))
+}
+
+func (c FfiConverterCallbackInterfaceSignerCallback) Write(writer io.Writer, value SignerCallback) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+type FfiDestroyerCallbackInterfaceSignerCallback struct{}
+
+func (FfiDestroyerCallbackInterfaceSignerCallback) Destroy(value SignerCallback) {}
+
+type uniffiCallbackResult C.int8_t
 
 const (
 	uniffiIdxCallbackFree               uniffiCallbackResult = 0
@@ -1682,150 +1833,89 @@ const (
 )
 
 type concurrentHandleMap[T any] struct {
-	leftMap       map[uint64]*T
-	rightMap      map[*T]uint64
+	handles       map[uint64]T
 	currentHandle uint64
 	lock          sync.RWMutex
 }
 
 func newConcurrentHandleMap[T any]() *concurrentHandleMap[T] {
 	return &concurrentHandleMap[T]{
-		leftMap:  map[uint64]*T{},
-		rightMap: map[*T]uint64{},
+		handles: map[uint64]T{},
 	}
 }
 
-func (cm *concurrentHandleMap[T]) insert(obj *T) uint64 {
+func (cm *concurrentHandleMap[T]) insert(obj T) uint64 {
 	cm.lock.Lock()
 	defer cm.lock.Unlock()
 
-	if existingHandle, ok := cm.rightMap[obj]; ok {
-		return existingHandle
-	}
 	cm.currentHandle = cm.currentHandle + 1
-	cm.leftMap[cm.currentHandle] = obj
-	cm.rightMap[obj] = cm.currentHandle
+	cm.handles[cm.currentHandle] = obj
 	return cm.currentHandle
 }
 
-func (cm *concurrentHandleMap[T]) remove(handle uint64) bool {
+func (cm *concurrentHandleMap[T]) remove(handle uint64) {
 	cm.lock.Lock()
 	defer cm.lock.Unlock()
 
-	if val, ok := cm.leftMap[handle]; ok {
-		delete(cm.leftMap, handle)
-		delete(cm.rightMap, val)
-	}
-	return false
+	delete(cm.handles, handle)
 }
 
-func (cm *concurrentHandleMap[T]) tryGet(handle uint64) (*T, bool) {
+func (cm *concurrentHandleMap[T]) tryGet(handle uint64) (T, bool) {
 	cm.lock.RLock()
 	defer cm.lock.RUnlock()
 
-	val, ok := cm.leftMap[handle]
+	val, ok := cm.handles[handle]
 	return val, ok
 }
 
-type FfiConverterCallbackInterface[CallbackInterface any] struct {
-	handleMap *concurrentHandleMap[CallbackInterface]
-}
-
-func (c *FfiConverterCallbackInterface[CallbackInterface]) drop(handle uint64) RustBuffer {
-	c.handleMap.remove(handle)
-	return RustBuffer{}
-}
-
-func (c *FfiConverterCallbackInterface[CallbackInterface]) Lift(handle uint64) CallbackInterface {
-	val, ok := c.handleMap.tryGet(handle)
+//export c2pa_cgo_dispatchCallbackInterfaceSignerCallbackMethod0
+func c2pa_cgo_dispatchCallbackInterfaceSignerCallbackMethod0(uniffiHandle C.uint64_t, data C.RustBuffer, uniffiOutReturn *C.RustBuffer, callStatus *C.RustCallStatus) {
+	handle := uint64(uniffiHandle)
+	uniffiObj, ok := FfiConverterCallbackInterfaceSignerCallbackINSTANCE.handleMap.tryGet(handle)
 	if !ok {
 		panic(fmt.Errorf("no callback in handle map: %d", handle))
 	}
-	return *val
-}
 
-func (c *FfiConverterCallbackInterface[CallbackInterface]) Read(reader io.Reader) CallbackInterface {
-	return c.Lift(readUint64(reader))
-}
-
-func (c *FfiConverterCallbackInterface[CallbackInterface]) Lower(value CallbackInterface) C.uint64_t {
-	return C.uint64_t(c.handleMap.insert(&value))
-}
-
-func (c *FfiConverterCallbackInterface[CallbackInterface]) Write(writer io.Writer, value CallbackInterface) {
-	writeUint64(writer, uint64(c.Lower(value)))
-}
-
-type SignerCallback interface {
-	Sign(data []byte) ([]byte, *Error)
-}
-
-// foreignCallbackCallbackInterfaceSignerCallback cannot be callable be a compiled function at a same time
-type foreignCallbackCallbackInterfaceSignerCallback struct{}
-
-//export c2pa_cgo_SignerCallback
-func c2pa_cgo_SignerCallback(handle C.uint64_t, method C.int32_t, argsPtr *C.uint8_t, argsLen C.int32_t, outBuf *C.RustBuffer) C.int32_t {
-	cb := FfiConverterCallbackInterfaceSignerCallbackINSTANCE.Lift(uint64(handle))
-	switch method {
-	case 0:
-		// 0 means Rust is done with the callback, and the callback
-		// can be dropped by the foreign language.
-		*outBuf = FfiConverterCallbackInterfaceSignerCallbackINSTANCE.drop(uint64(handle))
-		// See docs of ForeignCallback in `uniffi/src/ffi/foreigncallbacks.rs`
-		return C.int32_t(uniffiIdxCallbackFree)
-
-	case 1:
-		var result uniffiCallbackResult
-		args := unsafe.Slice((*byte)(argsPtr), argsLen)
-		result = foreignCallbackCallbackInterfaceSignerCallback{}.InvokeSign(cb, args, outBuf)
-		return C.int32_t(result)
-
-	default:
-		// This should never happen, because an out of bounds method index won't
-		// ever be used. Once we can catch errors, we should return an InternalException.
-		// https://github.com/mozilla/uniffi-rs/issues/351
-		return C.int32_t(uniffiCallbackUnexpectedResultError)
-	}
-}
-
-func (foreignCallbackCallbackInterfaceSignerCallback) InvokeSign(callback SignerCallback, args []byte, outBuf *C.RustBuffer) uniffiCallbackResult {
-	reader := bytes.NewReader(args)
-	result, err := callback.Sign(FfiConverterBytesINSTANCE.Read(reader))
+	res, err :=
+		uniffiObj.Sign(
+			FfiConverterBytesINSTANCE.Lift(GoRustBuffer{
+				inner: data,
+			}),
+		)
 
 	if err != nil {
 		// The only way to bypass an unexpected error is to bypass pointer to an empty
 		// instance of the error
 		if err.err == nil {
-			return uniffiCallbackUnexpectedResultError
+			*callStatus = C.RustCallStatus{
+				code: C.int8_t(uniffiCallbackUnexpectedResultError),
+			}
+			return
 		}
-		*outBuf = LowerIntoRustBuffer[*Error](FfiConverterTypeErrorINSTANCE, err)
-		return uniffiCallbackResultError
+
+		*callStatus = C.RustCallStatus{
+			code:     C.int8_t(uniffiCallbackResultError),
+			errorBuf: FfiConverterErrorINSTANCE.Lower(err),
+		}
+		return
 	}
-	*outBuf = LowerIntoRustBuffer[[]byte](FfiConverterBytesINSTANCE, result)
-	return uniffiCallbackResultSuccess
+
+	*uniffiOutReturn = FfiConverterBytesINSTANCE.Lower(res)
 }
 
-type FfiConverterCallbackInterfaceSignerCallback struct {
-	FfiConverterCallbackInterface[SignerCallback]
+var UniffiVTableCallbackInterfaceSignerCallbackINSTANCE = C.UniffiVTableCallbackInterfaceSignerCallback{
+	sign: (C.UniffiCallbackInterfaceSignerCallbackMethod0)(C.c2pa_cgo_dispatchCallbackInterfaceSignerCallbackMethod0),
+
+	uniffiFree: (C.UniffiCallbackInterfaceFree)(C.c2pa_cgo_dispatchCallbackInterfaceSignerCallbackFree),
 }
 
-var FfiConverterCallbackInterfaceSignerCallbackINSTANCE = &FfiConverterCallbackInterfaceSignerCallback{
-	FfiConverterCallbackInterface: FfiConverterCallbackInterface[SignerCallback]{
-		handleMap: newConcurrentHandleMap[SignerCallback](),
-	},
+//export c2pa_cgo_dispatchCallbackInterfaceSignerCallbackFree
+func c2pa_cgo_dispatchCallbackInterfaceSignerCallbackFree(handle C.uint64_t) {
+	FfiConverterCallbackInterfaceSignerCallbackINSTANCE.handleMap.remove(uint64(handle))
 }
 
-// This is a static function because only 1 instance is supported for registering
-func (c *FfiConverterCallbackInterfaceSignerCallback) register() {
-	rustCall(func(status *C.RustCallStatus) int32 {
-		C.uniffi_c2pa_fn_init_callback_signercallback(C.ForeignCallback(C.c2pa_cgo_SignerCallback), status)
-		return 0
-	})
-}
-
-type FfiDestroyerCallbackInterfaceSignerCallback struct{}
-
-func (FfiDestroyerCallbackInterfaceSignerCallback) Destroy(value SignerCallback) {
+func (c FfiConverterCallbackInterfaceSignerCallback) register() {
+	C.uniffi_c2pa_fn_init_callback_vtable_signercallback(&UniffiVTableCallbackInterfaceSignerCallbackINSTANCE)
 }
 
 type Stream interface {
@@ -1836,114 +1926,157 @@ type Stream interface {
 	WriteStream(data []byte) (uint64, *Error)
 }
 
-// foreignCallbackCallbackInterfaceStream cannot be callable be a compiled function at a same time
-type foreignCallbackCallbackInterfaceStream struct{}
-
-//export c2pa_cgo_Stream
-func c2pa_cgo_Stream(handle C.uint64_t, method C.int32_t, argsPtr *C.uint8_t, argsLen C.int32_t, outBuf *C.RustBuffer) C.int32_t {
-	cb := FfiConverterCallbackInterfaceStreamINSTANCE.Lift(uint64(handle))
-	switch method {
-	case 0:
-		// 0 means Rust is done with the callback, and the callback
-		// can be dropped by the foreign language.
-		*outBuf = FfiConverterCallbackInterfaceStreamINSTANCE.drop(uint64(handle))
-		// See docs of ForeignCallback in `uniffi/src/ffi/foreigncallbacks.rs`
-		return C.int32_t(uniffiIdxCallbackFree)
-
-	case 1:
-		var result uniffiCallbackResult
-		args := unsafe.Slice((*byte)(argsPtr), argsLen)
-		result = foreignCallbackCallbackInterfaceStream{}.InvokeReadStream(cb, args, outBuf)
-		return C.int32_t(result)
-	case 2:
-		var result uniffiCallbackResult
-		args := unsafe.Slice((*byte)(argsPtr), argsLen)
-		result = foreignCallbackCallbackInterfaceStream{}.InvokeSeekStream(cb, args, outBuf)
-		return C.int32_t(result)
-	case 3:
-		var result uniffiCallbackResult
-		args := unsafe.Slice((*byte)(argsPtr), argsLen)
-		result = foreignCallbackCallbackInterfaceStream{}.InvokeWriteStream(cb, args, outBuf)
-		return C.int32_t(result)
-
-	default:
-		// This should never happen, because an out of bounds method index won't
-		// ever be used. Once we can catch errors, we should return an InternalException.
-		// https://github.com/mozilla/uniffi-rs/issues/351
-		return C.int32_t(uniffiCallbackUnexpectedResultError)
-	}
-}
-
-func (foreignCallbackCallbackInterfaceStream) InvokeReadStream(callback Stream, args []byte, outBuf *C.RustBuffer) uniffiCallbackResult {
-	reader := bytes.NewReader(args)
-	result, err := callback.ReadStream(FfiConverterUint64INSTANCE.Read(reader))
-
-	if err != nil {
-		// The only way to bypass an unexpected error is to bypass pointer to an empty
-		// instance of the error
-		if err.err == nil {
-			return uniffiCallbackUnexpectedResultError
-		}
-		*outBuf = LowerIntoRustBuffer[*Error](FfiConverterTypeErrorINSTANCE, err)
-		return uniffiCallbackResultError
-	}
-	*outBuf = LowerIntoRustBuffer[[]byte](FfiConverterBytesINSTANCE, result)
-	return uniffiCallbackResultSuccess
-}
-func (foreignCallbackCallbackInterfaceStream) InvokeSeekStream(callback Stream, args []byte, outBuf *C.RustBuffer) uniffiCallbackResult {
-	reader := bytes.NewReader(args)
-	result, err := callback.SeekStream(FfiConverterInt64INSTANCE.Read(reader), FfiConverterTypeSeekModeINSTANCE.Read(reader))
-
-	if err != nil {
-		// The only way to bypass an unexpected error is to bypass pointer to an empty
-		// instance of the error
-		if err.err == nil {
-			return uniffiCallbackUnexpectedResultError
-		}
-		*outBuf = LowerIntoRustBuffer[*Error](FfiConverterTypeErrorINSTANCE, err)
-		return uniffiCallbackResultError
-	}
-	*outBuf = LowerIntoRustBuffer[uint64](FfiConverterUint64INSTANCE, result)
-	return uniffiCallbackResultSuccess
-}
-func (foreignCallbackCallbackInterfaceStream) InvokeWriteStream(callback Stream, args []byte, outBuf *C.RustBuffer) uniffiCallbackResult {
-	reader := bytes.NewReader(args)
-	result, err := callback.WriteStream(FfiConverterBytesINSTANCE.Read(reader))
-
-	if err != nil {
-		// The only way to bypass an unexpected error is to bypass pointer to an empty
-		// instance of the error
-		if err.err == nil {
-			return uniffiCallbackUnexpectedResultError
-		}
-		*outBuf = LowerIntoRustBuffer[*Error](FfiConverterTypeErrorINSTANCE, err)
-		return uniffiCallbackResultError
-	}
-	*outBuf = LowerIntoRustBuffer[uint64](FfiConverterUint64INSTANCE, result)
-	return uniffiCallbackResultSuccess
-}
-
 type FfiConverterCallbackInterfaceStream struct {
-	FfiConverterCallbackInterface[Stream]
+	handleMap *concurrentHandleMap[Stream]
 }
 
-var FfiConverterCallbackInterfaceStreamINSTANCE = &FfiConverterCallbackInterfaceStream{
-	FfiConverterCallbackInterface: FfiConverterCallbackInterface[Stream]{
-		handleMap: newConcurrentHandleMap[Stream](),
-	},
+var FfiConverterCallbackInterfaceStreamINSTANCE = FfiConverterCallbackInterfaceStream{
+	handleMap: newConcurrentHandleMap[Stream](),
 }
 
-// This is a static function because only 1 instance is supported for registering
-func (c *FfiConverterCallbackInterfaceStream) register() {
-	rustCall(func(status *C.RustCallStatus) int32 {
-		C.uniffi_c2pa_fn_init_callback_stream(C.ForeignCallback(C.c2pa_cgo_Stream), status)
-		return 0
-	})
+func (c FfiConverterCallbackInterfaceStream) Lift(handle uint64) Stream {
+	val, ok := c.handleMap.tryGet(handle)
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+	return val
+}
+
+func (c FfiConverterCallbackInterfaceStream) Read(reader io.Reader) Stream {
+	return c.Lift(readUint64(reader))
+}
+
+func (c FfiConverterCallbackInterfaceStream) Lower(value Stream) C.uint64_t {
+	return C.uint64_t(c.handleMap.insert(value))
+}
+
+func (c FfiConverterCallbackInterfaceStream) Write(writer io.Writer, value Stream) {
+	writeUint64(writer, uint64(c.Lower(value)))
 }
 
 type FfiDestroyerCallbackInterfaceStream struct{}
 
-func (FfiDestroyerCallbackInterfaceStream) Destroy(value Stream) {
+func (FfiDestroyerCallbackInterfaceStream) Destroy(value Stream) {}
+
+//export c2pa_cgo_dispatchCallbackInterfaceStreamMethod0
+func c2pa_cgo_dispatchCallbackInterfaceStreamMethod0(uniffiHandle C.uint64_t, length C.uint64_t, uniffiOutReturn *C.RustBuffer, callStatus *C.RustCallStatus) {
+	handle := uint64(uniffiHandle)
+	uniffiObj, ok := FfiConverterCallbackInterfaceStreamINSTANCE.handleMap.tryGet(handle)
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+
+	res, err :=
+		uniffiObj.ReadStream(
+			FfiConverterUint64INSTANCE.Lift(length),
+		)
+
+	if err != nil {
+		// The only way to bypass an unexpected error is to bypass pointer to an empty
+		// instance of the error
+		if err.err == nil {
+			*callStatus = C.RustCallStatus{
+				code: C.int8_t(uniffiCallbackUnexpectedResultError),
+			}
+			return
+		}
+
+		*callStatus = C.RustCallStatus{
+			code:     C.int8_t(uniffiCallbackResultError),
+			errorBuf: FfiConverterErrorINSTANCE.Lower(err),
+		}
+		return
+	}
+
+	*uniffiOutReturn = FfiConverterBytesINSTANCE.Lower(res)
+}
+
+//export c2pa_cgo_dispatchCallbackInterfaceStreamMethod1
+func c2pa_cgo_dispatchCallbackInterfaceStreamMethod1(uniffiHandle C.uint64_t, pos C.int64_t, mode C.RustBuffer, uniffiOutReturn *C.uint64_t, callStatus *C.RustCallStatus) {
+	handle := uint64(uniffiHandle)
+	uniffiObj, ok := FfiConverterCallbackInterfaceStreamINSTANCE.handleMap.tryGet(handle)
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+
+	res, err :=
+		uniffiObj.SeekStream(
+			FfiConverterInt64INSTANCE.Lift(pos),
+			FfiConverterSeekModeINSTANCE.Lift(GoRustBuffer{
+				inner: mode,
+			}),
+		)
+
+	if err != nil {
+		// The only way to bypass an unexpected error is to bypass pointer to an empty
+		// instance of the error
+		if err.err == nil {
+			*callStatus = C.RustCallStatus{
+				code: C.int8_t(uniffiCallbackUnexpectedResultError),
+			}
+			return
+		}
+
+		*callStatus = C.RustCallStatus{
+			code:     C.int8_t(uniffiCallbackResultError),
+			errorBuf: FfiConverterErrorINSTANCE.Lower(err),
+		}
+		return
+	}
+
+	*uniffiOutReturn = FfiConverterUint64INSTANCE.Lower(res)
+}
+
+//export c2pa_cgo_dispatchCallbackInterfaceStreamMethod2
+func c2pa_cgo_dispatchCallbackInterfaceStreamMethod2(uniffiHandle C.uint64_t, data C.RustBuffer, uniffiOutReturn *C.uint64_t, callStatus *C.RustCallStatus) {
+	handle := uint64(uniffiHandle)
+	uniffiObj, ok := FfiConverterCallbackInterfaceStreamINSTANCE.handleMap.tryGet(handle)
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+
+	res, err :=
+		uniffiObj.WriteStream(
+			FfiConverterBytesINSTANCE.Lift(GoRustBuffer{
+				inner: data,
+			}),
+		)
+
+	if err != nil {
+		// The only way to bypass an unexpected error is to bypass pointer to an empty
+		// instance of the error
+		if err.err == nil {
+			*callStatus = C.RustCallStatus{
+				code: C.int8_t(uniffiCallbackUnexpectedResultError),
+			}
+			return
+		}
+
+		*callStatus = C.RustCallStatus{
+			code:     C.int8_t(uniffiCallbackResultError),
+			errorBuf: FfiConverterErrorINSTANCE.Lower(err),
+		}
+		return
+	}
+
+	*uniffiOutReturn = FfiConverterUint64INSTANCE.Lower(res)
+}
+
+var UniffiVTableCallbackInterfaceStreamINSTANCE = C.UniffiVTableCallbackInterfaceStream{
+	readStream:  (C.UniffiCallbackInterfaceStreamMethod0)(C.c2pa_cgo_dispatchCallbackInterfaceStreamMethod0),
+	seekStream:  (C.UniffiCallbackInterfaceStreamMethod1)(C.c2pa_cgo_dispatchCallbackInterfaceStreamMethod1),
+	writeStream: (C.UniffiCallbackInterfaceStreamMethod2)(C.c2pa_cgo_dispatchCallbackInterfaceStreamMethod2),
+
+	uniffiFree: (C.UniffiCallbackInterfaceFree)(C.c2pa_cgo_dispatchCallbackInterfaceStreamFree),
+}
+
+//export c2pa_cgo_dispatchCallbackInterfaceStreamFree
+func c2pa_cgo_dispatchCallbackInterfaceStreamFree(handle C.uint64_t) {
+	FfiConverterCallbackInterfaceStreamINSTANCE.handleMap.remove(uint64(handle))
+}
+
+func (c FfiConverterCallbackInterfaceStream) register() {
+	C.uniffi_c2pa_fn_init_callback_vtable_stream(&UniffiVTableCallbackInterfaceStreamINSTANCE)
 }
 
 type FfiConverterOptionalString struct{}
@@ -1962,7 +2095,7 @@ func (_ FfiConverterOptionalString) Read(reader io.Reader) *string {
 	return &temp
 }
 
-func (c FfiConverterOptionalString) Lower(value *string) RustBuffer {
+func (c FfiConverterOptionalString) Lower(value *string) C.RustBuffer {
 	return LowerIntoRustBuffer[*string](c, value)
 }
 
@@ -1985,12 +2118,16 @@ func (_ FfiDestroyerOptionalString) Destroy(value *string) {
 
 func SdkVersion() string {
 	return FfiConverterStringINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
-		return C.uniffi_c2pa_fn_func_sdk_version(_uniffiStatus)
+		return GoRustBuffer{
+			inner: C.uniffi_c2pa_fn_func_sdk_version(_uniffiStatus),
+		}
 	}))
 }
 
 func Version() string {
 	return FfiConverterStringINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
-		return C.uniffi_c2pa_fn_func_version(_uniffiStatus)
+		return GoRustBuffer{
+			inner: C.uniffi_c2pa_fn_func_version(_uniffiStatus),
+		}
 	}))
 }

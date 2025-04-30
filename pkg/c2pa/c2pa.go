@@ -28,16 +28,16 @@ func FromStream(target io.ReadSeeker, mType string) (Reader, error) {
 	stream := C2PAStreamReader{target}
 	r := rustC2PA.NewReader()
 	r.FromStream(mType, &stream)
-	ret, err := r.Json()
-	if err != nil {
-		return nil, err
+	ret, rErr := r.Json()
+	if rErr.AsError() != nil {
+		return nil, rErr.AsError()
 	}
-	certs, err := r.GetProvenanceCertChain()
-	if err != nil {
-		return nil, err
+	certs, rErr := r.GetProvenanceCertChain()
+	if rErr.AsError() != nil {
+		return nil, rErr.AsError()
 	}
 	var store manifeststore.ManifestStoreSchemaJson
-	err = json.Unmarshal([]byte(ret), &store)
+	err := json.Unmarshal([]byte(ret), &store)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func NewBuilder(manifest *ManifestDefinition, params *BuilderParams) (Builder, e
 	if err != nil {
 		return nil, err
 	}
-	err = b.WithJson(string(bs))
+	err = b.WithJson(string(bs)).AsError()
 	if err != nil {
 		return nil, err
 	}
@@ -128,11 +128,11 @@ func (b *C2PABuilder) Sign(input io.ReadSeeker, output io.ReadWriteSeeker, mimeT
 		algorithm: *b.params.Algorithm,
 	}
 	signer := rustC2PA.NewCallbackSigner(mySigner, b.params.Algorithm.RustC2PAType, b.params.Cert, &b.params.TAURL)
-	_, err := b.builder.Sign(mimeType, &C2PAStreamReader{input}, &C2PAStreamWriter{output}, signer)
-	if err != nil {
-		return err
+	_, rErr := b.builder.Sign(mimeType, &C2PAStreamReader{input}, &C2PAStreamWriter{output}, signer)
+	if rErr.AsError() != nil {
+		return rErr.AsError()
 	}
-	_, err = FromStream(output, mimeType)
+	_, err := FromStream(output, mimeType)
 	if err != nil {
 		return fmt.Errorf("unable to validate newly-signed file: %w", err)
 	}
