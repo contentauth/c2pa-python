@@ -1,4 +1,4 @@
-name: build
+name: Build
 
 on:
   pull_request:
@@ -375,22 +375,12 @@ jobs:
           merge-multiple: true
       - name: List contents of dist directory
         run: ls -la dist/
-      - name: Debug environment
-        run: |
-          echo "Environment name: ${{ github.event.environment }}"
-          echo "Workflow name: ${{ github.workflow }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Event name: ${{ github.event_name }}"
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        env:
-          TWINE_VERBOSE: 1
-          TWINE_DEBUG: 1
-          PYTHONUNBUFFERED: 1
         with:
           packages-dir: dist
-          verbose: true
-          print-hash: true
-          skip-existing: true
+          # verbose: true
+          # print-hash: true
+          # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
+          # skip-existing: true
 
