@@ -391,6 +391,4 @@ jobs:
         with:
           packages-dir: dist
           verbose: true
-          print-hash: true
-          debug: true
 
