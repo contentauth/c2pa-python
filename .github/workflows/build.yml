@@ -374,9 +374,19 @@ jobs:
           merge-multiple: true
       - name: List contents of dist directory
         run: ls -la dist/
+      - name: Debug OIDC token
+        run: |
+          echo "Checking OIDC token information..."
+          echo "GITHUB_TOKEN: ${{ github.token != '' }}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL != '' }}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN != '' }}"
+          echo "ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN != '' }}"
+          echo "ACTIONS_RUNTIME_URL: ${{ env.ACTIONS_RUNTIME_URL != '' }}"
+          echo "__token__ value: __token__"
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           verbose: true
+          print-hash: true
 
