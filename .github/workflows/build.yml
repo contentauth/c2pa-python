@@ -384,6 +384,10 @@ jobs:
           echo "Event name: ${{ github.event_name }}"
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        env:
+          TWINE_VERBOSE: 1
+          TWINE_DEBUG: 1
+          PYTHONUNBUFFERED: 1
         with:
           packages-dir: dist
           verbose: true
