@@ -1,4 +1,4 @@
-name: build
+name: Build
 
 on:
   pull_request:
@@ -380,6 +380,6 @@ jobs:
       - name: Publish to PyPi
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages_dir: dist
+          packages-dir: dist
           verbose: true
 
