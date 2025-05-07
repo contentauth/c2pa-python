@@ -365,6 +365,7 @@ jobs:
     needs: [linux, windows, macos_x86, macos_aarch64, sdist]
     permissions:
       id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -376,7 +377,7 @@ jobs:
         run: ls -la dist/
       - name: Debug environment
         run: |
-          echo "Environment name: ${{ github.event.inputs.environment }}"
+          echo "Environment name: ${{ github.event.environment }}"
           echo "Workflow name: ${{ github.workflow }}"
           echo "Repository: ${{ github.repository }}"
           echo "Ref: ${{ github.ref }}"
