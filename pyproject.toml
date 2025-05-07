@@ -30,5 +30,4 @@ test = [
 ]
 
 [tool.maturin]
-python-source = "c2pa"
 module-name = "c2pa"
