@@ -382,5 +382,5 @@ jobs:
           # verbose: true
           # print-hash: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
-          # skip-existing: true
+          skip-existing: true
 
