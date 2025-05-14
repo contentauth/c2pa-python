@@ -1,30 +1,36 @@
 [build-system]
-requires = ["maturin>=1.7.4,<2.0","uniffi_bindgen>=0.28,<0.30"]
-build-backend = "maturin"
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "c2pa"
-dependencies = ["cffi"]
-requires-python = ">=3.7"
-description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
-readme = { file = "README.md", content-type = "text/markdown" }
+version = "0.10.0"
+description = "Python bindings for the C2PA library"
 license = {file = "LICENSE-MIT"}
-keywords = ["C2PA", "CAI", "content credentials", "metadata", "provenance"]
+readme = "README.md"
+authors = [{ name = "Gavin Peacock", email = "gvnpeacock@adobe.com" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy"
-]
-authors = [
-  {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
+    "Programming Language :: Python :: 3",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows"
 ]
 maintainers = [
   {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
 ]
 urls = {homepage = "https://contentauthenticity.org", repository = "https://github.com/contentauth/c2pa-python"}
 
-[project.optional-dependencies]
-test = [
-  "pytest < 5.0.0"
+requires-python = ">=3.8"
+dependencies = [
+    "cryptography>=41.0.0",
+    "pytest>=7.4.0"
 ]
+
+[project.scripts]
+download-artifacts = "c2pa.build:download_artifacts"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/c2pa"]
+
+[tool.hatch.build.hooks.custom]
+path = "c2pa/build.py"
