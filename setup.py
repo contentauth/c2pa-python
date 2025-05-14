@@ -36,29 +36,29 @@ def get_current_platform():
 
 def copy_platform_libraries(platform_name, clean_first=False):
     """Copy libraries for a specific platform to the package libs directory.
-    
+
     Args:
         platform_name: The platform to copy libraries for
         clean_first: If True, remove existing files in PACKAGE_LIBS_DIR first
     """
     platform_dir = ARTIFACTS_DIR / platform_name
-    
+
     # Ensure the platform directory exists and contains files
     if not platform_dir.exists():
         raise ValueError(f"Platform directory not found: {platform_dir}")
-    
+
     # Get list of all files in the platform directory
     platform_files = list(platform_dir.glob('*'))
     if not platform_files:
         raise ValueError(f"No files found in platform directory: {platform_dir}")
-    
+
     # Clean and recreate the package libs directory if requested
     if clean_first and PACKAGE_LIBS_DIR.exists():
         shutil.rmtree(PACKAGE_LIBS_DIR)
-    
+
     # Ensure the package libs directory exists
     PACKAGE_LIBS_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     # Copy files from platform-specific directory to the package libs directory
     for file in platform_files:
         if file.is_file():
@@ -85,10 +85,10 @@ def find_available_platforms():
         platform_dir = ARTIFACTS_DIR / platform_name
         if platform_dir.exists() and any(platform_dir.iterdir()):
             available_platforms.append(platform_name)
-    
+
     if not available_platforms:
         raise ValueError("No platform-specific libraries found in artifacts directory")
-    
+
     return available_platforms
 
 # For development installation
@@ -100,13 +100,13 @@ if 'develop' in sys.argv or 'install' in sys.argv:
 if 'bdist_wheel' in sys.argv:
     available_platforms = find_available_platforms()
     print(f"Found libraries for platforms: {', '.join(available_platforms)}")
-    
+
     for platform_name in available_platforms:
         print(f"\nBuilding wheel for {platform_name}...")
         try:
             # Copy libraries for this platform (cleaning first)
             copy_platform_libraries(platform_name, clean_first=True)
-            
+
             # Build the wheel
             setup(
                 name="c2pa",
