@@ -108,3 +108,4 @@ target/
 *.dylib
 *.dll
 *.so
+src/c2pa/libs/
