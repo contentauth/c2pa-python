@@ -31,12 +31,16 @@ def download_and_extract_libs(url, platform_name):
     with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:
         # Extract only files inside the libs/ directory
         for member in zip_ref.namelist():
+            print(f"  Processing zip member: {member}")
             if member.startswith("lib/") and not member.endswith("/"):
+                print(f"    Processing lib file from downloadedzip: {member}")
                 target_path = platform_dir / os.path.relpath(member, "lib")
+                print(f"      Moving file to target path: {target_path}")
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 with zip_ref.open(member) as source, open(target_path, "wb") as target:
                     target.write(source.read())
-    print(f"Successfully downloaded and extracted libraries for {platform_name}")
+
+    print(f"Done downloading and extracting libraries for {platform_name}")
 
 def main():
     if len(sys.argv) < 2:
