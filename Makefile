@@ -21,7 +21,9 @@ test-local-wheel-build:
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
 	python setup.py bdist_wheel
+	# Install local build in venv
 	pip install $$(ls dist/*.whl)
+	# Verify installation in local venv
 	python -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
 
 publish: release
