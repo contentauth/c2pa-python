@@ -83,7 +83,7 @@ def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.
         # Package directory
         Path(__file__).parent,
         # Additional library directory
-        Path(__file__).parent / "lib",
+        Path(__file__).parent / "libs",
         # System library paths
         *[Path(p) for p in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if p],
     ]
@@ -95,7 +95,7 @@ def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.
             raise RuntimeError(f"Could not find {lib_name} in any of the search paths")
         return lib
 
-    # Default paht (no library name provided in the environment)
+    # Default path (no library name provided in the environment)
     c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
     if not c2pa_lib:
         raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
