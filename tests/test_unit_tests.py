@@ -31,9 +31,9 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 class TestReader(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")    
+        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
         self.testPath = os.path.join(self.data_dir, "C.jpg")
-        
+
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg",file)
@@ -78,9 +78,9 @@ class TestBuilder(unittest.TestCase):
             ta_url=b"http://timestamp.digicert.com"
         )
         self.signer = Signer.from_info(self.signer_info)
-        
+
         self.testPath = os.path.join(self.data_dir, "C.jpg")
-        
+
         # Define a manifest as a dictionary
         self.manifestDefinition = {
             "claim_generator": "python_test",

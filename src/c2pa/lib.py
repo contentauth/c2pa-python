@@ -1,7 +1,7 @@
 """
 Library loading utilities
 
-Takes care only on loading the needed compiled libraries.
+Takes care only on loading the needed compiled library.
 """
 
 import os
@@ -40,16 +40,17 @@ def _load_single_library(lib_name: str, search_paths: list[Path]) -> Optional[ct
                 logger.error(f"Failed to load library from {lib_path}: {e}")
     return None
 
-def dynamically_load_library(lib_name: Optional[str] = None, load_c2pa: bool = True) -> Tuple[Optional[ctypes.CDLL], Optional[ctypes.CDLL]]:
+def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.CDLL]:
     """
-    Load the dynamic libraries based on the platform.
+    Load the dynamic library containing the C-API based on the platform.
 
     Args:
         lib_name: Optional specific library name to load. If provided, only this library will be loaded.
-        load_c2pa: Whether to load the c2pa library (default: True). Ignored if lib_name is provided.
+        This enables to potentially load wrapper libraries of the C-API that may have an other name
+        (the presence of required symbols will nevertheless be verified once the library is loaded).
 
     Returns:
-        Tuple of (adobe_lib, c2pa_lib). If load_c2pa is False or lib_name is provided, c2pa_lib will be None.
+        The loaded library or None if loading failed
     """
     if sys.platform == "darwin":
         c2pa_lib_name = "libc2pa_c.dylib"
@@ -67,7 +68,7 @@ def dynamically_load_library(lib_name: Optional[str] = None, load_c2pa: bool = T
         try:
             lib = _load_single_library(env_lib_name, possible_paths)
             if lib:
-                return lib, None
+                return lib
             else:
                 logger.error(f"Could not find library {env_lib_name} in any of the search paths")
                 # Continue with normal loading if environment variable library name fails
@@ -94,10 +95,9 @@ def dynamically_load_library(lib_name: Optional[str] = None, load_c2pa: bool = T
             raise RuntimeError(f"Could not find {lib_name} in any of the search paths")
         return lib
 
-    c2pa_lib = None
-    if load_c2pa:
-        c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
-        if not c2pa_lib:
-            raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
+    # Default paht (no library name provided in the environment)
+    c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
+    if not c2pa_lib:
+        raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib
