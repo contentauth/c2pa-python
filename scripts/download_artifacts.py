@@ -5,12 +5,14 @@ import requests
 from pathlib import Path
 import zipfile
 import io
+import shutil
 
 # Constants
 REPO_OWNER = "contentauth"
 REPO_NAME = "c2pa-rs"
 GITHUB_API_BASE = "https://api.github.com"
-ARTIFACTS_DIR = Path("artifacts")
+SCRIPTS_ARTIFACTS_DIR = Path("scripts/artifacts")
+ROOT_ARTIFACTS_DIR = Path("artifacts")
 
 def get_release_by_tag(tag):
     """Get release information for a specific tag from GitHub."""
@@ -22,7 +24,7 @@ def get_release_by_tag(tag):
 def download_and_extract_libs(url, platform_name):
     """Download a zip artifact and extract only the libs folder."""
     print(f"Downloading artifact for {platform_name}...")
-    platform_dir = ARTIFACTS_DIR / platform_name
+    platform_dir = SCRIPTS_ARTIFACTS_DIR / platform_name
     platform_dir.mkdir(parents=True, exist_ok=True)
 
     response = requests.get(url)
@@ -42,6 +44,18 @@ def download_and_extract_libs(url, platform_name):
 
     print(f"Done downloading and extracting libraries for {platform_name}")
 
+def copy_artifacts_to_root():
+    """Copy the artifacts folder from scripts/artifacts to the root of the repository."""
+    if not SCRIPTS_ARTIFACTS_DIR.exists():
+        print("No artifacts found in scripts/artifacts")
+        return
+        
+    print("Copying artifacts from scripts/artifacts to root...")
+    if ROOT_ARTIFACTS_DIR.exists():
+        shutil.rmtree(ROOT_ARTIFACTS_DIR)
+    shutil.copytree(SCRIPTS_ARTIFACTS_DIR, ROOT_ARTIFACTS_DIR)
+    print("Done copying artifacts")
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python download_artifacts.py <release_tag>")
@@ -50,11 +64,12 @@ def main():
 
     release_tag = sys.argv[1]
     try:
-        ARTIFACTS_DIR.mkdir(exist_ok=True)
+        SCRIPTS_ARTIFACTS_DIR.mkdir(exist_ok=True)
         print(f"Fetching release information for tag {release_tag}...")
         release = get_release_by_tag(release_tag)
         print(f"Found release: {release['tag_name']}")
 
+        artifacts_downloaded = False
         for asset in release['assets']:
             if not asset['name'].endswith('.zip'):
                 continue
@@ -67,14 +82,17 @@ def main():
             platform_name = '-'.join(parts[3:]).replace('.zip', '')
 
             download_and_extract_libs(asset['browser_download_url'], platform_name)
+            artifacts_downloaded = True
 
-        print("\nAll artifacts have been downloaded and extracted successfully!")
+        if artifacts_downloaded:
+            print("\nAll artifacts have been downloaded and extracted successfully!")
+            copy_artifacts_to_root()
 
     except requests.exceptions.RequestException as e:
-        print(f"Error downloading artifacts: {e}", file=sys.stderr)
+        print(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
+        print(f"Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

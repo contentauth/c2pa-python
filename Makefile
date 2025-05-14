@@ -18,6 +18,9 @@ test:
 test-local-wheel-build:
 	# Clean any existing builds
 	rm -rf build/ dist/
+	# Download artifacts and place them where they should go
+	python scripts/download_artifacts.py c2pa-v0.49.5
+	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
 	python setup.py bdist_wheel
