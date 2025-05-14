@@ -3,11 +3,12 @@ requires = ["setuptools>=68.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "c2pa"
+name = "c2pa-python"
 version = "0.10.0"
-description = "Python bindings for the C2PA library"
+requires-python = ">=3.8"
+description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
+readme = { file = "README.md", content-type = "text/markdown" }
 license = {file = "LICENSE-MIT"}
-readme = "README.md"
 authors = [{ name = "Gavin Peacock", email = "gvnpeacock@adobe.com" }]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,10 +21,9 @@ maintainers = [
 ]
 urls = {homepage = "https://contentauthenticity.org", repository = "https://github.com/contentauth/c2pa-python"}
 
-requires-python = ">=3.8"
-dependencies = [
-    "cryptography>=41.0.0",
-    "pytest>=7.4.0"
+[project.optional-dependencies]
+test = [
+  "pytest < 5.0.0"
 ]
 
 [project.scripts]
@@ -34,3 +34,4 @@ packages = ["src/c2pa"]
 
 [tool.hatch.build.hooks.custom]
 path = "c2pa/build.py"
+

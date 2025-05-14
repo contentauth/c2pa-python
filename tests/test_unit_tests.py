@@ -23,10 +23,10 @@ PROJECT_PATH = os.getcwd()
 
 testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
-# class TestC2paSdk(unittest.TestCase):
-#     def test_version(self):
-#         print(sdk_version())
-#         self.assertIn("0.8.0", sdk_version())
+class TestC2paSdk(unittest.TestCase):
+    def test_version(self):
+        self.assertIn("0.9.0", sdk_version())
+
 
 class TestReader(unittest.TestCase):
     def setUp(self):
