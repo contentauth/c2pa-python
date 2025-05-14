@@ -1,0 +1,9 @@
+# Build dependencies
+wheel==0.41.2  # For building wheels
+setuptools==68.0.0  # For building packages
+
+# Testing dependencies
+pytest==7.4.0
+
+# for downloading the library artifacts
+requests>=2.0.0
