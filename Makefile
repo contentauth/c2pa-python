@@ -3,6 +3,9 @@
 # Start from clean env: Delete `.venv`, then `python3 -m venv .venv`
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
 
+clean:
+	rm -rf artifacts/ build/ dist/
+
 clean-c2pa-env:
 	python3 -m pip uninstall -y c2pa
 	python3 -m pip cache purge
