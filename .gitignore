@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 
 /artifacts
+scripts/artifacts
 
 
 # C extensions
@@ -108,3 +109,4 @@ target/
 *.dylib
 *.dll
 *.so
+src/c2pa/libs/

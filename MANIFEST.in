@@ -1,3 +1,3 @@
 include src/c2pa/libs/*.dylib
 include src/c2pa/libs/*.dll
-include src/c2pa/libs/*.so 
+include src/c2pa/libs/*.so
