@@ -17,7 +17,7 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 
-from c2pa import  Builder, C2paError as Error,  Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer # load_settings_file
+from c2pa import  Builder, C2paError as Error,  Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version # load_settings_file
 
 PROJECT_PATH = os.getcwd()
 
@@ -25,7 +25,7 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_version(self):
-        self.assertIn("0.9.0", sdk_version())
+        self.assertIn("0.49.5", sdk_version())
 
 
 class TestReader(unittest.TestCase):

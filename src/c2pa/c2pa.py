@@ -316,7 +316,15 @@ def _handle_string_result(result: ctypes.c_void_p, check_error: bool = True) -> 
     return py_string
 
 def sdk_version() -> str:
-    return "0.8.0"
+    """
+    Returns the c2pa-rs version string, e.g., "0.49.5".
+    """
+    vstr = version()
+    # Example: "c2pa-c/0.49.5 c2pa-rs/0.49.5"
+    for part in vstr.split():
+        if part.startswith("c2pa-rs/"):
+            return part.split("/", 1)[1]
+    return vstr  # fallback if not found
 
 def version() -> str:
     """Get the C2PA library version."""
