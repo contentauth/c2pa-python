@@ -17,7 +17,7 @@ import tempfile
 import shutil
 import unittest
 
-from c2pa import Builder, Error, Reader, SigningAlg, create_signer, sdk_version, sign_ps256, version
+from c2pa import Builder, C2paError, Reader, SigningAlg, create_signer, sdk_version, sign_ps256, version
 
 # a little helper function to get a value from a nested dictionary
 from functools import reduce
@@ -104,7 +104,7 @@ class TestReader(unittest.TestCase):
             exit(1)
 
     def test_reader_from_file_no_store(self):
-        with pytest.raises(Error.ManifestNotFound) as err:
+        with pytest.raises(C2paError.ManifestNotFound) as err:
             reader = Reader.from_file("tests/fixtures/A.jpg")
 
 class TestSignerr(unittest.TestCase):

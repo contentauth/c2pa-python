@@ -11,19 +11,26 @@
 # each license.
 
 # This example shows how to add a do not train assertion to an asset and then verify it
+# We use python crypto to sign the data using openssl with Ps256 here
 
 import json
 import os
 import sys
 
+# Example of using python crypto to sign data using openssl with Ps256
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+
 from c2pa import *
 
+fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
+output_dir = os.path.join(os.path.dirname(__file__), "../output/")
+
 # set up paths to the files we we are using
-PROJECT_PATH = os.getcwd()
-testFile = os.path.join(PROJECT_PATH,"tests","fixtures","A.jpg")
-pemFile = os.path.join(PROJECT_PATH,"tests","fixtures","es256_certs.pem")
-keyFile = os.path.join(PROJECT_PATH,"tests","fixtures","es256_private.key")
-testOutputFile = os.path.join(PROJECT_PATH,"target","dnt.jpg")
+testFile = os.path.join(fixtures_dir, "A.jpg")
+pemFile = os.path.join(fixtures_dir, "ps256.pub")
+keyFile = os.path.join(fixtures_dir, "ps256.pem")
+testOutputFile = os.path.join(output_dir, "dnt.jpg")
 
 # a little helper function to get a value from a nested dictionary
 from functools import reduce
@@ -31,7 +38,22 @@ import operator
 def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
-print("version = " + version())
+
+# This function signs data with PS256 using a private key
+def sign_ps256(data: bytes, key: bytes) -> bytes:
+    private_key = serialization.load_pem_private_key(
+        key,
+        password=None,
+    )
+    signature = private_key.sign(
+        data,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+    return signature
 
 # first create an asset with a do not train assertion
 
@@ -73,24 +95,30 @@ ingredient_json = {
 # V2 signing api
 try:
     # This could be implemented on a server using an HSM
-    key = open("tests/fixtures/ps256.pem","rb").read()
+    key = open(keyFile,"rb").read()
     def sign(data: bytes) -> bytes:
+        print("data len = ", len(data))
+        #return ed25519_sign(data, key)
         return sign_ps256(data, key)
 
-    certs = open("tests/fixtures/ps256.pub","rb").read()
+    certs = open(pemFile,"rb").read()
 
+    import traceback
     # Create a signer from a certificate pem file
-    signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
-
+    try:
+        signer = create_signer(sign, C2paSigningAlg.PS256, certs, "http://timestamp.digicert.com")
+    except Exception as e:
+        print("An error occurred:")
+        traceback.print_exc()
     builder = Builder(manifest_json)
 
-    builder.add_resource_file("thumbnail", "tests/fixtures/A_thumbnail.jpg")
+    builder.add_resource_file("thumbnail", fixtures_dir + "A_thumbnail.jpg")
 
-    builder.add_ingredient_file(ingredient_json, "tests/fixtures/A.jpg")
+    builder.add_ingredient_file(ingredient_json, fixtures_dir + "A_thumbnail.jpg")
 
     if os.path.exists(testOutputFile):
         os.remove(testOutputFile)
-
+        
     result = builder.sign_file(signer, testFile, testOutputFile)
 
 except Exception as err:
@@ -114,7 +142,7 @@ try:
 
     # get the ingredient thumbnail
     uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
-    reader.resource_to_file(uri, "target/thumbnail_v2.jpg")
+    reader.resource_to_file(uri, output_dir + "thumbnail_v2.jpg")
 except Exception as err:
     sys.exit(err)
 

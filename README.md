@@ -1,59 +1,98 @@
-# C2PA Python library
+# Python API for C2PA
 
-The [c2pa-python](https://github.com/contentauth/c2pa-python) repository implements Python bindings for the Content Authenticity Initiative (CAI) SDK.
-It enables you to read and validate C2PA manifest data from and add signed manifests to media files in supported formats.
+This project provides a Python API for working with [C2PA](https://c2pa.org/) (Coalition for Content Provenance and Authenticity) manifests. It includes functionality for creating, signing, and verifying C2PA manifests, as well as working with assets and assertions.
 
-**NOTE**: Starting with version 0.5.0, this package has a completely different API from version 0.4.0. See [Release notes](docs/release-notes.md) for more information.
+## Features
 
-**WARNING**: This is an prerelease version of this library.  There may be bugs and unimplemented features, and the API is subject to change.
+- Create and sign C2PA manifests using various signing algorithms.
+- Verify C2PA manifests and extract metadata.
+- Add assertions and ingredients to assets.
+- Examples and unit tests to demonstrate usage.
 
-<div style={{display: 'none'}}>
-
-Additional documentation:
-- [Using the Python library](docs/usage.md)
-- [Release notes](docs/release-notes.md)
-- [Contributing to the project](docs/project-contributions.md)
-
-</div>
-
-## Installation
-
-Install from PyPI by entering this command:
+## Project Structure
 
 ```bash
-pip install -U c2pa-python
+python_api/ 
+    ├── examples/        # Example scripts demonstrating usage
+    ├── src/            # Source code for the C2PA Python API
+    │   └── c2pa/      # Main package directory
+    │       └── libs/  # Platform-specific libraries
+    ├── tests/          # Unit tests and benchmarks
+    ├── artifacts/      # Platform-specific libraries for building
+    │   ├── win_amd64/     # Windows x64 libraries
+    │   ├── win_arm64/     # Windows ARM64 libraries
+    │   ├── macosx_x86_64/ # macOS x64 libraries
+    │   ├── macosx_arm64/  # macOS ARM64 libraries
+    │   ├── linux_x86_64/  # Linux x64 libraries
+    │   └── linux_aarch64/ # Linux ARM64 libraries
+    ├── requirements.txt # Python dependencies
+    └── README.md       # Project documentation
 ```
 
-This is a platform wheel built with Rust that works on Windows, macOS, and most Linux distributions (using [manylinux](https://github.com/pypa/manylinux)). If you need to run on another platform, see [Project contributions - Development](docs/project-contributions.md#development) for information on how to build from source.
+## Development Setup
 
-### Updating
+1. Create and activate a virtual environment:
+```bash
+# Create virtual environment
+python -m venv .venv
 
-Determine what version you've got by entering this command:
+# Activate virtual environment
+# On Windows:
+.venv\Scripts\activate
+# On macOS/Linux:
+source .venv/bin/activate
+
+# load project dependencies
+pip install -r requirements.txt 
+
+# download library artifacts for the current version you want
+python scripts/download_artifacts.py c2pa-v0.49.5
+```
+
+
+2. Install the package in development mode:
+```bash
+pip install -e .
+```
+
+This will:
+- Copy the appropriate libraries for your platform from `artifacts/` to `src/c2pa/libs/`
+- Install the package in development mode, allowing you to make changes to the Python code without reinstalling
+
+## Building Wheels
+
+To build wheels for all platforms that have libraries in the `artifacts/` directory:
 
 ```bash
-pip list | grep c2pa-python
+python setup.py bdist_wheel
 ```
 
-If the version shown is lower than the most recent version, then update by [reinstalling](#installation).
+This will create platform-specific wheels in the `dist/` directory.
 
-### Reinstalling
+## Running Tests
 
-If you tried unsuccessfully to install this package before the [0.40 release](https://github.com/contentauth/c2pa-python/releases/tag/v0.4), then use this command to reinstall:
-
+Install pytest (if not already installed):
 ```bash
-pip install --upgrade --force-reinstall c2pa-python
+pip install pytest
 ```
 
-## Supported formats
+Run the tests:
+```bash
+pytest
+```
 
-The Python library [supports the same media file formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md) as the Rust library. 
+## Examples
+
+### Adding a "Do Not Train" Assertion
+The `examples/training.py` script demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
+
+### Signing and Verifying Assets
+The `examples/test.py` script shows how to sign an asset with a C2PA manifest and verify it.
+
+## Contributing
+
+Contributions are welcome! Please fork the repository and submit a pull request.
 
 ## License
 
-This package is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-python/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-python/blob/main/LICENSE-APACHE).
-
-Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
-
-### Contributions and feedback
-
-We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-python/blob/main/CONTRIBUTING.md).
+This project is licensed under the Apache License 2.0 or the MIT License. See the LICENSE-MIT and LICENSE-APACHE files for details.
