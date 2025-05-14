@@ -92,7 +92,7 @@ def dynamically_load_library(lib_name: Optional[str] = None, load_c2pa: bool = T
         lib = _load_single_library(lib_name, possible_paths)
         if not lib:
             raise RuntimeError(f"Could not find {lib_name} in any of the search paths")
-        return lib, None
+        return lib
 
     c2pa_lib = None
     if load_c2pa:
@@ -100,4 +100,4 @@ def dynamically_load_library(lib_name: Optional[str] = None, load_c2pa: bool = T
         if not c2pa_lib:
             raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
-    return c2pa_lib, None
+    return c2pa_lib

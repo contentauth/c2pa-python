@@ -94,10 +94,10 @@ else:
 env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
 if env_lib_name:
     # Use the environment variable library name
-    _lib, _ = dynamically_load_library(env_lib_name)
+    _lib = dynamically_load_library(env_lib_name)
 else:
     # Use the platform-specific name
-    _lib, _ = dynamically_load_library(_lib_name_default)
+    _lib = dynamically_load_library(_lib_name_default)
 
 _validate_library_exports(_lib)
 
