@@ -72,9 +72,28 @@ def download_artifacts() -> None:
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
 
+def inject_version():
+    """Inject the version from pyproject.toml into src/c2pa/__init__.py as __version__."""
+    import toml
+    pyproject_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml"))
+    init_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c2pa", "__init__.py"))
+    with open(pyproject_path, "r") as f:
+        pyproject = toml.load(f)
+    version = pyproject["project"]["version"]
+    # Read and update __init__.py
+    lines = []
+    if os.path.exists(init_path):
+        with open(init_path, "r") as f:
+            lines = [line for line in f if not line.startswith("__version__")]
+    lines.insert(0, f'__version__ = "{version}"\n')
+    with open(init_path, "w") as f:
+        f.writelines(lines)
+
 def initialize_build() -> None:
     """Initialize the build process by downloading artifacts."""
+    inject_version()
     download_artifacts()
 
 if __name__ == "__main__":
+    inject_version()
     download_artifacts() 

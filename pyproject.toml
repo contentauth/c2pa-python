@@ -8,7 +8,7 @@ version = "0.10.0"
 requires-python = ">=3.8"
 description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
 readme = { file = "README.md", content-type = "text/markdown" }
-license = {file = "LICENSE-MIT"}
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 authors = [{ name = "Gavin Peacock", email = "gvnpeacock@adobe.com" }]
 classifiers = [
     "Programming Language :: Python :: 3",
