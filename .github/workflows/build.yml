@@ -42,153 +42,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          toolchain: ${{ matrix.rust_version }}
-          components: llvm-tools-preview
+          python-version: "3.10"
+          cache: "pip"
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-  clippy_check:
-    name: Clippy
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run Clippy
-        run: cargo clippy --all-features --all-targets -- -Dwarnings
-
-  cargo_fmt:
-    name: Enforce Rust code format
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt
-
-      - name: Check format
-        run: cargo +nightly fmt --all -- --check
-
-  docs_rs:
-    name: Preflight docs.rs build
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install nightly Rust toolchain
-        # Nightly is used here because the docs.rs build
-        # uses nightly and we use doc_cfg features that are
-        # not in stable Rust as of this writing (Rust 1.76).
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Run cargo docs
-        # This is intended to mimic the docs.rs build
-        # environment. The goal is to fail PR validation
-        # if the subsequent release would result in a failed
-        # documentation build on docs.rs.
-        run: cargo +nightly doc --workspace --all-features --no-deps
-        env:
-          RUSTDOCFLAGS: --cfg docsrs
-          DOCS_RS: 1
-  cargo-deny:
-    name: License / vulnerability audit
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        checks:
-          - advisories
-          - bans licenses sources
-
-    # Prevent sudden announcement of a new advisory from failing CI:
-    continue-on-error: ${{ matrix.checks == 'advisories' }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Audit crate dependencies
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check ${{ matrix.checks }}
-
-  unused_deps:
-    name: Check for unused dependencies
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install nightly Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Run cargo-udeps
-        uses: aig787/cargo-udeps-action@v1
-        with:
-          version: latest
-          args: --all-targets --all-features
-
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install pytest
+      - run: pytest
   linux:
     runs-on: ubuntu-latest
 
@@ -208,35 +71,11 @@ jobs:
         with:
           python-version: "3.10"
           cache: "pip"
-      - run: pip install -r requirements.txt
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v1
-        if: ${{ matrix.target == 'aarch64' }}
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          maturin-version: "1.2.0"
-          args: --release --out dist --find-interpreter
-          sccache: "true"
-          manylinux: ${{ matrix.target == 'aarch64' && 'manylinux_2_28' || 'auto' }}
-          before-script-linux: |
-            pip install uniffi-bindgen==0.24.1
+      - run: 
+          pip install -r requirements.txt
+          python setup.py bdist_wheel
 
-            # ISSUE: https://github.com/sfackler/rust-openssl/issues/2036#issuecomment-1724324145
-            # If we're running on rhel centos, install needed packages.
-            if command -v yum &> /dev/null; then
-                yum update -y && yum install -y perl-core openssl openssl-devel pkgconfig libatomic
 
-                # If we're running on i686 we need to symlink libatomic
-                # in order to build openssl with -latomic flag.
-                if [[ ! -d "/usr/lib64" ]]; then
-                    ln -s /usr/lib/libatomic.so.1 /usr/lib/libatomic.so
-                fi
-            else
-                # If we're running on debian-based system.
-                apt update -y && apt-get install -y libssl-dev openssl pkg-config
-            fi
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -263,13 +102,10 @@ jobs:
           python-version: '3.10'
           architecture: ${{ matrix.target }}
           cache: "pip"
-      - run: pip install -r requirements.txt
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          sccache: 'true'
+      - run: 
+          pip install -r requirements.txt
+          python setup.py bdist_wheel
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -292,13 +128,9 @@ jobs:
         with:
           python-version: '3.10'
           cache: "pip"
-      - run: pip install -r requirements.txt
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: x86_64
-          args: --release --out dist --find-interpreter
-          sccache: 'true'
+      - run: 
+          pip install -r requirements.txt
+          python setup.py bdist_wheel
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -359,21 +191,28 @@ jobs:
 
   release:
     name: Release
-
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
-
     runs-on: ubuntu-latest
-    environment: Publish
+    environment: pypipublish
     needs: [linux, windows, macos_x86, macos_aarch64, sdist]
+    permissions:
+      id-token: write
+      contents: read
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
-          name: wheels
+          path: dist
+          merge-multiple: true
+      - name: List contents of dist directory
+        run: ls -la dist/
       - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.caipypi }}
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          command: upload
-          args: --non-interactive --skip-existing *
+          packages-dir: dist
+          # verbose: true
+          # print-hash: true
+          # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
+          skip-existing: true
+
