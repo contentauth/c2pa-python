@@ -19,6 +19,9 @@ on:
         required: true
         default: 'false'
 
+permissions:
+  contents: read
+
 jobs:
   # TODO reactivate tests & debug test runs once publishing squared out
   # tests:
@@ -111,7 +114,6 @@ jobs:
 
   sdist:
     runs-on: ubuntu-latest
-
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||

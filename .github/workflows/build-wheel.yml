@@ -16,6 +16,11 @@ on:
       github-token:
         required: true
 
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
 jobs:
   build:
     runs-on: ${{ inputs.runs-on }}
