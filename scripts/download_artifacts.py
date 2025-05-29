@@ -6,6 +6,8 @@ from pathlib import Path
 import zipfile
 import io
 import shutil
+import platform
+import subprocess
 
 # Constants
 REPO_OWNER = "contentauth"
@@ -13,6 +15,49 @@ REPO_NAME = "c2pa-rs"
 GITHUB_API_BASE = "https://api.github.com"
 SCRIPTS_ARTIFACTS_DIR = Path("scripts/artifacts")
 ROOT_ARTIFACTS_DIR = Path("artifacts")
+
+def detect_os():
+    """Detect the operating system and return the corresponding platform identifier."""
+    system = platform.system().lower()
+    if system == "darwin":
+        return "apple-darwin"
+    elif system == "linux":
+        return "unknown-linux-gnu"
+    elif system == "windows":
+        return "pc-windows-msvc"
+    else:
+        raise ValueError(f"Unsupported operating system: {system}")
+
+def detect_arch():
+    """Detect the CPU architecture and return the corresponding identifier."""
+    machine = platform.machine().lower()
+
+    # Handle common architecture names
+    if machine in ["x86_64", "amd64"]:
+        return "x86_64"
+    elif machine in ["arm64", "aarch64"]:
+        return "aarch64"
+    else:
+        raise ValueError(f"Unsupported CPU architecture: {machine}")
+
+def get_platform_identifier():
+    """Get the full platform identifier (arch-os) for the current system,
+    matching the identifiers used by the Github publisher.
+    Returns one of:
+    - universal-apple-darwin (for Mac)
+    - x86_64-pc-windows-msvc (for Windows 64-bit)
+    - x86_64-unknown-linux-gnu (for Linux 64-bit)
+    """
+    system = platform.system().lower()
+
+    if system == "darwin":
+        return "universal-apple-darwin"
+    elif system == "windows":
+        return "x86_64-pc-windows-msvc"
+    elif system == "linux":
+        return "x86_64-unknown-linux-gnu"
+    else:
+        raise ValueError(f"Unsupported operating system: {system}")
 
 def get_release_by_tag(tag):
     """Get release information for a specific tag from GitHub."""
@@ -44,7 +89,6 @@ def download_and_extract_libs(url, platform_name):
                     target.write(source.read())
 
     print(f"Done downloading and extracting libraries for {platform_name}")
-    print("--------------------------------")
 
 def copy_artifacts_to_root():
     """Copy the artifacts folder from scripts/artifacts to the root of the repository."""
@@ -71,24 +115,32 @@ def main():
         release = get_release_by_tag(release_tag)
         print(f"Found release: {release['tag_name']} \n")
 
-        artifacts_downloaded = False
+        # Get the platform identifier for the current system
+        env_platform = os.environ.get("C2PA_LIBS_PLATFORM")
+        if env_platform:
+            print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
+        platform_id = env_platform or get_platform_identifier()
+        platform_source = "environment variable" if env_platform else "auto-detection"
+        print(f"Target platform: {platform_id} (set through{platform_source})")
+
+        # Construct the expected asset name
+        expected_asset_name = f"{release_tag}-{platform_id}.zip"
+        print(f"Looking for asset: {expected_asset_name}")
+
+        # Find the matching asset in the release
+        matching_asset = None
         for asset in release['assets']:
-            if not asset['name'].endswith('.zip'):
-                continue
+            if asset['name'] == expected_asset_name:
+                matching_asset = asset
+                break
 
-            # Example asset name: c2pa-v0.49.5-aarch64-apple-darwin.zip
-            # Platform name: aarch64-apple-darwin
-            parts = asset['name'].split('-')
-            if len(parts) < 4:
-                continue  # Unexpected naming, skip
-            platform_name = '-'.join(parts[3:]).replace('.zip', '')
-
-            download_and_extract_libs(asset['browser_download_url'], platform_name)
-            artifacts_downloaded = True
-
-        if artifacts_downloaded:
-            print("\nAll artifacts have been downloaded and extracted successfully!")
+        if matching_asset:
+            print(f"Found matching asset: {matching_asset['name']}")
+            download_and_extract_libs(matching_asset['browser_download_url'], platform_id)
+            print("\nArtifacts have been downloaded and extracted successfully!")
             copy_artifacts_to_root()
+        else:
+            print(f"\nNo matching asset found: {expected_asset_name}")
 
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
