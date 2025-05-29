@@ -184,12 +184,12 @@ if 'bdist_wheel' in sys.argv:
                 shutil.rmtree(PACKAGE_LIBS_DIR)
     sys.exit(0)
 
-# For development installation
+# For sdist and development installation
 setup(
     name="c2pa",
     version="1.0.0",
     package_dir={"": "src"},
-    packages=find_packages(where="src") + ["c2pa.libs"],
+    packages=find_packages(where="src"),
     include_package_data=True,
     package_data={
         "c2pa": ["libs/*"],  # Include all files in libs directory
@@ -197,5 +197,14 @@ setup(
     classifiers=[
         "Programming Language :: Python :: 3",
         get_platform_classifier(get_current_platform()),
+    ],
+    # Add sdist-specific configuration
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    python_requires=">=3.7",
+    install_requires=[
+        line.strip()
+        for line in open("requirements.txt")
+        if line.strip() and not line.startswith("#")
     ],
 )

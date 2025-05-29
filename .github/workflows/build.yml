@@ -188,11 +188,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
+      - uses: actions/setup-python@v5
         with:
-          command: sdist
-          args: --out dist
+          python-version: "3.10"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build sdist
+        run: python setup.py sdist
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
