@@ -349,7 +349,7 @@ class _StringContainer:
 
 def _parse_operation_result_for_error(result: ctypes.c_void_p, check_error: bool = True) -> Optional[str]:
     """Helper function to handle string results from C2PA functions."""
-    if not result:  # NULL pointer
+    if not result:
         if check_error:
             error = _lib.c2pa_error()
             if error:
@@ -823,14 +823,14 @@ class Reader:
         self._own_stream = None
         self._error_messages = {
             'unsupported': "Unsupported format",
-            'io_error': "IO error: {}",
-            'manifest_error': "Invalid manifest data: must be bytes",
-            'reader_error': "Failed to create reader: {}",
-            'cleanup_error': "Error during cleanup: {}",
-            'stream_error': "Error cleaning up stream: {}",
-            'file_error': "Error cleaning up file: {}",
-            'reader_cleanup': "Error cleaning up reader: {}",
-            'encoding_error': "Invalid UTF-8 characters in input: {}"
+            'ioError': "IO error: {}",
+            'manifestError': "Invalid manifest data: must be bytes",
+            'readerError': "Failed to create reader: {}",
+            'cleanupError': "Error during cleanup: {}",
+            'streamError': "Error cleaning up stream: {}",
+            'fileError': "Error cleaning up file: {}",
+            'readerCleanupError': "Error cleaning up reader: {}",
+            'encodingError': "Invalid UTF-8 characters in input: {}"
         }
 
         # Check for unsupported format
