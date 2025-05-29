@@ -55,45 +55,13 @@ jobs:
   #     - run: pytest
 
   linux:
-    runs-on: ubuntu-latest
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      python-version: "3.10"
+      artifact-name: wheels-${{ matrix.target }}
     strategy:
       matrix:
         target: [x86_64, aarch64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-          cache: "pip"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Prepare build directories
-        run: |
-          mkdir -p artifacts
-          mkdir -p src/c2pa/libs
-          rm -rf dist/* build/*
-      - name: Download native artifacts (from tag c2pa-v0.55.0)
-        run: python3 scripts/download_artifacts.py c2pa-v0.55.0
-      - name: Build wheel for ${{ matrix.target }}
-        run: python setup.py bdist_wheel
-
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.target }}
-          path: dist
-
-  windows:
-    runs-on: windows-latest
-
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -101,98 +69,45 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
+  windows:
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      python-version: "3.10"
+      architecture: ${{ matrix.target }}
+      artifact-name: wheels-${{ matrix.target }}
     strategy:
       matrix:
         target: [x64, x86]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          architecture: ${{ matrix.target }}
-          cache: "pip"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Prepare build directories
-        run: |
-          mkdir -p artifacts
-          mkdir -p src/c2pa/libs
-          rm -rf dist/* build/*
-      - name: Download native artifacts (from tag c2pa-v0.55.0)
-        run: python3 scripts/download_artifacts.py c2pa-v0.55.0
-      - name: Build wheel
-        run: python setup.py bdist_wheel
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.target }}
-          path: dist
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
 
   macos_x86:
-    runs-on: macos-latest
-
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      python-version: "3.10"
+      artifact-name: wheels-mac-x86_64
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: "pip"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Prepare build directories
-        run: |
-          mkdir -p artifacts
-          mkdir -p src/c2pa/libs
-          rm -rf dist/* build/*
-      - name: Download native artifacts (from tag c2pa-v0.55.0)
-        run: python3 scripts/download_artifacts.py c2pa-v0.55.0
-      - name: Build wheel
-        run: python setup.py bdist_wheel
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-mac-x86_64
-          path: dist
 
   macos_aarch64:
-    runs-on: macos-latest-large
-
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      python-version: "3.10"
+      artifact-name: wheels-mac-aarch64
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: "pip"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Prepare build directories
-        run: |
-          mkdir -p artifacts
-          mkdir -p src/c2pa/libs
-          rm -rf dist/* build/*
-      - name: Download native artifacts (from tag c2pa-v0.55.0)
-        run: python3 scripts/download_artifacts.py c2pa-v0.55.0
-      - name: Build wheel
-        run: python setup.py bdist_wheel
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-mac-aarch64
-          path: dist
 
   sdist:
     runs-on: ubuntu-latest
@@ -225,7 +140,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypipublish
-    needs: [linux, sdist]
+    needs: [linux, windows, macos_x86, macos_aarch64, sdist]
     permissions:
       id-token: write
       contents: read
