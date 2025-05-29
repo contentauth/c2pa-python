@@ -121,8 +121,9 @@ jobs:
       - name: Run tests
         run: python .\tests\test_unit_tests.py
 
-  linux:
+  build-linux-wheel:
     uses: ./.github/workflows/build-wheel.yml
+    needs: tests-unix
     with:
       python-version: "3.10"
       artifact-name: wheels-${{ matrix.target }}
@@ -138,8 +139,9 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-  windows:
+  build-windows-wheel:
     uses: ./.github/workflows/build-wheel.yml
+    needs: tests-windows
     with:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
@@ -156,8 +158,9 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-  macos_x86:
+  build-macos_x86-wheel:
     uses: ./.github/workflows/build-wheel.yml
+    needs: tests-unix
     with:
       python-version: "3.10"
       artifact-name: wheels-mac-x86_64
@@ -170,8 +173,9 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-  macos_aarch64:
+  build-macos_aarch64-wheel:
     uses: ./.github/workflows/build-wheel.yml
+    needs: tests-unix
     with:
       python-version: "3.10"
       artifact-name: wheels-mac-aarch64
@@ -214,7 +218,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypipublish
-    needs: [linux, windows, macos_x86, macos_aarch64, sdist]
+    needs: [build-linux-wheel, build-windows-wheel, build-macos_x86-wheel, build-macos_aarch64-wheel, sdist]
     permissions:
       id-token: write
       contents: read
