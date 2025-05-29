@@ -35,3 +35,7 @@ test-local-wheel-build:
 publish: release
 	python3 -m pip install twine
 	python3 -m twine upload dist/*
+
+format:
+	autopep8 --aggressive --aggressive --in-place src/c2pa/*.py
+

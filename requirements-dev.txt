@@ -7,3 +7,6 @@ pytest==7.4.0
 
 # for downloading the library artifacts
 requests>=2.0.0
+
+# Code formatting
+autopep8==2.0.4  # For automatic code formatting
