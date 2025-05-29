@@ -204,7 +204,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypipublish
-    needs: [linux, windows, macos_x86, macos_aarch64, sdist]
+    needs: [linux, sdist]
     permissions:
       id-token: write
       contents: read
