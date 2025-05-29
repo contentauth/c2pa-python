@@ -20,6 +20,14 @@ maintainers = [
   {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
 ]
 urls = {homepage = "https://contentauthenticity.org", repository = "https://github.com/contentauth/c2pa-python"}
+dependencies = [
+    "wheel>=0.41.2",
+    "setuptools>=68.0.0",
+    "toml>=0.10.2",
+    "pytest>=7.4.0",
+    "cryptography>=41.0.0",
+    "requests>=2.0.0"
+]
 
 [project.optional-dependencies]
 test = [
