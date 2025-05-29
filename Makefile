@@ -2,6 +2,7 @@
 
 # Start from clean env: Delete `.venv`, then `python3 -m venv .venv`
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
+# Run Pytest tests in virtualenv: .venv/bin/pytest tests/test_unit_tests.py -v
 
 clean:
 	rm -rf artifacts/ build/ dist/
@@ -10,12 +11,15 @@ clean-c2pa-env: clean
 	python3 -m pip uninstall -y c2pa
 	python3 -m pip cache purge
 
-build-python:
+install-deps:
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
 	pip install -e .
 
-rebuild: clean-c2pa-env download-native-artifacts build-python
+build-python:
+	pip install -e .
+
+rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
 	@echo "Development rebuild done!"
 
 test:
