@@ -44,6 +44,7 @@ def download_and_extract_libs(url, platform_name):
                     target.write(source.read())
 
     print(f"Done downloading and extracting libraries for {platform_name}")
+    print("--------------------------------")
 
 def copy_artifacts_to_root():
     """Copy the artifacts folder from scripts/artifacts to the root of the repository."""
@@ -68,7 +69,7 @@ def main():
         SCRIPTS_ARTIFACTS_DIR.mkdir(exist_ok=True)
         print(f"Fetching release information for tag {release_tag}...")
         release = get_release_by_tag(release_tag)
-        print(f"Found release: {release['tag_name']}")
+        print(f"Found release: {release['tag_name']} \n")
 
         artifacts_downloaded = False
         for asset in release['assets']:
