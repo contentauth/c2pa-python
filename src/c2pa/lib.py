@@ -11,6 +11,7 @@ import logging
 import platform
 from pathlib import Path
 from typing import Optional, Tuple
+from enum import Enum
 
 # Debug flag for library loading
 DEBUG_LIBRARY_LOADING = False
@@ -23,6 +24,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class CPUArchitecture(Enum):
+    """CPU architecture enum for platform-specific identifiers."""
+    AARCH64 = "aarch64"
+    X86_64 = "x86_64"
+
+def get_platform_identifier(cpu_arch: Optional[CPUArchitecture] = None) -> str:
+    """Get the full platform identifier (arch-os) for the current system,
+    matching the downloaded identifiers used by the Github publisher.
+
+    Args:
+        cpu_arch: Optional CPU architecture for macOS.
+        If not provided, returns universal build.
+        Only used on macOS systems.
+
+    Returns one of:
+    - universal-apple-darwin (for Mac, when cpu_arch is None)
+    - aarch64-apple-darwin (for Mac ARM64)
+    - x86_64-apple-darwin (for Mac x86_64)
+    - x86_64-pc-windows-msvc (for Windows 64-bit)
+    - x86_64-unknown-linux-gnu (for Linux 64-bit)
+    """
+    system = platform.system().lower()
+
+    if system == "darwin":
+        if cpu_arch is None:
+            return "universal-apple-darwin"
+        elif cpu_arch == CPUArchitecture.AARCH64:
+            return "aarch64-apple-darwin"
+        elif cpu_arch == CPUArchitecture.X86_64:
+            return "x86_64-apple-darwin"
+        else:
+            raise ValueError(f"Unsupported CPU architecture for macOS: {cpu_arch}")
+    elif system == "windows":
+        return "x86_64-pc-windows-msvc"
+    elif system == "linux":
+        return "x86_64-unknown-linux-gnu"
+    else:
+        raise ValueError(f"Unsupported operating system: {system}")
 
 def _get_architecture() -> str:
     """
@@ -100,21 +139,49 @@ def _load_single_library(lib_name: str, search_paths: list[Path]) -> Optional[ct
             logger.debug(f"Library not found at: {lib_path}")
     return None
 
-def _find_artifacts_folders(start_path: Path) -> list[Path]:
+def _get_possible_search_paths() -> list[Path]:
     """
-    Recursively find all artifacts folders starting from the given path.
-
-    Args:
-        start_path: The root path to start searching from
+    Get a list of possible paths where the library might be located.
 
     Returns:
-        List of paths to artifacts folders
+        List of Path objects representing possible library locations
     """
-    artifacts_folders = []
-    for path in start_path.rglob("artifacts"):
-        if path.is_dir():
-            artifacts_folders.append(path)
-    return artifacts_folders
+    # Get platform-specific directory and identifier
+    platform_dir = _get_platform_dir()
+    platform_id = get_platform_identifier()
+
+    if DEBUG_LIBRARY_LOADING:
+        logger.info(f"Using platform directory: {platform_dir}")
+        logger.info(f"Using platform identifier: {platform_id}")
+
+    # Base paths without platform-specific subdirectories
+    base_paths = [
+        # Current directory
+        Path.cwd(),
+        # Artifacts directory at root of repo
+        Path.cwd() / "artifacts",
+        # Libs directory at root of repo
+        Path.cwd() / "libs",
+        # Package directory (usually for local dev)
+        Path(__file__).parent,
+        # Additional library directory (usually for local dev)
+        Path(__file__).parent / "libs",
+    ]
+
+    # Create the full list of paths including platform-specific subdirectories
+    possible_paths = []
+    for base_path in base_paths:
+        # Add the base path
+        possible_paths.append(base_path)
+        # Add platform directory subfolder
+        possible_paths.append(base_path / platform_dir)
+        # Add platform identifier subfolder
+        possible_paths.append(base_path / platform_id)
+
+    # Add system library paths
+    possible_paths.extend([Path(p) for p in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if p])
+
+    return possible_paths
 
 def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.CDLL]:
     """
@@ -148,6 +215,7 @@ def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.
         if DEBUG_LIBRARY_LOADING:
             logger.info(f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
         try:
+            possible_paths = _get_possible_search_paths()
             lib = _load_single_library(env_lib_name, possible_paths)
             if lib:
                 return lib
@@ -158,35 +226,7 @@ def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.
             logger.error(f"Failed to load library from C2PA_LIBRARY_NAME: {e}")
             # Continue with normal loading if environment variable library name fails
 
-    # Find all artifacts folders recursively
-    artifacts_folders = _find_artifacts_folders(Path.cwd())
-
-    # Get platform-specific directory
-    platform_dir = _get_platform_dir()
-    if DEBUG_LIBRARY_LOADING:
-        logger.info(f"Using platform directory: {platform_dir}")
-
-    # Try to find the libraries in various locations
-    possible_paths = [
-        # Current directory
-        Path.cwd(),
-        # Current directory with platform-specific subdirectory
-        Path.cwd() / platform_dir,
-        # Package directory
-        Path(__file__).parent,
-        # Package directory with platform-specific subdirectory
-        Path(__file__).parent / platform_dir,
-        # Additional library directory
-        Path(__file__).parent / "libs",
-        # Additional library directory with platform-specific subdirectory
-        Path(__file__).parent / "libs" / platform_dir,
-        # All found artifacts folders
-        *artifacts_folders,
-        # All found artifacts folders with platform-specific subdirectories
-        *(folder / platform_dir for folder in artifacts_folders),
-        # System library paths
-        *[Path(p) for p in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if p],
-    ]
+    possible_paths = _get_possible_search_paths()
 
     if lib_name:
         # If specific library name is provided, only load that one

@@ -1752,4 +1752,5 @@ __all__ = [
     'sign_file',
     'format_embeddable',
     'ed25519_sign',
+    'sdk_version'
 ]
