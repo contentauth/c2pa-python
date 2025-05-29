@@ -37,16 +37,22 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Prepare build directories
+      - name: Prepare build directories (Unix)
+        shell: bash
+        if: runner.os != 'Windows'
         run: |
           mkdir -p artifacts
           mkdir -p src/c2pa/libs
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            if (Test-Path dist) { Remove-Item -Recurse -Force dist }
-            if (Test-Path build) { Remove-Item -Recurse -Force build }
-          else
-            rm -rf dist/* build/*
-          fi
+          rm -rf dist build
+
+      - name: Prepare build directories (Windows)
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          New-Item -ItemType Directory -Force -Path src/c2pa/libs
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
       - name: Download native artifacts (from tag c2pa-v0.55.0)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
