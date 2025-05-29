@@ -41,7 +41,12 @@ jobs:
         run: |
           mkdir -p artifacts
           mkdir -p src/c2pa/libs
-          rm -rf dist/* build/*
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+            if (Test-Path build) { Remove-Item -Recurse -Force build }
+          else
+            rm -rf dist/* build/*
+          fi
       - name: Download native artifacts (from tag c2pa-v0.55.0)
         run: python3 scripts/download_artifacts.py c2pa-v0.55.0
       - name: Build wheel
