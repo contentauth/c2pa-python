@@ -17,6 +17,7 @@ ROOT_ARTIFACTS_DIR = Path("artifacts")
 def get_release_by_tag(tag):
     """Get release information for a specific tag from GitHub."""
     url = f"{GITHUB_API_BASE}/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}"
+    print(f"Fetching release information from {url}...")
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
@@ -49,7 +50,7 @@ def copy_artifacts_to_root():
     if not SCRIPTS_ARTIFACTS_DIR.exists():
         print("No artifacts found in scripts/artifacts")
         return
-        
+
     print("Copying artifacts from scripts/artifacts to root...")
     if ROOT_ARTIFACTS_DIR.exists():
         shutil.rmtree(ROOT_ARTIFACTS_DIR)
