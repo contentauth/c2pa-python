@@ -75,7 +75,14 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Build wheel
+      - name: Prepare build directories
+        run: |
+          mkdir -p artifacts
+          mkdir -p src/c2pa/libs
+          rm -rf dist/* build/*
+      - name: Download native artifacts (from tag c2pa-v0.55.0)
+        run: python3 scripts/download_artifacts.py c2pa-v0.55.0
+      - name: Build wheel for ${{ matrix.target }}
         run: python setup.py bdist_wheel
 
       - name: Upload wheels
@@ -84,90 +91,90 @@ jobs:
           name: wheels-${{ matrix.target }}
           path: dist
 
-  windows:
-    runs-on: windows-latest
+  # windows:
+  #   runs-on: windows-latest
 
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
+  #   if: |
+  #     github.event_name != 'pull_request' ||
+  #     github.event.pull_request.author_association == 'COLLABORATOR' ||
+  #     github.event.pull_request.author_association == 'MEMBER' ||
+  #     github.event.pull_request.user.login == 'dependabot[bot]' ||
+  #     contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    strategy:
-      matrix:
-        target: [x64, x86]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          architecture: ${{ matrix.target }}
-          cache: "pip"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Build wheel
-        run: python setup.py bdist_wheel
+  #   strategy:
+  #     matrix:
+  #       target: [x64, x86]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.10'
+  #         architecture: ${{ matrix.target }}
+  #         cache: "pip"
+  #     - name: Install dependencies
+  #       run: pip install -r requirements.txt
+  #     - name: Build wheel
+  #       run: python setup.py bdist_wheel
 
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.target }}
-          path: dist
+  #     - name: Upload wheels
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheels-${{ matrix.target }}
+  #         path: dist
 
-  macos_x86:
-    runs-on: macos-latest
+  # macos_x86:
+  #   runs-on: macos-latest
 
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
+  #   if: |
+  #     github.event_name != 'pull_request' ||
+  #     github.event.pull_request.author_association == 'COLLABORATOR' ||
+  #     github.event.pull_request.author_association == 'MEMBER' ||
+  #     github.event.pull_request.user.login == 'dependabot[bot]' ||
+  #     contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: "pip"
-      - run:
-          pip install -r requirements.txt
-          python setup.py bdist_wheel
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-mac-x86_64
-          path: dist
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.10'
+  #         cache: "pip"
+  #     - run:
+  #         pip install -r requirements.txt
+  #         python setup.py bdist_wheel
+  #     - name: Upload wheels
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheels-mac-x86_64
+  #         path: dist
 
-  macos_aarch64:
-    runs-on: macos-latest-large
+  # macos_aarch64:
+  #   runs-on: macos-latest-large
 
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
+  #   if: |
+  #     github.event_name != 'pull_request' ||
+  #     github.event.pull_request.author_association == 'COLLABORATOR' ||
+  #     github.event.pull_request.author_association == 'MEMBER' ||
+  #     github.event.pull_request.user.login == 'dependabot[bot]' ||
+  #     contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: "pip"
-      - run: pip install -r requirements.txt
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: aarch64
-          args: --release --out dist --find-interpreter
-          sccache: 'true'
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-mac-aarch64
-          path: dist
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.10'
+  #         cache: "pip"
+  #     - run: pip install -r requirements.txt
+  #     - name: Build wheels
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         target: aarch64
+  #         args: --release --out dist --find-interpreter
+  #         sccache: 'true'
+  #     - name: Upload wheels
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheels-mac-aarch64
+  #         path: dist
 
   sdist:
     runs-on: ubuntu-latest
