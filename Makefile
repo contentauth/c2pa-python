@@ -6,7 +6,7 @@
 clean:
 	rm -rf artifacts/ build/ dist/
 
-clean-c2pa-env:
+clean-c2pa-env: clean
 	python3 -m pip uninstall -y c2pa
 	python3 -m pip cache purge
 
@@ -14,6 +14,9 @@ build-python:
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
 	pip install -e .
+
+rebuild: clean-c2pa-env download-native-artifacts build-python
+	@echo "Development rebuild done!"
 
 test:
 	python3 ./tests/test_unit_tests.py
@@ -39,3 +42,5 @@ publish: release
 format:
 	autopep8 --aggressive --aggressive --in-place src/c2pa/*.py
 
+download-native-artifacts:
+	python3 scripts/download_artifacts.py c2pa-v0.55.0

@@ -19,6 +19,40 @@ PLATFORM_EXTENSIONS = {
 ARTIFACTS_DIR = Path('artifacts')  # Where downloaded libraries are stored
 PACKAGE_LIBS_DIR = Path('src/c2pa/libs')  # Where libraries will be copied for the wheel
 
+
+def get_platform_identifier(cpu_arch = None) -> str:
+    """Get a platform identifier (arch-os) for the current system,
+    matching downloaded identifiers used by the Github publisher.
+
+    Args:
+        Only used on macOS systems.:
+            cpu_arch: Optional CPU architecture for macOS. If not provided, returns universal build.
+
+    Returns one of:
+    - universal-apple-darwin (for Mac, when cpu_arch is None, fallback)
+    - aarch64-apple-darwin (for Mac ARM64)
+    - x86_64-apple-darwin (for Mac x86_64)
+    - x86_64-pc-windows-msvc (for Windows 64-bit)
+    - x86_64-unknown-linux-gnu (for Linux 64-bit)
+    """
+    system = platform.system().lower()
+
+    if system == "darwin":
+        if cpu_arch is None:
+            return "universal-apple-darwin"
+        elif cpu_arch == "arm64":
+            return "aarch64-apple-darwin"
+        elif cpu_arch == "x86_64":
+            return "x86_64-apple-darwin"
+        else:
+            raise ValueError(f"Unsupported CPU architecture for macOS: {cpu_arch}")
+    elif system == "windows":
+        return "x86_64-pc-windows-msvc"
+    elif system == "linux":
+        return "x86_64-unknown-linux-gnu"
+    else:
+        raise ValueError(f"Unsupported operating system: {system}")
+
 def get_current_platform():
     """Determine the current platform name."""
     if sys.platform == "win32":
@@ -93,7 +127,8 @@ def find_available_platforms():
 
 # For development installation
 if 'develop' in sys.argv or 'install' in sys.argv:
-    current_platform = get_current_platform()
+    current_platform = get_platform_identifier()
+    print("Installing in development mode for platform ", current_platform)
     copy_platform_libraries(current_platform)
 
 # For wheel building
