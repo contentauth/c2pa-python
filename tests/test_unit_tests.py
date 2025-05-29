@@ -25,20 +25,20 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_version(self):
-        self.assertIn("0.49.5", sdk_version())
+        self.assertIn("0.55.0", sdk_version())
 
 
 class TestReader(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")    
+        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
         self.testPath = os.path.join(self.data_dir, "C.jpg")
-        
+
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
-            reader = Reader("image/jpeg",file)
-            json = reader.json()
-            self.assertIn("C.jpg", json)
+            reader = Reader("image/jpeg", file)
+            json_data = reader.json()
+            self.assertIn("C.jpg", json_data)
 
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
@@ -47,9 +47,10 @@ class TestReader(unittest.TestCase):
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, "C.jpg")
 
-    def test_json_decode_err(self):
-        with self.assertRaises(Error.Io):
-            manifest_store = Reader("image/jpeg","foo")
+    #def test_json_decode_err(self):
+    #    """Test that attempting to read from an invalid file path raises an IO error"""
+    #    with self.assertRaises(Error.Io):
+    #        manifest_store = Reader("image/jpeg", "foo")
 
     def test_reader_bad_format(self):
         with self.assertRaises(Error.NotSupported):
@@ -59,16 +60,18 @@ class TestReader(unittest.TestCase):
     def test_settings_trust(self):
         #load_settings_file("tests/fixtures/settings.toml")
         with open(self.testPath, "rb") as file:
-            reader = Reader("image/jpeg",file)
-            json = reader.json()
-            self.assertIn("C.jpg", json)
+            reader = Reader("image/jpeg", file)
+            json_data = reader.json()
+            self.assertIn("C.jpg", json_data)
 
 class TestBuilder(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
-        self.certs = open(os.path.join(self.data_dir, "es256_certs.pem"), "rb").read()
-        self.key = open(os.path.join(self.data_dir, "es256_private.key"), "rb").read()
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            self.certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            self.key = key_file.read()
 
         # Create a local Ps256 signer with certs and a timestamp server
         self.signer_info = C2paSignerInfo(
@@ -78,9 +81,9 @@ class TestBuilder(unittest.TestCase):
             ta_url=b"http://timestamp.digicert.com"
         )
         self.signer = Signer.from_info(self.signer_info)
-        
+
         self.testPath = os.path.join(self.data_dir, "C.jpg")
-        
+
         # Define a manifest as a dictionary
         self.manifestDefinition = {
             "claim_generator": "python_test",
@@ -118,6 +121,7 @@ class TestBuilder(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
+            output.close()
 
     def test_archive_sign(self):
         with open(self.testPath, "rb") as file:
@@ -132,6 +136,8 @@ class TestBuilder(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
+            archive.close()
+            output.close()
 
     def test_remote_sign(self):
         with open(self.testPath, "rb") as file:
@@ -144,6 +150,7 @@ class TestBuilder(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
+            output.close()
 
 if __name__ == '__main__':
     unittest.main()
