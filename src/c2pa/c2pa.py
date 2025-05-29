@@ -347,7 +347,7 @@ class _StringContainer:
         """Initialize an empty string container."""
         pass
 
-def _handle_string_result(result: ctypes.c_void_p, check_error: bool = True) -> Optional[str]:
+def _parse_operation_result_for_error(result: ctypes.c_void_p, check_error: bool = True) -> Optional[str]:
     """Helper function to handle string results from C2PA functions."""
     if not result:  # NULL pointer
         if check_error:
@@ -433,7 +433,7 @@ def load_settings(settings: str, format: str = "json") -> None:
         format.encode('utf-8')
     )
     if result != 0:
-        error = _handle_string_result(_lib.c2pa_error())
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             raise C2paError(error)
 
@@ -456,7 +456,7 @@ def read_file(path: Union[str, Path], data_dir: Optional[Union[str, Path]] = Non
     container._data_dir_str = str(data_dir).encode('utf-8') if data_dir else None
 
     result = _lib.c2pa_read_file(container._path_str, container._data_dir_str)
-    return _handle_string_result(result)
+    return _parse_operation_result_for_error(result)
 
 def read_ingredient_file(path: Union[str, Path], data_dir: Optional[Union[str, Path]] = None) -> str:
     """Read a C2PA ingredient from a file.
@@ -477,7 +477,7 @@ def read_ingredient_file(path: Union[str, Path], data_dir: Optional[Union[str, P
     container._data_dir_str = str(data_dir).encode('utf-8') if data_dir else None
 
     result = _lib.c2pa_read_ingredient_file(container._path_str, container._data_dir_str)
-    return _handle_string_result(result)
+    return _parse_operation_result_for_error(result)
 
 def sign_file(
     source_path: Union[str, Path],
@@ -518,7 +518,7 @@ def sign_file(
         ctypes.byref(signer_info),
         signer_info._data_dir_str
     )
-    return _handle_string_result(result)
+    return _parse_operation_result_for_error(result)
 
 class Stream:
     # Class-level counter for generating unique stream IDs
@@ -730,7 +730,7 @@ class Stream:
             self._flush_cb
         )
         if not self._stream:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             raise Exception("Failed to create stream: {}".format(error))
 
         self._initialized = True
@@ -870,7 +870,7 @@ class Reader:
                 if not self._reader:
                     self._own_stream.close()
                     file.close()
-                    error = _handle_string_result(_lib.c2pa_error())
+                    error = _parse_operation_result_for_error(_lib.c2pa_error())
                     if error:
                         raise C2paError(error)
                     raise C2paError(self._error_messages['reader_error'].format("Unknown error"))
@@ -907,7 +907,7 @@ class Reader:
                 if not self._reader:
                     self._own_stream.close()
                     file.close()
-                    error = _handle_string_result(_lib.c2pa_error())
+                    error = _parse_operation_result_for_error(_lib.c2pa_error())
                     if error:
                         raise C2paError(error)
                     raise C2paError(self._error_messages['reader_error'].format("Unknown error"))
@@ -939,7 +939,7 @@ class Reader:
                     )
 
                 if not self._reader:
-                    error = _handle_string_result(_lib.c2pa_error())
+                    error = _parse_operation_result_for_error(_lib.c2pa_error())
                     if error:
                         raise C2paError(error)
                     raise C2paError(self._error_messages['reader_error'].format("Unknown error"))
@@ -1014,7 +1014,7 @@ class Reader:
         if not self._reader:
             raise C2paError("Reader is closed")
         result = _lib.c2pa_reader_json(self._reader)
-        return _handle_string_result(result)
+        return _parse_operation_result_for_error(result)
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
@@ -1038,7 +1038,7 @@ class Reader:
             result = _lib.c2pa_reader_resource_to_stream(self._reader, self._uri_str, stream_obj._stream)
 
             if result < 0:
-                error = _handle_string_result(_lib.c2pa_error())
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
 
@@ -1087,7 +1087,7 @@ class Signer:
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
         if not signer_ptr:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 # More detailed error message when possible
                 raise C2paError(error)
@@ -1152,7 +1152,7 @@ class Signer:
         )
 
         if not signer_ptr:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
             raise C2paError("Failed to create signer")
@@ -1208,7 +1208,7 @@ class Signer:
             result = _lib.c2pa_signer_reserve_size(self._signer)
 
             if result < 0:
-                error = _handle_string_result(_lib.c2pa_error())
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError("Failed to get reserve size")
@@ -1270,7 +1270,7 @@ class Builder:
         self._builder = _lib.c2pa_builder_from_json(json_str)
 
         if not self._builder:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
             raise C2paError(self._error_messages['builder_error'].format("Unknown error"))
@@ -1308,7 +1308,7 @@ class Builder:
         builder._builder = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
         if not builder._builder:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
             raise C2paError("Failed to create builder from archive")
@@ -1388,7 +1388,7 @@ class Builder:
         result = _lib.c2pa_builder_set_remote_url(self._builder, url_str)
 
         if result != 0:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
             raise C2paError(self._error_messages['url_error'].format("Unknown error"))
@@ -1411,7 +1411,7 @@ class Builder:
             result = _lib.c2pa_builder_add_resource(self._builder, uri_str, stream_obj._stream)
 
             if result != 0:
-                error = _handle_string_result(_lib.c2pa_error())
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError(self._error_messages['resource_error'].format("Unknown error"))
@@ -1441,7 +1441,7 @@ class Builder:
         result = _lib.c2pa_builder_add_ingredient_from_stream(self._builder, ingredient_str, format_str, source_stream._stream)
 
         if result != 0:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
             raise C2paError(self._error_messages['ingredient_error'].format("Unknown error"))
@@ -1472,7 +1472,7 @@ class Builder:
                 self._builder, ingredient_str, format_str, source_stream._stream)
 
             if result != 0:
-                error = _handle_string_result(_lib.c2pa_error())
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError(self._error_messages['ingredient_error'].format("Unknown error"))
@@ -1493,7 +1493,7 @@ class Builder:
             result = _lib.c2pa_builder_to_archive(self._builder, stream_obj._stream)
 
             if result != 0:
-                error = _handle_string_result(_lib.c2pa_error())
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError(self._error_messages['archive_error'].format("Unknown error"))
@@ -1534,7 +1534,7 @@ class Builder:
             )
 
             if result < 0:
-                error = _handle_string_result(_lib.c2pa_error())
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
 
@@ -1580,7 +1580,7 @@ class Builder:
         )
 
         if result < 0:
-            error = _handle_string_result(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
 
@@ -1618,7 +1618,7 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     )
 
     if result < 0:
-        error = _handle_string_result(_lib.c2pa_error())
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             raise C2paError(error)
         raise C2paError("Failed to format embeddable manifest")
@@ -1666,7 +1666,7 @@ def create_signer(
     )
 
     if not signer_ptr:
-        error = _handle_string_result(_lib.c2pa_error())
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             # More detailed error message when possible
             raise C2paError(error)
@@ -1689,7 +1689,7 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
     signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
     if not signer_ptr:
-        error = _handle_string_result(_lib.c2pa_error())
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             # More detailed error message when possible
             raise C2paError(error)
@@ -1723,7 +1723,7 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
     signature_ptr = _lib.c2pa_ed25519_sign(data_array, len(data), key_str)
 
     if not signature_ptr:
-        error = _handle_string_result(_lib.c2pa_error())
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             raise C2paError(error)
         raise C2paError("Failed to sign data with Ed25519")
