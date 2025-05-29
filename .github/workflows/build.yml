@@ -73,10 +73,10 @@ jobs:
         with:
           python-version: "3.10"
           cache: "pip"
-      - run:
-          pip install -r requirements.txt
-          python setup.py bdist_wheel
-
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build wheel
+        run: python setup.py bdist_wheel
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -104,9 +104,10 @@ jobs:
           python-version: '3.10'
           architecture: ${{ matrix.target }}
           cache: "pip"
-      - run:
-          pip install -r requirements.txt
-          python setup.py bdist_wheel
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build wheel
+        run: python setup.py bdist_wheel
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
