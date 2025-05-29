@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   tests-unix:
-    name: Unit tests (Unix)
+    name: Unit tests for developer setup (Unix)
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -76,7 +76,7 @@ jobs:
         run: python3 ./tests/test_unit_tests.py
 
   tests-windows:
-    name: Unit tests (Windows)
+    name: Unit tests for developer setup (Windows)
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
