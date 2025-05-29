@@ -12,6 +12,10 @@ on:
       artifact-name:
         required: true
         type: string
+      runs-on:
+        required: true
+        type: string
+        default: 'ubuntu-latest'
     secrets:
       github-token:
         required: true
