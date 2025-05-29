@@ -15,6 +15,15 @@ PLATFORM_EXTENSIONS = {
     'linux_aarch64': 'so',
 }
 
+# Based on what c2pa-rs repo publishes
+PLATFORM_FOLDERS = {
+    'universal-apple-darwin': 'dylib',
+    'aarch64-apple-darwin': 'dylib',
+    'x86_64-apple-darwin': 'dylib',
+    'x86_64-pc-windows-msvc': 'dll',
+    'x86_64-unknown-linux-gnu': 'so',
+}
+
 # Directory structure
 ARTIFACTS_DIR = Path('artifacts')  # Where downloaded libraries are stored
 PACKAGE_LIBS_DIR = Path('src/c2pa/libs')  # Where libraries will be copied for the wheel
@@ -53,6 +62,17 @@ def get_platform_identifier(cpu_arch = None) -> str:
     else:
         raise ValueError(f"Unsupported operating system: {system}")
 
+def get_platform_classifier(platform_name):
+    """Get the appropriate classifier for a platform."""
+    if platform_name.startswith('win') or platform_name.endswith('windows-msvc'):
+        return "Operating System :: Microsoft :: Windows"
+    elif platform_name.startswith('macosx') or platform_name.endswith('apple-darwin'):
+        return "Operating System :: MacOS"
+    elif platform_name.startswith('linux') or platform_name.endswith('linux-gnu'):
+        return "Operating System :: POSIX :: Linux"
+    else:
+        raise ValueError(f"Unknown platform: {platform_name}")
+
 def get_current_platform():
     """Determine the current platform name."""
     if sys.platform == "win32":
@@ -76,6 +96,9 @@ def copy_platform_libraries(platform_name, clean_first=False):
         clean_first: If True, remove existing files in PACKAGE_LIBS_DIR first
     """
     platform_dir = ARTIFACTS_DIR / platform_name
+    print(" ")
+    print('##### Found platform dir: ', platform_dir)
+    print(" ")
 
     # Ensure the platform directory exists and contains files
     if not platform_dir.exists():
@@ -83,6 +106,9 @@ def copy_platform_libraries(platform_name, clean_first=False):
 
     # Get list of all files in the platform directory
     platform_files = list(platform_dir.glob('*'))
+    print(" ")
+    print('##### Platform files: ', platform_files)
+    print(" ")
     if not platform_files:
         raise ValueError(f"No files found in platform directory: {platform_dir}")
 
@@ -91,6 +117,9 @@ def copy_platform_libraries(platform_name, clean_first=False):
         shutil.rmtree(PACKAGE_LIBS_DIR)
 
     # Ensure the package libs directory exists
+    print(" ")
+    print('##### Package libs dir will be in: ', PACKAGE_LIBS_DIR)
+    print(" ")
     PACKAGE_LIBS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Copy files from platform-specific directory to the package libs directory
@@ -98,24 +127,13 @@ def copy_platform_libraries(platform_name, clean_first=False):
         if file.is_file():
             shutil.copy2(file, PACKAGE_LIBS_DIR / file.name)
 
-def get_platform_classifier(platform_name):
-    """Get the appropriate classifier for a platform."""
-    if platform_name.startswith('win'):
-        return "Operating System :: Microsoft :: Windows"
-    elif platform_name.startswith('macosx') or platform_name.startswith('apple-darwin'):
-        return "Operating System :: MacOS"
-    elif platform_name.startswith('linux'):
-        return "Operating System :: POSIX :: Linux"
-    else:
-        raise ValueError(f"Unknown platform: {platform_name}")
-
 def find_available_platforms():
     """Scan the artifacts directory for available platform-specific libraries."""
     if not ARTIFACTS_DIR.exists():
         raise ValueError(f"Artifacts directory not found: {ARTIFACTS_DIR}")
 
     available_platforms = []
-    for platform_name in PLATFORM_EXTENSIONS.keys():
+    for platform_name in PLATFORM_FOLDERS.keys():
         platform_dir = ARTIFACTS_DIR / platform_name
         if platform_dir.exists() and any(platform_dir.iterdir()):
             available_platforms.append(platform_name)
@@ -140,6 +158,9 @@ if 'bdist_wheel' in sys.argv:
         print(f"\nBuilding wheel for {platform_name}...")
         try:
             # Copy libraries for this platform (cleaning first)
+            print(" ")
+            print('##### Preparing to copy libraries to where they belong (bdist_wheel)')
+            print(" ")
             copy_platform_libraries(platform_name, clean_first=True)
 
             # Build the wheel
@@ -147,7 +168,7 @@ if 'bdist_wheel' in sys.argv:
                 name="c2pa",
                 version="1.0.0",
                 package_dir={"": "src"},
-                packages=find_packages(where="src"),
+                packages=find_packages(where="src") + ["c2pa.libs"],
                 include_package_data=True,
                 package_data={
                     "c2pa": ["libs/*"],  # Include all files in libs directory
@@ -168,7 +189,7 @@ setup(
     name="c2pa",
     version="1.0.0",
     package_dir={"": "src"},
-    packages=find_packages(where="src"),
+    packages=find_packages(where="src") + ["c2pa.libs"],
     include_package_data=True,
     package_data={
         "c2pa": ["libs/*"],  # Include all files in libs directory
