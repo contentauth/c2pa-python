@@ -59,6 +59,13 @@ jobs:
         run: python3 scripts/download_artifacts.py c2pa-v0.55.0
       - name: Build wheel
         run: python setup.py bdist_wheel
+      - name: Test wheel
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install --no-index --find-links=dist c2pa
+          python -c "from c2pa import C2paError; print('C2paError imported successfully')"
+          python ./tests/test_unit_tests.py
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
