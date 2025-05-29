@@ -21,6 +21,8 @@ on:
 
 permissions:
   contents: read
+  packages: read
+  actions: read
 
 jobs:
   tests:
@@ -85,6 +87,8 @@ jobs:
     with:
       python-version: "3.10"
       artifact-name: wheels-${{ matrix.target }}
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
         target: [x86_64, aarch64]
@@ -101,6 +105,8 @@ jobs:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
       artifact-name: wheels-${{ matrix.target }}
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
         target: [x64, x86]
@@ -116,6 +122,8 @@ jobs:
     with:
       python-version: "3.10"
       artifact-name: wheels-mac-x86_64
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -128,6 +136,8 @@ jobs:
     with:
       python-version: "3.10"
       artifact-name: wheels-mac-aarch64
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
