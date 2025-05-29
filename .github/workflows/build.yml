@@ -101,10 +101,10 @@ jobs:
 
       - name: Prepare build directories
         run: |
-          mkdir artifacts
-          mkdir src\c2pa\libs
-          if exist dist rmdir /s /q dist
-          if exist build rmdir /s /q build
+          New-Item -ItemType Directory -Force -Path artifacts
+          New-Item -ItemType Directory -Force -Path src\c2pa\libs
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
 
       - name: Download native artifacts
         run: python scripts\download_artifacts.py c2pa-v0.55.0
