@@ -259,7 +259,9 @@ jobs:
       - name: Install wheel for testing
         run: |
           .\venv\Scripts\activate
-          pip install dist\c2pa_python-*.whl
+          $wheel = Get-ChildItem -Path dist -Filter "c2pa_python-*.whl" | Select-Object -First 1
+          if (-not $wheel) { Write-Error "No wheel file found in dist directory"; exit 1 }
+          pip install $wheel.FullName
 
       - name: Run unittest tests on installed wheel
         run: |
@@ -446,7 +448,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypipublish
-    needs: [build-linux-wheel, sdist]
+    needs: [test-built-linux-wheel, test-built-macos_x86-wheel, test-built-macos_aarch64-wheel, test-built-windows-wheel, sdist]
     permissions:
       id-token: write
       contents: read
