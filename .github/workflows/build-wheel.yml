@@ -37,6 +37,8 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Install project development dependencies
+        run: python -m pip install -r requirements-dev.txt
       - name: Prepare build directories (Unix)
         shell: bash
         if: runner.os != 'Windows'
