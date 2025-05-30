@@ -2,7 +2,7 @@
 wheel==0.41.2  # For building wheels
 setuptools==68.0.0  # For building packages
 build==1.0.3  # For building packages using PEP 517/518
-toml==0.10.2  # For reading pyproject.toml files
+toml==0.10.3  # For reading pyproject.toml files
 
 # Testing dependencies
 pytest==7.4.0
