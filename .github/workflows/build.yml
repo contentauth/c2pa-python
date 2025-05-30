@@ -200,26 +200,81 @@ jobs:
           source venv/bin/activate
           venv/bin/pytest tests/test_unit_tests.py -v
 
-  # build-windows-wheel:
-  #   name: Build Windows wheel
-  #   uses: ./.github/workflows/build-wheel.yml
-  #   needs: tests-windows
-  #   with:
-  #     python-version: "3.10"
-  #     architecture: ${{ matrix.target }}
-  #     artifact-name: wheels-${{ matrix.target }}
-  #     runs-on: windows-latest
-  #   secrets:
-  #     github-token: ${{ secrets.GITHUB_TOKEN }}
-  #   strategy:
-  #     matrix:
-  #       target: [x64, x86]
-  #   if: |
-  #     github.event_name != 'pull_request' ||
-  #     github.event.pull_request.author_association == 'COLLABORATOR' ||
-  #     github.event.pull_request.author_association == 'MEMBER' ||
-  #     github.event.pull_request.user.login == 'dependabot[bot]' ||
-  #     contains(github.event.pull_request.labels.*.name, 'safe to test')
+  build-windows-wheel:
+    name: Build Windows wheel
+    uses: ./.github/workflows/build-wheel.yml
+    needs: tests-windows
+    with:
+      python-version: "3.10"
+      architecture: ${{ matrix.target }}
+      artifact-name: wheels-${{ matrix.target }}
+      runs-on: windows-latest
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      matrix:
+        target: [x64, x86]
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+  test-built-windows-wheel:
+    name: Test Windows wheel
+    needs: build-windows-wheel
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target: [x64, x86]
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist
+
+      - name: Create and activate virtual environment
+        run: |
+          python -m venv venv
+          .\venv\Scripts\activate
+
+      - name: Install wheel for testing
+        run: |
+          .\venv\Scripts\activate
+          pip install dist\c2pa_python-*.whl
+
+      - name: Run unittest tests on installed wheel
+        run: |
+          .\venv\Scripts\activate
+          python .\tests\test_unit_tests.py
+
+      - name: Install pytest (in venv)
+        run: |
+          .\venv\Scripts\activate
+          pip install pytest
+
+      - name: Run tests with pytest (venv)
+        run: |
+          .\venv\Scripts\activate
+          .\venv\Scripts\pytest .\tests\test_unit_tests.py -v
 
   build-macos_x86-wheel:
     name: Build macOS x86_64 wheel
