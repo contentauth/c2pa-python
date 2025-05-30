@@ -54,6 +54,9 @@ jobs:
       - name: Install project dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install project development dependencies
+        run: python -m pip install -r requirements-dev.txt
+
       - name: Prepare build directories
         run: |
           mkdir -p artifacts
@@ -100,6 +103,9 @@ jobs:
 
       - name: Install project dependencies
         run: python -m pip install -r requirements.txt
+
+      - name: Install project development dependencies
+        run: python -m pip install -r requirements-dev.txt
 
       - name: Prepare build directories
         run: |
