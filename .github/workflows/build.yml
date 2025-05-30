@@ -398,54 +398,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Create dist directory
         run: mkdir -p dist
-      - uses: actions/download-artifact@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          pattern: wheels-linux-x86_64
-          path: dist-linux
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-linux-aarch64
-          path: dist-linux
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-macos-x86_64
-          path: dist-macos
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-macos-aarch64
-          path: dist-macos
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-windows-x64
-          path: dist-windows
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-windows-x86
-          path: dist-windows
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-sdist
-          path: dist-sdist
-      - name: Debug - List all artifact directories
-        run: |
-          echo "Contents of dist-linux:"
-          ls -la dist-linux/ || echo "dist-linux is empty"
-          echo "Contents of dist-macos:"
-          ls -la dist-macos/ || echo "dist-macos is empty"
-          echo "Contents of dist-windows:"
-          ls -la dist-windows/ || echo "dist-windows is empty"
-          echo "Contents of dist-sdist:"
-          ls -la dist-sdist/ || echo "dist-sdist is empty"
-      - name: Combine artifacts
-        run: |
-          echo "Copying Linux wheels..."
-          cp -v dist-linux/* dist/ 2>/dev/null || echo "No Linux wheels to copy"
-          echo "Copying macOS wheels..."
-          cp -v dist-macos/* dist/ 2>/dev/null || echo "No macOS wheels to copy"
-          echo "Copying Windows wheels..."
-          cp -v dist-windows/* dist/ 2>/dev/null || echo "No Windows wheels to copy"
-          echo "Copying source distribution..."
-          cp -v dist-sdist/* dist/ 2>/dev/null || echo "No source distribution to copy"
+          path: dist
       - name: Debug - List final dist directory
         run: |
           echo "Final contents of dist directory:"
