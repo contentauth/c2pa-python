@@ -151,66 +151,66 @@ if 'develop' in sys.argv or 'install' in sys.argv:
     print("Installing in development mode for platform ", current_platform)
     copy_platform_libraries(current_platform)
 
-# For wheel building
-if 'bdist_wheel' in sys.argv:
-    available_platforms = find_available_platforms()
-    if not available_platforms:
-        print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
-        setup(
-            name="c2pa-python",
-            version="0.10.0",
-            package_dir={"": "src"},
-            packages=find_packages(where="src"),
-            include_package_data=True,
-            package_data={
-                "c2pa": ["libs/*"],  # Include all files in libs directory
-            },
-            classifiers=[
-                "Programming Language :: Python :: 3",
-                get_platform_classifier(get_current_platform()),
-            ],
-            python_requires=">=3.10",
-            long_description=open("README.md").read(),
-            long_description_content_type="text/markdown",
-            license="MIT OR Apache-2.0",
-        )
-        sys.exit(0)
-
-    print(f"Found libraries for platforms: {', '.join(available_platforms)}")
-
-    for platform_name in available_platforms:
-        print(f"\nBuilding wheel for {platform_name}...")
-        try:
-            # Copy libraries for this platform (cleaning first)
-            print(" ")
-            print('##### Preparing to copy libraries to where they belong (bdist_wheel)')
-            print(" ")
-            copy_platform_libraries(platform_name, clean_first=True)
-
-            # Build the wheel
-            setup(
-                name="c2pa-python",
-                version="0.10.0",
-                package_dir={"": "src"},
-                packages=find_packages(where="src"),
-                include_package_data=True,
-                package_data={
-                    "c2pa": ["libs/*"],  # Include all files in libs directory
-                },
-                classifiers=[
-                    "Programming Language :: Python :: 3",
-                    get_platform_classifier(platform_name),
-                ],
-                python_requires=">=3.10",
-                long_description=open("README.md").read(),
-                long_description_content_type="text/markdown",
-                license="MIT OR Apache-2.0",
-            )
-        finally:
-            # Clean up by removing the package libs directory
-            if PACKAGE_LIBS_DIR.exists():
-                shutil.rmtree(PACKAGE_LIBS_DIR)
-    sys.exit(0)
+# # For wheel building
+# if 'bdist_wheel' in sys.argv:
+#     available_platforms = find_available_platforms()
+#     if not available_platforms:
+#         print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
+#         setup(
+#             name="c2pa-python",
+#             version="0.10.0",
+#             package_dir={"": "src"},
+#             packages=find_packages(where="src"),
+#             include_package_data=True,
+#             package_data={
+#                 "c2pa": ["libs/*"],  # Include all files in libs directory
+#             },
+#             classifiers=[
+#                 "Programming Language :: Python :: 3",
+#                 get_platform_classifier(get_current_platform()),
+#             ],
+#             python_requires=">=3.10",
+#             long_description=open("README.md").read(),
+#             long_description_content_type="text/markdown",
+#             license="MIT OR Apache-2.0",
+#         )
+#         sys.exit(0)
+# 
+#     print(f"Found libraries for platforms: {', '.join(available_platforms)}")
+# 
+#     for platform_name in available_platforms:
+#         print(f"\nBuilding wheel for {platform_name}...")
+#         try:
+#             # Copy libraries for this platform (cleaning first)
+#             print(" ")
+#             print('##### Preparing to copy libraries to where they belong (bdist_wheel)')
+#             print(" ")
+#             copy_platform_libraries(platform_name, clean_first=True)
+# 
+#             # Build the wheel
+#             setup(
+#                 name="c2pa-python",
+#                 version="0.10.0",
+#                 package_dir={"": "src"},
+#                 packages=find_packages(where="src"),
+#                 include_package_data=True,
+#                 package_data={
+#                     "c2pa": ["libs/*"],  # Include all files in libs directory
+#                 },
+#                 classifiers=[
+#                     "Programming Language :: Python :: 3",
+#                     get_platform_classifier(platform_name),
+#                 ],
+#                 python_requires=">=3.10",
+#                 long_description=open("README.md").read(),
+#                 long_description_content_type="text/markdown",
+#                 license="MIT OR Apache-2.0",
+#             )
+#         finally:
+#             # Clean up by removing the package libs directory
+#             if PACKAGE_LIBS_DIR.exists():
+#                 shutil.rmtree(PACKAGE_LIBS_DIR)
+#     sys.exit(0)
 
 # For sdist and development installation
 setup(

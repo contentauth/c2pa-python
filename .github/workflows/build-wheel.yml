@@ -58,7 +58,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/download_artifacts.py c2pa-v0.55.0
       - name: Build wheel
-        run: python setup.py bdist_wheel
+        run: python -m build --wheel
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
