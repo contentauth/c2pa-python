@@ -398,32 +398,41 @@ jobs:
       - uses: actions/checkout@v4
       - name: Create dist directory
         run: mkdir -p dist
-      - name: Download all artifacts
+      - name: Download Linux wheels
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-      - name: Debug - List artifact structure
-        run: |
-          echo "=== Artifact Directory Structure ==="
-          find artifacts -type f -ls
-          echo "=== Artifact Directory Contents ==="
-          ls -R artifacts/
-      - name: Move wheel files to dist
-        run: |
-          echo "=== Moving files ==="
-          # For each platform directory
-          for platform in linux macos windows; do
-            # For each architecture in that platform
-            for arch in x86_64 aarch64 x64 x86; do
-              # Find and copy wheel files
-              if [ -d "artifacts/wheels-$platform-$arch" ]; then
-                echo "Processing $platform-$arch"
-                find "artifacts/wheels-$platform-$arch" -name "*.whl" -exec cp -v {} dist/ \;
-              fi
-            done
-          done
-          # Copy source distribution
-          find artifacts/wheels-sdist -name "*.tar.gz" -exec cp -v {} dist/ \;
+          name: wheels-linux-x86_64
+          path: dist
+      - name: Download Linux ARM wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-aarch64
+          path: dist
+      - name: Download macOS wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos-x86_64
+          path: dist
+      - name: Download macOS ARM wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos-aarch64
+          path: dist
+      - name: Download Windows wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-windows-x64
+          path: dist
+      - name: Download Windows 32-bit wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-windows-x86
+          path: dist
+      - name: Download source distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-sdist
+          path: dist
       - name: Debug - List final dist directory
         run: |
           echo "=== Final dist directory contents ==="
