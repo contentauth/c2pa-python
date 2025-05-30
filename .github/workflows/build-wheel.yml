@@ -45,10 +45,7 @@ jobs:
             /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py c2pa-v0.55.0 &&
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
               \${PYBIN}/pip install --upgrade pip wheel &&
-              CFLAGS="-I/opt/python/cp310-cp310/include/python3.10" LDFLAGS="-L/opt/python/cp310-cp310/lib" \${PYBIN}/python setup.py bdist_wheel --plat-name manylinux_2_28_x86_64
-            done &&
-            for whl in /io/dist/*.whl; do
-              auditwheel repair \"\$whl\" --plat manylinux_2_28_x86_64 -w /io/dist/
+              CFLAGS=\"-I/opt/python/cp310-cp310/include/python3.10\" LDFLAGS=\"-L/opt/python/cp310-cp310/lib\" \${PYBIN}/python setup.py bdist_wheel --plat-name manylinux_2_28_x86_64
             done &&
             rm -f /io/dist/*-linux_*.whl
           "
