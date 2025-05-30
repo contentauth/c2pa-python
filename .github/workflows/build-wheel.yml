@@ -32,7 +32,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.github-token }}
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Build Linux wheels
         if: runner.os != 'Windows'
         run: |
@@ -41,17 +41,27 @@ jobs:
             mkdir -p /io/artifacts /io/src/c2pa/libs &&
             rm -rf /io/dist /io/build &&
             cd /io &&
-            python3 scripts/download_artifacts.py c2pa-v0.55.0 &&
-            pip install -r requirements.txt -r requirements-dev.txt &&
+            /opt/python/cp310-cp310/bin/pip install -r requirements.txt -r requirements-dev.txt &&
+            /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py c2pa-v0.55.0 &&
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
               \${PYBIN}/pip install --upgrade pip wheel &&
               \${PYBIN}/python setup.py bdist_wheel
             done &&
-            for whl in dist/*.whl; do
-              auditwheel repair \"\$whl\" --plat manylinux_2_28_x86_64 -w dist/
+            for whl in /io/dist/*.whl; do
+              auditwheel repair \"\$whl\" --plat manylinux_2_28_x86_64 -w /io/dist/
             done &&
-            rm -f dist/*-linux_*.whl
+            rm -f /io/dist/*-linux_*.whl
           "
+
+      - name: Verify Linux wheels
+        if: runner.os != 'Windows'
+        run: |
+          echo "Contents of dist directory:"
+          ls -la dist/
+          echo "Number of wheels found:"
+          find dist -name "*.whl" | wc -l
+          echo "Wheel filenames:"
+          find dist -name "*.whl" -exec basename {} \;
 
       - name: Build Windows wheel
         if: runner.os == 'Windows'
