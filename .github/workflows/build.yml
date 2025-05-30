@@ -131,7 +131,7 @@ jobs:
     needs: tests-unix
     with:
       python-version: "3.10"
-      artifact-name: wheels-${{ matrix.target }}
+      artifact-name: wheels-linux-${{ matrix.target }}
       runs-on: ubuntu-latest
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -172,7 +172,7 @@ jobs:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          name: wheels-${{ matrix.target }}
+          name: wheels-linux-${{ matrix.target }}
           path: dist
 
       - name: Create and activate virtual environment
@@ -207,7 +207,7 @@ jobs:
     with:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
-      artifact-name: wheels-${{ matrix.target }}
+      artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -248,7 +248,7 @@ jobs:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          name: wheels-${{ matrix.target }}
+          name: wheels-windows-${{ matrix.target }}
           path: dist
 
       - name: Create and activate virtual environment
@@ -284,7 +284,7 @@ jobs:
     needs: tests-unix
     with:
       python-version: "3.10"
-      artifact-name: wheels-mac-${{ matrix.target }}
+      artifact-name: wheels-macos-${{ matrix.target }}
       runs-on: macos-latest
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -325,7 +325,7 @@ jobs:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          name: wheels-mac-${{ matrix.target }}
+          name: wheels-macos-${{ matrix.target }}
           path: dist
 
       - name: Create and activate virtual environment
