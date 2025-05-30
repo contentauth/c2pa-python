@@ -411,10 +411,19 @@ jobs:
       - name: Move wheel files to dist
         run: |
           echo "=== Moving files ==="
-          # Move all .whl files from artifact directories to dist
-          find artifacts -name "*.whl" -exec sh -c 'echo "Moving {} to dist/"; cp -v {} dist/' \;
-          # Move all .tar.gz files from artifact directories to dist
-          find artifacts -name "*.tar.gz" -exec sh -c 'echo "Moving {} to dist/"; cp -v {} dist/' \;
+          # For each platform directory
+          for platform in linux macos windows; do
+            # For each architecture in that platform
+            for arch in x86_64 aarch64 x64 x86; do
+              # Find and copy wheel files
+              if [ -d "artifacts/wheels-$platform-$arch" ]; then
+                echo "Processing $platform-$arch"
+                find "artifacts/wheels-$platform-$arch" -name "*.whl" -exec cp -v {} dist/ \;
+              fi
+            done
+          done
+          # Copy source distribution
+          find artifacts/wheels-sdist -name "*.tar.gz" -exec cp -v {} dist/ \;
       - name: Debug - List final dist directory
         run: |
           echo "=== Final dist directory contents ==="
