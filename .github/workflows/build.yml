@@ -196,7 +196,7 @@ jobs:
       - name: Install wheel
         run: |
           source venv/bin/activate
-          pip install --no-index --find-links=dist c2pa --verbose
+          pip install --no-index --find-links=dist c2pa_python --verbose
 
       - name: Run tests directly
         run: |
