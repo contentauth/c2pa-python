@@ -65,7 +65,7 @@ jobs:
           PLATFORM=$(echo "${{ inputs.artifact-name }}" | cut -d'-' -f2)
           ARCH=$(echo "${{ inputs.artifact-name }}" | cut -d'-' -f3)
           # Set environment variable for wheel name
-          export WHEEL_NAME="c2pa_python-0.10.6-${PLATFORM}-${ARCH}-py3-none-any.whl"
+          export WHEEL_NAME="c2pa_python-0.10.7-${PLATFORM}-${ARCH}-py3-none-any.whl"
           # Build wheel with custom name
           python -m build --wheel
           # Rename the wheel file

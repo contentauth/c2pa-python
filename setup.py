@@ -158,7 +158,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
         print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
         setup(
             name="c2pa-python",
-            version="0.10.6",
+            version="0.10.7",
             package_dir={"": "src"},
             packages=find_packages(where="src"),
             include_package_data=True,
@@ -190,7 +190,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
             # Build the wheel
             setup(
                 name="c2pa-python",
-                version="0.10.6",
+                version="0.10.7",
                 package_dir={"": "src"},
                 packages=find_packages(where="src"),
                 include_package_data=True,
@@ -215,7 +215,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
 # For sdist and development installation
 setup(
     name="c2pa-python",
-    version="0.10.6",
+    version="0.10.7",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     include_package_data=True,
