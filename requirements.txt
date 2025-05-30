@@ -1,11 +1,2 @@
-wheel==0.41.2  # For building wheels
-setuptools==68.0.0  # For building packages
-build==1.0.3  # For building packages using PEP 517/518
-toml ==0.10.2  # For reading pyproject.toml files
-
-# Testing dependencies
-pytest==7.4.0
 # only used in the training example
 cryptography>=41.0.0
-# for downloading the library artifacts
-requests>=2.0.0
