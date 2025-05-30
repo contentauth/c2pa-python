@@ -63,12 +63,6 @@ jobs:
           mkdir -p src/c2pa/libs
           rm -rf dist/* build/*
 
-      - name: Check GitHub API rate limit
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit | grep -A 2 "core"
-
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,7 +121,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit | grep -A 2 "core"
+          echo "Checking GitHub API rate limit..."
+          curl -s -H "Authorization: token $env:GITHUB_TOKEN" https://api.github.com/rate_limit
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to check rate limit"
+            exit 1
+          }
 
       - name: Download native artifacts
         env:
