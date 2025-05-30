@@ -180,20 +180,12 @@ jobs:
           python -m venv venv
           source venv/bin/activate
 
-      - name: List available wheels
-        run: |
-          source venv/bin/activate
-          echo "Contents of dist directory:"
-          ls -la dist/
-          echo "Wheel files:"
-          find dist -name "*.whl" -type f
-
-      - name: Install wheel
+      - name: Install wheel for testing
         run: |
           source venv/bin/activate
           pip install dist/c2pa_python-*.whl
 
-      - name: Run tests directly
+      - name: Run unittest tests on installed wheel
         run: |
           source venv/bin/activate
           python ./tests/test_unit_tests.py
@@ -229,39 +221,143 @@ jobs:
   #     github.event.pull_request.user.login == 'dependabot[bot]' ||
   #     contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-  # build-macos_x86-wheel:
-  #   name: Build macOS x86_64 wheel
-  #   uses: ./.github/workflows/build-wheel.yml
-  #   needs: tests-unix
-  #   with:
-  #     python-version: "3.10"
-  #     artifact-name: wheels-mac-x86_64
-  #     runs-on: macos-latest
-  #   secrets:
-  #     github-token: ${{ secrets.GITHUB_TOKEN }}
-  #   if: |
-  #     github.event_name != 'pull_request' ||
-  #     github.event.pull_request.author_association == 'COLLABORATOR' ||
-  #     github.event.pull_request.author_association == 'MEMBER' ||
-  #     github.event.pull_request.user.login == 'dependabot[bot]' ||
-  #     contains(github.event.pull_request.labels.*.name, 'safe to test')
+  build-macos_x86-wheel:
+    name: Build macOS x86_64 wheel
+    uses: ./.github/workflows/build-wheel.yml
+    needs: tests-unix
+    with:
+      python-version: "3.10"
+      artifact-name: wheels-mac-x86_64
+      runs-on: macos-latest
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-  # build-macos_aarch64-wheel:
-  #   name: Build macOS aarch64 wheel
-  #   uses: ./.github/workflows/build-wheel.yml
-  #   needs: tests-unix
-  #   with:
-  #     python-version: "3.10"
-  #     artifact-name: wheels-mac-aarch64
-  #     runs-on: macos-latest
-  #   secrets:
-  #     github-token: ${{ secrets.GITHUB_TOKEN }}
-  #   if: |
-  #     github.event_name != 'pull_request' ||
-  #     github.event.pull_request.author_association == 'COLLABORATOR' ||
-  #     github.event.pull_request.author_association == 'MEMBER' ||
-  #     github.event.pull_request.user.login == 'dependabot[bot]' ||
-  #     contains(github.event.pull_request.labels.*.name, 'safe to test')
+  test-built-macos_x86-wheel:
+    name: Test macOS x86_64 wheel
+    needs: build-macos_x86-wheel
+    runs-on: macos-latest
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-mac-x86_64
+          path: dist
+
+      - name: Create and activate virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+
+      - name: Install wheel for testing
+        run: |
+          source venv/bin/activate
+          pip install dist/c2pa_python-*.whl
+
+      - name: Run unittest tests on installed wheel
+        run: |
+          source venv/bin/activate
+          python ./tests/test_unit_tests.py
+
+      - name: Install pytest (in venv)
+        run: |
+          source venv/bin/activate
+          pip install pytest
+
+      - name: Run tests with pytest (venv)
+        run: |
+          source venv/bin/activate
+          venv/bin/pytest tests/test_unit_tests.py -v
+
+  build-macos_aarch64-wheel:
+    name: Build macOS aarch64 wheel
+    uses: ./.github/workflows/build-wheel.yml
+    needs: tests-unix
+    with:
+      python-version: "3.10"
+      artifact-name: wheels-mac-aarch64
+      runs-on: macos-latest
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+  test-built-macos_aarch64-wheel:
+    name: Test macOS aarch64 wheel
+    needs: build-macos_aarch64-wheel
+    runs-on: macos-latest
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-mac-aarch64
+          path: dist
+
+      - name: Create and activate virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+
+      - name: Install wheel for testing
+        run: |
+          source venv/bin/activate
+          pip install dist/c2pa_python-*.whl
+
+      - name: Run unittest tests on installed wheel
+        run: |
+          source venv/bin/activate
+          python ./tests/test_unit_tests.py
+
+      - name: Install pytest (in venv)
+        run: |
+          source venv/bin/activate
+          pip install pytest
+
+      - name: Run tests with pytest (venv)
+        run: |
+          source venv/bin/activate
+          venv/bin/pytest tests/test_unit_tests.py -v
 
   sdist:
     runs-on: ubuntu-latest
