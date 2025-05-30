@@ -63,7 +63,7 @@ ingredient_def = {
 
 class TestC2paSdk(unittest.TestCase):
     def test_version(self):
-        assert version() == "0.10.5"
+        assert version() == "0.10.6"
 
     def test_sdk_version(self):
         assert "c2pa-rs/" in sdk_version()

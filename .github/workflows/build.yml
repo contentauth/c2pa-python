@@ -402,15 +402,22 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Debug - List artifact structure
+        run: |
+          echo "=== Artifact Directory Structure ==="
+          find artifacts -type f -ls
+          echo "=== Artifact Directory Contents ==="
+          ls -R artifacts/
       - name: Move wheel files to dist
         run: |
+          echo "=== Moving files ==="
           # Move all .whl files from artifact directories to dist
-          find artifacts -name "*.whl" -exec cp {} dist/ \;
+          find artifacts -name "*.whl" -exec sh -c 'echo "Moving {} to dist/"; cp -v {} dist/' \;
           # Move all .tar.gz files from artifact directories to dist
-          find artifacts -name "*.tar.gz" -exec cp {} dist/ \;
+          find artifacts -name "*.tar.gz" -exec sh -c 'echo "Moving {} to dist/"; cp -v {} dist/' \;
       - name: Debug - List final dist directory
         run: |
-          echo "Final contents of dist directory:"
+          echo "=== Final dist directory contents ==="
           ls -la dist/ || echo "dist is empty"
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
