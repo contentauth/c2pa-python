@@ -165,8 +165,8 @@ if 'bdist_wheel' in sys.argv:
 
             # Build the wheel
             setup(
-                name="c2pa",
-                version="1.0.0",
+                name="c2pa-python",
+                version="0.10.0",
                 package_dir={"": "src"},
                 packages=find_packages(where="src") + ["c2pa.libs"],
                 include_package_data=True,
@@ -186,8 +186,8 @@ if 'bdist_wheel' in sys.argv:
 
 # For sdist and development installation
 setup(
-    name="c2pa",
-    version="1.0.0",
+    name="c2pa-python",
+    version="0.10.0",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     include_package_data=True,
