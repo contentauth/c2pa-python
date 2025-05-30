@@ -33,12 +33,29 @@ test-local-wheel-build:
 	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
-	python -m build
+	python -m build --wheel
 	# Install local build in venv
 	pip install $$(ls dist/*.whl)
 	# Verify installation in local venv
 	python -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
 	# Verify wheel structure
+	twine check dist/*
+
+test-local-sdist-build:
+	# Clean any existing builds
+	rm -rf build/ dist/
+	# Download artifacts and place them where they should go
+	python scripts/download_artifacts.py c2pa-v0.55.0
+	# Install Python
+	python3 -m pip install -r requirements.txt
+	python3 -m pip install -r requirements-dev.txt
+	# Build sdist package
+	python -m build --sdist
+	# Install local build in venv
+	pip install $$(ls dist/*.tar.gz)
+	# Verify installation in local venv
+	python -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
+	# Verify sdist structure
 	twine check dist/*
 
 verify-wheel-build:
