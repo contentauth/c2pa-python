@@ -65,12 +65,22 @@ jobs:
           # Extract platform info from artifact name
           PLATFORM=$(echo "${{ inputs.artifact-name }}" | cut -d'-' -f2)
           ARCH=$(echo "${{ inputs.artifact-name }}" | cut -d'-' -f3)
-          # Set environment variable for wheel name
-          export WHEEL_NAME="c2pa_python-0.10.7-${PLATFORM}-${ARCH}-py3-none-any.whl"
-          # Build wheel with custom name
-          python -m build --wheel
-          # Rename the wheel file
-          mv dist/c2pa_python-*.whl "dist/${WHEEL_NAME}"
+          # Set platform tag based on platform and architecture
+          if [ "$PLATFORM" = "linux" ]; then
+            if [ "$ARCH" = "x86_64" ]; then
+              export PLATFORM_TAG="manylinux_2_17_x86_64"
+            elif [ "$ARCH" = "aarch64" ]; then
+              export PLATFORM_TAG="manylinux_2_17_aarch64"
+            fi
+          elif [ "$PLATFORM" = "macos" ]; then
+            if [ "$ARCH" = "x86_64" ]; then
+              export PLATFORM_TAG="macosx_x86_64"
+            elif [ "$ARCH" = "aarch64" ]; then
+              export PLATFORM_TAG="macosx_arm64"
+            fi
+          fi
+          # Build wheel with platform tag
+          python -m build --wheel --config-setting="--global-option=build_ext" --config-setting="--global-option=--plat-name=$PLATFORM_TAG"
 
       - name: Build wheel (Windows)
         if: runner.os == 'Windows'
@@ -81,14 +91,14 @@ jobs:
           $parts = $artifactName -split '-'
           $PLATFORM = $parts[1]
           $ARCH = $parts[2]
-          # Set environment variable for wheel name
-          $env:WHEEL_NAME = "c2pa_python-0.10.7-${PLATFORM}-${ARCH}-py3-none-any.whl"
-          # Build wheel with custom name
-          python -m build --wheel
-          # Rename the wheel file
-          Get-ChildItem -Path dist -Filter "c2pa_python-*.whl" | ForEach-Object {
-            Move-Item -Path $_.FullName -Destination "dist/$env:WHEEL_NAME" -Force
+          # Set platform tag based on architecture
+          if ($ARCH -eq "x64") {
+            $env:PLATFORM_TAG = "win_amd64"
+          } elseif ($ARCH -eq "x86") {
+            $env:PLATFORM_TAG = "win32"
           }
+          # Build wheel with platform tag
+          python -m build --wheel --config-setting="--global-option=build_ext" --config-setting="--global-option=--plat-name=$env:PLATFORM_TAG"
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
