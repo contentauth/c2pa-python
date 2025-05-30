@@ -401,7 +401,13 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: artifacts
+      - name: Move wheel files to dist
+        run: |
+          # Move all .whl files from artifact directories to dist
+          find artifacts -name "*.whl" -exec cp {} dist/ \;
+          # Move all .tar.gz files from artifact directories to dist
+          find artifacts -name "*.tar.gz" -exec cp {} dist/ \;
       - name: Debug - List final dist directory
         run: |
           echo "Final contents of dist directory:"
