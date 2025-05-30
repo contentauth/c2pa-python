@@ -130,7 +130,8 @@ def copy_platform_libraries(platform_name, clean_first=False):
 def find_available_platforms():
     """Scan the artifacts directory for available platform-specific libraries."""
     if not ARTIFACTS_DIR.exists():
-        raise ValueError(f"Artifacts directory not found: {ARTIFACTS_DIR}")
+        print(f"Warning: Artifacts directory not found: {ARTIFACTS_DIR}")
+        return []
 
     available_platforms = []
     for platform_name in PLATFORM_FOLDERS.keys():
@@ -139,7 +140,8 @@ def find_available_platforms():
             available_platforms.append(platform_name)
 
     if not available_platforms:
-        raise ValueError("No platform-specific libraries found in artifacts directory")
+        print("Warning: No platform-specific libraries found in artifacts directory")
+        return []
 
     return available_platforms
 
@@ -152,6 +154,28 @@ if 'develop' in sys.argv or 'install' in sys.argv:
 # For wheel building
 if 'bdist_wheel' in sys.argv:
     available_platforms = find_available_platforms()
+    if not available_platforms:
+        print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
+        setup(
+            name="c2pa-python",
+            version="0.10.0",
+            package_dir={"": "src"},
+            packages=find_packages(where="src"),
+            include_package_data=True,
+            package_data={
+                "c2pa": ["libs/*"],  # Include all files in libs directory
+            },
+            classifiers=[
+                "Programming Language :: Python :: 3",
+                get_platform_classifier(get_current_platform()),
+            ],
+            python_requires=">=3.10",
+            long_description=open("README.md").read(),
+            long_description_content_type="text/markdown",
+            license="MIT OR Apache-2.0",
+        )
+        sys.exit(0)
+
     print(f"Found libraries for platforms: {', '.join(available_platforms)}")
 
     for platform_name in available_platforms:
@@ -168,7 +192,7 @@ if 'bdist_wheel' in sys.argv:
                 name="c2pa-python",
                 version="0.10.0",
                 package_dir={"": "src"},
-                packages=find_packages(where="src") + ["c2pa.libs"],
+                packages=find_packages(where="src"),
                 include_package_data=True,
                 package_data={
                     "c2pa": ["libs/*"],  # Include all files in libs directory
@@ -177,6 +201,10 @@ if 'bdist_wheel' in sys.argv:
                     "Programming Language :: Python :: 3",
                     get_platform_classifier(platform_name),
                 ],
+                python_requires=">=3.10",
+                long_description=open("README.md").read(),
+                long_description_content_type="text/markdown",
+                license="MIT OR Apache-2.0",
             )
         finally:
             # Clean up by removing the package libs directory
@@ -198,8 +226,8 @@ setup(
         "Programming Language :: Python :: 3",
         get_platform_classifier(get_current_platform()),
     ],
-    # Add sdist-specific configuration
+    python_requires=">=3.10",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    python_requires=">=3.7",
+    license="MIT OR Apache-2.0",
 )

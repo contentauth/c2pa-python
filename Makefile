@@ -29,7 +29,7 @@ test-local-wheel-build:
 	# Clean any existing builds
 	rm -rf build/ dist/
 	# Download artifacts and place them where they should go
-	python scripts/download_artifacts.py c2pa-v0.49.5
+	python scripts/download_artifacts.py c2pa-v0.55.0
 	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
@@ -38,6 +38,11 @@ test-local-wheel-build:
 	pip install $$(ls dist/*.whl)
 	# Verify installation in local venv
 	python -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
+
+verify-wheel-build:
+	rm -rf build/ dist/ src/*.egg-info/
+	python -m build
+	twine check dist/*
 
 publish: release
 	python3 -m pip install twine
