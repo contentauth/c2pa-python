@@ -63,10 +63,19 @@ jobs:
           mkdir -p src/c2pa/libs
           rm -rf dist/* build/*
 
+      - name: Check GitHub API rate limit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit | grep -A 2 "core"
+
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/download_artifacts.py c2pa-v0.55.0
+        run: |
+          # Ensure the token is being used
+          echo "Using GitHub token for authentication"
+          python3 scripts/download_artifacts.py c2pa-v0.55.0
 
       - name: Install package in development mode
         run: |
@@ -114,10 +123,19 @@ jobs:
           if (Test-Path dist) { Remove-Item -Recurse -Force dist }
           if (Test-Path build) { Remove-Item -Recurse -Force build }
 
+      - name: Check GitHub API rate limit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit | grep -A 2 "core"
+
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts\download_artifacts.py c2pa-v0.55.0
+        run: |
+          # Ensure the token is being used
+          echo "Using GitHub token for authentication"
+          python scripts\download_artifacts.py c2pa-v0.55.0
 
       - name: Install package in development mode
         run: |

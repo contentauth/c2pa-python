@@ -28,6 +28,8 @@ permissions:
 jobs:
   build:
     runs-on: ${{ inputs.runs-on }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.github-token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,8 +64,6 @@ jobs:
       - name: Build wheel (Unix)
         if: runner.os != 'Windows'
         run: |
-          # Download native libraries for current platform
-          python3 scripts/download_artifacts.py c2pa-v0.55.0
           # Build wheel
           python setup.py bdist_wheel
 
@@ -71,8 +71,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Download native libraries for current platform
-          python scripts/download_artifacts.py c2pa-v0.55.0
           # Build wheel
           python setup.py bdist_wheel
       - name: Upload wheels
