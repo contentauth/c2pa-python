@@ -431,6 +431,21 @@ jobs:
           find dist -type f -ls
           echo "=== Downloaded artifacts contents ==="
           ls -R dist/
+          echo "=== Artifact details ==="
+          for file in dist/*; do
+            echo "File: $file"
+            echo "Size: $(stat -f %z "$file")"
+            echo "Last modified: $(stat -f %Sm "$file")"
+            echo "---"
+          done
+          echo "=== Platform-specific artifacts ==="
+          echo "Linux x86_64: $(ls -l dist/wheels-linux-x86_64/* 2>/dev/null || echo 'Not found')"
+          echo "Linux aarch64: $(ls -l dist/wheels-linux-aarch64/* 2>/dev/null || echo 'Not found')"
+          echo "macOS x86_64: $(ls -l dist/wheels-macos-x86_64/* 2>/dev/null || echo 'Not found')"
+          echo "macOS aarch64: $(ls -l dist/wheels-macos-aarch64/* 2>/dev/null || echo 'Not found')"
+          echo "Windows x64: $(ls -l dist/wheels-windows-x64/* 2>/dev/null || echo 'Not found')"
+          echo "Windows x86: $(ls -l dist/wheels-windows-x86/* 2>/dev/null || echo 'Not found')"
+          echo "SDist: $(ls -l dist/wheels-sdist/* 2>/dev/null || echo 'Not found')"
       - name: Debug - List final dist directory
         run: |
           echo "=== Final dist directory contents ==="
