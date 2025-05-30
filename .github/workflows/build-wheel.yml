@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Linux wheels
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         run: |
           docker run --rm -v $PWD:/io quay.io/pypa/manylinux_2_28_x86_64 bash -c "
             yum install -y gcc gcc-c++ make &&
