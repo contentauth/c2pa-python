@@ -54,7 +54,7 @@ jobs:
           "
 
       - name: Verify Linux wheels
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         run: |
           echo "Contents of dist directory:"
           ls -la dist/
@@ -123,6 +123,7 @@ jobs:
           python setup.py bdist_wheel --plat-name macosx_11_0_arm64
 
       - name: Log wheel filename
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
         run: |
           echo "Built wheel:"
