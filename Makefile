@@ -16,3 +16,7 @@ build-python:
 test:
 	python3 ./tests/test_unit_tests.py
 	python3 ./tests/test_api.py
+
+publish: release
+	python3 -m pip install twine
+	python3 -m twine upload dist/*

@@ -359,21 +359,28 @@ jobs:
 
   release:
     name: Release
-
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
-
     runs-on: ubuntu-latest
-    environment: Publish
+    environment: pypipublish
     needs: [linux, windows, macos_x86, macos_aarch64, sdist]
+    permissions:
+      id-token: write
+      contents: read
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
-          name: wheels
+          path: dist
+          merge-multiple: true
+      - name: List contents of dist directory
+        run: ls -la dist/
       - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.caipypi }}
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          command: upload
-          args: --non-interactive --skip-existing *
+          packages-dir: dist
+          # verbose: true
+          # print-hash: true
+          # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
+          skip-existing: true
+
