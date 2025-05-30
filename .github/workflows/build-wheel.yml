@@ -67,12 +67,16 @@ jobs:
           ARCH=$(echo "${{ inputs.artifact-name }}" | cut -d'-' -f3)
           # Set platform identifier based on platform and architecture
           if [ "$PLATFORM" = "linux" ]; then
-            export PLATFORM_ID="x86_64-unknown-linux-gnu"
+            if [ "$ARCH" = "x86_64" ]; then
+              export PLATFORM_ID="manylinux_2_17_x86_64"
+            elif [ "$ARCH" = "aarch64" ]; then
+              export PLATFORM_ID="manylinux_2_17_aarch64"
+            fi
           elif [ "$PLATFORM" = "macos" ]; then
             if [ "$ARCH" = "x86_64" ]; then
-              export PLATFORM_ID="x86_64-apple-darwin"
+              export PLATFORM_ID="macosx_x86_64"
             elif [ "$ARCH" = "aarch64" ]; then
-              export PLATFORM_ID="aarch64-apple-darwin"
+              export PLATFORM_ID="macosx_arm64"
             fi
           fi
           # Build wheel with platform identifier
@@ -88,7 +92,11 @@ jobs:
           $PLATFORM = $parts[1]
           $ARCH = $parts[2]
           # Set platform identifier
-          $env:PLATFORM_ID = "x86_64-pc-windows-msvc"
+          if ($ARCH -eq "x64") {
+            $env:PLATFORM_ID = "win_amd64"
+          } elseif ($ARCH -eq "x86") {
+            $env:PLATFORM_ID = "win32"
+          }
           # Build wheel with platform identifier
           python setup.py bdist_wheel --plat-name=$env:PLATFORM_ID
       - name: Upload wheels
