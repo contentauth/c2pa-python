@@ -100,6 +100,13 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name macosx_10_9_x86_64
 
+          # Rename wheel to ensure unique filename
+          cd dist
+          for wheel in *.whl; do
+            mv "$wheel" "${wheel/macosx_10_9_x86_64/macosx_10_9_intel}"
+          done
+          cd ..
+
       - name: Build macOS wheel (Apple Silicon)
         if: runner.os == 'macOS' && runner.arch == 'arm64'
         run: |
@@ -119,6 +126,13 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name macosx_11_0_arm64
 
+          # Rename wheel to ensure unique filename
+          cd dist
+          for wheel in *.whl; do
+            mv "$wheel" "${wheel/macosx_11_0_arm64/macosx_11_0_arm64}"
+          done
+          cd ..
+
       - name: Log wheel filename
         if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
@@ -131,3 +145,4 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
           path: dist
+          if-no-files-found: error
