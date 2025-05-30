@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 import sys
 import os
 import platform
@@ -160,7 +160,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
             name="c2pa-python",
             version="0.10.8",
             package_dir={"": "src"},
-            packages=find_packages(where="src"),
+            packages=find_namespace_packages(where="src", exclude=["c2pa.libs"]),
             include_package_data=True,
             package_data={
                 "c2pa": ["libs/*"],  # Include all files in libs directory
@@ -192,7 +192,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
                 name="c2pa-python",
                 version="0.10.8",
                 package_dir={"": "src"},
-                packages=find_packages(where="src"),
+                packages=find_namespace_packages(where="src", exclude=["c2pa.libs"]),
                 include_package_data=True,
                 package_data={
                     "c2pa": ["libs/*"],  # Include all files in libs directory
@@ -217,7 +217,7 @@ setup(
     name="c2pa-python",
     version="0.10.8",
     package_dir={"": "src"},
-    packages=find_packages(where="src"),
+    packages=find_namespace_packages(where="src", exclude=["c2pa.libs"]),
     include_package_data=True,
     package_data={
         "c2pa": ["libs/*"],  # Include all files in libs directory
