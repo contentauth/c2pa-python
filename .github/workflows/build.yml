@@ -185,8 +185,13 @@ jobs:
           source venv/bin/activate
           echo "Contents of dist directory:"
           ls -la dist/
-          echo "Available wheels:"
-          pip index versions --no-index --find-links=dist c2pa
+          echo "Wheel files:"
+          find dist -name "*.whl" -type f
+          echo "Wheel file details:"
+          for wheel in dist/*.whl; do
+            echo "=== $wheel ==="
+            unzip -l "$wheel" | grep -E "c2pa|\.so|\.dll|\.dylib"
+          done
 
       - name: Install wheel
         run: |
