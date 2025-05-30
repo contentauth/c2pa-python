@@ -31,9 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "pytest < 5.0.0"
+  "pytest>=7.4.0"
 ]
 
 [project.scripts]
 download-artifacts = "c2pa.build:download_artifacts"
 
+[tool.setuptools]
+license-files = []
