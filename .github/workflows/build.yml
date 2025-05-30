@@ -154,6 +154,7 @@ jobs:
     needs: tests-unix
     with:
       python-version: "3.10"
+      architecture: ${{ matrix.target }}
       artifact-name: wheels-linux-${{ matrix.target }}
       runs-on: ubuntu-latest
     secrets:
@@ -236,7 +237,7 @@ jobs:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
-        target: [x64, x86]
+        target: [x64]
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -250,7 +251,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        target: [x64, x86]
+        target: [x64]
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -313,7 +314,7 @@ jobs:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        target: [aarch64]
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -327,7 +328,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        target: [aarch64]
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
