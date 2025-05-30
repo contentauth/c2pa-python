@@ -73,6 +73,13 @@ jobs:
         run: |
           # Build wheel
           python setup.py bdist_wheel
+
+      - name: Log wheel filename
+        shell: bash
+        run: |
+          echo "Built wheel:"
+          ls -l dist/*.whl
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
