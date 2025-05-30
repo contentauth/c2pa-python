@@ -67,6 +67,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Create necessary directories
+          New-Item -ItemType Directory -Force -Path artifacts
+          New-Item -ItemType Directory -Force -Path src/c2pa/libs
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          
+          # Install dependencies
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install wheel
+          
+          # Download native artifacts
+          python scripts/download_artifacts.py c2pa-v0.55.0
+          
           # Build wheel
           python setup.py bdist_wheel --plat-name win_amd64
 
