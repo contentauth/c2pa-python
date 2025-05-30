@@ -1,4 +1,4 @@
-__version__ = "0.10.10"
+__version__ = "0.10.11"
 
 from .c2pa import (
     Builder,
