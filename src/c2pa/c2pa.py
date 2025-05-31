@@ -651,6 +651,11 @@ class Stream:
         Raises:
             TypeError: If the file object doesn't implement all required methods
         """
+        # Initialize _closed first to prevent AttributeError during garbage collection
+        self._closed = False
+        self._initialized = False
+        self._stream = None
+
         # Generate unique stream ID with timestamp
         timestamp = int(time.time() * 1000)  # milliseconds since epoch
 
@@ -672,26 +677,6 @@ class Stream:
                     ', '.join(missing_methods)))
 
         self._file = file
-        self._stream = None  # Initialize to None to track if stream was created
-        self._closed = False  # Track if the stream has been closed
-        self._initialized = False  # Track if stream was successfully initialized
-
-        # print(f'## Created stream {self._stream_id} for file {self._file}')
-
-        # Pre-allocate error message strings to avoid string formatting
-        # overhead
-        self._error_messages = {
-            'read': "Error: Attempted to read from uninitialized or closed stream",
-            'seek': "Error: Attempted to seek in uninitialized or closed stream",
-            'write': "Error: Attempted to write to uninitialized or closed stream",
-            'flush': "Error: Attempted to flush uninitialized or closed stream",
-            'read_error': "Error reading from stream: {}",
-            'seek_error': "Error seeking in stream: {}",
-            'write_error': "Error writing to stream: {}",
-            'flush_error': "Error flushing stream: {}",
-            'cleanup_error': "Error during cleanup: {}",
-            'callback_error': "Error cleaning up callback {}: {}",
-            'stream_error': "Error releasing stream: {}"}
 
         def read_callback(ctx, data, length):
             """Callback function for reading data from the Python stream.
@@ -860,7 +845,8 @@ class Stream:
 
     def __del__(self):
         """Ensure resources are cleaned up if close() wasn't called."""
-        self.close()
+        if hasattr(self, '_closed'):
+            self.close()
 
     def close(self):
         """Release the stream resources.
@@ -1487,7 +1473,8 @@ class Builder:
 
     def __del__(self):
         """Ensure resources are cleaned up if close() wasn't called."""
-        self.close()
+        if hasattr(self, '_closed'):
+            self.close()
 
     def close(self):
         """Release the builder resources.
