@@ -47,11 +47,6 @@ class TestReader(unittest.TestCase):
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, "C.jpg")
 
-    #def test_json_decode_err(self):
-    #    """Test that attempting to read from an invalid file path raises an IO error"""
-    #    with self.assertRaises(Error.Io):
-    #        manifest_store = Reader("image/jpeg", "foo")
-
     def test_reader_bad_format(self):
         with self.assertRaises(Error.NotSupported):
             with open(self.testPath, "rb") as file:
@@ -110,7 +105,6 @@ class TestBuilder(unittest.TestCase):
             ]
         }
 
-
     def test_streams_sign(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinition)
@@ -122,6 +116,68 @@ class TestBuilder(unittest.TestCase):
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
             output.close()
+
+    def test_sign_all_files(self):
+        """Test signing all files in the fixtures/files-for-signing-tests directory"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        for filename in os.listdir(signing_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                # print(f"Skipping {filename} - unsupported file type")
+                continue
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    builder = Builder(self.manifestDefinition)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+                    reader = Reader(mime_type, output)
+                    json_data = reader.json()
+                    self.assertIn("Python Test", json_data)
+                    self.assertNotIn("validation_status", json_data)
+                    output.close()
+            except Error.NotSupported:
+                print(f"Skipping {filename} - format not supported")
+                continue
+            except Exception as e:
+                self.fail(f"Failed to sign {filename}: {str(e)}")
 
     def test_archive_sign(self):
         with open(self.testPath, "rb") as file:
