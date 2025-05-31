@@ -921,19 +921,19 @@ class TestBuilder(unittest.TestCase):
                     manifest_data = builder.sign(
                         self.signer, "image/jpeg", file, output_stream)
                     output_stream.seek(0)
-                    
+
                     # Store manifest data for final verification
                     if thread_id == 1:
                         manifest_data1 = manifest_data
                     else:
                         manifest_data2 = manifest_data
-                    
+
                     # Verify the signed file
                     reader = Reader("image/jpeg", output_stream, manifest_data)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-                    
+
                     # Verify the correct manifest was used
                     if thread_id == 1:
                         expected_claim_generator = "python_test_1/0.0.1"
@@ -941,9 +941,9 @@ class TestBuilder(unittest.TestCase):
                     else:
                         expected_claim_generator = "python_test_2/0.0.1"
                         expected_author = "Tester Two"
-                    
+
                     self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
-                    
+
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
@@ -951,7 +951,7 @@ class TestBuilder(unittest.TestCase):
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
-                    
+
             except Exception as e:
                 sign_errors.append(f"Thread {thread_id} error: {str(e)}")
             finally:
@@ -1153,41 +1153,41 @@ class TestBuilder(unittest.TestCase):
             # Submit both signing tasks
             future1 = executor.submit(sign_file, output1, self.manifestDefinition_1, 1)
             future2 = executor.submit(sign_file, output2, self.manifestDefinition_2, 2)
-            
+
             # Collect results
             for future in concurrent.futures.as_completed([future1, future2]):
                 error = future.result()
                 if error:
                     sign_errors.append(error)
-        
+
         # Check for errors
         if sign_errors:
             self.fail("\n".join(sign_errors))
-        
+
         # Verify thread results
         self.assertEqual(len(thread_results), 2, "Both threads should have completed")
-        
+
         # Verify the outputs are different
         output1.seek(0)
         output2.seek(0)
         reader1 = Reader("image/jpeg", output1)
         reader2 = Reader("image/jpeg", output2)
-        
+
         manifest_store1 = json.loads(reader1.json())
         manifest_store2 = json.loads(reader2.json())
-        
+
         # Get the active manifests
         active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
         active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
-        
+
         # Verify the manifests are different
         self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
         self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
-        
+
         # Verify both outputs have valid signatures
         self.assertNotIn("validation_status", manifest_store1)
         self.assertNotIn("validation_status", manifest_store2)
-        
+
         # Clean up
         output1.close()
         output2.close()
