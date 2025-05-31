@@ -7,6 +7,7 @@ from .c2pa import (
     C2paSigningAlg,
     C2paSignerInfo,
     Signer,
+    Stream,
     sdk_version
 )  # NOQA
 
@@ -18,5 +19,6 @@ __all__ = [
     'C2paSigningAlg',
     'C2paSignerInfo',
     'Signer',
+    'Stream',
     'sdk_version'
 ]
