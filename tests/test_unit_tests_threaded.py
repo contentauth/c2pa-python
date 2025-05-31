@@ -16,7 +16,6 @@ import io
 import json
 import unittest
 from unittest.mock import mock_open, patch
-import ctypes
 import threading
 import concurrent.futures
 import time
@@ -256,48 +255,6 @@ class TestBuilder(unittest.TestCase):
                 }
             ]
         }
-
-    def test_streams_sign(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
-            output.close()
-
-    def test_archive_sign(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            archive = io.BytesIO(bytearray())
-            builder.to_archive(archive)
-            builder = Builder.from_archive(archive)
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
-            archive.close()
-            output.close()
-
-    def test_remote_sign(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            builder.set_no_embed()
-            output = io.BytesIO(bytearray())
-            manifest_data = builder.sign(
-                self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, manifest_data)
-            json_data = reader.json()
-            self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
-            output.close()
 
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories using a thread pool"""
@@ -947,6 +904,294 @@ class TestBuilder(unittest.TestCase):
 
         # Verify all readers completed
         self.assertEqual(active_readers, 0, "Not all readers completed")
+
+    def test_remote_sign_threaded(self):
+        """Test remote signing with multiple threads in parallel"""
+        output1 = io.BytesIO(bytearray())
+        output2 = io.BytesIO(bytearray())
+        sign_errors = []
+        sign_complete = threading.Event()
+        manifest_data1 = None
+        manifest_data2 = None
+        def remote_sign(output_stream, manifest_def, thread_id):
+            nonlocal manifest_data1, manifest_data2
+            try:
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(manifest_def)
+                    builder.set_no_embed()
+                    manifest_data = builder.sign(
+                        self.signer, "image/jpeg", file, output_stream)
+                    output_stream.seek(0)
+                    
+                    # Store manifest data for final verification
+                    if thread_id == 1:
+                        manifest_data1 = manifest_data
+                    else:
+                        manifest_data2 = manifest_data
+                    
+                    # Verify the signed file
+                    reader = Reader("image/jpeg", output_stream, manifest_data)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                    
+                    # Verify the correct manifest was used
+                    if thread_id == 1:
+                        expected_claim_generator = "python_test_1/0.0.1"
+                        expected_author = "Tester One"
+                    else:
+                        expected_claim_generator = "python_test_2/0.0.1"
+                        expected_author = "Tester Two"
+                    
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+                    
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+                    
+            except Exception as e:
+                sign_errors.append(f"Thread {thread_id} error: {str(e)}")
+            finally:
+                sign_complete.set()
+
+        # Create and start two threads for concurrent remote signing
+        thread1 = threading.Thread(
+            target=remote_sign,
+            args=(output1, self.manifestDefinition_1, 1)
+        )
+        thread2 = threading.Thread(
+            target=remote_sign,
+            args=(output2, self.manifestDefinition_2, 2)
+        )
+
+        # Start both threads
+        thread1.start()
+        thread2.start()
+
+        # Wait for both threads to complete
+        thread1.join()
+        thread2.join()
+
+        # Check for errors
+        if sign_errors:
+            self.fail("\n".join(sign_errors))
+
+        # Verify the outputs are different before closing
+        output1.seek(0)
+        output2.seek(0)
+        reader1 = Reader("image/jpeg", output1, manifest_data1)
+        reader2 = Reader("image/jpeg", output2, manifest_data2)
+
+        manifest_store1 = json.loads(reader1.json())
+        manifest_store2 = json.loads(reader2.json())
+
+        # Get the active manifests
+        active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
+        active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
+
+        # Verify the manifests are different
+        self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
+        self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
+
+        # Clean up after verification
+        output1.close()
+        output2.close()
+
+    def test_archive_sign_threaded(self):
+        """Test archive signing with multiple threads in parallel"""
+        archive1 = io.BytesIO(bytearray())
+        archive2 = io.BytesIO(bytearray())
+        output1 = io.BytesIO(bytearray())
+        output2 = io.BytesIO(bytearray())
+        sign_errors = []
+        sign_complete = threading.Event()
+
+        def archive_sign(archive_stream, output_stream, manifest_def, thread_id):
+            try:
+                with open(self.testPath, "rb") as file:
+                    # Create and save archive
+                    builder = Builder(manifest_def)
+                    builder.to_archive(archive_stream)
+                    archive_stream.seek(0)
+
+                    # Load from archive and sign
+                    builder = Builder.from_archive(archive_stream)
+                    builder.sign(self.signer, "image/jpeg", file, output_stream)
+                    output_stream.seek(0)
+
+                    # Verify the signed file
+                    reader = Reader("image/jpeg", output_stream)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                    # Verify the correct manifest was used
+                    if thread_id == 1:
+                        expected_claim_generator = "python_test_1/0.0.1"
+                        expected_author = "Tester One"
+                    else:
+                        expected_claim_generator = "python_test_2/0.0.1"
+                        expected_author = "Tester Two"
+
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+
+            except Exception as e:
+                sign_errors.append(f"Thread {thread_id} error: {str(e)}")
+            finally:
+                sign_complete.set()
+
+        # Create and start two threads for concurrent archive signing
+        thread1 = threading.Thread(
+            target=archive_sign,
+            args=(archive1, output1, self.manifestDefinition_1, 1)
+        )
+        thread2 = threading.Thread(
+            target=archive_sign,
+            args=(archive2, output2, self.manifestDefinition_2, 2)
+        )
+
+        # Start both threads
+        thread1.start()
+        thread2.start()
+
+        # Wait for both threads to complete
+        thread1.join()
+        thread2.join()
+
+        # Check for errors
+        if sign_errors:
+            self.fail("\n".join(sign_errors))
+
+        # Verify the outputs are different before closing
+        output1.seek(0)
+        output2.seek(0)
+        reader1 = Reader("image/jpeg", output1)
+        reader2 = Reader("image/jpeg", output2)
+
+        manifest_store1 = json.loads(reader1.json())
+        manifest_store2 = json.loads(reader2.json())
+
+        # Get the active manifests
+        active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
+        active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
+
+        # Verify the manifests are different
+        self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
+        self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
+
+        # Clean up after verification
+        archive1.close()
+        archive2.close()
+        output1.close()
+        output2.close()
+
+    def test_sign_all_files_twice(self):
+        """Test signing the same file twice with different manifests using a thread pool of size 2"""
+        output1 = io.BytesIO(bytearray())
+        output2 = io.BytesIO(bytearray())
+        sign_errors = []
+        thread_results = {}
+        thread_lock = threading.Lock()
+
+        def sign_file(output_stream, manifest_def, thread_id):
+            try:
+                with open(self.testPath, "rb") as file:
+                    # Sign the file
+                    builder = Builder(manifest_def)
+                    builder.sign(self.signer, "image/jpeg", file, output_stream)
+                    output_stream.seek(0)
+
+                    # Verify the signed file
+                    reader = Reader("image/jpeg", output_stream)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                    # Verify the correct manifest was used
+                    if thread_id == 1:
+                        expected_claim_generator = "python_test_1/0.0.1"
+                        expected_author = "Tester One"
+                    else:
+                        expected_claim_generator = "python_test_2/0.0.1"
+                        expected_author = "Tester Two"
+
+                    # Store results for final verification
+                    with thread_lock:
+                        thread_results[thread_id] = {
+                            'manifest': active_manifest
+                        }
+
+                    # Verify manifest data
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+
+                    return None  # Success case
+
+            except Exception as e:
+                return f"Thread {thread_id} error: {str(e)}"
+
+        # Create a thread pool with 2 workers
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both signing tasks
+            future1 = executor.submit(sign_file, output1, self.manifestDefinition_1, 1)
+            future2 = executor.submit(sign_file, output2, self.manifestDefinition_2, 2)
+            
+            # Collect results
+            for future in concurrent.futures.as_completed([future1, future2]):
+                error = future.result()
+                if error:
+                    sign_errors.append(error)
+        
+        # Check for errors
+        if sign_errors:
+            self.fail("\n".join(sign_errors))
+        
+        # Verify thread results
+        self.assertEqual(len(thread_results), 2, "Both threads should have completed")
+        
+        # Verify the outputs are different
+        output1.seek(0)
+        output2.seek(0)
+        reader1 = Reader("image/jpeg", output1)
+        reader2 = Reader("image/jpeg", output2)
+        
+        manifest_store1 = json.loads(reader1.json())
+        manifest_store2 = json.loads(reader2.json())
+        
+        # Get the active manifests
+        active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
+        active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
+        
+        # Verify the manifests are different
+        self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
+        self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
+        
+        # Verify both outputs have valid signatures
+        self.assertNotIn("validation_status", manifest_store1)
+        self.assertNotIn("validation_status", manifest_store2)
+        
+        # Clean up
+        output1.close()
+        output2.close()
 
 
 if __name__ == '__main__':
