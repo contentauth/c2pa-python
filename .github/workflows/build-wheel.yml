@@ -25,34 +25,50 @@ permissions:
   packages: read
   actions: read
 
+env:
+  GITHUB_TOKEN: ${{ secrets.github-token }}
+
 jobs:
   build:
     runs-on: ${{ inputs.runs-on }}
-    env:
-      GITHUB_TOKEN: ${{ secrets.github-token }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Linux wheels
         if: runner.os == 'Linux'
         run: |
-          docker run --rm -v $PWD:/io quay.io/pypa/manylinux_2_28_x86_64 bash -c "
+          # Create necessary directories
+          mkdir -p artifacts
+          mkdir -p src/c2pa/libs
+          rm -rf dist build
+
+          # Set Docker image and platform tag based on architecture
+          if [ "${{ inputs.architecture }}" = "aarch64" ]; then
+            DOCKER_IMAGE="quay.io/pypa/manylinux_2_28_aarch64"
+            PLATFORM_TAG="manylinux_2_28_aarch64"
+          else
+            DOCKER_IMAGE="quay.io/pypa/manylinux_2_28_x86_64"
+            PLATFORM_TAG="manylinux_2_28_x86_64"
+          fi
+
+          # Build wheel in Docker container
+          docker run --rm -v $PWD:/io $DOCKER_IMAGE bash -c "
             yum install -y gcc gcc-c++ make &&
             mkdir -p /io/artifacts /io/src/c2pa/libs &&
             rm -rf /io/dist /io/build &&
             cd /io &&
             /opt/python/cp310-cp310/bin/pip install -r requirements.txt -r requirements-dev.txt &&
-            /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py c2pa-v0.55.0 &&
+            /opt/python/cp310-cp310/bin/pip install toml &&
+            C2PA_LIBS_PLATFORM=\"${{ inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}\" /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py c2pa-v0.55.0 &&
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
               \${PYBIN}/pip install --upgrade pip wheel &&
-              CFLAGS=\"-I/opt/python/cp310-cp310/include/python3.10\" LDFLAGS=\"-L/opt/python/cp310-cp310/lib\" \${PYBIN}/python setup.py bdist_wheel --plat-name manylinux_2_28_x86_64
+              \${PYBIN}/pip install toml &&
+              CFLAGS=\"-I/opt/python/cp310-cp310/include/python3.10\" LDFLAGS=\"-L/opt/python/cp310-cp310/lib\" \${PYBIN}/python setup.py bdist_wheel --plat-name $PLATFORM_TAG
             done &&
             rm -f /io/dist/*-linux_*.whl
           "
 
-      - name: Verify Linux wheels
-        if: runner.os == 'Linux'
-        run: |
+          # Verify the wheel was built
           echo "Contents of dist directory:"
           ls -la dist/
           echo "Number of wheels found:"
@@ -60,7 +76,7 @@ jobs:
           echo "Wheel filenames:"
           find dist -name "*.whl" -exec basename {} \;
 
-      - name: Build Windows wheel
+      - name: Build Windows wheel (x64)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -81,25 +97,6 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name win_amd64
 
-      - name: Build macOS wheel (Intel)
-        if: runner.os == 'macOS' && runner.arch == 'x64'
-        run: |
-          # Create necessary directories
-          mkdir -p artifacts
-          mkdir -p src/c2pa/libs
-          rm -rf dist build
-
-          # Install dependencies
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-          pip install wheel
-
-          # Download native artifacts
-          python scripts/download_artifacts.py c2pa-v0.55.0
-
-          # Build wheel
-          python setup.py bdist_wheel --plat-name macosx_10_9_x86_64
-
       - name: Build macOS wheel (Apple Silicon)
         if: runner.os == 'macOS' && runner.arch == 'arm64'
         run: |
@@ -119,6 +116,13 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name macosx_11_0_arm64
 
+          # Rename wheel to ensure unique filename
+          cd dist
+          for wheel in *.whl; do
+            mv "$wheel" "${wheel/macosx_11_0_arm64/macosx_11_0_arm64}"
+          done
+          cd ..
+
       - name: Log wheel filename
         if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
@@ -131,3 +135,4 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
           path: dist
+          if-no-files-found: error

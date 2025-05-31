@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0.0", "wheel"]
+requires = ["setuptools>=68.0.0", "wheel", "toml>=0.10.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "c2pa-python"
-version = "0.10.9"
+version = "0.10.12"
 requires-python = ">=3.10"
 description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -37,5 +37,6 @@ test = [
 [project.scripts]
 download-artifacts = "c2pa.build:download_artifacts"
 
+# Workaround to prevent setuptools from automatically including invalid metadata
 [tool.setuptools]
 license-files = []
