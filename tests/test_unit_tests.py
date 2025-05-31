@@ -59,7 +59,7 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("C.jpg", json_data)
 
-    def test_read_all_files_metadata(self):
+    def test_read_all_files(self):
         """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
 
@@ -112,12 +112,6 @@ class TestReader(unittest.TestCase):
                     manifest = json.loads(json_data)
                     self.assertIn("manifests", manifest)
                     self.assertIn("active_manifest", manifest)
-
-            except Error.ManifestNotFound:
-                # This is an expected case - some files don't have C2PA metadata
-                continue
-            except Error.NotSupported:
-                continue
             except Exception as e:
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
@@ -179,11 +173,40 @@ class TestBuilder(unittest.TestCase):
             self.assertNotIn("validation_status", json_data)
             output.close()
 
+    def test_archive_sign(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            archive = io.BytesIO(bytearray())
+            builder.to_archive(archive)
+            builder = Builder.from_archive(archive)
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            archive.close()
+            output.close()
+
+    def test_remote_sign(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            builder.set_no_embed()
+            output = io.BytesIO(bytearray())
+            manifest_data = builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output, manifest_data)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
         signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
-        
+
         # Map of file extensions to MIME types
         mime_types = {
             '.jpg': 'image/jpeg',
@@ -241,35 +264,6 @@ class TestBuilder(unittest.TestCase):
                     continue
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
-
-    def test_archive_sign(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            archive = io.BytesIO(bytearray())
-            builder.to_archive(archive)
-            builder = Builder.from_archive(archive)
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
-            archive.close()
-            output.close()
-
-    def test_remote_sign(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            builder.set_no_embed()
-            output = io.BytesIO(bytearray())
-            manifest_data = builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, manifest_data)
-            json_data = reader.json()
-            self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
-            output.close()
 
 if __name__ == '__main__':
     unittest.main()
