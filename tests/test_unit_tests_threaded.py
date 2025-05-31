@@ -140,7 +140,7 @@ class TestReader(unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
             # Submit all files to the thread pool
             future_to_file = {
-                executor.submit(process_file, filename): filename 
+                executor.submit(process_file, filename): filename
                 for filename in os.listdir(reading_dir)
             }
 
@@ -180,7 +180,7 @@ class TestBuilder(unittest.TestCase):
 
         self.testPath = os.path.join(self.data_dir, "C.jpg")
 
-        # Define a manifest as a dictionary
+        # Define manifests
         self.manifestDefinition = {
             "claim_generator": "python_test",
             "claim_generator_info": [{
@@ -197,7 +197,57 @@ class TestBuilder(unittest.TestCase):
                         '@type': 'CreativeWork',
                         'author': [
                             {'@type': 'Person',
-                                'name': 'Gavin Peacock'
+                                'name': 'Tester'
+                            }
+                        ]
+                    },
+                    'kind': 'Json'
+                }
+            ]
+        }
+
+        self.manifestDefinition_1 = {
+            "claim_generator": "python_test_thread1",
+            "claim_generator_info": [{
+                "name": "python_test_1",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Image 1",
+            "ingredients": [],
+            "assertions": [
+                {'label': 'stds.schema-org.CreativeWork',
+                    'data': {
+                        '@context': 'http://schema.org/',
+                        '@type': 'CreativeWork',
+                        'author': [
+                            {'@type': 'Person',
+                                'name': 'Tester One'
+                            }
+                        ]
+                    },
+                    'kind': 'Json'
+                }
+            ]
+        }
+
+        self.manifestDefinition_2 = {
+            "claim_generator": "python_test_thread2",
+            "claim_generator_info": [{
+                "name": "python_test_2",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Image 2",
+            "ingredients": [],
+            "assertions": [
+                {'label': 'stds.schema-org.CreativeWork',
+                    'data': {
+                        '@context': 'http://schema.org/',
+                        '@type': 'CreativeWork',
+                        'author': [
+                            {'@type': 'Person',
+                                'name': 'Tester Two'
                             }
                         ]
                     },
@@ -310,6 +360,77 @@ class TestBuilder(unittest.TestCase):
                     continue
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
+
+    def test_parallel_manifest_writing(self):
+        """Test writing different manifests to two files in parallel and verify no data mixing occurs"""
+        output1 = io.BytesIO(bytearray())
+        output2 = io.BytesIO(bytearray())
+
+        def write_manifest(manifest_def, output_stream, thread_id):
+            with open(self.testPath, "rb") as file:
+                builder = Builder(manifest_def)
+                builder.sign(self.signer, "image/jpeg", file, output_stream)
+                output_stream.seek(0)
+                reader = Reader("image/jpeg", output_stream)
+                json_data = reader.json()
+                manifest_store = json.loads(json_data)
+
+                # Get the active manifest
+                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify the correct manifest was written
+                expected_claim_generator = f"python_test_{thread_id}/0.0.1"
+                self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+                self.assertEqual(active_manifest["title"], f"Python Test Image {thread_id}")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, f"Tester {'One' if thread_id == 1 else 'Two'}")
+                        break
+
+                return active_manifest
+
+        # Create two threads
+        thread1 = threading.Thread(
+            target=write_manifest,
+            args=(self.manifestDefinition_1, output1, 1)
+        )
+        thread2 = threading.Thread(
+            target=write_manifest,
+            args=(self.manifestDefinition_2, output2, 2)
+        )
+
+        # Start both threads
+        thread1.start()
+        thread2.start()
+
+        # Wait for both threads to complete
+        thread2.join()
+        thread1.join()
+
+        # Verify the outputs are different
+        output1.seek(0)
+        output2.seek(0)
+        reader1 = Reader("image/jpeg", output1)
+        reader2 = Reader("image/jpeg", output2)
+
+        manifest_store1 = json.loads(reader1.json())
+        manifest_store2 = json.loads(reader2.json())
+
+        # Get the active manifests
+        active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
+        active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
+
+        # Verify the manifests are different
+        self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
+        self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
+
+        # Clean up
+        output1.close()
+        output2.close()
 
 
 if __name__ == '__main__':
