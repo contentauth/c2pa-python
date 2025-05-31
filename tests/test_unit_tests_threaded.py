@@ -2091,7 +2091,7 @@ class TestBuilderWithThreads(unittest.TestCase):
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder class operations with 10 threads, each adding 3 random ingredients and signing a random file."""
         # Number of threads to use in the test
-        TOTAL_THREADS_USED = 100
+        TOTAL_THREADS_USED = 1200
 
         # Get list of files from files-for-reading-tests directory
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
