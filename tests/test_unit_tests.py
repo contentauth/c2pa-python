@@ -155,11 +155,11 @@ class TestBuilder(unittest.TestCase):
                         'author': [
                             {'@type': 'Person',
                                 'name': 'Gavin Peacock'
-                             }
+                            }
                         ]
                     },
                     'kind': 'Json'
-                 }
+                }
             ]
         }
 
