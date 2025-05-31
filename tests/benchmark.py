@@ -98,23 +98,19 @@ def test_files_build():
         with open(output_path, "wb") as dest_file:
             builder.sign(signer, "image/jpeg", source_file, dest_file)
 
-
 def test_streams_build():
     """Benchmark building a C2PA asset from a stream."""
     output = io.BytesIO(bytearray())
     with open(test_path, "rb") as source_file:
         builder.sign(signer, "image/jpeg", source_file, output)
 
-
 def test_files_reading(benchmark):
     """Benchmark file-based reading."""
     benchmark(test_files_read)
 
-
 def test_streams_reading(benchmark):
     """Benchmark stream-based reading."""
     benchmark(test_streams_read)
-
 
 def test_files_builder_signer_benchmark(benchmark):
     """Benchmark file-based building."""
