@@ -30,6 +30,7 @@ rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
 # Runs the unit tests
 test:
 	python3 ./tests/test_unit_tests.py
+	python3 ./tests/test_unit_tests_threaded.py
 
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
