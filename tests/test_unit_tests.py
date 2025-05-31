@@ -236,58 +236,6 @@ class TestBuilder(unittest.TestCase):
             self.assertNotIn("validation_status", json_data)
             output.close()
 
-    def test_builder_double_close(self):
-        """Test that multiple close calls are handled gracefully."""
-        builder = Builder(self.manifestDefinition)
-        # First close
-        builder.close()
-        # Second close should not raise an exception
-        builder.close()
-        # Verify builder is closed
-        with self.assertRaises(Error):
-            builder.set_no_embed()
-
-    def test_builder_add_ingredient(self):
-        """Test Builder class operations with a real file."""
-        # Test creating builder from JSON
-
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
-
-        # Test adding ingredient
-        ingredient_json = '{"test": "ingredient"}'
-        with open(self.testPath, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/jpeg", f)
-
-        builder.close()
-
-    def test_builder_add_multiple_ingredients(self):
-        """Test Builder class operations with a real file."""
-        # Test creating builder from JSON
-
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
-
-        # Test builder operations
-        builder.set_no_embed()
-        builder.set_remote_url("http://test.url")
-
-        # Test adding resource
-        with open(self.testPath, 'rb') as f:
-            builder.add_resource("test_uri", f)
-
-        # Test adding ingredient
-        ingredient_json = '{"test": "ingredient"}'
-        with open(self.testPath, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/jpeg", f)
-
-        # Test adding another ingredient
-        ingredient_json = '{"test": "ingredient2"}'
-        with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
-
-        builder.close()
-
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
         signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
@@ -350,6 +298,58 @@ class TestBuilder(unittest.TestCase):
                     continue
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
+
+    def test_builder_double_close(self):
+        """Test that multiple close calls are handled gracefully."""
+        builder = Builder(self.manifestDefinition)
+        # First close
+        builder.close()
+        # Second close should not raise an exception
+        builder.close()
+        # Verify builder is closed
+        with self.assertRaises(Error):
+            builder.set_no_embed()
+
+    def test_builder_add_ingredient(self):
+        """Test Builder class operations with a real file."""
+        # Test creating builder from JSON
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients(self):
+        """Test Builder class operations with a real file."""
+        # Test creating builder from JSON
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test builder operations
+        builder.set_no_embed()
+        builder.set_remote_url("http://test.url")
+
+        # Test adding resource
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri", f)
+
+        # Test adding ingredient
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        # Test adding another ingredient
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
 
     def test_builder_sign_with_ingredient(self):
         """Test Builder class operations with a real file."""
@@ -504,17 +504,17 @@ class TestBuilder(unittest.TestCase):
             # Verify active manifest exists
             self.assertIn("active_manifest", manifest_data)
             active_manifest_id = manifest_data["active_manifest"]
-            
+
             # Verify active manifest object exists
             self.assertIn("manifests", manifest_data)
             self.assertIn(active_manifest_id, manifest_data["manifests"])
             active_manifest = manifest_data["manifests"][active_manifest_id]
-            
+
             # Verify ingredients array exists in active manifest
             self.assertIn("ingredients", active_manifest)
             self.assertIsInstance(active_manifest["ingredients"], list)
             self.assertEqual(len(active_manifest["ingredients"]), 2)
-            
+
             # Verify both ingredients exist in the array (order doesn't matter)
             ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
             self.assertIn("Test Ingredient Stream 1", ingredient_titles)
