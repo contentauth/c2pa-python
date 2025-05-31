@@ -120,8 +120,7 @@ def _load_single_library(lib_name: str,
         The loaded library or None if loading failed
     """
     if DEBUG_LIBRARY_LOADING:
-        logger.info(f"Searching for library '{lib_name}' in paths: {
-                    [str(p) for p in search_paths]}")
+        logger.info(f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
     current_arch = _get_architecture()
     if DEBUG_LIBRARY_LOADING:
         logger.info(f"Current architecture: {current_arch}")
@@ -138,12 +137,10 @@ def _load_single_library(lib_name: str,
             except Exception as e:
                 error_msg = str(e)
                 if "incompatible architecture" in error_msg:
-                    logger.error(f"Architecture mismatch: Library at {
-                                 lib_path} is not compatible with current architecture {current_arch}")
+                    logger.error(f"Architecture mismatch: Library at {lib_path} is not compatible with current architecture {current_arch}")
                     logger.error(f"Error details: {error_msg}")
                 else:
-                    logger.error(
-                        f"Failed to load library from {lib_path}: {e}")
+                    logger.error(f"Failed to load library from {lib_path}: {e}")
         else:
             logger.debug(f"Library not found at: {lib_path}")
     return None
@@ -234,8 +231,7 @@ def dynamically_load_library(
             if lib:
                 return lib
             else:
-                logger.error(f"Could not find library {
-                             env_lib_name} in any of the search paths")
+                logger.error(f"Could not find library {env_lib_name} in any of the search paths")
                 # Continue with normal loading if environment variable library
                 # name fails
         except Exception as e:
@@ -249,18 +245,14 @@ def dynamically_load_library(
         # If specific library name is provided, only load that one
         lib = _load_single_library(lib_name, possible_paths)
         if not lib:
-            logger.error(f"Could not find {lib_name} in any of the search paths: {
-                         [str(p) for p in possible_paths]}")
-            raise RuntimeError(
-                f"Could not find {lib_name} in any of the search paths")
+            logger.error(f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+            raise RuntimeError(f"Could not find {lib_name} in any of the search paths")
         return lib
 
     # Default path (no library name provided in the environment)
     c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
     if not c2pa_lib:
-        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {
-                     [str(p) for p in possible_paths]}")
-        raise RuntimeError(
-            f"Could not find {c2pa_lib_name} in any of the search paths")
+        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+        raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib
