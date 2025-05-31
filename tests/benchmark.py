@@ -13,6 +13,7 @@
 
 import os
 import io
+import json
 import pytest
 from c2pa import Reader, Builder, Signer, C2paSigningAlg, C2paSignerInfo
 
@@ -76,7 +77,13 @@ def test_files_read():
         reader = Reader("image/jpeg", f)
         result = reader.json()
         assert result is not None
-        return result
+        # Parse the JSON string into a dictionary
+        result_dict = json.loads(result)
+        # Additional assertions to verify the structure of the result
+        assert "active_manifest" in result_dict
+        assert "manifests" in result_dict
+        assert "validation_state" in result_dict
+        assert result_dict["validation_state"] == "Valid"
 
 
 def test_streams_read():
@@ -86,7 +93,13 @@ def test_streams_read():
     reader = Reader("image/jpeg", io.BytesIO(source))
     result = reader.json()
     assert result is not None
-    return result
+    # Parse the JSON string into a dictionary
+    result_dict = json.loads(result)
+    # Additional assertions to verify the structure of the result
+    assert "active_manifest" in result_dict
+    assert "manifests" in result_dict
+    assert "validation_state" in result_dict
+    assert result_dict["validation_state"] == "Valid"
 
 
 def test_files_build():
