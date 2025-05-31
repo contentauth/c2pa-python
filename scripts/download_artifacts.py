@@ -63,7 +63,10 @@ def get_release_by_tag(tag):
     """Get release information for a specific tag from GitHub."""
     url = f"{GITHUB_API_BASE}/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}"
     print(f"Fetching release information from {url}...")
-    response = requests.get(url)
+    headers = {}
+    if 'GITHUB_TOKEN' in os.environ:
+        headers['Authorization'] = f"token {os.environ['GITHUB_TOKEN']}"
+    response = requests.get(url, headers=headers)
     response.raise_for_status()
     return response.json()
 
@@ -73,7 +76,10 @@ def download_and_extract_libs(url, platform_name):
     platform_dir = SCRIPTS_ARTIFACTS_DIR / platform_name
     platform_dir.mkdir(parents=True, exist_ok=True)
 
-    response = requests.get(url)
+    headers = {}
+    if 'GITHUB_TOKEN' in os.environ:
+        headers['Authorization'] = f"token {os.environ['GITHUB_TOKEN']}"
+    response = requests.get(url, headers=headers)
     response.raise_for_status()
 
     with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:

@@ -1,9 +1,16 @@
-from c2pa import  Builder, Error,  Reader, SigningAlg, create_signer,  sdk_version, sign_ps256
 import os
 import io
+import pytest
+from c2pa import Reader, Builder, Signer, C2paSigningAlg, C2paSignerInfo
+
 PROJECT_PATH = os.getcwd()
 
-testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
+# Test paths
+test_path = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
+output_path = "target/python_out.jpg"
+
+# Ensure target directory exists
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
 manifestDefinition = {
     "claim_generator": "python_test",
@@ -29,43 +36,70 @@ manifestDefinition = {
         }
     ]
 }
-private_key = open("tests/fixtures/ps256.pem","rb").read()
 
-# Define a function that signs data with PS256 using a private key
-def sign(data: bytes) -> bytes:
-    print("date len = ", len(data))
-    return sign_ps256(data, private_key)
-
-# load the public keys from a pem file
-certs = open("tests/fixtures/ps256.pub","rb").read()
+# Load private key and certificates
+private_key = open("tests/fixtures/ps256.pem", "rb").read()
+certs = open("tests/fixtures/ps256.pub", "rb").read()
 
 # Create a local Ps256 signer with certs and a timestamp server
-signer = create_signer(sign, SigningAlg.PS256, certs, "http://timestamp.digicert.com")
-
+signer_info = C2paSignerInfo(
+    alg=b"ps256",
+    sign_cert=certs,
+    private_key=private_key,
+    ta_url=b"http://timestamp.digicert.com"
+)
+signer = Signer.from_info(signer_info)
 builder = Builder(manifestDefinition)
 
-source = open(testPath, "rb").read()
+# Load source image
+source = open(test_path, "rb").read()
 
-testPath = "/Users/gpeacock/Pictures/Lightroom Saved Photos/IMG_0483.jpg"
-testPath = "tests/fixtures/c.jpg"
-outputPath = "target/python_out.jpg"
+# Run the benchmark: python -m pytest tests/benchmark.py -v
+
+def test_files_read():
+    """Benchmark reading a C2PA asset from a file."""
+    with open(test_path, "rb") as f:
+        reader = Reader("image/jpeg", f)
+        result = reader.json()
+        assert result is not None
+        return result
+
+def test_streams_read():
+    """Benchmark reading a C2PA asset from a stream."""
+    with open(test_path, "rb") as file:
+        source = file.read()
+    reader = Reader("image/jpeg", io.BytesIO(source))
+    result = reader.json()
+    assert result is not None
+    return result
 
 def test_files_build():
-        # Delete the output file if it exists
-    if os.path.exists(outputPath):
-        os.remove(outputPath)
-    builder.sign_file(signer, testPath, outputPath)
+    """Benchmark building a C2PA asset from a file."""
+    # Delete the output file if it exists
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    with open(test_path, "rb") as source_file:
+        with open(output_path, "wb") as dest_file:
+            builder.sign(signer, "image/jpeg", source_file, dest_file)
 
 def test_streams_build():
-    #with open(testPath, "rb") as file:
+    """Benchmark building a C2PA asset from a stream."""
     output = io.BytesIO(bytearray())
-    builder.sign(signer, "image/jpeg", io.BytesIO(source), output)
+    with open(test_path, "rb") as source_file:
+        builder.sign(signer, "image/jpeg", source_file, output)
 
-def test_func(benchmark):
+def test_files_reading(benchmark):
+    """Benchmark file-based reading."""
+    benchmark(test_files_read)
+
+def test_streams_reading(benchmark):
+    """Benchmark stream-based reading."""
+    benchmark(test_streams_read)
+
+def test_files_builder_signer_benchmark(benchmark):
+    """Benchmark file-based building."""
     benchmark(test_files_build)
 
-def test_streams(benchmark):
+def test_streams_builder_benchmark(benchmark):
+    """Benchmark stream-based building."""
     benchmark(test_streams_build)
-
-#def test_signer(benchmark):
-#    benchmark(sign_ps256, data, private_key)

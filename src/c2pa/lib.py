@@ -24,10 +24,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class CPUArchitecture(Enum):
     """CPU architecture enum for platform-specific identifiers."""
     AARCH64 = "aarch64"
     X86_64 = "x86_64"
+
 
 def get_platform_identifier(cpu_arch: Optional[CPUArchitecture] = None) -> str:
     """Get the full platform identifier (arch-os) for the current system,
@@ -55,13 +57,15 @@ def get_platform_identifier(cpu_arch: Optional[CPUArchitecture] = None) -> str:
         elif cpu_arch == CPUArchitecture.X86_64:
             return "x86_64-apple-darwin"
         else:
-            raise ValueError(f"Unsupported CPU architecture for macOS: {cpu_arch}")
+            raise ValueError(
+                f"Unsupported CPU architecture for macOS: {cpu_arch}")
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
         return "x86_64-unknown-linux-gnu"
     else:
         raise ValueError(f"Unsupported operating system: {system}")
+
 
 def _get_architecture() -> str:
     """
@@ -102,7 +106,9 @@ def _get_platform_dir() -> str:
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
-def _load_single_library(lib_name: str, search_paths: list[Path]) -> Optional[ctypes.CDLL]:
+
+def _load_single_library(lib_name: str,
+                         search_paths: list[Path]) -> Optional[ctypes.CDLL]:
     """
     Load a single library from the given search paths.
 
@@ -138,6 +144,7 @@ def _load_single_library(lib_name: str, search_paths: list[Path]) -> Optional[ct
         else:
             logger.debug(f"Library not found at: {lib_path}")
     return None
+
 
 def _get_possible_search_paths() -> list[Path]:
     """
@@ -179,11 +186,14 @@ def _get_possible_search_paths() -> list[Path]:
         possible_paths.append(base_path / platform_id)
 
     # Add system library paths
-    possible_paths.extend([Path(p) for p in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if p])
+    possible_paths.extend([Path(p) for p in os.environ.get(
+        "LD_LIBRARY_PATH", "").split(os.pathsep) if p])
 
     return possible_paths
 
-def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.CDLL]:
+
+def dynamically_load_library(
+        lib_name: Optional[str] = None) -> Optional[ctypes.CDLL]:
     """
     Load the dynamic library containing the C-API based on the platform.
 
@@ -213,7 +223,8 @@ def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.
     env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
     if env_lib_name:
         if DEBUG_LIBRARY_LOADING:
-            logger.info(f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
+            logger.info(
+                f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
         try:
             possible_paths = _get_possible_search_paths()
             lib = _load_single_library(env_lib_name, possible_paths)
@@ -221,10 +232,12 @@ def dynamically_load_library(lib_name: Optional[str] = None) -> Optional[ctypes.
                 return lib
             else:
                 logger.error(f"Could not find library {env_lib_name} in any of the search paths")
-                # Continue with normal loading if environment variable library name fails
+                # Continue with normal loading if environment variable library
+                # name fails
         except Exception as e:
             logger.error(f"Failed to load library from C2PA_LIBRARY_NAME: {e}")
-            # Continue with normal loading if environment variable library name fails
+            # Continue with normal loading if environment variable library name
+            # fails
 
     possible_paths = _get_possible_search_paths()
 
