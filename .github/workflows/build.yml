@@ -399,6 +399,8 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Install dev dependencies for build
+        run: pip install -r requirements-dev.txt
       - name: Build sdist
         run: python setup.py sdist
       - name: Upload sdist
