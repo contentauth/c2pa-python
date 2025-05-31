@@ -635,6 +635,319 @@ class TestBuilder(unittest.TestCase):
         if errors:
             self.fail("\n".join(errors))
 
+    def test_concurrent_read_after_write(self):
+        """Test reading from a file after writing is complete"""
+        output = io.BytesIO(bytearray())
+        write_complete = threading.Event()
+        write_errors = []
+        read_errors = []
+
+        def write_manifest():
+            try:
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinition_1)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    write_complete.set()
+            except Exception as e:
+                write_errors.append(f"Write error: {str(e)}")
+                write_complete.set()
+
+        def read_manifest():
+            try:
+                # Wait for write to complete before reading
+                write_complete.wait()
+
+                # Read after write is complete
+                output.seek(0)
+                reader = Reader("image/jpeg", output)
+                json_data = reader.json()
+                manifest_store = json.loads(json_data)
+                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify final manifest
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, "Tester One")
+                        break
+
+            except Exception as e:
+                read_errors.append(f"Read error: {str(e)}")
+
+        # Start both threads
+        write_thread = threading.Thread(target=write_manifest)
+        read_thread = threading.Thread(target=read_manifest)
+
+        read_thread.start()
+        write_thread.start()
+
+        # Wait for both threads to complete
+        write_thread.join()
+        read_thread.join()
+
+        # Clean up
+        output.close()
+
+        # Check for errors
+        if write_errors:
+            self.fail("\n".join(write_errors))
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+    def test_concurrent_read_write_multiple_readers(self):
+        """Test multiple readers reading from a file after writing is complete"""
+        output = io.BytesIO(bytearray())
+        write_complete = threading.Event()
+        write_errors = []
+        read_errors = []
+        reader_count = 3
+        active_readers = 0
+        readers_lock = threading.Lock()
+        stream_lock = threading.Lock()  # Lock for stream access
+
+        def write_manifest():
+            try:
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinition_1)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)  # Reset stream position after write
+                    write_complete.set()
+            except Exception as e:
+                write_errors.append(f"Write error: {str(e)}")
+                write_complete.set()
+
+        def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                with readers_lock:
+                    active_readers += 1
+
+                # Wait for write to complete before reading
+                write_complete.wait()
+
+                # Read after write is complete
+                with stream_lock:  # Ensure exclusive access to stream
+                    output.seek(0)  # Reset stream position before read
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify final manifest
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, "Tester One")
+                        break
+
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                with readers_lock:
+                    active_readers -= 1
+
+        # Start the write thread
+        write_thread = threading.Thread(target=write_manifest)
+        write_thread.start()
+
+        # Start multiple read threads
+        read_threads = []
+        for i in range(reader_count):
+            thread = threading.Thread(target=read_manifest, args=(i,))
+            read_threads.append(thread)
+            thread.start()
+
+        # Wait for write to complete
+        write_thread.join()
+
+        # Wait for all readers to complete
+        for thread in read_threads:
+            thread.join()
+
+        # Clean up
+        output.close()
+
+        # Check for errors
+        if write_errors:
+            self.fail("\n".join(write_errors))
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+        # Verify all readers completed
+        self.assertEqual(active_readers, 0, "Not all readers completed")
+
+    def test_resource_contention_read(self):
+        """Test multiple threads trying to access the same file simultaneously"""
+        output = io.BytesIO(bytearray())
+        read_complete = threading.Event()
+        read_errors = []
+        reader_count = 5  # Number of concurrent readers
+        active_readers = 0
+        readers_lock = threading.Lock()
+        stream_lock = threading.Lock()  # Lock for stream access
+
+        # First write some data to read
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition_1)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+        def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                with readers_lock:
+                    active_readers += 1
+
+                # Read the manifest
+                with stream_lock:  # Ensure exclusive access to stream
+                    output.seek(0)  # Reset stream position before read
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify manifest data
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, "Tester One")
+                        break
+
+                # Add a small delay to increase contention
+                time.sleep(0.01)
+
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                with readers_lock:
+                    active_readers -= 1
+                    if active_readers == 0:
+                        read_complete.set()
+
+        # Start multiple read threads
+        read_threads = []
+        for i in range(reader_count):
+            thread = threading.Thread(target=read_manifest, args=(i,))
+            read_threads.append(thread)
+            thread.start()
+
+        # Wait for all readers to complete
+        for thread in read_threads:
+            thread.join()
+
+        # Clean up
+        output.close()
+
+        # Check for errors
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+        # Verify all readers completed
+        self.assertEqual(active_readers, 0, "Not all readers completed")
+
+    def test_resource_contention_read_parallel(self):
+        """Test multiple threads starting simultaneously to read the same file"""
+        output = io.BytesIO(bytearray())
+        read_errors = []
+        reader_count = 5  # Number of concurrent readers
+        active_readers = 0
+        readers_lock = threading.Lock()
+        stream_lock = threading.Lock()  # Lock for stream access
+        start_barrier = threading.Barrier(reader_count)  # Barrier to synchronize thread starts
+        start_times = []  # Track when each thread starts reading
+        start_times_lock = threading.Lock()
+
+        # First write some data to read
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition_1)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+        def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                with readers_lock:
+                    active_readers += 1
+
+                # Wait for all threads to be ready
+                start_barrier.wait()
+
+                # Record start time
+                with start_times_lock:
+                    start_times.append(time.time())
+
+                # Read the manifest
+                with stream_lock:  # Ensure exclusive access to stream
+                    output.seek(0)  # Reset stream position before read
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify manifest data
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, "Tester One")
+                        break
+
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                with readers_lock:
+                    active_readers -= 1
+
+        # Create all threads first
+        read_threads = []
+        for i in range(reader_count):
+            thread = threading.Thread(target=read_manifest, args=(i,))
+            read_threads.append(thread)
+
+        # Start all threads at once
+        for thread in read_threads:
+            thread.start()
+
+        # Wait for all readers to complete
+        for thread in read_threads:
+            thread.join()
+
+        # Verify that all threads started within a very small time window
+        if len(start_times) == reader_count:
+            max_time_diff = max(start_times) - min(start_times)
+            self.assertLess(max_time_diff, 0.001,  # Should be less than 1ms
+                          f"Threads did not start simultaneously. Max time difference: {max_time_diff:.6f}s")
+
+        # Clean up
+        output.close()
+
+        # Check for errors
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+        # Verify all readers completed
+        self.assertEqual(active_readers, 0, "Not all readers completed")
+
 
 if __name__ == '__main__':
     unittest.main()
