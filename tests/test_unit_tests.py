@@ -390,6 +390,45 @@ class TestBuilder(unittest.TestCase):
 
         builder.close()
 
+    def test_builder_sign_with_ingredient_from_stream(self):
+        """Test Builder class operations with a real file using stream for ingredient."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient using stream
+        ingredient_json = '{"title": "Test Ingredient Stream"}'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient Stream")
+
+        builder.close()
+
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
