@@ -233,6 +233,17 @@ class TestBuilder(unittest.TestCase):
             self.assertNotIn("validation_status", json_data)
             output.close()
 
+    def test_builder_double_close(self):
+        """Test that multiple close calls are handled gracefully."""
+        builder = Builder(self.manifestDefinition)
+        # First close
+        builder.close()
+        # Second close should not raise an exception
+        builder.close()
+        # Verify builder is closed
+        with self.assertRaises(Error):
+            builder.set_no_embed()
+
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
         signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
