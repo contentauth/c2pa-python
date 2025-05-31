@@ -73,7 +73,7 @@ jobs:
           echo "Wheel filenames:"
           find dist -name "*.whl" -exec basename {} \;
 
-      - name: Build Windows wheel
+      - name: Build Windows wheel (x64)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |

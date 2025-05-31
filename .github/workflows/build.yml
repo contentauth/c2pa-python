@@ -165,7 +165,7 @@ jobs:
           - target: x86_64
             runs-on: ubuntu-latest
           - target: aarch64
-            runs-on: ubuntu-latest-arm64
+            runs-on: ubuntu-24.04-arm
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -443,14 +443,6 @@ jobs:
             echo "Last modified: $(stat -f %Sm "$file")"
             echo "---"
           done
-          echo "=== Platform-specific artifacts ==="
-          echo "Linux x86_64: $(ls -l dist/wheels-linux-x86_64/* 2>/dev/null || echo 'Not found')"
-          echo "Linux aarch64: $(ls -l dist/wheels-linux-aarch64/* 2>/dev/null || echo 'Not found')"
-          echo "macOS x86_64: $(ls -l dist/wheels-macos-x86_64/* 2>/dev/null || echo 'Not found')"
-          echo "macOS aarch64: $(ls -l dist/wheels-macos-aarch64/* 2>/dev/null || echo 'Not found')"
-          echo "Windows x64: $(ls -l dist/wheels-windows-x64/* 2>/dev/null || echo 'Not found')"
-          echo "Windows x86: $(ls -l dist/wheels-windows-x86/* 2>/dev/null || echo 'Not found')"
-          echo "SDist: $(ls -l dist/wheels-sdist/* 2>/dev/null || echo 'Not found')"
       - name: Debug - List final dist directory
         run: |
           echo "=== Final dist directory contents ==="
