@@ -186,11 +186,11 @@ class TestBuilder(unittest.TestCase):
                         'author': [
                             {'@type': 'Person',
                                 'name': 'Gavin Peacock'
-                            }
+                             }
                         ]
                     },
                     'kind': 'Json'
-                }
+                 }
             ]
         }
 
@@ -400,7 +400,8 @@ class TestBuilder(unittest.TestCase):
         # Test adding ingredient using stream
         ingredient_json = '{"title": "Test Ingredient Stream"}'
         with open(self.testPath3, 'rb') as f:
-            builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", f)
+            builder.add_ingredient_from_stream(
+                ingredient_json, "image/jpeg", f)
 
         with open(self.testPath2, "rb") as file:
             output = io.BytesIO(bytearray())
@@ -426,7 +427,9 @@ class TestBuilder(unittest.TestCase):
 
             # Verify the first ingredient's title matches what we set
             first_ingredient = active_manifest["ingredients"][0]
-            self.assertEqual(first_ingredient["title"], "Test Ingredient Stream")
+            self.assertEqual(
+                first_ingredient["title"],
+                "Test Ingredient Stream")
 
         builder.close()
 
@@ -470,7 +473,8 @@ class TestBuilder(unittest.TestCase):
             self.assertEqual(len(active_manifest["ingredients"]), 2)
 
             # Verify both ingredients exist in the array (order doesn't matter)
-            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            ingredient_titles = [ing["title"]
+                                 for ing in active_manifest["ingredients"]]
             self.assertIn("Test Ingredient 1", ingredient_titles)
             self.assertIn("Test Ingredient 2", ingredient_titles)
 
@@ -485,13 +489,15 @@ class TestBuilder(unittest.TestCase):
         # Add first ingredient using stream
         ingredient_json1 = '{"title": "Test Ingredient Stream 1"}'
         with open(self.testPath3, 'rb') as f:
-            builder.add_ingredient_from_stream(ingredient_json1, "image/jpeg", f)
+            builder.add_ingredient_from_stream(
+                ingredient_json1, "image/jpeg", f)
 
         # Add second ingredient using stream
         ingredient_json2 = '{"title": "Test Ingredient Stream 2"}'
         cloud_path = os.path.join(self.data_dir, "cloud.jpg")
         with open(cloud_path, 'rb') as f:
-            builder.add_ingredient_from_stream(ingredient_json2, "image/jpeg", f)
+            builder.add_ingredient_from_stream(
+                ingredient_json2, "image/jpeg", f)
 
         with open(self.testPath2, "rb") as file:
             output = io.BytesIO(bytearray())
@@ -516,11 +522,13 @@ class TestBuilder(unittest.TestCase):
             self.assertEqual(len(active_manifest["ingredients"]), 2)
 
             # Verify both ingredients exist in the array (order doesn't matter)
-            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            ingredient_titles = [ing["title"]
+                                 for ing in active_manifest["ingredients"]]
             self.assertIn("Test Ingredient Stream 1", ingredient_titles)
             self.assertIn("Test Ingredient Stream 2", ingredient_titles)
 
         builder.close()
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):

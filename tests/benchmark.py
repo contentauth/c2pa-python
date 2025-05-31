@@ -35,18 +35,18 @@ manifestDefinition = {
     "title": "Python Test Image",
     "ingredients": [],
     "assertions": [
-        {   'label': 'stds.schema-org.CreativeWork',
+        {'label': 'stds.schema-org.CreativeWork',
             'data': {
                 '@context': 'http://schema.org/',
                 '@type': 'CreativeWork',
                 'author': [
-                    {   '@type': 'Person',
+                    {'@type': 'Person',
                         'name': 'Gavin Peacock'
-                    }
+                     }
                 ]
             },
             'kind': 'Json'
-        }
+         }
     ]
 }
 
@@ -69,6 +69,7 @@ source = open(test_path, "rb").read()
 
 # Run the benchmark: python -m pytest tests/benchmark.py -v
 
+
 def test_files_read():
     """Benchmark reading a C2PA asset from a file."""
     with open(test_path, "rb") as f:
@@ -76,6 +77,7 @@ def test_files_read():
         result = reader.json()
         assert result is not None
         return result
+
 
 def test_streams_read():
     """Benchmark reading a C2PA asset from a stream."""
@@ -86,6 +88,7 @@ def test_streams_read():
     assert result is not None
     return result
 
+
 def test_files_build():
     """Benchmark building a C2PA asset from a file."""
     # Delete the output file if it exists
@@ -95,23 +98,28 @@ def test_files_build():
         with open(output_path, "wb") as dest_file:
             builder.sign(signer, "image/jpeg", source_file, dest_file)
 
+
 def test_streams_build():
     """Benchmark building a C2PA asset from a stream."""
     output = io.BytesIO(bytearray())
     with open(test_path, "rb") as source_file:
         builder.sign(signer, "image/jpeg", source_file, output)
 
+
 def test_files_reading(benchmark):
     """Benchmark file-based reading."""
     benchmark(test_files_read)
+
 
 def test_streams_reading(benchmark):
     """Benchmark stream-based reading."""
     benchmark(test_streams_read)
 
+
 def test_files_builder_signer_benchmark(benchmark):
     """Benchmark file-based building."""
     benchmark(test_files_build)
+
 
 def test_streams_builder_benchmark(benchmark):
     """Benchmark stream-based building."""
