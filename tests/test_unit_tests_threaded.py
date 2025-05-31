@@ -1355,6 +1355,118 @@ class TestBuilder(unittest.TestCase):
         # Verify all readers completed
         self.assertEqual(active_readers, 0, "Not all readers completed")
 
+    def test_sign_all_files_async(self):
+        """Test signing all files using asyncio with a pool of workers"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        async def async_sign_file(filename, thread_id):
+            """Async version of file signing operation"""
+            if filename in skip_files:
+                return None
+
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Choose manifest based on thread number
+                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
+                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
+
+                    builder = Builder(manifest_def)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+
+                    # Verify the signed file
+                    reader = Reader(mime_type, output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                    # Verify the correct manifest was used
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+
+                    output.close()
+                    return None  # Success case
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
+
+        async def run_async_tests():
+            # Get all files from both directories
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+
+            # Create tasks for all files
+            tasks = []
+            for i, filename in enumerate(all_files):
+                task = asyncio.create_task(async_sign_file(filename, i))
+                tasks.append(task)
+
+            # Wait for all tasks to complete and collect results
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            errors = []
+            for result in results:
+                if isinstance(result, Exception):
+                    errors.append(str(result))
+                elif result:  # Non-None result indicates an error
+                    errors.append(result)
+
+            # If any errors occurred, fail the test with all error messages
+            if errors:
+                self.fail("\n".join(errors))
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
+
 
 if __name__ == '__main__':
     unittest.main()
