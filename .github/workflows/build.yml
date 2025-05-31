@@ -164,8 +164,6 @@ jobs:
         include:
           - target: x86_64
             runs-on: ubuntu-24.04
-          - target: aarch64
-            runs-on: ubuntu-24.04-arm
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -182,8 +180,6 @@ jobs:
         include:
           - target: x86_64
             runs-on: ubuntu-24.04
-          - target: aarch64
-            runs-on: ubuntu-24.04-arm
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
