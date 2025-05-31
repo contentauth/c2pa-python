@@ -1,9 +1,16 @@
 from setuptools import setup, find_namespace_packages
 import sys
-import os
 import platform
 import shutil
 from pathlib import Path
+import toml
+
+# Read version from pyproject.toml
+def get_version():
+    pyproject = toml.load("pyproject.toml")
+    return pyproject["project"]["version"]
+
+VERSION = get_version()
 
 # Define platform to library extension mapping (for reference only)
 PLATFORM_EXTENSIONS = {
@@ -158,7 +165,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
         print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
         setup(
             name="c2pa-python",
-            version="0.10.11",
+            version=VERSION,
             package_dir={"": "src"},
             packages=find_namespace_packages(where="src"),
             include_package_data=True,
@@ -190,7 +197,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
             # Build the wheel
             setup(
                 name="c2pa-python",
-                version="0.10.11",
+                version=VERSION,
                 package_dir={"": "src"},
                 packages=find_namespace_packages(where="src"),
                 include_package_data=True,
@@ -215,7 +222,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
 # For sdist and development installation
 setup(
     name="c2pa-python",
-    version="0.10.11",
+    version=VERSION,
     package_dir={"": "src"},
     packages=find_namespace_packages(where="src"),
     include_package_data=True,
