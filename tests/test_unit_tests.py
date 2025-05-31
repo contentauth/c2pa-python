@@ -17,11 +17,12 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 
-from c2pa import  Builder, C2paError as Error,  Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version # load_settings_file
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # load_settings_file
 
 PROJECT_PATH = os.getcwd()
 
 testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
+
 
 class TestC2paSdk(unittest.TestCase):
     def test_version(self):
@@ -53,7 +54,7 @@ class TestReader(unittest.TestCase):
                 reader = Reader("badFormat", file)
 
     def test_settings_trust(self):
-        #load_settings_file("tests/fixtures/settings.toml")
+        # load_settings_file("tests/fixtures/settings.toml")
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
@@ -115,6 +116,7 @@ class TestReader(unittest.TestCase):
             except Exception as e:
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
+
 class TestBuilder(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
@@ -146,18 +148,18 @@ class TestBuilder(unittest.TestCase):
             "title": "Python Test Image",
             "ingredients": [],
             "assertions": [
-                {   'label': 'stds.schema-org.CreativeWork',
+                {'label': 'stds.schema-org.CreativeWork',
                     'data': {
                         '@context': 'http://schema.org/',
                         '@type': 'CreativeWork',
                         'author': [
-                            {   '@type': 'Person',
+                            {'@type': 'Person',
                                 'name': 'Gavin Peacock'
-                            }
+                             }
                         ]
                     },
                     'kind': 'Json'
-                }
+                 }
             ]
         }
 
@@ -194,7 +196,8 @@ class TestBuilder(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             builder.set_no_embed()
             output = io.BytesIO(bytearray())
-            manifest_data = builder.sign(self.signer, "image/jpeg", file, output)
+            manifest_data = builder.sign(
+                self.signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output, manifest_data)
             json_data = reader.json()
@@ -264,6 +267,7 @@ class TestBuilder(unittest.TestCase):
                     continue
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
+
 
 if __name__ == '__main__':
     unittest.main()
