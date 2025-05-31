@@ -59,6 +59,68 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("C.jpg", json_data)
 
+    def test_read_all_files_metadata(self):
+        """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                continue
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    reader = Reader(mime_type, file)
+                    json_data = reader.json()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+
+            except Error.ManifestNotFound:
+                # This is an expected case - some files don't have C2PA metadata
+                continue
+            except Error.NotSupported:
+                continue
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
 class TestBuilder(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
@@ -118,9 +180,10 @@ class TestBuilder(unittest.TestCase):
             output.close()
 
     def test_sign_all_files(self):
-        """Test signing all files in the fixtures/files-for-signing-tests directory"""
+        """Test signing all files in both fixtures directories"""
         signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
-
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        
         # Map of file extensions to MIME types
         mime_types = {
             '.jpg': 'image/jpeg',
@@ -145,39 +208,39 @@ class TestBuilder(unittest.TestCase):
             'sample3.invalid.wav',  # Invalid file
         }
 
-        for filename in os.listdir(signing_dir):
-            if filename in skip_files:
-                continue
+        # Process both directories
+        for directory in [signing_dir, reading_dir]:
+            for filename in os.listdir(directory):
+                if filename in skip_files:
+                    continue
 
-            file_path = os.path.join(signing_dir, filename)
-            if not os.path.isfile(file_path):
-                continue
+                file_path = os.path.join(directory, filename)
+                if not os.path.isfile(file_path):
+                    continue
 
-            # Get file extension and corresponding MIME type
-            _, ext = os.path.splitext(filename)
-            ext = ext.lower()
-            if ext not in mime_types:
-                # print(f"Skipping {filename} - unsupported file type")
-                continue
+                # Get file extension and corresponding MIME type
+                _, ext = os.path.splitext(filename)
+                ext = ext.lower()
+                if ext not in mime_types:
+                    continue
 
-            mime_type = mime_types[ext]
+                mime_type = mime_types[ext]
 
-            try:
-                with open(file_path, "rb") as file:
-                    builder = Builder(self.manifestDefinition)
-                    output = io.BytesIO(bytearray())
-                    builder.sign(self.signer, mime_type, file, output)
-                    output.seek(0)
-                    reader = Reader(mime_type, output)
-                    json_data = reader.json()
-                    self.assertIn("Python Test", json_data)
-                    self.assertNotIn("validation_status", json_data)
-                    output.close()
-            except Error.NotSupported:
-                print(f"Skipping {filename} - format not supported")
-                continue
-            except Exception as e:
-                self.fail(f"Failed to sign {filename}: {str(e)}")
+                try:
+                    with open(file_path, "rb") as file:
+                        builder = Builder(self.manifestDefinition)
+                        output = io.BytesIO(bytearray())
+                        builder.sign(self.signer, mime_type, file, output)
+                        output.seek(0)
+                        reader = Reader(mime_type, output)
+                        json_data = reader.json()
+                        self.assertIn("Python Test", json_data)
+                        self.assertNotIn("validation_status", json_data)
+                        output.close()
+                except Error.NotSupported:
+                    continue
+                except Exception as e:
+                    self.fail(f"Failed to sign {filename}: {str(e)}")
 
     def test_archive_sign(self):
         with open(self.testPath, "rb") as file:
