@@ -25,15 +25,7 @@ from c2pa.c2pa import Stream
 
 PROJECT_PATH = os.getcwd()
 
-testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
-
-
-class TestC2paSdk(unittest.TestCase):
-    def test_version(self):
-        self.assertIn("0.55.0", sdk_version())
-
-
-class TestReader(unittest.TestCase):
+class TestReaderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -160,7 +152,7 @@ class TestReader(unittest.TestCase):
             self.fail("\n".join(errors))
 
 
-class TestBuilder(unittest.TestCase):
+class TestBuilderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -179,6 +171,9 @@ class TestBuilder(unittest.TestCase):
         self.signer = Signer.from_info(self.signer_info)
 
         self.testPath = os.path.join(self.data_dir, "C.jpg")
+        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
+        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
+        self.testPath4 = os.path.join(self.data_dir, "cloud.jpg")
 
         # Define manifests
         self.manifestDefinition = {
@@ -364,6 +359,118 @@ class TestBuilder(unittest.TestCase):
         # If any errors occurred, fail the test with all error messages
         if errors:
             self.fail("\n".join(errors))
+
+    def test_sign_all_files_async(self):
+        """Test signing all files using asyncio with a pool of workers"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        async def async_sign_file(filename, thread_id):
+            """Async version of file signing operation"""
+            if filename in skip_files:
+                return None
+
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Choose manifest based on thread number
+                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
+                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
+
+                    builder = Builder(manifest_def)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+
+                    # Verify the signed file
+                    reader = Reader(mime_type, output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                    # Verify the correct manifest was used
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+
+                    output.close()
+                    return None  # Success case
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
+
+        async def run_async_tests():
+            # Get all files from both directories
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+
+            # Create tasks for all files
+            tasks = []
+            for i, filename in enumerate(all_files):
+                task = asyncio.create_task(async_sign_file(filename, i))
+                tasks.append(task)
+
+            # Wait for all tasks to complete and collect results
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            errors = []
+            for result in results:
+                if isinstance(result, Exception):
+                    errors.append(str(result))
+                elif result:  # Non-None result indicates an error
+                    errors.append(result)
+
+            # If any errors occurred, fail the test with all error messages
+            if errors:
+                self.fail("\n".join(errors))
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
 
     def test_parallel_manifest_writing(self):
         """Test writing different manifests to two files in parallel and verify no data mixing occurs"""
@@ -1355,117 +1462,166 @@ class TestBuilder(unittest.TestCase):
         # Verify all readers completed
         self.assertEqual(active_readers, 0, "Not all readers completed")
 
-    def test_sign_all_files_async(self):
-        """Test signing all files using asyncio with a pool of workers"""
-        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
-        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+    def test_builder_sign_with_multiple_ingredient(self):
+        """Test Builder class operations with multiple ingredients added in parallel threads."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
 
-        # Map of file extensions to MIME types
-        mime_types = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp',
-            '.heic': 'image/heic',
-            '.heif': 'image/heif',
-            '.avif': 'image/avif',
-            '.tif': 'image/tiff',
-            '.tiff': 'image/tiff',
-            '.mp4': 'video/mp4',
-            '.avi': 'video/x-msvideo',
-            '.mp3': 'audio/mpeg',
-            '.m4a': 'audio/mp4',
-            '.wav': 'audio/wav'
-        }
+        # Define paths for test files
+        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
+        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
+        cloud_path = os.path.join(self.data_dir, "cloud.jpg")
 
-        # Skip files that are known to be invalid or unsupported
-        skip_files = {
-            'sample3.invalid.wav',  # Invalid file
-        }
+        # Thread synchronization
+        ingredient_added = threading.Event()
+        add_errors = []
+        add_lock = threading.Lock()
 
-        async def async_sign_file(filename, thread_id):
-            """Async version of file signing operation"""
-            if filename in skip_files:
-                return None
-
-            file_path = os.path.join(signing_dir, filename)
-            if not os.path.isfile(file_path):
-                return None
-
-            # Get file extension and corresponding MIME type
-            _, ext = os.path.splitext(filename)
-            ext = ext.lower()
-            if ext not in mime_types:
-                return None
-
-            mime_type = mime_types[ext]
-
+        def add_ingredient(ingredient_json, file_path, thread_id):
             try:
-                with open(file_path, "rb") as file:
-                    # Choose manifest based on thread number
-                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
-                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
-
-                    builder = Builder(manifest_def)
-                    output = io.BytesIO(bytearray())
-                    builder.sign(self.signer, mime_type, file, output)
-                    output.seek(0)
-
-                    # Verify the signed file
-                    reader = Reader(mime_type, output)
-                    json_data = reader.json()
-                    manifest_store = json.loads(json_data)
-                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-
-                    # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
-                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
-
-                    # Verify the author is correct
-                    assertions = active_manifest["assertions"]
-                    for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
-                            author_name = assertion["data"]["author"][0]["name"]
-                            self.assertEqual(author_name, expected_author)
-                            break
-
-                    output.close()
-                    return None  # Success case
-            except Error.NotSupported:
-                return None
+                with open(file_path, 'rb') as f:
+                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
+                with add_lock:
+                    add_errors.append(None)  # Success case
             except Exception as e:
-                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
+                with add_lock:
+                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
+            finally:
+                ingredient_added.set()
 
-        async def run_async_tests():
-            # Get all files from both directories
-            all_files = []
-            for directory in [signing_dir, reading_dir]:
-                all_files.extend(os.listdir(directory))
+        # Create and start two threads for parallel ingredient addition
+        thread1 = threading.Thread(
+            target=add_ingredient,
+            args=('{"title": "Test Ingredient 1"}', self.testPath3, 1)
+        )
+        thread2 = threading.Thread(
+            target=add_ingredient,
+            args=('{"title": "Test Ingredient 2"}', cloud_path, 2)
+        )
 
-            # Create tasks for all files
-            tasks = []
-            for i, filename in enumerate(all_files):
-                task = asyncio.create_task(async_sign_file(filename, i))
-                tasks.append(task)
+        # Start both threads
+        thread1.start()
+        thread2.start()
 
-            # Wait for all tasks to complete and collect results
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Wait for both threads to complete
+        thread1.join()
+        thread2.join()
 
-            # Process results
-            errors = []
-            for result in results:
-                if isinstance(result, Exception):
-                    errors.append(str(result))
-                elif result:  # Non-None result indicates an error
-                    errors.append(result)
+        # Check for errors during ingredient addition
+        if any(error for error in add_errors if error is not None):
+            self.fail("\n".join(error for error in add_errors if error is not None))
 
-            # If any errors occurred, fail the test with all error messages
-            if errors:
-                self.fail("\n".join(errors))
+        # Verify both ingredients were added successfully
+        self.assertEqual(len(add_errors), 2, "Both threads should have completed")
 
-        # Run the async tests
-        asyncio.run(run_async_tests())
+        # Now sign the manifest with the added ingredients
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertEqual(len(active_manifest["ingredients"]), 2)
+
+            # Verify both ingredients exist in the array (order doesn't matter)
+            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            self.assertIn("Test Ingredient 1", ingredient_titles)
+            self.assertIn("Test Ingredient 2", ingredient_titles)
+
+        builder.close()
+
+    def test_builder_sign_with_multiple_ingredients_from_stream(self):
+        """Test Builder class operations with multiple ingredients added in parallel threads using streams."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Thread synchronization
+        ingredient_added = threading.Event()
+        add_errors = []
+        add_lock = threading.Lock()
+
+        def add_ingredient_from_stream(ingredient_json, file_path, thread_id):
+            try:
+                with open(file_path, 'rb') as f:
+                    builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", f)
+                with add_lock:
+                    add_errors.append(None)  # Success case
+            except Exception as e:
+                with add_lock:
+                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
+            finally:
+                ingredient_added.set()
+
+        # Create and start two threads for parallel ingredient addition
+        thread1 = threading.Thread(
+            target=add_ingredient_from_stream,
+            args=('{"title": "Test Ingredient Stream 1"}', self.testPath3, 1)
+        )
+        thread2 = threading.Thread(
+            target=add_ingredient_from_stream,
+            args=('{"title": "Test Ingredient Stream 2"}', self.testPath4, 2)
+        )
+
+        # Start both threads
+        thread1.start()
+        thread2.start()
+
+        # Wait for both threads to complete
+        thread1.join()
+        thread2.join()
+
+        # Check for errors during ingredient addition
+        if any(error for error in add_errors if error is not None):
+            self.fail("\n".join(error for error in add_errors if error is not None))
+
+        # Verify both ingredients were added successfully
+        self.assertEqual(len(add_errors), 2, "Both threads should have completed")
+
+        # Now sign the manifest with the added ingredients
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertEqual(len(active_manifest["ingredients"]), 2)
+
+            # Verify both ingredients exist in the array (order doesn't matter)
+            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            self.assertIn("Test Ingredient Stream 1", ingredient_titles)
+            self.assertIn("Test Ingredient Stream 2", ingredient_titles)
+
+        builder.close()
 
 
 if __name__ == '__main__':
