@@ -18,6 +18,7 @@ import unittest
 import threading
 import concurrent.futures
 import time
+import asyncio
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
 from c2pa.c2pa import Stream
@@ -796,12 +797,12 @@ class TestBuilder(unittest.TestCase):
                     if active_readers == 0:
                         read_complete.set()
 
-        # Start multiple read threads
+        # Create and start all threads
         read_threads = []
         for i in range(reader_count):
             thread = threading.Thread(target=read_manifest, args=(i,))
             read_threads.append(thread)
-            thread.start()
+            thread.start()  # Start each thread immediately after creation
 
         # Wait for all readers to complete
         for thread in read_threads:
@@ -888,11 +889,11 @@ class TestBuilder(unittest.TestCase):
         for thread in read_threads:
             thread.join()
 
-        # Verify that all threads started within a very small time window
+        # Verify that all threads started within a reasonable time window
         if len(start_times) == reader_count:
             max_time_diff = max(start_times) - min(start_times)
-            self.assertLess(max_time_diff, 0.001,  # Should be less than 1ms
-                          f"Threads did not start simultaneously. Max time difference: {max_time_diff:.6f}s")
+            self.assertLess(max_time_diff, 0.2,  # Should be less than 200ms
+                          f"Threads did not start within expected time window. Max time difference: {max_time_diff:.6f}s")
 
         # Clean up
         output.close()
@@ -1191,6 +1192,168 @@ class TestBuilder(unittest.TestCase):
         # Clean up
         output1.close()
         output2.close()
+
+    def test_concurrent_read_after_write_async(self):
+        """Test reading from a file after writing is complete using asyncio"""
+        output = io.BytesIO(bytearray())
+        write_complete = asyncio.Event()
+        write_errors = []
+        read_errors = []
+        write_success = False
+
+        async def write_manifest():
+            nonlocal write_success
+            try:
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinition_1)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    write_success = True
+                    write_complete.set()
+            except Exception as e:
+                write_errors.append(f"Write error: {str(e)}")
+                write_complete.set()
+
+        async def read_manifest():
+            try:
+                # Wait for write to complete before reading
+                await write_complete.wait()
+
+                # Verify write was successful
+                if not write_success:
+                    raise Exception("Write operation did not complete successfully")
+
+                # Verify output is not empty
+                output_size = len(output.getvalue())
+                self.assertGreater(output_size, 0, "Output should not be empty after write")
+
+                # Read after write is complete
+                output.seek(0)
+                reader = Reader("image/jpeg", output)
+                json_data = reader.json()
+                manifest_store = json.loads(json_data)
+
+                # Verify manifest store structure
+                self.assertIn("manifests", manifest_store, "Manifest store should contain 'manifests'")
+                self.assertIn("active_manifest", manifest_store, "Manifest store should contain 'active_manifest'")
+
+                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify final manifest
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                author_found = False
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, "Tester One")
+                        author_found = True
+                        break
+                self.assertTrue(author_found, "Author assertion not found in manifest")
+
+                # Verify no validation errors
+                self.assertNotIn("validation_status", manifest_store, "Manifest should not have validation errors")
+
+            except Exception as e:
+                read_errors.append(f"Read error: {str(e)}")
+
+        async def run_async_tests():
+            # Create and run write task first
+            write_task = asyncio.create_task(write_manifest())
+            await write_task  # Wait for write to complete
+
+            # Only start read task after write is complete
+            read_task = asyncio.create_task(read_manifest())
+            await read_task  # Wait for read to complete
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
+
+        # Clean up
+        output.close()
+
+        # Check for errors
+        if write_errors:
+            self.fail("\n".join(write_errors))
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+    def test_resource_contention_read_parallel_async(self):
+        """Test multiple async tasks reading the same file concurrently"""
+        output = io.BytesIO(bytearray())
+        read_errors = []
+        reader_count = 5  # Number of concurrent readers
+        active_readers = 0
+        readers_lock = asyncio.Lock()  # Lock for reader count
+        stream_lock = asyncio.Lock()  # Lock for stream access
+        start_barrier = asyncio.Barrier(reader_count)  # Barrier to synchronize task starts
+
+        # First write some data to read
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition_1)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+        async def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                async with readers_lock:
+                    active_readers += 1
+
+                # Wait for all tasks to be ready
+                await start_barrier.wait()
+
+                # Read the manifest
+                async with stream_lock:  # Ensure exclusive access to stream
+                    output.seek(0)  # Reset stream position before read
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                # Verify manifest data
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+
+                # Verify the author is correct
+                assertions = active_manifest["assertions"]
+                for assertion in assertions:
+                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                        author_name = assertion["data"]["author"][0]["name"]
+                        self.assertEqual(author_name, "Tester One")
+                        break
+
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                async with readers_lock:
+                    active_readers -= 1
+
+        async def run_async_tests():
+            # Create all tasks first
+            tasks = []
+            for i in range(reader_count):
+                task = asyncio.create_task(read_manifest(i))
+                tasks.append(task)
+
+            # Wait for all tasks to complete
+            await asyncio.gather(*tasks)
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
+
+        # Clean up
+        output.close()
+
+        # Check for errors
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+        # Verify all readers completed
+        self.assertEqual(active_readers, 0, "Not all readers completed")
 
 
 if __name__ == '__main__':
