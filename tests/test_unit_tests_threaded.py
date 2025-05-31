@@ -1547,17 +1547,19 @@ class TestBuilderWithThreads(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_multiple_ingredients_from_stream(self):
-        """Test Builder class operations with multiple ingredients added in parallel threads using streams."""
+        """Test Builder class operations with multiple ingredients using streams."""
         # Test creating builder from JSON
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
         # Thread synchronization
-        ingredient_added = threading.Event()
         add_errors = []
         add_lock = threading.Lock()
+        completed_threads = 0
+        completion_lock = threading.Lock()
 
         def add_ingredient_from_stream(ingredient_json, file_path, thread_id):
+            nonlocal completed_threads
             try:
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", f)
@@ -1567,7 +1569,8 @@ class TestBuilderWithThreads(unittest.TestCase):
                 with add_lock:
                     add_errors.append(f"Thread {thread_id} error: {str(e)}")
             finally:
-                ingredient_added.set()
+                with completion_lock:
+                    completed_threads += 1
 
         # Create and start two threads for parallel ingredient addition
         thread1 = threading.Thread(
@@ -1592,7 +1595,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             self.fail("\n".join(error for error in add_errors if error is not None))
 
         # Verify both ingredients were added successfully
-        self.assertEqual(len(add_errors), 2, "Both threads should have completed")
+        self.assertEqual(completed_threads, 2, "Both threads should have completed")
+        self.assertEqual(len(add_errors), 2, "Both threads should have completed without errors")
 
         # Now sign the manifest with the added ingredients
         with open(self.testPath2, "rb") as file:
