@@ -1769,8 +1769,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             nonlocal completed_threads
             try:
                 file_path = os.path.join(reading_dir, file_name)
-                ingredient_json = f'{
-                    {"title": "Test Ingredient Thread {thread_id} - {file_name}"}}'
+                ingredient_json = f'{{"title": "Test Ingredient Thread {thread_id} - {file_name}"}}'
 
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient(ingredient_json, "image/jpeg", f)
@@ -1780,8 +1779,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Exception as e:
                 with add_lock:
                     add_errors.append(
-                        f"Thread {thread_id} error with file {file_name}: {
-                            str(e)}")
+                        f"Thread {thread_id} error with file {file_name}: {str(e)}")
             finally:
                 with completion_lock:
                     completed_threads += 1
@@ -1893,8 +1891,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 await start_barrier.wait()
 
                 file_path = os.path.join(reading_dir, file_name)
-                ingredient_json = f'{
-                    {"title": "Test Ingredient Task {task_id} - {file_name}"}}'
+                ingredient_json = f'{{"title": "Test Ingredient Task {task_id} - {file_name}"}}'
 
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient(ingredient_json, "image/jpeg", f)
