@@ -2088,6 +2088,136 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         builder.close()
 
+    def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
+        """Test Builder class operations with 10 threads, each adding 3 random ingredients and signing a random file."""
+        # Number of threads to use in the test
+        TOTAL_THREADS_USED = 100
+
+        # Get list of files from files-for-reading-tests directory
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Filter for JPG and PNG files only
+        all_files = [
+            f for f in os.listdir(reading_dir)
+            if os.path.isfile(os.path.join(reading_dir, f))
+            and os.path.splitext(f)[1].lower() in {'.jpg', '.jpeg', '.png'}
+        ]
+
+        # Ensure we have enough files
+        self.assertGreaterEqual(len(all_files), 3, "Need at least 3 JPG/PNG files for testing")
+
+        # Thread synchronization
+        thread_results = {}
+        completed_threads = 0
+
+        def thread_work(thread_id):
+            nonlocal completed_threads
+            try:
+                # Create a new builder for this thread
+                builder = Builder.from_json(self.manifestDefinition)
+
+                # Select 3 random files for ingredients
+                random.seed(thread_id)  # Use thread_id as seed for reproducibility
+                ingredient_files = random.sample(all_files, 3)
+
+                # Add each ingredient
+                for i, file_name in enumerate(ingredient_files, 1):
+                    file_path = os.path.join(reading_dir, file_name)
+                    ingredient_json = f'{{"title": "Thread {thread_id} Ingredient {i} - {file_name}"}}'
+
+                    with open(file_path, 'rb') as f:
+                        builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+                # Select a random file for signing
+                sign_file = random.choice(all_files)
+                sign_file_path = os.path.join(reading_dir, sign_file)
+
+                # Sign the file
+                with open(sign_file_path, "rb") as file:
+                    output = io.BytesIO()
+                    builder.sign(self.signer, "image/jpeg", file, output)
+
+                    # Ensure all data is written
+                    output.flush()
+
+                    # Get the complete data
+                    output_data = output.getvalue()
+
+                    # Create a new BytesIO with the complete data
+                    input_stream = io.BytesIO(output_data)
+
+                    # Now read and verify the signed manifest
+                    reader = Reader("image/jpeg", input_stream)
+                    json_data = reader.json()
+                    manifest_data = json.loads(json_data)
+
+                    # Store results for verification
+                    thread_results[thread_id] = {
+                        'manifest': manifest_data,
+                        'ingredient_files': ingredient_files,
+                        'sign_file': sign_file
+                    }
+
+                    # Clean up streams
+                    output.close()
+                    input_stream.close()
+
+                builder.close()
+
+            except Exception as e:
+                thread_results[thread_id] = {
+                    'error': str(e)
+                }
+            finally:
+                completed_threads += 1
+
+        # Create and start threads
+        threads = []
+        for i in range(1, TOTAL_THREADS_USED + 1):
+            thread = threading.Thread(target=thread_work, args=(i,))
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+
+        # Verify all threads completed
+        self.assertEqual(completed_threads, TOTAL_THREADS_USED, f"All {TOTAL_THREADS_USED} threads should have completed")
+        self.assertEqual(len(thread_results), TOTAL_THREADS_USED, f"Should have results from all {TOTAL_THREADS_USED} threads")
+
+        # Verify results for each thread
+        for thread_id in range(1, TOTAL_THREADS_USED + 1):
+            result = thread_results[thread_id]
+
+            # Check if thread encountered an error
+            if 'error' in result:
+                self.fail(f"Thread {thread_id} failed with error: {result['error']}")
+
+            manifest_data = result['manifest']
+            ingredient_files = result['ingredient_files']
+            sign_file = result['sign_file']
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists and has correct length
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertEqual(len(active_manifest["ingredients"]), 3)
+
+            # Verify all ingredients exist with correct thread ID and file names
+            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            for i, file_name in enumerate(ingredient_files, 1):
+                expected_title = f"Thread {thread_id} Ingredient {i} - {file_name}"
+                self.assertIn(expected_title, ingredient_titles,
+                            f"Thread {thread_id} should have ingredient with title {expected_title}")
 
 if __name__ == '__main__':
     unittest.main()
