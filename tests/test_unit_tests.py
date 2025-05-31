@@ -62,6 +62,32 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("C.jpg", json_data)
 
+    def test_reader_double_close(self):
+        """Test that multiple close calls are handled gracefully."""
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            reader.close()
+            # Second close should not raise an exception
+            reader.close()
+            # Verify reader is closed
+            with self.assertRaises(Error):
+                reader.json()
+
+    def test_reader_close_cleanup(self):
+        """Test that close properly cleans up all resources."""
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            # Store references to internal objects
+            reader_ref = reader._reader
+            stream_ref = reader._own_stream
+            # Close the reader
+            reader.close()
+            # Verify all resources are cleaned up
+            self.assertIsNone(reader._reader)
+            self.assertIsNone(reader._own_stream)
+            # Verify reader is marked as closed
+            self.assertTrue(reader._closed)
+
     def test_read_all_files(self):
         """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
