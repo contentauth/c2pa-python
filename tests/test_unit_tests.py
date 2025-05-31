@@ -165,6 +165,7 @@ class TestBuilder(unittest.TestCase):
 
         self.testPath = os.path.join(self.data_dir, "C.jpg")
         self.testPath2 = os.path.join(self.data_dir, "A.jpg")
+        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
 
         # Define a manifest as a dictionary
         self.manifestDefinition = {
@@ -358,7 +359,7 @@ class TestBuilder(unittest.TestCase):
 
         # Test adding ingredient
         ingredient_json = '{"title": "Test Ingredient"}'
-        with open(self.testPath2, 'rb') as f:
+        with open(self.testPath3, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         with open(self.testPath2, "rb") as file:
