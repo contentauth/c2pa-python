@@ -19,6 +19,7 @@ import threading
 import concurrent.futures
 import time
 import asyncio
+import random
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
 from c2pa.c2pa import Stream
@@ -1621,6 +1622,202 @@ class TestBuilderWithThreads(unittest.TestCase):
             self.assertIn("Test Ingredient Stream 1", ingredient_titles)
             self.assertIn("Test Ingredient Stream 2", ingredient_titles)
 
+        builder.close()
+
+    def test_builder_sign_with_multiple_ingredient_random(self):
+        """Test Builder class operations with 5 random ingredients added in parallel threads."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Get list of files from files-for-reading-tests directory
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        all_files = [f for f in os.listdir(reading_dir) if os.path.isfile(os.path.join(reading_dir, f))]
+
+        # Select 5 random files
+        random.seed(42)  # For reproducible testing
+        selected_files = random.sample(all_files, 5)
+
+        # Thread synchronization
+        add_errors = []
+        add_lock = threading.Lock()
+        completed_threads = 0
+        completion_lock = threading.Lock()
+
+        def add_ingredient(file_name, thread_id):
+            nonlocal completed_threads
+            try:
+                file_path = os.path.join(reading_dir, file_name)
+                ingredient_json = f'{{"title": "Test Ingredient Thread {thread_id} - {file_name}"}}'
+
+                with open(file_path, 'rb') as f:
+                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+                with add_lock:
+                    add_errors.append(None)  # Success case
+            except Exception as e:
+                with add_lock:
+                    add_errors.append(f"Thread {thread_id} error with file {file_name}: {str(e)}")
+            finally:
+                with completion_lock:
+                    completed_threads += 1
+
+        # Create and start 5 threads for parallel ingredient addition
+        threads = []
+        for i, file_name in enumerate(selected_files, 1):
+            thread = threading.Thread(
+                target=add_ingredient,
+                args=(file_name, i)
+            )
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+
+        # Check for errors during ingredient addition
+        if any(error for error in add_errors if error is not None):
+            self.fail("\n".join(error for error in add_errors if error is not None))
+
+        # Verify all ingredients were added successfully
+        self.assertEqual(completed_threads, 5, "All 5 threads should have completed")
+        self.assertEqual(len(add_errors), 5, "All 5 threads should have completed without errors")
+
+        # Now sign the manifest with the added ingredients
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertEqual(len(active_manifest["ingredients"]), 5)
+
+            # Verify all ingredients exist in the array with correct thread IDs
+            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            for i in range(1, 6):
+                # Find an ingredient with this thread ID
+                thread_ingredients = [title for title in ingredient_titles if f"Thread {i}" in title]
+                self.assertEqual(len(thread_ingredients), 1, f"Should find exactly one ingredient for thread {i}")
+
+                # Verify the ingredient title contains the file name
+                thread_ingredient = thread_ingredients[0]
+                file_name = selected_files[i-1]
+                self.assertIn(file_name, thread_ingredient, f"Ingredient for thread {i} should contain its file name")
+
+        builder.close()
+
+    def test_builder_sign_with_multiple_ingredient_async_random(self):
+        """Test Builder class operations with 5 random ingredients added in parallel using asyncio."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Get list of files from files-for-reading-tests directory
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        all_files = [f for f in os.listdir(reading_dir) if os.path.isfile(os.path.join(reading_dir, f))]
+
+        # Select 5 random files
+        random.seed(42)  # For reproducible testing
+        selected_files = random.sample(all_files, 5)
+
+        # Async synchronization
+        add_errors = []
+        add_lock = asyncio.Lock()
+        completed_tasks = 0
+        completion_lock = asyncio.Lock()
+        start_barrier = asyncio.Barrier(5)  # Barrier to synchronize task starts
+
+        async def add_ingredient(file_name, task_id):
+            nonlocal completed_tasks
+            try:
+                # Wait for all tasks to be ready
+                await start_barrier.wait()
+
+                file_path = os.path.join(reading_dir, file_name)
+                ingredient_json = f'{{"title": "Test Ingredient Task {task_id} - {file_name}"}}'
+
+                with open(file_path, 'rb') as f:
+                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+                async with add_lock:
+                    add_errors.append(None)  # Success case
+            except Exception as e:
+                async with add_lock:
+                    add_errors.append(f"Task {task_id} error with file {file_name}: {str(e)}")
+            finally:
+                async with completion_lock:
+                    completed_tasks += 1
+
+        async def run_async_tests():
+            # Create all tasks first
+            tasks = []
+            for i, file_name in enumerate(selected_files, 1):
+                task = asyncio.create_task(add_ingredient(file_name, i))
+                tasks.append(task)
+
+            # Wait for all tasks to complete
+            await asyncio.gather(*tasks)
+
+            # Check for errors during ingredient addition
+            if any(error for error in add_errors if error is not None):
+                raise Exception("\n".join(error for error in add_errors if error is not None))
+
+            # Verify all ingredients were added successfully
+            self.assertEqual(completed_tasks, 5, "All 5 tasks should have completed")
+            self.assertEqual(len(add_errors), 5, "All 5 tasks should have completed without errors")
+
+            # Now sign the manifest with the added ingredients
+            with open(self.testPath2, "rb") as file:
+                output = io.BytesIO(bytearray())
+                builder.sign(self.signer, "image/jpeg", file, output)
+                output.seek(0)
+                reader = Reader("image/jpeg", output)
+                json_data = reader.json()
+                manifest_data = json.loads(json_data)
+
+                # Verify active manifest exists
+                self.assertIn("active_manifest", manifest_data)
+                active_manifest_id = manifest_data["active_manifest"]
+
+                # Verify active manifest object exists
+                self.assertIn("manifests", manifest_data)
+                self.assertIn(active_manifest_id, manifest_data["manifests"])
+                active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                # Verify ingredients array exists in active manifest
+                self.assertIn("ingredients", active_manifest)
+                self.assertIsInstance(active_manifest["ingredients"], list)
+                self.assertEqual(len(active_manifest["ingredients"]), 5)
+
+                # Verify all ingredients exist in the array with correct task IDs
+                ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+                for i in range(1, 6):
+                    # Find an ingredient with this task ID
+                    task_ingredients = [title for title in ingredient_titles if f"Task {i}" in title]
+                    self.assertEqual(len(task_ingredients), 1, f"Should find exactly one ingredient for task {i}")
+
+                    # Verify the ingredient title contains the file name
+                    task_ingredient = task_ingredients[0]
+                    file_name = selected_files[i-1]
+                    self.assertIn(file_name, task_ingredient, f"Ingredient for task {i} should contain its file name")
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
         builder.close()
 
 
