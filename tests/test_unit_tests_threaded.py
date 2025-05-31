@@ -15,7 +15,6 @@ import os
 import io
 import json
 import unittest
-from unittest.mock import mock_open, patch
 import threading
 import concurrent.futures
 import time
