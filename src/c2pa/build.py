@@ -13,12 +13,14 @@ REPO_NAME = "c2pa-rs"
 GITHUB_API_BASE = "https://api.github.com"
 ARTIFACTS_DIR = Path("artifacts")
 
+
 def get_latest_release() -> dict:
     """Get the latest release information from GitHub."""
     url = f"{GITHUB_API_BASE}/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
+
 
 def download_artifact(url: str, platform_name: str) -> None:
     """Download and extract an artifact to the appropriate platform directory."""
@@ -37,7 +39,9 @@ def download_artifact(url: str, platform_name: str) -> None:
         # Extract all files to the platform directory
         zip_ref.extractall(platform_dir)
 
-    print(f"Successfully downloaded and extracted artifacts for {platform_name}")
+    print(f"Successfully downloaded and extracted artifacts for {
+          platform_name}")
+
 
 def download_artifacts() -> None:
     """Main function to download artifacts. Can be called as a script or from hatch."""
@@ -72,11 +76,22 @@ def download_artifacts() -> None:
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
 
+
 def inject_version():
     """Inject the version from pyproject.toml into src/c2pa/__init__.py as __version__."""
     import toml
-    pyproject_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml"))
-    init_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c2pa", "__init__.py"))
+    pyproject_path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "..",
+            "pyproject.toml"))
+    init_path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "c2pa",
+            "__init__.py"))
     with open(pyproject_path, "r") as f:
         pyproject = toml.load(f)
     version = pyproject["project"]["version"]
@@ -89,10 +104,12 @@ def inject_version():
     with open(init_path, "w") as f:
         f.writelines(lines)
 
+
 def initialize_build() -> None:
     """Initialize the build process by downloading artifacts."""
     inject_version()
     download_artifacts()
+
 
 if __name__ == "__main__":
     inject_version()

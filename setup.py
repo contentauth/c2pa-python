@@ -103,9 +103,6 @@ def copy_platform_libraries(platform_name, clean_first=False):
         clean_first: If True, remove existing files in PACKAGE_LIBS_DIR first
     """
     platform_dir = ARTIFACTS_DIR / platform_name
-    print(" ")
-    print('##### Found platform dir: ', platform_dir)
-    print(" ")
 
     # Ensure the platform directory exists and contains files
     if not platform_dir.exists():
@@ -113,9 +110,6 @@ def copy_platform_libraries(platform_name, clean_first=False):
 
     # Get list of all files in the platform directory
     platform_files = list(platform_dir.glob('*'))
-    print(" ")
-    print('##### Platform files: ', platform_files)
-    print(" ")
     if not platform_files:
         raise ValueError(f"No files found in platform directory: {platform_dir}")
 
@@ -124,9 +118,6 @@ def copy_platform_libraries(platform_name, clean_first=False):
         shutil.rmtree(PACKAGE_LIBS_DIR)
 
     # Ensure the package libs directory exists
-    print(" ")
-    print('##### Package libs dir will be in: ', PACKAGE_LIBS_DIR)
-    print(" ")
     PACKAGE_LIBS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Copy files from platform-specific directory to the package libs directory
@@ -189,9 +180,6 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
         print(f"\nBuilding wheel for {platform_name}...")
         try:
             # Copy libraries for this platform (cleaning first)
-            print(" ")
-            print('##### Preparing to copy libraries to where they belong')
-            print(" ")
             copy_platform_libraries(platform_name, clean_first=True)
 
             # Build the wheel
