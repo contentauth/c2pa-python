@@ -601,6 +601,7 @@ def sign_file(
     data_dir: Optional[Union[str, Path]] = None
 ) -> str:
     """Sign a file with a C2PA manifest.
+    For now, this function is left here to provide a backwards-compatible API.
 
     .. deprecated:: 0.10.0
         This function is deprecated and will be removed in a future version.
