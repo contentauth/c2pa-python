@@ -107,7 +107,7 @@ jobs:
           Get-ChildItem -Recurse -Path src/c2pa/libs
 
           # Build wheel
-          # python setup.py bdist_wheel --plat-name win_amd64
+          python setup.py bdist_wheel --plat-name win_amd64
 
       - name: Build macOS wheel (Apple Silicon)
         if: runner.os == 'macOS' && runner.arch == 'arm64'
