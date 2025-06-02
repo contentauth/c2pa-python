@@ -5,6 +5,7 @@ __pycache__/
 
 /artifacts
 scripts/artifacts
+tests/fixtures/temp_data
 
 
 # C extensions
