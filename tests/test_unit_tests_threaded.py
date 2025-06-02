@@ -1765,7 +1765,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             nonlocal completed_threads
             try:
                 file_path = os.path.join(reading_dir, file_name)
-                ingredient_json = f'{{"title": "Test Ingredient Thread {thread_id} - {file_name}"}}'
+                ingredient_json = f'{
+                    {"title": "Test Ingredient Thread {thread_id} - {file_name}"}}'
 
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient(ingredient_json, "image/jpeg", f)
@@ -1775,7 +1776,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Exception as e:
                 with add_lock:
                     add_errors.append(
-                        f"Thread {thread_id} error with file {file_name}: {str(e)}")
+                        f"Thread {thread_id} error with file {file_name}: {
+                            str(e)}")
             finally:
                 with completion_lock:
                     completed_threads += 1
@@ -1887,7 +1889,8 @@ class TestBuilderWithThreads(unittest.TestCase):
                 await start_barrier.wait()
 
                 file_path = os.path.join(reading_dir, file_name)
-                ingredient_json = f'{{"title": "Test Ingredient Task {task_id} - {file_name}"}}'
+                ingredient_json = f'{
+                    {"title": "Test Ingredient Task {task_id} - {file_name}"}}'
 
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient(ingredient_json, "image/jpeg", f)
@@ -2083,7 +2086,7 @@ class TestBuilderWithThreads(unittest.TestCase):
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder class operations with 10 threads, each adding 3 random ingredients and signing a random file."""
         # Number of threads to use in the test
-        # We are pushing it here, as we want to test with thread count one to two orders of magnitude 
+        # We are pushing it here, as we want to test with thread count one to two orders of magnitude
         # higher than "usual" max numbers of cores on (server) machines may be.
 
         TOTAL_THREADS_USED = 1200
@@ -2099,7 +2102,10 @@ class TestBuilderWithThreads(unittest.TestCase):
         ]
 
         # Ensure we have enough files
-        self.assertGreaterEqual(len(all_files), 3, "Need at least 3 JPG/PNG files for testing")
+        self.assertGreaterEqual(
+            len(all_files),
+            3,
+            "Need at least 3 JPG/PNG files for testing")
 
         # Thread synchronization
         thread_results = {}
@@ -2112,16 +2118,19 @@ class TestBuilderWithThreads(unittest.TestCase):
                 builder = Builder.from_json(self.manifestDefinition)
 
                 # Select 3 random files for ingredients
-                random.seed(thread_id)  # Use thread_id as seed for reproducibility
+                # Use thread_id as seed for reproducibility
+                random.seed(thread_id)
                 ingredient_files = random.sample(all_files, 3)
 
                 # Add each ingredient
                 for i, file_name in enumerate(ingredient_files, 1):
                     file_path = os.path.join(reading_dir, file_name)
-                    ingredient_json = f'{{"title": "Thread {thread_id} Ingredient {i} - {file_name}"}}'
+                    ingredient_json = f'{
+                        {"title": "Thread {thread_id} Ingredient {i} - {file_name}"}}'
 
                     with open(file_path, 'rb') as f:
-                        builder.add_ingredient(ingredient_json, "image/jpeg", f)
+                        builder.add_ingredient(
+                            ingredient_json, "image/jpeg", f)
 
                 # Select a random file for signing
                 sign_file = random.choice(all_files)
@@ -2178,8 +2187,12 @@ class TestBuilderWithThreads(unittest.TestCase):
             thread.join()
 
         # Verify all threads completed
-        self.assertEqual(completed_threads, TOTAL_THREADS_USED, f"All {TOTAL_THREADS_USED} threads should have completed")
-        self.assertEqual(len(thread_results), TOTAL_THREADS_USED, f"Should have results from all {TOTAL_THREADS_USED} threads")
+        self.assertEqual(completed_threads, TOTAL_THREADS_USED, f"All {
+                         TOTAL_THREADS_USED} threads should have completed")
+        self.assertEqual(
+            len(thread_results),
+            TOTAL_THREADS_USED,
+            f"Should have results from all {TOTAL_THREADS_USED} threads")
 
         # Verify results for each thread
         for thread_id in range(1, TOTAL_THREADS_USED + 1):
@@ -2187,7 +2200,9 @@ class TestBuilderWithThreads(unittest.TestCase):
 
             # Check if thread encountered an error
             if 'error' in result:
-                self.fail(f"Thread {thread_id} failed with error: {result['error']}")
+                self.fail(
+                    f"Thread {thread_id} failed with error: {
+                        result['error']}")
 
             manifest_data = result['manifest']
             ingredient_files = result['ingredient_files']
@@ -2207,12 +2222,16 @@ class TestBuilderWithThreads(unittest.TestCase):
             self.assertIsInstance(active_manifest["ingredients"], list)
             self.assertEqual(len(active_manifest["ingredients"]), 3)
 
-            # Verify all ingredients exist with correct thread ID and file names
-            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            # Verify all ingredients exist with correct thread ID and file
+            # names
+            ingredient_titles = [ing["title"]
+                                 for ing in active_manifest["ingredients"]]
             for i, file_name in enumerate(ingredient_files, 1):
-                expected_title = f"Thread {thread_id} Ingredient {i} - {file_name}"
-                self.assertIn(expected_title, ingredient_titles,
-                            f"Thread {thread_id} should have ingredient with title {expected_title}")
+                expected_title = f"Thread {
+                    thread_id} Ingredient {i} - {file_name}"
+                self.assertIn(expected_title, ingredient_titles, f"Thread {
+                              thread_id} should have ingredient with title {expected_title}")
+
 
 if __name__ == '__main__':
     unittest.main()
