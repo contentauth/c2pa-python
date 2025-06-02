@@ -82,7 +82,7 @@ publish: release
 
 # Formats Python source code using autopep8 with aggressive settings
 format:
-	autopep8 --aggressive --aggressive --in-place src/c2pa/*.py
+	autopep8 --aggressive --aggressive --in-place src/c2pa/**/*.py
 
 # Downloads the required native artifacts for the specified version
 download-native-artifacts:
