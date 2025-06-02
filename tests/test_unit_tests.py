@@ -775,9 +775,6 @@ class TestLegacyAPI(unittest.TestCase):
                 temp_data_dir
             )
 
-            print("Signed manifest:")
-            print(result_json)
-
         finally:
             # Clean up
             if os.path.exists(output_path):

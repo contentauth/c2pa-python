@@ -3,6 +3,7 @@ import enum
 import json
 import sys
 import os
+import warnings
 from pathlib import Path
 from typing import Optional, Union, Callable, Any
 import time
@@ -585,6 +586,10 @@ def sign_file(
 ) -> str:
     """Sign a file with a C2PA manifest.
 
+    .. deprecated:: 0.10.12
+        This function is deprecated and will be removed in a future version.
+        Please use the Builder class for signing and the Reader class for reading signed data instead.
+
     Args:
         source_path: Path to the source file
         dest_path: Path to write the signed file to
@@ -600,6 +605,13 @@ def sign_file(
         C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
         C2paError.NotSupported: If the file type cannot be determined
     """
+    warnings.warn(
+        "The sign_file function is deprecated and will be removed in a future version. "
+        "Please use the Builder class for signing and the Reader class for reading signed data instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     try:
         # Create a signer from the signer info
         signer = Signer.from_info(signer_info)
