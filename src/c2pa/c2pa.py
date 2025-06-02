@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Union, Callable, Any
 import time
 from .lib import dynamically_load_library
+import mimetypes
 
 # Define required function names
 _REQUIRED_FUNCTIONS = [
@@ -16,7 +17,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_load_settings',
     'c2pa_read_file',
     'c2pa_read_ingredient_file',
-    'c2pa_sign_file',
     'c2pa_reader_from_stream',
     'c2pa_reader_from_manifest_data_and_stream',
     'c2pa_reader_free',
@@ -247,13 +247,6 @@ _setup_function(
 _setup_function(
     _lib.c2pa_read_ingredient_file, [
         ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
-_setup_function(_lib.c2pa_sign_file,
-                [ctypes.c_char_p,
-                 ctypes.c_char_p,
-                 ctypes.c_char_p,
-                 ctypes.POINTER(C2paSignerInfo),
-                 ctypes.c_char_p],
-                ctypes.c_void_p)
 
 # Set up Reader and Builder function prototypes
 _setup_function(_lib.c2pa_reader_from_stream,
@@ -600,31 +593,61 @@ def sign_file(
         data_dir: Optional directory to write binary resources to
 
     Returns:
-        Result information as a JSON string
+        The signed manifest as a JSON string
 
     Raises:
         C2paError: If there was an error signing the file
         C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
+        C2paError.NotSupported: If the file type cannot be determined
     """
-    # Store encoded strings as attributes of signer_info to keep them alive
     try:
-        signer_info._source_str = str(source_path).encode('utf-8')
-        signer_info._dest_str = str(dest_path).encode('utf-8')
-        signer_info._manifest_str = manifest.encode('utf-8')
-        signer_info._data_dir_str = str(data_dir).encode(
-            'utf-8') if data_dir else None
-    except UnicodeError as e:
-        raise C2paError.Encoding(
-            f"Invalid UTF-8 characters in input strings: {str(e)}")
+        # Create a signer from the signer info
+        signer = Signer.from_info(signer_info)
 
-    result = _lib.c2pa_sign_file(
-        signer_info._source_str,
-        signer_info._dest_str,
-        signer_info._manifest_str,
-        ctypes.byref(signer_info),
-        signer_info._data_dir_str
-    )
-    return _parse_operation_result_for_error(result)
+        # Create a builder from the manifest
+        builder = Builder(manifest)
+
+        # Open source and destination files
+        with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
+            # Get the MIME type from the file extension
+            mime_type = mimetypes.guess_type(str(source_path))[0]
+            if not mime_type:
+                raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+
+            # Sign the file using the builder
+            manifest_bytes = builder.sign(
+                signer=signer,
+                format=mime_type,
+                source=source_file,
+                dest=dest_file
+            )
+
+            # If we have manifest bytes and a data directory, write them
+            if manifest_bytes and data_dir:
+                manifest_path = os.path.join(str(data_dir), 'manifest.json')
+                with open(manifest_path, 'wb') as f:
+                    f.write(manifest_bytes)
+
+            # Read the signed manifest from the destination file
+            with Reader(dest_path) as reader:
+                return reader.json()
+
+    except Exception as e:
+        # Clean up destination file if it exists and there was an error
+        if os.path.exists(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass  # Ignore cleanup errors
+
+        # Re-raise the error
+        raise C2paError(f"Error signing file: {str(e)}")
+    finally:
+        # Ensure resources are cleaned up
+        if 'builder' in locals():
+            builder.close()
+        if 'signer' in locals():
+            signer.close()
 
 
 class Stream:
@@ -958,7 +981,7 @@ class Reader:
 
             path = str(format_or_path)
             mime_type = mimetypes.guess_type(
-                path)[0] or 'application/octet-stream'
+                path)[0]
 
             # Keep mime_type string alive
             try:

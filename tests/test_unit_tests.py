@@ -19,7 +19,7 @@ from unittest.mock import mock_open, patch
 import ctypes
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file
 
 PROJECT_PATH = os.getcwd()
 
@@ -667,7 +667,7 @@ class TestStream(unittest.TestCase):
         self.assertEqual(flush_cb(None), -1)
 
 
-class TestAPI(unittest.TestCase):
+class TestLegacyAPI(unittest.TestCase):
     def setUp(self):
         self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -704,6 +704,74 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(file_data["active_manifest"], expected_manifest_id)
         self.assertIn("manifests", file_data)
         self.assertIn(expected_manifest_id, file_data["manifests"])
+
+    def test_sign_file(self):
+        """Test signing a file with C2PA manifest."""
+        # Set up test paths
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+        output_path = os.path.join(temp_data_dir, "signed_output.jpg")
+
+        # Load test certificates and key
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            key = key_file.read()
+
+        # Create signer info
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+
+        # Create a simple manifest
+        manifest = {
+            "claim_generator": "python_internals_test",
+            "claim_generator_info": [{
+                "name": "python_internals_test",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Signed Image",
+            "ingredients": [],
+            "assertions": [
+                {'label': 'stds.schema-org.CreativeWork',
+                    'data': {
+                        '@context': 'http://schema.org/',
+                        '@type': 'CreativeWork',
+                        'author': [
+                            {'@type': 'Person',
+                                'name': 'Test Author'
+                             }
+                        ]
+                    },
+                    'kind': 'Json'
+                 }
+            ]
+        }
+
+        # Convert manifest to JSON string
+        manifest_json = json.dumps(manifest)
+
+        try:
+            # Sign the file
+            result_json = sign_file(
+                self.testPath,
+                output_path,
+                manifest_json,
+                signer_info,
+                temp_data_dir
+            )
+
+            print("Signed manifest:")
+            print(result_json)
+
+        finally:
+            # Clean up
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
 
 if __name__ == '__main__':
