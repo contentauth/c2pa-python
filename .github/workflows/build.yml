@@ -433,7 +433,7 @@ jobs:
         with:
           packages-dir: dist
           # Uncomment to use TestPyPI
-          repository-url: https://test.pypi.org/legacy/
+          # repository-url: https://test.pypi.org/legacy/
           verbose: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
           skip-existing: true
