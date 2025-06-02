@@ -251,7 +251,7 @@ jobs:
       architecture: ${{ matrix.target }}
       artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
-      c2pa-version: "c2pa-v0.55.0"
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
