@@ -17,9 +17,13 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 import ctypes
+import warnings
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
 from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file
+
+# Suppress deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 PROJECT_PATH = os.getcwd()
 

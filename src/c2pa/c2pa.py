@@ -534,6 +534,15 @@ def read_file(path: Union[str, Path],
               data_dir: Union[str, Path]) -> str:
     """Read a C2PA manifest from a file.
 
+    .. deprecated:: 0.10.12
+        This function is deprecated and will be removed in a future version.
+        Please use the Reader class for reading C2PA metadata instead.
+        Example:
+            ```python
+            with Reader(path) as reader:
+                manifest_json = reader.json()
+            ```
+
     Args:
         path: Path to the file to read
         data_dir: Directory to write binary resources to
@@ -544,6 +553,13 @@ def read_file(path: Union[str, Path],
     Raises:
         C2paError: If there was an error reading the file
     """
+    warnings.warn(
+        "The read_file function is deprecated and will be removed in a future version. "
+        "Please use the Reader class for reading C2PA metadata instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     container = _StringContainer()
 
     container._path_str = str(path).encode('utf-8')
