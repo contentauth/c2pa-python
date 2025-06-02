@@ -682,7 +682,7 @@ class TestAPI(unittest.TestCase):
 
         ingredient_json_with_dir = read_ingredient_file(self.testPath, temp_data_dir)
 
-        # Parse the JSON and verify specific fields
+        # Parse the JSON and verify specific ingredient fields
         ingredient_data = json.loads(ingredient_json_with_dir)
         self.assertEqual(ingredient_data["title"], "C.jpg")
         self.assertEqual(ingredient_data["format"], "image/jpeg")
