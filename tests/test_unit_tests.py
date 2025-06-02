@@ -674,6 +674,16 @@ class TestLegacyAPI(unittest.TestCase):
         # That file has C2PA metadata, so there is something to read
         self.testPath = os.path.join(self.data_dir, "C.jpg")
 
+        # Create temp directory for tests
+        self.temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(self.temp_data_dir, exist_ok=True)
+
+    def tearDown(self):
+        """Clean up temporary files after each test."""
+        if os.path.exists(self.temp_data_dir):
+            import shutil
+            shutil.rmtree(self.temp_data_dir)
+
     def test_read_ingredient_file(self):
         """Test reading a C2PA ingredient from a file."""
         # Test reading ingredient from file with data_dir
