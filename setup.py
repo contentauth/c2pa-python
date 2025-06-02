@@ -11,6 +11,7 @@ def get_version():
     return pyproject["project"]["version"]
 
 VERSION = get_version()
+PACKAGE_NAME = "c2pa-python"  # Define package name as a constant
 
 # Define platform to library extension mapping (for reference only)
 PLATFORM_EXTENSIONS = {
@@ -155,7 +156,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
     if not available_platforms:
         print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
         setup(
-            name="c2pa-python",
+            name=PACKAGE_NAME,
             version=VERSION,
             package_dir={"": "src"},
             packages=find_namespace_packages(where="src"),
@@ -184,7 +185,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
 
             # Build the wheel
             setup(
-                name="c2pa-python",
+                name=PACKAGE_NAME,
                 version=VERSION,
                 package_dir={"": "src"},
                 packages=find_namespace_packages(where="src"),
@@ -209,7 +210,7 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
 
 # For sdist and development installation
 setup(
-    name="c2pa-python",
+    name=PACKAGE_NAME,
     version=VERSION,
     package_dir={"": "src"},
     packages=find_namespace_packages(where="src"),
