@@ -98,9 +98,8 @@ jobs:
           # Download native artifacts
           Write-Host "Starting artifact download process..."
           Write-Host "C2PA_VERSION: $env:C2PA_VERSION"
-          Write-Host "Current directory: $(Get-Location)"
 
-          python -v scripts/download_artifacts.py $C2PA_VERSION
+          python scripts/download_artifacts.py $C2PA_VERSION
 
           Write-Host "Artifacts directory contents:"
           Get-ChildItem -Recurse -Path artifacts
