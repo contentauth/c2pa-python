@@ -530,11 +530,35 @@ def load_settings(settings: str, format: str = "json") -> None:
             raise C2paError(error)
 
 
+def read_ingredient_file(
+        path: Union[str, Path], data_dir: Union[str, Path]) -> str:
+    """Read a C2PA ingredient from a file.
+
+    Args:
+        path: Path to the file to read
+        data_dir: Directory to write binary resources to
+
+    Returns:
+        The ingredient as a JSON string
+
+    Raises:
+        C2paError: If there was an error reading the file
+    """
+    container = _StringContainer()
+
+    container._path_str = str(path).encode('utf-8')
+    container._data_dir_str = str(data_dir).encode('utf-8')
+
+    result = _lib.c2pa_read_ingredient_file(
+        container._path_str, container._data_dir_str)
+    return _parse_operation_result_for_error(result)
+
+
 def read_file(path: Union[str, Path],
               data_dir: Union[str, Path]) -> str:
     """Read a C2PA manifest from a file.
 
-    .. deprecated:: 0.10.12
+    .. deprecated:: 0.10.0
         This function is deprecated and will be removed in a future version.
         Please use the Reader class for reading C2PA metadata instead.
         Example:
@@ -569,30 +593,6 @@ def read_file(path: Union[str, Path],
     return _parse_operation_result_for_error(result)
 
 
-def read_ingredient_file(
-        path: Union[str, Path], data_dir: Union[str, Path]) -> str:
-    """Read a C2PA ingredient from a file.
-
-    Args:
-        path: Path to the file to read
-        data_dir: Directory to write binary resources to
-
-    Returns:
-        The ingredient as a JSON string
-
-    Raises:
-        C2paError: If there was an error reading the file
-    """
-    container = _StringContainer()
-
-    container._path_str = str(path).encode('utf-8')
-    container._data_dir_str = str(data_dir).encode('utf-8')
-
-    result = _lib.c2pa_read_ingredient_file(
-        container._path_str, container._data_dir_str)
-    return _parse_operation_result_for_error(result)
-
-
 def sign_file(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
@@ -602,7 +602,7 @@ def sign_file(
 ) -> str:
     """Sign a file with a C2PA manifest.
 
-    .. deprecated:: 0.10.12
+    .. deprecated:: 0.10.0
         This function is deprecated and will be removed in a future version.
         Please use the Builder class for signing and the Reader class for reading signed data instead.
 

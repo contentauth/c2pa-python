@@ -673,6 +673,10 @@ class TestStream(unittest.TestCase):
 
 class TestLegacyAPI(unittest.TestCase):
     def setUp(self):
+        # Filter specific deprecation warnings for legacy API tests
+        warnings.filterwarnings("ignore", message="The read_file function is deprecated")
+        warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
+        
         self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
 
         # That file has C2PA metadata, so there is something to read
