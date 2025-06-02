@@ -1,5 +1,8 @@
 name: Build
 
+env:
+  C2PA_VERSION: "c2pa-v0.55.0"  # This should be updated to match the version in c2pa-version.txt
+
 on:
   pull_request:
     types:
@@ -45,11 +48,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Read C2PA version
-        id: read-version
-        shell: bash
-        run: echo "version=$(cat c2pa-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -71,7 +69,7 @@ jobs:
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          C2PA_VERSION: ${{ steps.read-version.outputs.version }}
+          C2PA_VERSION: ${{ env.C2PA_VERSION }}
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
@@ -103,14 +101,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Read C2PA version
-        id: read-version
-        shell: pwsh
-        run: |
-          $version = Get-Content c2pa-version.txt -Raw
-          $version = $version.Trim()
-          echo "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -145,7 +135,7 @@ jobs:
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          C2PA_VERSION: ${{ steps.read-version.outputs.version }}
+          C2PA_VERSION: ${{ env.C2PA_VERSION }}
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
