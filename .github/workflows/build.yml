@@ -25,8 +25,20 @@ permissions:
   actions: read
 
 jobs:
+  read-version:
+    name: Read C2PA version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version from file
+        id: read-version
+        run: echo "version=$(cat c2pa-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
+
   tests-unix:
     name: Unit tests for developer setup (Unix)
+    needs: read-version
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -36,7 +48,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     outputs:
-      version: "c2pa-v0.55.0"
+      version: ${{ needs.read-version.outputs.version }}
 
     strategy:
       fail-fast: false
@@ -68,11 +80,10 @@ jobs:
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          C2PA_VERSION: ${{ env.C2PA_VERSION }}
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python3 scripts/download_artifacts.py ${{ env.C2PA_VERSION }}
+          python3 scripts/download_artifacts.py ${{ needs.read-version.outputs.version }}
 
       - name: Install package in development mode
         run: |
@@ -88,6 +99,7 @@ jobs:
 
   tests-windows:
     name: Unit tests for developer setup (Windows)
+    needs: read-version
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -97,7 +109,7 @@ jobs:
 
     runs-on: windows-latest
     outputs:
-      version: "c2pa-v0.55.0"
+      version: ${{ needs.read-version.outputs.version }}
 
     steps:
       - name: Checkout repository
@@ -136,11 +148,10 @@ jobs:
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          C2PA_VERSION: ${{ env.C2PA_VERSION }}
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python scripts\download_artifacts.py ${{ env.C2PA_VERSION }}
+          python scripts\download_artifacts.py ${{ needs.read-version.outputs.version }}
 
       - name: Install package in development mode
         run: |
@@ -244,7 +255,7 @@ jobs:
       architecture: ${{ matrix.target }}
       artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
-      c2pa-version: ${{ env.C2PA_VERSION }}
+      c2pa-version: ${{ needs.read-version.outputs.version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
