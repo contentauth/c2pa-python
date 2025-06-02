@@ -1,8 +1,5 @@
 name: Build
 
-env:
-  C2PA_VERSION: "c2pa-v0.55.0"  # This should be updated to match the version in c2pa-version.txt
-
 on:
   pull_request:
     types:
@@ -38,6 +35,8 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ${{ matrix.os }}
+    outputs:
+      version: "c2pa-v0.55.0"
 
     strategy:
       fail-fast: false
@@ -97,6 +96,8 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: windows-latest
+    outputs:
+      version: "c2pa-v0.55.0"
 
     steps:
       - name: Checkout repository
@@ -162,7 +163,7 @@ jobs:
       architecture: ${{ matrix.target }}
       artifact-name: wheels-linux-${{ matrix.target }}
       runs-on: ${{ matrix.runs-on }}
-      c2pa-version: ${{ env.C2PA_VERSION }}
+      c2pa-version: ${{ needs.tests-unix.outputs.version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -321,7 +322,7 @@ jobs:
       python-version: "3.10"
       artifact-name: wheels-macos-${{ matrix.target }}
       runs-on: macos-latest
-      c2pa-version: ${{ env.C2PA_VERSION }}
+      c2pa-version: ${{ needs.tests-unix.outputs.version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
