@@ -1566,8 +1566,6 @@ class TestBuilderWithThreads(unittest.TestCase):
         assert builder._builder is not None
 
         # Define paths for test files
-        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
-        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
         cloud_path = os.path.join(self.data_dir, "cloud.jpg")
 
         # Thread synchronization
@@ -1982,10 +1980,6 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Test creating builder from JSON
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
-
-        # Define paths for test files
-        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
-        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
 
         # Thread synchronization
         add_errors = []
