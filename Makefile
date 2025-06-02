@@ -63,7 +63,7 @@ test-local-sdist-build:
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
 	# Build sdist package
-	python -m build --sdist
+	python setup.py sdist
 	# Install local build in venv
 	pip install $$(ls dist/*.tar.gz)
 	# Verify installation in local venv
