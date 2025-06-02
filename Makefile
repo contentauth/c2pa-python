@@ -1,5 +1,8 @@
 # For Python bindings ===========================================================
 
+# Version of C2PA to use
+C2PA_VERSION := $(shell c2pa-version.txt)
+
 # Start from clean env: Delete `.venv`, then `python3 -m venv .venv`
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
 # Run Pytest tests in virtualenv: .venv/bin/pytest tests/test_unit_tests.py -v
@@ -37,7 +40,7 @@ test-local-wheel-build:
 	# Clean any existing builds
 	rm -rf build/ dist/
 	# Download artifacts and place them where they should go
-	python scripts/download_artifacts.py c2pa-v0.55.0
+	python scripts/download_artifacts.py $(C2PA_VERSION)
 	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
@@ -55,7 +58,7 @@ test-local-sdist-build:
 	# Clean any existing builds
 	rm -rf build/ dist/
 	# Download artifacts and place them where they should go
-	python scripts/download_artifacts.py c2pa-v0.55.0
+	python scripts/download_artifacts.py $(C2PA_VERSION)
 	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
@@ -85,4 +88,4 @@ format:
 
 # Downloads the required native artifacts for the specified version
 download-native-artifacts:
-	python3 scripts/download_artifacts.py c2pa-v0.55.0
+	python3 scripts/download_artifacts.py $(C2PA_VERSION)

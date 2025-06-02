@@ -16,6 +16,9 @@ on:
         required: true
         type: string
         default: 'ubuntu-latest'
+      c2pa-version:
+        required: true
+        type: string
     secrets:
       github-token:
         required: true
@@ -27,6 +30,7 @@ permissions:
 
 env:
   GITHUB_TOKEN: ${{ secrets.github-token }}
+  C2PA_VERSION: ${{ inputs.c2pa-version }}
 
 jobs:
   build:
@@ -59,7 +63,7 @@ jobs:
             cd /io &&
             /opt/python/cp310-cp310/bin/pip install -r requirements.txt -r requirements-dev.txt &&
             /opt/python/cp310-cp310/bin/pip install toml &&
-            C2PA_LIBS_PLATFORM=\"${{ inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}\" /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py c2pa-v0.55.0 &&
+            C2PA_LIBS_PLATFORM=\"${{ inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}\" /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py $C2PA_VERSION &&
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
               \${PYBIN}/pip install --upgrade pip wheel &&
               \${PYBIN}/pip install toml &&
@@ -92,7 +96,7 @@ jobs:
           pip install wheel
 
           # Download native artifacts
-          python scripts/download_artifacts.py c2pa-v0.55.0
+          python scripts/download_artifacts.py $C2PA_VERSION
 
           # Build wheel
           python setup.py bdist_wheel --plat-name win_amd64
@@ -111,7 +115,7 @@ jobs:
           pip install wheel
 
           # Download native artifacts
-          python scripts/download_artifacts.py c2pa-v0.55.0
+          python scripts/download_artifacts.py $C2PA_VERSION
 
           # Build wheel
           python setup.py bdist_wheel --plat-name macosx_11_0_arm64

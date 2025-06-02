@@ -1,5 +1,8 @@
 name: Build
 
+env:
+  C2PA_VERSION: ${{ steps.read-version.outputs.version }}
+
 on:
   pull_request:
     types:
@@ -45,6 +48,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Read C2PA version
+        id: read-version
+        shell: bash
+        run: echo "version=$(cat c2pa-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -69,7 +77,7 @@ jobs:
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python3 scripts/download_artifacts.py c2pa-v0.55.0
+          python3 scripts/download_artifacts.py ${{ env.C2PA_VERSION }}
 
       - name: Install package in development mode
         run: |
@@ -97,6 +105,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Read C2PA version
+        id: read-version
+        shell: pwsh
+        run: |
+          $version = Get-Content c2pa-version.txt -Raw
+          $version = $version.Trim()
+          echo "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -134,7 +150,7 @@ jobs:
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python scripts\download_artifacts.py c2pa-v0.55.0
+          python scripts\download_artifacts.py ${{ env.C2PA_VERSION }}
 
       - name: Install package in development mode
         run: |
@@ -157,6 +173,7 @@ jobs:
       architecture: ${{ matrix.target }}
       artifact-name: wheels-linux-${{ matrix.target }}
       runs-on: ${{ matrix.runs-on }}
+      c2pa-version: ${{ env.C2PA_VERSION }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -237,6 +254,7 @@ jobs:
       architecture: ${{ matrix.target }}
       artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
+      c2pa-version: ${{ env.C2PA_VERSION }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -314,6 +332,7 @@ jobs:
       python-version: "3.10"
       artifact-name: wheels-macos-${{ matrix.target }}
       runs-on: macos-latest
+      c2pa-version: ${{ env.C2PA_VERSION }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
