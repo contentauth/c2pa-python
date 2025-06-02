@@ -99,20 +99,16 @@ jobs:
           Write-Host "Starting artifact download process..."
           Write-Host "C2PA_VERSION: $env:C2PA_VERSION"
           Write-Host "Current directory: $(Get-Location)"
-          Write-Host "Directory contents before download:"
-          Get-ChildItem -Recurse -Depth 1
 
           python -v scripts/download_artifacts.py $C2PA_VERSION
 
-          Write-Host "Directory contents after download:"
-          Get-ChildItem -Recurse -Depth 1
           Write-Host "Artifacts directory contents:"
           Get-ChildItem -Recurse -Path artifacts
           Write-Host "src/c2pa/libs directory contents:"
           Get-ChildItem -Recurse -Path src/c2pa/libs
 
           # Build wheel
-          python setup.py bdist_wheel --plat-name win_amd64
+          # python setup.py bdist_wheel --plat-name win_amd64
 
       - name: Build macOS wheel (Apple Silicon)
         if: runner.os == 'macOS' && runner.arch == 'arm64'
