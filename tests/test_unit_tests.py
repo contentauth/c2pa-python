@@ -19,7 +19,7 @@ from unittest.mock import mock_open, patch
 import ctypes
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file
+from c2pa.c2pa import Stream, read_ingredient_file, read_file
 
 PROJECT_PATH = os.getcwd()
 
@@ -682,11 +682,28 @@ class TestAPI(unittest.TestCase):
 
         ingredient_json_with_dir = read_ingredient_file(self.testPath, temp_data_dir)
 
-        # Parse the JSON and verify specific ingredient fields
+        # Verify some fields
         ingredient_data = json.loads(ingredient_json_with_dir)
         self.assertEqual(ingredient_data["title"], "C.jpg")
         self.assertEqual(ingredient_data["format"], "image/jpeg")
         self.assertIn("thumbnail", ingredient_data)
+
+    def test_read_file(self):
+        """Test reading a C2PA ingredient from a file."""
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+
+        # self.testPath has C2PA metadata to read
+        file_json_with_dir = read_file(self.testPath, temp_data_dir)
+
+        # Parse the JSON and verify specific fields
+        file_data = json.loads(file_json_with_dir)
+        expected_manifest_id = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
+
+        # Verify some fields
+        self.assertEqual(file_data["active_manifest"], expected_manifest_id)
+        self.assertIn("manifests", file_data)
+        self.assertIn(expected_manifest_id, file_data["manifests"])
 
 
 if __name__ == '__main__':

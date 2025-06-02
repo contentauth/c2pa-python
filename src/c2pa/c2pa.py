@@ -537,12 +537,12 @@ def load_settings(settings: str, format: str = "json") -> None:
 
 
 def read_file(path: Union[str, Path],
-              data_dir: Optional[Union[str, Path]] = None) -> str:
+              data_dir: Union[str, Path]) -> str:
     """Read a C2PA manifest from a file.
 
     Args:
         path: Path to the file to read
-        data_dir: Optional directory to write binary resources to
+        data_dir: Directory to write binary resources to
 
     Returns:
         The manifest as a JSON string
@@ -553,20 +553,19 @@ def read_file(path: Union[str, Path],
     container = _StringContainer()
 
     container._path_str = str(path).encode('utf-8')
-    container._data_dir_str = str(data_dir).encode(
-        'utf-8') if data_dir else None
+    container._data_dir_str = str(data_dir).encode('utf-8')
 
     result = _lib.c2pa_read_file(container._path_str, container._data_dir_str)
     return _parse_operation_result_for_error(result)
 
 
 def read_ingredient_file(
-        path: Union[str, Path], data_dir: Optional[Union[str, Path]] = None) -> str:
+        path: Union[str, Path], data_dir: Union[str, Path]) -> str:
     """Read a C2PA ingredient from a file.
 
     Args:
         path: Path to the file to read
-        data_dir: Optional directory to write binary resources to
+        data_dir: Directory to write binary resources to
 
     Returns:
         The ingredient as a JSON string
@@ -577,8 +576,7 @@ def read_ingredient_file(
     container = _StringContainer()
 
     container._path_str = str(path).encode('utf-8')
-    container._data_dir_str = str(data_dir).encode(
-        'utf-8') if data_dir else None
+    container._data_dir_str = str(data_dir).encode('utf-8')
 
     result = _lib.c2pa_read_ingredient_file(
         container._path_str, container._data_dir_str)
