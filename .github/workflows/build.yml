@@ -29,12 +29,12 @@ jobs:
     name: Read C2PA version
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.read-version.outputs.version }}
+      c2pa-native-version: ${{ steps.read-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Read version from file
         id: read-version
-        run: echo "version=$(cat c2pa-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
+        run: echo "version=$(cat c2pa-native-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
 
   tests-unix:
     name: Unit tests for developer setup (Unix)
@@ -48,7 +48,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     outputs:
-      version: ${{ needs.read-version.outputs.version }}
+      version: ${{ needs.read-version.outputs.c2pa-native-version }}
 
     strategy:
       fail-fast: false
@@ -83,7 +83,7 @@ jobs:
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python3 scripts/download_artifacts.py ${{ needs.read-version.outputs.version }}
+          python3 scripts/download_artifacts.py ${{ needs.read-version.outputs.c2pa-native-version }}
 
       - name: Install package in development mode
         run: |
@@ -109,7 +109,7 @@ jobs:
 
     runs-on: windows-latest
     outputs:
-      version: ${{ needs.read-version.outputs.version }}
+      version: ${{ needs.read-version.outputs.c2pa-native-version }}
 
     steps:
       - name: Checkout repository
@@ -151,7 +151,7 @@ jobs:
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python scripts\download_artifacts.py ${{ needs.read-version.outputs.version }}
+          python scripts\download_artifacts.py ${{ needs.read-version.outputs.c2pa-native-version }}
 
       - name: Install package in development mode
         run: |
@@ -255,7 +255,7 @@ jobs:
       architecture: ${{ matrix.target }}
       artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
-      c2pa-version: ${{ needs.read-version.outputs.version }}
+      c2pa-version: ${{ needs.tests-windows.outputs.version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
