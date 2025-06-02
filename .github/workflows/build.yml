@@ -25,8 +25,20 @@ permissions:
   actions: read
 
 jobs:
+  read-version:
+    name: Read C2PA version
+    runs-on: ubuntu-latest
+    outputs:
+      c2pa-native-version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version from file
+        id: read-version
+        run: echo "version=$(cat c2pa-native-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
+
   tests-unix:
     name: Unit tests for developer setup (Unix)
+    needs: read-version
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -69,7 +81,7 @@ jobs:
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python3 scripts/download_artifacts.py c2pa-v0.55.0
+          python3 scripts/download_artifacts.py ${{ needs.read-version.outputs.c2pa-native-version }}
 
       - name: Install package in development mode
         run: |
@@ -85,6 +97,7 @@ jobs:
 
   tests-windows:
     name: Unit tests for developer setup (Windows)
+    needs: read-version
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -134,7 +147,7 @@ jobs:
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
-          python scripts\download_artifacts.py c2pa-v0.55.0
+          python scripts\download_artifacts.py ${{ needs.read-version.outputs.c2pa-native-version }}
 
       - name: Install package in development mode
         run: |
@@ -151,12 +164,13 @@ jobs:
   build-linux-wheel:
     name: Build Linux wheel
     uses: ./.github/workflows/build-wheel.yml
-    needs: tests-unix
+    needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
       artifact-name: wheels-linux-${{ matrix.target }}
       runs-on: ${{ matrix.runs-on }}
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -231,12 +245,13 @@ jobs:
   build-windows-wheel:
     name: Build Windows wheel
     uses: ./.github/workflows/build-wheel.yml
-    needs: tests-windows
+    needs: [tests-windows, read-version]
     with:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
       artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -309,11 +324,12 @@ jobs:
   build-macos-wheel:
     name: Build macOS wheel
     uses: ./.github/workflows/build-wheel.yml
-    needs: tests-unix
+    needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
       artifact-name: wheels-macos-${{ matrix.target }}
       runs-on: macos-latest
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -402,7 +418,7 @@ jobs:
       - name: Install dev dependencies for build
         run: pip install -r requirements-dev.txt
       - name: Build sdist
-        run: python setup.py sdist
+        run: python -m build --sdist
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
@@ -433,7 +449,7 @@ jobs:
         with:
           packages-dir: dist
           # Uncomment to use TestPyPI
-          # repository-url: https://test.pypi.org/legacy/
+          repository-url: https://test.pypi.org/legacy/
           verbose: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
           skip-existing: true
