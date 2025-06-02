@@ -1,8 +1,5 @@
 name: Build
 
-env:
-  C2PA_VERSION: ${{ steps.read-version.outputs.version }}
-
 on:
   pull_request:
     types:
@@ -74,6 +71,7 @@ jobs:
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          C2PA_VERSION: ${{ steps.read-version.outputs.version }}
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
@@ -147,6 +145,7 @@ jobs:
       - name: Download native artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          C2PA_VERSION: ${{ steps.read-version.outputs.version }}
         run: |
           # Ensure the token is being used
           echo "Using GitHub token for authentication"
@@ -452,7 +451,7 @@ jobs:
         with:
           packages-dir: dist
           # Uncomment to use TestPyPI
-          # repository-url: https://test.pypi.org/legacy/
+          repository-url: https://test.pypi.org/legacy/
           verbose: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
           skip-existing: true
