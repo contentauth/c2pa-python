@@ -689,7 +689,5 @@ class TestAPI(unittest.TestCase):
         self.assertIn("thumbnail", ingredient_data)
 
 
-
-
 if __name__ == '__main__':
     unittest.main()
