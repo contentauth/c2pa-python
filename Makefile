@@ -32,6 +32,10 @@ test:
 	python3 ./tests/test_unit_tests.py
 	python3 ./tests/test_unit_tests_threaded.py
 
+# Runs benchmarks in the venv
+benchmark:
+	python -m pytest tests/benchmark.py -v
+
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
 test-local-wheel-build:

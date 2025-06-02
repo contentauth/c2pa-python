@@ -1765,8 +1765,9 @@ class TestBuilderWithThreads(unittest.TestCase):
             nonlocal completed_threads
             try:
                 file_path = os.path.join(reading_dir, file_name)
-                ingredient_json = f'{
-                    {"title": "Test Ingredient Thread {thread_id} - {file_name}"}}'
+                ingredient_json = json.dumps({
+                    "title": f"Test Ingredient Thread {thread_id} - {file_name}"
+                })
 
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient(ingredient_json, "image/jpeg", f)
@@ -1889,8 +1890,9 @@ class TestBuilderWithThreads(unittest.TestCase):
                 await start_barrier.wait()
 
                 file_path = os.path.join(reading_dir, file_name)
-                ingredient_json = f'{
-                    {"title": "Test Ingredient Task {task_id} - {file_name}"}}'
+                ingredient_json = json.dumps({
+                    "title": f"Test Ingredient Task {task_id} - {file_name}"
+                })
 
                 with open(file_path, 'rb') as f:
                     builder.add_ingredient(ingredient_json, "image/jpeg", f)
@@ -2008,9 +2010,9 @@ class TestBuilderWithThreads(unittest.TestCase):
         threads = []
         for i in range(1, 6):
             # Create unique manifest JSON for each thread
-            ingredient_json = f'''{{
-                "title": "Test Ingredient Thread {i}"
-            }}'''
+            ingredient_json = json.dumps({
+                "title": f"Test Ingredient Thread {i}"
+            })
 
             thread = threading.Thread(
                 target=add_ingredient,
@@ -2125,12 +2127,12 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Add each ingredient
                 for i, file_name in enumerate(ingredient_files, 1):
                     file_path = os.path.join(reading_dir, file_name)
-                    ingredient_json = f'{
-                        {"title": "Thread {thread_id} Ingredient {i} - {file_name}"}}'
+                    ingredient_json = json.dumps({
+                        "title": f"Thread {thread_id} Ingredient {i} - {file_name}"
+                    })
 
                     with open(file_path, 'rb') as f:
-                        builder.add_ingredient(
-                            ingredient_json, "image/jpeg", f)
+                        builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
                 # Select a random file for signing
                 sign_file = random.choice(all_files)
