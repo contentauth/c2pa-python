@@ -47,8 +47,6 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ${{ matrix.os }}
-    outputs:
-      version: ${{ needs.read-version.outputs.c2pa-native-version }}
 
     strategy:
       fail-fast: false
@@ -108,8 +106,6 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: windows-latest
-    outputs:
-      version: ${{ needs.read-version.outputs.c2pa-native-version }}
 
     steps:
       - name: Checkout repository
@@ -168,13 +164,13 @@ jobs:
   build-linux-wheel:
     name: Build Linux wheel
     uses: ./.github/workflows/build-wheel.yml
-    needs: tests-unix
+    needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
       artifact-name: wheels-linux-${{ matrix.target }}
       runs-on: ${{ matrix.runs-on }}
-      c2pa-version: ${{ needs.tests-unix.outputs.version }}
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -249,13 +245,13 @@ jobs:
   build-windows-wheel:
     name: Build Windows wheel
     uses: ./.github/workflows/build-wheel.yml
-    needs: tests-windows
+    needs: [tests-windows, read-version]
     with:
       python-version: "3.10"
       architecture: ${{ matrix.target }}
       artifact-name: wheels-windows-${{ matrix.target }}
       runs-on: windows-latest
-      c2pa-version: ${{ needs.tests-windows.outputs.version }}
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -328,12 +324,12 @@ jobs:
   build-macos-wheel:
     name: Build macOS wheel
     uses: ./.github/workflows/build-wheel.yml
-    needs: tests-unix
+    needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
       artifact-name: wheels-macos-${{ matrix.target }}
       runs-on: macos-latest
-      c2pa-version: ${{ needs.tests-unix.outputs.version }}
+      c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
