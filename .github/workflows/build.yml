@@ -418,7 +418,7 @@ jobs:
       - name: Install dev dependencies for build
         run: pip install -r requirements-dev.txt
       - name: Build sdist
-        run: python setup.py sdist
+        run: python -m build --sdist
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
