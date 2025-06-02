@@ -19,7 +19,7 @@ from unittest.mock import mock_open, patch
 import ctypes
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream
+from c2pa.c2pa import Stream, read_ingredient_file
 
 PROJECT_PATH = os.getcwd()
 
@@ -27,7 +27,7 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 
 class TestC2paSdk(unittest.TestCase):
-    def test_version(self):
+    def test_sdk_version(self):
         self.assertIn("0.55.0", sdk_version())
 
 
@@ -529,7 +529,6 @@ class TestBuilder(unittest.TestCase):
 
         builder.close()
 
-
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
@@ -666,6 +665,30 @@ class TestStream(unittest.TestCase):
         stream.close()
         # Flushing closed stream should return -1
         self.assertEqual(flush_cb(None), -1)
+
+
+class TestAPI(unittest.TestCase):
+    def setUp(self):
+        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
+
+        # That file has C2PA metadata, so there is something to read
+        self.testPath = os.path.join(self.data_dir, "C.jpg")
+
+    def test_read_ingredient_file(self):
+        """Test reading a C2PA ingredient from a file."""
+        # Test reading ingredient from file with data_dir
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+
+        ingredient_json_with_dir = read_ingredient_file(self.testPath, temp_data_dir)
+
+        # Parse the JSON and verify specific fields
+        ingredient_data = json.loads(ingredient_json_with_dir)
+        self.assertEqual(ingredient_data["title"], "C.jpg")
+        self.assertEqual(ingredient_data["format"], "image/jpeg")
+        self.assertIn("thumbnail", ingredient_data)
+
+
 
 
 if __name__ == '__main__':

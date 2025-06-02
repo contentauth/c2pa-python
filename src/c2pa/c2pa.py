@@ -496,7 +496,7 @@ def _parse_operation_result_for_error(
 
 def sdk_version() -> str:
     """
-    Returns the c2pa-rs version string, e.g., "0.49.5".
+    Returns the underlying c2pa-rs version string, e.g., "0.49.5".
     """
     vstr = version()
     # Example: "c2pa-c/0.49.5 c2pa-rs/0.49.5"
