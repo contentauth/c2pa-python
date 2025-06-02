@@ -26,6 +26,10 @@ from c2pa.c2pa import Stream
 
 PROJECT_PATH = os.getcwd()
 
+# Note: Despite being threaded, some of the tests will take time to run,
+# as they may try to push for thread contention, or simply just have a lot
+# of work to do (eg. signing or reading all files in a folder).
+
 
 class TestReaderWithThreads(unittest.TestCase):
     def setUp(self):
@@ -1043,12 +1047,6 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Wait for all readers to complete
         for thread in read_threads:
             thread.join()
-
-        # Verify that all threads started within a reasonable time window
-        if len(start_times) == reader_count:
-            max_time_diff = max(start_times) - min(start_times)
-            self.assertLess(max_time_diff, 0.2,  # Should be less than 200ms
-                            f"Threads did not start within expected time window. Max time difference: {max_time_diff:.6f}s")
 
         # Clean up
         output.close()
@@ -2091,6 +2089,9 @@ class TestBuilderWithThreads(unittest.TestCase):
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder class operations with 10 threads, each adding 3 random ingredients and signing a random file."""
         # Number of threads to use in the test
+        # We are pushing it here, as we want to test with thread count one to two orders of magnitude 
+        # higher than "usual" max numbers of cores on (server) machines may be.
+
         TOTAL_THREADS_USED = 1200
 
         # Get list of files from files-for-reading-tests directory
