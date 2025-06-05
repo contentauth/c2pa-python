@@ -13,27 +13,41 @@ This project provides a Python API for working with [C2PA](https://c2pa.org/) (C
 
 ```bash
 .
-├── .github/           # GitHub configuration files
-├── artifacts/         # Platform-specific libraries for building (per subfolder)
-│   └── linux_x86_64/ # Linux ARM64 libraries
-├── docs/             # Project documentation
-├── examples/         # Example scripts demonstrating usage
-├── scripts/          # Utility scripts (eg. artifacts download)
-├── src/             # Source code
-│   └── c2pa/        # Main package directory
-│       └── libs/    # Platform-specific libraries
-├── tests/           # Unit tests and benchmarks
-├── .gitignore       # Git ignore rules
-├── Makefile         # Build and development commands
-├── pyproject.toml   # Python project configuration
-├── requirements.txt # Python dependencies
-├── requirements-dev.txt # Development dependencies
-└── setup.py         # Package setup script
+├── .github/                  # GitHub configuration files
+├── artifacts/                # Platform-specific libraries for building (per subfolder)
+│   └── your_target_platform/ # Platform-specific artifacts
+├── docs/                     # Project documentation
+├── examples/                 # Example scripts demonstrating usage
+├── scripts/                  # Utility scripts (eg. artifacts download)
+├── src/                      # Source code
+│   └── c2pa/                 # Main package directory
+│       └── libs/             # Platform-specific libraries
+├── tests/                    # Unit tests and benchmarks
+├── .gitignore                # Git ignore rules
+├── Makefile                  # Build and development commands
+├── pyproject.toml            # Python project configuration
+├── requirements.txt          # Python dependencies
+├── requirements-dev.txt      # Development dependencies
+└── setup.py                  # Package setup script
+```
+
+## Package installation
+
+The c2pa-python package is published to PyPI. You can install it from there by running:
+
+```bash
+pip install c2pa-python
+```
+
+To use the module in your Python code, import like this:
+
+```python
+import c2pa
 ```
 
 ## Development Setup
 
-1. Create and activate a virtual environment:
+1. Create and activate a virtual environment with native dependencies:
 
 ```bash
 # Create virtual environment
