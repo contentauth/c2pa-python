@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=68.0.0", "wheel"]
+requires = ["setuptools>=68.0.0", "wheel", "toml>=0.10.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "c2pa-python"
-version = "0.10.0"
-requires-python = ">=3.8"
+version = "0.10.15"
+requires-python = ">=3.10"
 description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
 readme = { file = "README.md", content-type = "text/markdown" }
-license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+license = { text = "MIT OR Apache-2.0" }
 authors = [{ name = "Gavin Peacock", email = "gvnpeacock@adobe.com" }]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,18 +20,18 @@ maintainers = [
   {name = "Gavin Peacock", email = "gpeacock@adobe.com"}
 ]
 urls = {homepage = "https://contentauthenticity.org", repository = "https://github.com/contentauth/c2pa-python"}
-
-[project.optional-dependencies]
-test = [
-  "pytest < 5.0.0"
+dependencies = [
+    "wheel>=0.41.2",
+    "setuptools>=68.0.0",
+    "toml>=0.10.2",
+    "pytest>=7.4.0",
+    "cryptography>=41.0.0",
+    "requests>=2.0.0"
 ]
 
 [project.scripts]
 download-artifacts = "c2pa.build:download_artifacts"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/c2pa"]
-
-[tool.hatch.build.hooks.custom]
-path = "c2pa/build.py"
-
+# Workaround to prevent setuptools from automatically including invalid metadata
+[tool.setuptools]
+license-files = []

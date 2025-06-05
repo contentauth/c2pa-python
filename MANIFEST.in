@@ -1,3 +1,6 @@
-include src/c2pa/libs/*.dylib
-include src/c2pa/libs/*.dll
-include src/c2pa/libs/*.so
+include LICENSE-MIT
+include LICENSE-APACHE
+include README.md
+include requirements.txt
+include scripts/download_artifacts.py
+recursive-include src/c2pa *.py

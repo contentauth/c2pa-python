@@ -21,18 +21,22 @@ import sys
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-from c2pa import *
+import c2pa
 
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
-# set up paths to the files we we are using
+# Ensure the output directory exists
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+# Set up paths to the files we we are using
 testFile = os.path.join(fixtures_dir, "A.jpg")
 pemFile = os.path.join(fixtures_dir, "ps256.pub")
 keyFile = os.path.join(fixtures_dir, "ps256.pem")
 testOutputFile = os.path.join(output_dir, "dnt.jpg")
 
-# a little helper function to get a value from a nested dictionary
+# A little helper function to get a value from a nested dictionary
 from functools import reduce
 import operator
 def getitem(d, key):
@@ -55,9 +59,9 @@ def sign_ps256(data: bytes, key: bytes) -> bytes:
     )
     return signature
 
-# first create an asset with a do not train assertion
+# First create an asset with a do not train assertion
 
-# define a manifest with the do not train assertion
+# Define a manifest with the do not train assertion
 manifest_json = {
     "claim_generator_info": [{
         "name": "python_test",
@@ -92,34 +96,39 @@ ingredient_json = {
     }
 }
 
-# V2 signing api
+# V2 signing API example
 try:
-    # This could be implemented on a server using an HSM
+    # Read the private key and certificate files
     key = open(keyFile,"rb").read()
-    def sign(data: bytes) -> bytes:
-        print("data len = ", len(data))
-        #return ed25519_sign(data, key)
-        return sign_ps256(data, key)
-
     certs = open(pemFile,"rb").read()
 
-    import traceback
-    # Create a signer from a certificate pem file
-    try:
-        signer = create_signer(sign, C2paSigningAlg.PS256, certs, "http://timestamp.digicert.com")
-    except Exception as e:
-        print("An error occurred:")
-        traceback.print_exc()
-    builder = Builder(manifest_json)
+    # Create a signer using the new API
+    signer_info = c2pa.C2paSignerInfo(
+        alg=b"ps256",
+        sign_cert=certs,
+        private_key=key,
+        ta_url=b"http://timestamp.digicert.com"
+    )
+    signer = c2pa.Signer.from_info(signer_info)
 
-    builder.add_resource_file("thumbnail", fixtures_dir + "A_thumbnail.jpg")
+    # Create the builder
+    builder = c2pa.Builder(manifest_json)
 
-    builder.add_ingredient_file(ingredient_json, fixtures_dir + "A_thumbnail.jpg")
+    # Add the thumbnail resource using a stream
+    with open(fixtures_dir + "A_thumbnail.jpg", "rb") as thumbnail_file:
+        builder.add_resource("thumbnail", thumbnail_file)
+
+    # Add the ingredient using the correct method
+    with open(fixtures_dir + "A_thumbnail.jpg", "rb") as ingredient_file:
+        builder.add_ingredient(json.dumps(ingredient_json), "image/jpeg", ingredient_file)
 
     if os.path.exists(testOutputFile):
         os.remove(testOutputFile)
-        
-    result = builder.sign_file(signer, testFile, testOutputFile)
+
+    # Sign the file using the stream-based sign method
+    with open(testFile, "rb") as source_file:
+        with open(testOutputFile, "wb") as dest_file:
+            result = builder.sign(signer, "image/jpeg", source_file, dest_file)
 
 except Exception as err:
     sys.exit(err)
@@ -127,11 +136,12 @@ except Exception as err:
 print("V2: successfully added do not train manifest to file " + testOutputFile)
 
 
-# now verify the asset and check the manifest for a do not train assertion
+# now verify the asset and check the manifest for a do not train assertion...
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
-    reader = Reader.from_file(testOutputFile)
+    # Create reader using the current API
+    reader = c2pa.Reader(testOutputFile)
     manifest_store = json.loads(reader.json())
 
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -140,9 +150,11 @@ try:
             if getitem(assertion, ("data","entries","c2pa.ai_training","use")) == "notAllowed":
                 allowed = False
 
-    # get the ingredient thumbnail
+    # get the ingredient thumbnail and save it to a file using resource_to_stream
     uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
-    reader.resource_to_file(uri, output_dir + "thumbnail_v2.jpg")
+    with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
+        reader.resource_to_stream(uri, thumbnail_output)
+
 except Exception as err:
     sys.exit(err)
 
