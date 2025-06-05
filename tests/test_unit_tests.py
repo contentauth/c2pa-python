@@ -17,9 +17,13 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 import ctypes
+import warnings
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file
+
+# Suppress deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 PROJECT_PATH = os.getcwd()
 
@@ -27,7 +31,7 @@ testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
 
 
 class TestC2paSdk(unittest.TestCase):
-    def test_version(self):
+    def test_sdk_version(self):
         self.assertIn("0.55.0", sdk_version())
 
 
@@ -164,6 +168,9 @@ class TestBuilder(unittest.TestCase):
         self.signer = Signer.from_info(self.signer_info)
 
         self.testPath = os.path.join(self.data_dir, "C.jpg")
+        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
+        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
+        self.testPath4 = os.path.join(self.data_dir, "cloud.jpg")
 
         # Define a manifest as a dictionary
         self.manifestDefinition = {
@@ -183,11 +190,11 @@ class TestBuilder(unittest.TestCase):
                         'author': [
                             {'@type': 'Person',
                                 'name': 'Gavin Peacock'
-                            }
+                             }
                         ]
                     },
                     'kind': 'Json'
-                }
+                 }
             ]
         }
 
@@ -232,17 +239,6 @@ class TestBuilder(unittest.TestCase):
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
             output.close()
-
-    def test_builder_double_close(self):
-        """Test that multiple close calls are handled gracefully."""
-        builder = Builder(self.manifestDefinition)
-        # First close
-        builder.close()
-        # Second close should not raise an exception
-        builder.close()
-        # Verify builder is closed
-        with self.assertRaises(Error):
-            builder.set_no_embed()
 
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
@@ -307,6 +303,235 @@ class TestBuilder(unittest.TestCase):
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
 
+    def test_builder_double_close(self):
+        """Test that multiple close calls are handled gracefully."""
+        builder = Builder(self.manifestDefinition)
+        # First close
+        builder.close()
+        # Second close should not raise an exception
+        builder.close()
+        # Verify builder is closed
+        with self.assertRaises(Error):
+            builder.set_no_embed()
+
+    def test_builder_add_ingredient(self):
+        """Test Builder class operations with a real file."""
+        # Test creating builder from JSON
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients(self):
+        """Test Builder class operations with a real file."""
+        # Test creating builder from JSON
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test builder operations
+        builder.set_no_embed()
+        builder.set_remote_url("http://test.url")
+
+        # Test adding resource
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri", f)
+
+        # Test adding ingredient
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        # Test adding another ingredient
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
+
+    def test_builder_sign_with_ingredient(self):
+        """Test Builder class operations with a real file."""
+        # Test creating builder from JSON
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient
+        ingredient_json = '{"title": "Test Ingredient"}'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+
+        builder.close()
+
+    def test_builder_sign_with_ingredient_from_stream(self):
+        """Test Builder class operations with a real file using stream for ingredient."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient using stream
+        ingredient_json = '{"title": "Test Ingredient Stream"}'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient_from_stream(
+                ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(
+                first_ingredient["title"],
+                "Test Ingredient Stream")
+
+        builder.close()
+
+    def test_builder_sign_with_multiple_ingredient(self):
+        """Test Builder class operations with multiple ingredients."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Add first ingredient
+        ingredient_json1 = '{"title": "Test Ingredient 1"}'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json1, "image/jpeg", f)
+
+        # Add second ingredient
+        ingredient_json2 = '{"title": "Test Ingredient 2"}'
+        cloud_path = os.path.join(self.data_dir, "cloud.jpg")
+        with open(cloud_path, 'rb') as f:
+            builder.add_ingredient(ingredient_json2, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertEqual(len(active_manifest["ingredients"]), 2)
+
+            # Verify both ingredients exist in the array (order doesn't matter)
+            ingredient_titles = [ing["title"]
+                                 for ing in active_manifest["ingredients"]]
+            self.assertIn("Test Ingredient 1", ingredient_titles)
+            self.assertIn("Test Ingredient 2", ingredient_titles)
+
+        builder.close()
+
+    def test_builder_sign_with_multiple_ingredients_from_stream(self):
+        """Test Builder class operations with multiple ingredients using streams."""
+        # Test creating builder from JSON
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Add first ingredient using stream
+        ingredient_json1 = '{"title": "Test Ingredient Stream 1"}'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient_from_stream(
+                ingredient_json1, "image/jpeg", f)
+
+        # Add second ingredient using stream
+        ingredient_json2 = '{"title": "Test Ingredient Stream 2"}'
+        cloud_path = os.path.join(self.data_dir, "cloud.jpg")
+        with open(cloud_path, 'rb') as f:
+            builder.add_ingredient_from_stream(
+                ingredient_json2, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertEqual(len(active_manifest["ingredients"]), 2)
+
+            # Verify both ingredients exist in the array (order doesn't matter)
+            ingredient_titles = [ing["title"]
+                                 for ing in active_manifest["ingredients"]]
+            self.assertIn("Test Ingredient Stream 1", ingredient_titles)
+            self.assertIn("Test Ingredient Stream 2", ingredient_titles)
+
+        builder.close()
 
 class TestStream(unittest.TestCase):
     def setUp(self):
@@ -444,6 +669,124 @@ class TestStream(unittest.TestCase):
         stream.close()
         # Flushing closed stream should return -1
         self.assertEqual(flush_cb(None), -1)
+
+
+class TestLegacyAPI(unittest.TestCase):
+    def setUp(self):
+        # Filter specific deprecation warnings for legacy API tests
+        warnings.filterwarnings("ignore", message="The read_file function is deprecated")
+        warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
+        
+        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
+
+        # That file has C2PA metadata, so there is something to read
+        self.testPath = os.path.join(self.data_dir, "C.jpg")
+
+        # Create temp directory for tests
+        self.temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(self.temp_data_dir, exist_ok=True)
+
+    def tearDown(self):
+        """Clean up temporary files after each test."""
+        if os.path.exists(self.temp_data_dir):
+            import shutil
+            shutil.rmtree(self.temp_data_dir)
+
+    def test_read_ingredient_file(self):
+        """Test reading a C2PA ingredient from a file."""
+        # Test reading ingredient from file with data_dir
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+
+        ingredient_json_with_dir = read_ingredient_file(self.testPath, temp_data_dir)
+
+        # Verify some fields
+        ingredient_data = json.loads(ingredient_json_with_dir)
+        self.assertEqual(ingredient_data["title"], "C.jpg")
+        self.assertEqual(ingredient_data["format"], "image/jpeg")
+        self.assertIn("thumbnail", ingredient_data)
+
+    def test_read_file(self):
+        """Test reading a C2PA ingredient from a file."""
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+
+        # self.testPath has C2PA metadata to read
+        file_json_with_dir = read_file(self.testPath, temp_data_dir)
+
+        # Parse the JSON and verify specific fields
+        file_data = json.loads(file_json_with_dir)
+        expected_manifest_id = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
+
+        # Verify some fields
+        self.assertEqual(file_data["active_manifest"], expected_manifest_id)
+        self.assertIn("manifests", file_data)
+        self.assertIn(expected_manifest_id, file_data["manifests"])
+
+    def test_sign_file(self):
+        """Test signing a file with C2PA manifest."""
+        # Set up test paths
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+        output_path = os.path.join(temp_data_dir, "signed_output.jpg")
+
+        # Load test certificates and key
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            key = key_file.read()
+
+        # Create signer info
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+
+        # Create a simple manifest
+        manifest = {
+            "claim_generator": "python_internals_test",
+            "claim_generator_info": [{
+                "name": "python_internals_test",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Signed Image",
+            "ingredients": [],
+            "assertions": [
+                {'label': 'stds.schema-org.CreativeWork',
+                    'data': {
+                        '@context': 'http://schema.org/',
+                        '@type': 'CreativeWork',
+                        'author': [
+                            {'@type': 'Person',
+                                'name': 'Test Author'
+                             }
+                        ]
+                    },
+                    'kind': 'Json'
+                 }
+            ]
+        }
+
+        # Convert manifest to JSON string
+        manifest_json = json.dumps(manifest)
+
+        try:
+            # Sign the file
+            result_json = sign_file(
+                self.testPath,
+                output_path,
+                manifest_json,
+                signer_info,
+                temp_data_dir
+            )
+
+        finally:
+            # Clean up
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
 
 if __name__ == '__main__':
