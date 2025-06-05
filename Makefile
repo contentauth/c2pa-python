@@ -30,8 +30,13 @@ build-python:
 rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
 	@echo "Development rebuild done!"
 
-# Runs the unit tests
-test:
+run-examples:
+	python3 ./examples/sign.py
+	python3 ./examples/training.py
+	rm -rf output/
+
+# Runs the examples, then the unit tests
+test: run-examples
 	python3 ./tests/test_unit_tests.py
 	python3 ./tests/test_unit_tests_threaded.py
 
