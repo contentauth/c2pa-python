@@ -1,6 +1,20 @@
+# Copyright 2025 Adobe. All rights reserved.
+# This file is licensed to you under the Apache License,
+# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+# or the MIT license (http://opensource.org/licenses/MIT),
+# at your option.
+# Unless required by applicable law or agreed to in writing,
+# this software is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+# specific language governing permissions and limitations under
+# each license.
+
+# This example shows how to sign an image with a C2PA manifest
+# and read the metadata added to the image.
+
 import os
 import c2pa
-import io
 
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")

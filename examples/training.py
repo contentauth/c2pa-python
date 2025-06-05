@@ -26,17 +26,17 @@ import c2pa
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
-# ensure the output directory exists
+# Ensure the output directory exists
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-# set up paths to the files we we are using
+# Set up paths to the files we we are using
 testFile = os.path.join(fixtures_dir, "A.jpg")
 pemFile = os.path.join(fixtures_dir, "ps256.pub")
 keyFile = os.path.join(fixtures_dir, "ps256.pem")
 testOutputFile = os.path.join(output_dir, "dnt.jpg")
 
-# a little helper function to get a value from a nested dictionary
+# A little helper function to get a value from a nested dictionary
 from functools import reduce
 import operator
 def getitem(d, key):
@@ -59,9 +59,9 @@ def sign_ps256(data: bytes, key: bytes) -> bytes:
     )
     return signature
 
-# first create an asset with a do not train assertion
+# First create an asset with a do not train assertion
 
-# define a manifest with the do not train assertion
+# Define a manifest with the do not train assertion
 manifest_json = {
     "claim_generator_info": [{
         "name": "python_test",
@@ -96,7 +96,7 @@ ingredient_json = {
     }
 }
 
-# V2 signing api
+# V2 signing API example
 try:
     # Read the private key and certificate files
     key = open(keyFile,"rb").read()
@@ -124,7 +124,7 @@ try:
 
     if os.path.exists(testOutputFile):
         os.remove(testOutputFile)
-        
+
     # Sign the file using the stream-based sign method
     with open(testFile, "rb") as source_file:
         with open(testOutputFile, "wb") as dest_file:
@@ -136,7 +136,7 @@ except Exception as err:
 print("V2: successfully added do not train manifest to file " + testOutputFile)
 
 
-# now verify the asset and check the manifest for a do not train assertion
+# now verify the asset and check the manifest for a do not train assertion...
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:

@@ -53,7 +53,7 @@ The `examples/training.py` script demonstrates how to add a "Do Not Train" asser
 
 ### Signing and Verifying Assets
 
-The `examples/test.py` script shows how to sign an asset with a C2PA manifest and verify it.
+The `examples/sign.py` script shows how to sign an asset with a C2PA manifest and verify it.
 
 ## Development Setup
 
