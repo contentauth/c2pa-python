@@ -45,6 +45,16 @@ To use the module in your Python code, import like this:
 import c2pa
 ```
 
+## Examples
+
+### Adding a "Do Not Train" Assertion
+
+The `examples/training.py` script demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
+
+### Signing and Verifying Assets
+
+The `examples/test.py` script shows how to sign an asset with a C2PA manifest and verify it.
+
 ## Development Setup
 
 1. Create and activate a virtual environment with native dependencies:
@@ -112,16 +122,6 @@ And run:
 ```bash
 pytest
 ```
-
-## Examples
-
-### Adding a "Do Not Train" Assertion
-
-The `examples/training.py` script demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
-
-### Signing and Verifying Assets
-
-The `examples/test.py` script shows how to sign an asset with a C2PA manifest and verify it.
 
 ## Contributing
 
