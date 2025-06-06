@@ -55,15 +55,15 @@ class TestReader(unittest.TestCase):
             self.assertEqual(title, "C.jpg")
 
     def test_stream_read_string_stream(self):
-        reader = Reader("image/jpeg", self.testPath)
-        json_data = reader.json()
-        self.assertIn("C.jpg", json_data)
+        with Reader("image/jpeg", self.testPath) as reader:
+            json_data = reader.json()
+            self.assertIn("C.jpg", json_data)
 
     def test_stream_read_string_stream_and_parse(self):
-        reader = Reader("image/jpeg", self.testPath)
-        manifest_store = json.loads(reader.json())
-        title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
-        self.assertEqual(title, "C.jpg")
+        with Reader("image/jpeg", self.testPath) as reader:
+            manifest_store = json.loads(reader.json())
+            title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+            self.assertEqual(title, "C.jpg")
 
     def test_reader_bad_format(self):
         with self.assertRaises(Error.NotSupported):
@@ -429,7 +429,7 @@ class TestBuilder(unittest.TestCase):
 
         builder.close()
 
-    def test_builder_sign_with__duplicate_ingredient(self):
+    def test_builder_sign_with_duplicate_ingredient(self):
         """Test Builder class operations with a real file."""
         # Test creating builder from JSON
 
