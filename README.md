@@ -47,6 +47,7 @@ source .venv/bin/activate
 
 # load project dependencies
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # download library artifacts for the current version you want, eg v0.55.0
 python scripts/download_artifacts.py c2pa-v0.55.0
