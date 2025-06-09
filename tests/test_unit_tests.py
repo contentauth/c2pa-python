@@ -20,7 +20,7 @@ import ctypes
 import warnings
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -50,6 +50,17 @@ class TestReader(unittest.TestCase):
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
+            manifest_store = json.loads(reader.json())
+            title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+            self.assertEqual(title, "C.jpg")
+
+    def test_stream_read_string_stream(self):
+        with Reader("image/jpeg", self.testPath) as reader:
+            json_data = reader.json()
+            self.assertIn("C.jpg", json_data)
+
+    def test_stream_read_string_stream_and_parse(self):
+        with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, "C.jpg")
@@ -91,6 +102,13 @@ class TestReader(unittest.TestCase):
             self.assertIsNone(reader._own_stream)
             # Verify reader is marked as closed
             self.assertTrue(reader._closed)
+    
+    def test_resource_to_stream_on_closed_reader(self):
+        """Test that resource_to_stream correctly raises error on closed."""
+        reader = Reader("image/jpeg", self.testPath)
+        reader.close()
+        with self.assertRaises(Error):
+            reader.resource_to_stream("", io.BytesIO(bytearray()))
 
     def test_read_all_files(self):
         """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
@@ -197,6 +215,11 @@ class TestBuilder(unittest.TestCase):
                  }
             ]
         }
+
+    def test_reserve_size_on_closed_signer(self):
+        self.signer.close()
+        with self.assertRaises(Error):
+            self.signer.reserve_size()
 
     def test_streams_sign(self):
         with open(self.testPath, "rb") as file:
@@ -313,6 +336,17 @@ class TestBuilder(unittest.TestCase):
         # Verify builder is closed
         with self.assertRaises(Error):
             builder.set_no_embed()
+    
+    def test_builder_add_ingredient_on_closed_builder(self):
+        """Test that exception is raised when trying to add ingredient after close."""
+        builder = Builder(self.manifestDefinition)
+
+        builder.close()
+
+        with self.assertRaises(Error):
+            ingredient_json = '{"test": "ingredient"}'
+            with open(self.testPath, 'rb') as f:
+                builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
     def test_builder_add_ingredient(self):
         """Test Builder class operations with a real file."""
@@ -395,6 +429,55 @@ class TestBuilder(unittest.TestCase):
 
         builder.close()
 
+    def test_builder_sign_with_duplicate_ingredient(self):
+        """Test Builder class operations with a real file."""
+        # Test creating builder from JSON
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient
+        ingredient_json = '{"title": "Test Ingredient"}'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+            
+            # Verify subsequent labels are unique and have a double underscore with a monotonically inc. index
+            second_ingredient = active_manifest["ingredients"][1]
+            self.assertTrue(second_ingredient["label"].endswith("__1"))
+
+            third_ingredient = active_manifest["ingredients"][2]
+            self.assertTrue(third_ingredient["label"].endswith("__2"))
+            
+        builder.close()
+   
     def test_builder_sign_with_ingredient_from_stream(self):
         """Test Builder class operations with a real file using stream for ingredient."""
         # Test creating builder from JSON
@@ -533,6 +616,37 @@ class TestBuilder(unittest.TestCase):
 
         builder.close()
 
+    def test_builder_set_remote_url(self):
+        """Test setting the remote url of a builder."""
+        builder = Builder.from_json(self.manifestDefinition)
+        builder.set_remote_url("http://this_does_not_exist/foo.jpg")
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            d = output.read()
+            self.assertIn(b'provenance="http://this_does_not_exist/foo.jpg"', d)    
+
+    def test_builder_set_remote_url_no_embed(self):
+        """Test setting the remote url of a builder with no embed flag."""
+        builder = Builder.from_json(self.manifestDefinition)
+        load_settings(r'{"verify": { "remote_manifest_fetch": false} }')
+        builder.set_no_embed()
+        builder.set_remote_url("http://this_does_not_exist/foo.jpg")
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            with self.assertRaises(Error) as e:
+                Reader("image/jpeg", output)
+        
+        self.assertIn("http://this_does_not_exist/foo.jpg", e.exception.message)
+        
+        # Return back to default settings
+        load_settings(r'{"verify": { "remote_manifest_fetch": true} }')
+        
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
@@ -691,6 +805,11 @@ class TestLegacyAPI(unittest.TestCase):
         if os.path.exists(self.temp_data_dir):
             import shutil
             shutil.rmtree(self.temp_data_dir)
+
+    def test_invalid_settings_str(self):
+        """Test loading a malformed settings string.""" 
+        with self.assertRaises(Error):
+            load_settings(r'{"verify": { "remote_manifest_fetch": false }')
 
     def test_read_ingredient_file(self):
         """Test reading a C2PA ingredient from a file."""
