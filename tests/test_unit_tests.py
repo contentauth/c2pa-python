@@ -644,6 +644,9 @@ class TestBuilder(unittest.TestCase):
         
         self.assertIn("http://this_does_not_exist/foo.jpg", e.exception.message)
         
+        # Return back to default settings
+        load_settings(r'{"verify": { "remote_manifest_fetch": true} }')
+        
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
