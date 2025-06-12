@@ -194,18 +194,16 @@ class TestBuilderWithThreads(unittest.TestCase):
             "title": "Python Test Image",
             "ingredients": [],
             "assertions": [
-                {'label': 'stds.schema-org.CreativeWork',
+                {'label': 'com.unit.test',
                     'data': {
-                        '@context': 'http://schema.org/',
-                        '@type': 'CreativeWork',
                         'author': [
-                            {'@type': 'Person',
+                            {
                                 'name': 'Tester'
-                             }
+                            }
                         ]
                     },
                     'kind': 'Json'
-                 }
+                }
             ]
         }
 
@@ -219,18 +217,16 @@ class TestBuilderWithThreads(unittest.TestCase):
             "title": "Python Test Image 1",
             "ingredients": [],
             "assertions": [
-                {'label': 'stds.schema-org.CreativeWork',
+                {'label': 'com.unit.test',
                     'data': {
-                        '@context': 'http://schema.org/',
-                        '@type': 'CreativeWork',
                         'author': [
-                            {'@type': 'Person',
+                            {
                                 'name': 'Tester One'
-                             }
+                            }
                         ]
                     },
                     'kind': 'Json'
-                 }
+                }
             ]
         }
 
@@ -244,18 +240,16 @@ class TestBuilderWithThreads(unittest.TestCase):
             "title": "Python Test Image 2",
             "ingredients": [],
             "assertions": [
-                {'label': 'stds.schema-org.CreativeWork',
+                {'label': 'com.unit.test',
                     'data': {
-                        '@context': 'http://schema.org/',
-                        '@type': 'CreativeWork',
                         'author': [
-                            {'@type': 'Person',
+                            {
                                 'name': 'Tester Two'
-                             }
+                            }
                         ]
                     },
                     'kind': 'Json'
-                 }
+                }
             ]
         }
 
@@ -331,7 +325,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                        if assertion["label"] == "com.unit.test":
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
@@ -446,7 +440,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                        if assertion["label"] == "com.unit.test":
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
@@ -518,7 +512,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Verify the author is correct
                 assertions = active_manifest["assertions"]
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(
                             author_name, f"Tester {
@@ -675,7 +669,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                        if assertion["label"] == "com.unit.test":
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
@@ -775,7 +769,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Verify the author is correct
                 assertions = active_manifest["assertions"]
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(author_name, "Tester One")
                         break
@@ -853,7 +847,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Verify the author is correct
                 assertions = active_manifest["assertions"]
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(author_name, "Tester One")
                         break
@@ -935,7 +929,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Verify the author is correct
                 assertions = active_manifest["assertions"]
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(author_name, "Tester One")
                         break
@@ -1023,7 +1017,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Verify the author is correct
                 assertions = active_manifest["assertions"]
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(author_name, "Tester One")
                         break
@@ -1104,7 +1098,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                        if assertion["label"] == "com.unit.test":
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
@@ -1209,7 +1203,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                        if assertion["label"] == "com.unit.test":
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
@@ -1313,7 +1307,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Verify the author is correct
                     assertions = active_manifest["assertions"]
                     for assertion in assertions:
-                        if assertion["label"] == "stds.schema-org.CreativeWork":
+                        if assertion["label"] == "com.unit.test":
                             author_name = assertion["data"]["author"][0]["name"]
                             self.assertEqual(author_name, expected_author)
                             break
@@ -1442,7 +1436,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 assertions = active_manifest["assertions"]
                 author_found = False
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(author_name, "Tester One")
                         author_found = True
@@ -1525,7 +1519,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Verify the author is correct
                 assertions = active_manifest["assertions"]
                 for assertion in assertions:
-                    if assertion["label"] == "stds.schema-org.CreativeWork":
+                    if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(author_name, "Tester One")
                         break
