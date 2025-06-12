@@ -201,18 +201,16 @@ class TestBuilder(unittest.TestCase):
             "title": "Python Test Image",
             "ingredients": [],
             "assertions": [
-                {'label': 'stds.schema-org.CreativeWork',
-                    'data': {
-                        '@context': 'http://schema.org/',
-                        '@type': 'CreativeWork',
-                        'author': [
-                            {'@type': 'Person',
-                                'name': 'Gavin Peacock'
-                             }
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
                         ]
-                    },
-                    'kind': 'Json'
-                 }
+                    }
+                }
             ]
         }
 
@@ -874,18 +872,16 @@ class TestLegacyAPI(unittest.TestCase):
             "title": "Python Test Signed Image",
             "ingredients": [],
             "assertions": [
-                {'label': 'stds.schema-org.CreativeWork',
-                    'data': {
-                        '@context': 'http://schema.org/',
-                        '@type': 'CreativeWork',
-                        'author': [
-                            {'@type': 'Person',
-                                'name': 'Test Author'
-                             }
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
                         ]
-                    },
-                    'kind': 'Json'
-                 }
+                    }
+                }
             ]
         }
 

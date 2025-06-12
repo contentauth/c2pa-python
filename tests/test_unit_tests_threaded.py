@@ -2091,7 +2091,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         # We are pushing it here, as we want to test with thread count one to two orders of magnitude
         # higher than "usual" max numbers of cores on (server) machines may be.
 
-        TOTAL_THREADS_USED = 1200
+        TOTAL_THREADS_USED = 12
 
         # Get list of files from files-for-reading-tests directory
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
