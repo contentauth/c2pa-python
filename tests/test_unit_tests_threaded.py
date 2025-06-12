@@ -183,7 +183,8 @@ class TestBuilderWithThreads(unittest.TestCase):
         self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
         self.testPath4 = os.path.join(self.data_dir, "cloud.jpg")
 
-        # Define manifests
+        # For that test manifest, we use a placeholder assertion with content
+        # varying depending on thread/manifest, to check for data scrambling.
         self.manifestDefinition = {
             "claim_generator": "python_test",
             "claim_generator_info": [{
@@ -207,6 +208,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             ]
         }
 
+        # For that test manifest, we use a placeholder assertion with content
+        # varying depending on thread/manifest, to check for data scrambling.
         self.manifestDefinition_1 = {
             "claim_generator": "python_test_thread1",
             "claim_generator_info": [{
@@ -230,6 +233,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             ]
         }
 
+        # For that test manifest, we use a placeholder assertion with content
+        # varying depending on thread/manifest, to check for data scrambling.
         self.manifestDefinition_2 = {
             "claim_generator": "python_test_thread2",
             "claim_generator_info": [{
