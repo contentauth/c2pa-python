@@ -185,6 +185,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         # For that test manifest, we use a placeholder assertion with content
         # varying depending on thread/manifest, to check for data scrambling.
+        # The used assertion is custom, and not part of the C2PA standard.
         self.manifestDefinition = {
             "claim_generator": "python_test",
             "claim_generator_info": [{
@@ -195,7 +196,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             "title": "Python Test Image",
             "ingredients": [],
             "assertions": [
-                {'label': 'com.unit.test',
+                {
+                    'label': 'com.unit.test',
                     'data': {
                         'author': [
                             {
@@ -210,6 +212,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         # For that test manifest, we use a placeholder assertion with content
         # varying depending on thread/manifest, to check for data scrambling.
+        # The used assertion is custom, and not part of the C2PA standard.
         self.manifestDefinition_1 = {
             "claim_generator": "python_test_thread1",
             "claim_generator_info": [{
@@ -220,7 +223,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             "title": "Python Test Image 1",
             "ingredients": [],
             "assertions": [
-                {'label': 'com.unit.test',
+                {
+                    'label': 'com.unit.test',
                     'data': {
                         'author': [
                             {
@@ -235,6 +239,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         # For that test manifest, we use a placeholder assertion with content
         # varying depending on thread/manifest, to check for data scrambling.
+        # The used assertion is custom, and not part of the C2PA standard.
         self.manifestDefinition_2 = {
             "claim_generator": "python_test_thread2",
             "claim_generator_info": [{
@@ -245,7 +250,8 @@ class TestBuilderWithThreads(unittest.TestCase):
             "title": "Python Test Image 2",
             "ingredients": [],
             "assertions": [
-                {'label': 'com.unit.test',
+                {
+                    'label': 'com.unit.test',
                     'data': {
                         'author': [
                             {
