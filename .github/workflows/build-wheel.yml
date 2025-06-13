@@ -1,0 +1,150 @@
+name: Build Wheel
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        required: true
+        type: string
+      architecture:
+        required: false
+        type: string
+      artifact-name:
+        required: true
+        type: string
+      runs-on:
+        required: true
+        type: string
+        default: 'ubuntu-latest'
+      c2pa-version:
+        required: true
+        type: string
+    secrets:
+      github-token:
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+env:
+  GITHUB_TOKEN: ${{ secrets.github-token }}
+  C2PA_VERSION: ${{ inputs.c2pa-version }}
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Linux wheels
+        if: runner.os == 'Linux'
+        run: |
+          # Create necessary directories
+          mkdir -p artifacts
+          mkdir -p src/c2pa/libs
+          rm -rf dist build
+
+          # Set Docker image and platform tag based on architecture
+          if [ "${{ inputs.architecture }}" = "aarch64" ]; then
+            DOCKER_IMAGE="quay.io/pypa/manylinux_2_28_aarch64"
+            PLATFORM_TAG="manylinux_2_28_aarch64"
+          else
+            DOCKER_IMAGE="quay.io/pypa/manylinux_2_28_x86_64"
+            PLATFORM_TAG="manylinux_2_28_x86_64"
+          fi
+
+          # Build wheel in Docker container
+          docker run --rm -v $PWD:/io $DOCKER_IMAGE bash -c "
+            yum install -y gcc gcc-c++ make &&
+            mkdir -p /io/artifacts /io/src/c2pa/libs &&
+            rm -rf /io/dist /io/build &&
+            cd /io &&
+            /opt/python/cp310-cp310/bin/pip install -r requirements.txt -r requirements-dev.txt &&
+            /opt/python/cp310-cp310/bin/pip install toml &&
+            C2PA_LIBS_PLATFORM=\"${{ inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}\" /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py $C2PA_VERSION &&
+            for PYBIN in /opt/python/cp3{10,11}-*/bin; do
+              \${PYBIN}/pip install --upgrade pip wheel &&
+              \${PYBIN}/pip install toml &&
+              CFLAGS=\"-I/opt/python/cp310-cp310/include/python3.10\" LDFLAGS=\"-L/opt/python/cp310-cp310/lib\" \${PYBIN}/python setup.py bdist_wheel --plat-name $PLATFORM_TAG
+            done &&
+            rm -f /io/dist/*-linux_*.whl
+          "
+
+          # Verify the wheel was built
+          echo "Contents of dist directory:"
+          ls -la dist/
+          echo "Number of wheels found:"
+          find dist -name "*.whl" | wc -l
+          echo "Wheel filenames:"
+          find dist -name "*.whl" -exec basename {} \;
+
+      - name: Build Windows wheel (x64)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Create necessary directories
+          New-Item -ItemType Directory -Force -Path artifacts
+          New-Item -ItemType Directory -Force -Path src/c2pa/libs
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+
+          # Install dependencies
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install wheel
+
+          # Download native artifacts
+          Write-Host "Starting artifact download process..."
+          Write-Host "C2PA_VERSION: $env:C2PA_VERSION"
+
+          python scripts/download_artifacts.py "$env:C2PA_VERSION"
+
+          Write-Host "Artifacts directory contents:"
+          Get-ChildItem -Recurse -Path artifacts
+          Write-Host "src/c2pa/libs directory contents:"
+          Get-ChildItem -Recurse -Path src/c2pa/libs
+
+          # Build wheel
+          python setup.py bdist_wheel --plat-name win_amd64
+
+      - name: Build macOS wheel (Apple Silicon)
+        if: runner.os == 'macOS' && runner.arch == 'arm64'
+        run: |
+          # Create necessary directories
+          mkdir -p artifacts
+          mkdir -p src/c2pa/libs
+          rm -rf dist build
+
+          # Install dependencies
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install wheel
+
+          # Download native artifacts
+          python scripts/download_artifacts.py $C2PA_VERSION
+
+          # Build wheel
+          python setup.py bdist_wheel --plat-name macosx_11_0_arm64
+
+          # Rename wheel to ensure unique filename
+          cd dist
+          for wheel in *.whl; do
+            mv "$wheel" "${wheel/macosx_11_0_arm64/macosx_11_0_arm64}"
+          done
+          cd ..
+
+      - name: Log wheel filename
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          echo "Built wheel:"
+          ls -l dist/*.whl
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist
+          if-no-files-found: error
