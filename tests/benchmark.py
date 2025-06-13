@@ -14,17 +14,18 @@
 import os
 import io
 import json
-import pytest
+import shutil
 from c2pa import Reader, Builder, Signer, C2paSigningAlg, C2paSignerInfo
 
 PROJECT_PATH = os.getcwd()
 
 # Test paths
 test_path = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
-output_path = "target/python_out.jpg"
+temp_dir = os.path.join(PROJECT_PATH, "tests", "temp")
+output_path = os.path.join(temp_dir, "python_out.jpg")
 
-# Ensure target directory exists
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
+# Ensure temp directory exists
+os.makedirs(temp_dir, exist_ok=True)
 
 manifestDefinition = {
     "claim_generator": "python_test",
@@ -137,3 +138,9 @@ def test_files_builder_signer_benchmark(benchmark):
 def test_streams_builder_benchmark(benchmark):
     """Benchmark stream-based building."""
     benchmark(test_streams_build)
+
+
+def teardown_module(module):
+    """Clean up temporary files after all tests."""
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
