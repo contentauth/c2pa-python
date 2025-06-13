@@ -104,7 +104,7 @@ class TestReader(unittest.TestCase):
             self.assertIsNone(reader._own_stream)
             # Verify reader is marked as closed
             self.assertTrue(reader._closed)
-    
+
     def test_resource_to_stream_on_closed_reader(self):
         """Test that resource_to_stream correctly raises error on closed."""
         reader = Reader("image/jpeg", self.testPath)
@@ -159,6 +159,50 @@ class TestReader(unittest.TestCase):
             try:
                 with open(file_path, "rb") as file:
                     reader = Reader(mime_type, file)
+                    json_data = reader.json()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
+    def test_read_all_files_using_extension(self):
+        """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        extensions = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in extensions:
+                continue
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Remove the leading dot
+                    parsed_extension = ext[1:]
+                    reader = Reader(parsed_extension, file)
                     json_data = reader.json()
                     self.assertIsInstance(json_data, str)
                     # Verify the manifest contains expected fields
