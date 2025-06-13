@@ -25,6 +25,11 @@ from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningA
 from c2pa.c2pa import Stream
 
 PROJECT_PATH = os.getcwd()
+FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
+DEFAULT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "C.jpg")
+INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "A.jpg")
+ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "cloud.jpg")
+OTHER_ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "A_thumbnail.jpg")
 
 # Note: Despite being threaded, some of the tests will take time to run,
 # as they may try to push for thread contention, or simply just have a lot
@@ -34,8 +39,8 @@ PROJECT_PATH = os.getcwd()
 class TestReaderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
-        self.testPath = os.path.join(self.data_dir, "C.jpg")
+        self.data_dir = FIXTURES_FOLDER
+        self.testPath = DEFAULT_TEST_FILE
 
     def test_stream_read(self):
         def read_metadata():
@@ -163,7 +168,7 @@ class TestReaderWithThreads(unittest.TestCase):
 class TestBuilderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
+        self.data_dir = FIXTURES_FOLDER
         with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
             self.certs = cert_file.read()
         with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
@@ -178,10 +183,10 @@ class TestBuilderWithThreads(unittest.TestCase):
         )
         self.signer = Signer.from_info(self.signer_info)
 
-        self.testPath = os.path.join(self.data_dir, "C.jpg")
-        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
-        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
-        self.testPath4 = os.path.join(self.data_dir, "cloud.jpg")
+        self.testPath = DEFAULT_TEST_FILE
+        self.testPath2 = INGREDIENT_TEST_FILE
+        self.testPath3 = OTHER_ALTERNATIVE_INGREDIENT_TEST_FILE
+        self.testPath4 = ALTERNATIVE_INGREDIENT_TEST_FILE
 
         # For that test manifest, we use a placeholder assertion with content
         # varying depending on thread/manifest, to check for data scrambling.
