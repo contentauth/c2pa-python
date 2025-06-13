@@ -26,9 +26,11 @@ from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_s
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 PROJECT_PATH = os.getcwd()
-
-testPath = os.path.join(PROJECT_PATH, "tests", "fixtures", "C.jpg")
-
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+DEFAULT_TEST_FILE_NAME = "C.jpg"
+DEFAULT_TEST_FILE = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
+INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "A.jpg")
+ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
@@ -38,32 +40,32 @@ class TestC2paSdk(unittest.TestCase):
 class TestReader(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
-        self.testPath = os.path.join(self.data_dir, "C.jpg")
+        self.data_dir = FIXTURES_DIR
+        self.testPath = DEFAULT_TEST_FILE
 
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
-            self.assertIn("C.jpg", json_data)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
-            self.assertEqual(title, "C.jpg")
+            self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
             json_data = reader.json()
-            self.assertIn("C.jpg", json_data)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_stream_read_string_stream_and_parse(self):
         with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
-            self.assertEqual(title, "C.jpg")
+            self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
     def test_reader_bad_format(self):
         with self.assertRaises(Error.NotSupported):
@@ -75,7 +77,7 @@ class TestReader(unittest.TestCase):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
-            self.assertIn("C.jpg", json_data)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_reader_double_close(self):
         """Test that multiple close calls are handled gracefully."""
@@ -170,7 +172,9 @@ class TestReader(unittest.TestCase):
 class TestBuilder(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
+        self.data_dir = FIXTURES_DIR
+        self.testPath = DEFAULT_TEST_FILE
+        self.testPath2 = INGREDIENT_TEST_FILE
         with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
             self.certs = cert_file.read()
         with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
@@ -185,10 +189,8 @@ class TestBuilder(unittest.TestCase):
         )
         self.signer = Signer.from_info(self.signer_info)
 
-        self.testPath = os.path.join(self.data_dir, "C.jpg")
-        self.testPath2 = os.path.join(self.data_dir, "A.jpg")
         self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
-        self.testPath4 = os.path.join(self.data_dir, "cloud.jpg")
+        self.testPath4 = ALTERNATIVE_INGREDIENT_TEST_FILE
 
         # Define a manifest as a dictionary
         self.manifestDefinition = {
@@ -531,7 +533,7 @@ class TestBuilder(unittest.TestCase):
 
         # Add second ingredient
         ingredient_json2 = '{"title": "Test Ingredient 2"}'
-        cloud_path = os.path.join(self.data_dir, "cloud.jpg")
+        cloud_path = ALTERNATIVE_INGREDIENT_TEST_FILE
         with open(cloud_path, 'rb') as f:
             builder.add_ingredient(ingredient_json2, "image/jpeg", f)
 
@@ -579,7 +581,7 @@ class TestBuilder(unittest.TestCase):
 
         # Add second ingredient using stream
         ingredient_json2 = '{"title": "Test Ingredient Stream 2"}'
-        cloud_path = os.path.join(self.data_dir, "cloud.jpg")
+        cloud_path = ALTERNATIVE_INGREDIENT_TEST_FILE
         with open(cloud_path, 'rb') as f:
             builder.add_ingredient_from_stream(
                 ingredient_json2, "image/jpeg", f)
@@ -788,11 +790,9 @@ class TestLegacyAPI(unittest.TestCase):
         # Filter specific deprecation warnings for legacy API tests
         warnings.filterwarnings("ignore", message="The read_file function is deprecated")
         warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
-        
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
 
-        # That file has C2PA metadata, so there is something to read
-        self.testPath = os.path.join(self.data_dir, "C.jpg")
+        self.data_dir = FIXTURES_DIR
+        self.testPath = DEFAULT_TEST_FILE
 
         # Create temp directory for tests
         self.temp_data_dir = os.path.join(self.data_dir, "temp_data")
@@ -819,7 +819,7 @@ class TestLegacyAPI(unittest.TestCase):
 
         # Verify some fields
         ingredient_data = json.loads(ingredient_json_with_dir)
-        self.assertEqual(ingredient_data["title"], "C.jpg")
+        self.assertEqual(ingredient_data["title"], DEFAULT_TEST_FILE_NAME)
         self.assertEqual(ingredient_data["format"], "image/jpeg")
         self.assertIn("thumbnail", ingredient_data)
 
