@@ -1,0 +1,6 @@
+include LICENSE-MIT
+include LICENSE-APACHE
+include README.md
+include requirements.txt
+include scripts/download_artifacts.py
+recursive-include src/c2pa *.py
