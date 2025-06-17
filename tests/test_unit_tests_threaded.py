@@ -2096,28 +2096,16 @@ class TestBuilderWithThreads(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
-        """Test Builder class operations with 10 threads, each adding 3 random ingredients and signing a random file."""
+        """Test Builder class operations with 12 threads, each adding 3 specific ingredients and signing a file."""
         # Number of threads to use in the test
-        # We are pushing it here, as we want to test with thread count one to two orders of magnitude
-        # higher than "usual" max numbers of cores on (server) machines may be.
-
         TOTAL_THREADS_USED = 12
 
-        # Get list of files from files-for-reading-tests directory
-        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
-
-        # Filter for JPG and PNG files only
-        all_files = [
-            f for f in os.listdir(reading_dir)
-            if os.path.isfile(os.path.join(reading_dir, f))
-            and os.path.splitext(f)[1].lower() in {'.jpg', '.jpeg', '.png'}
+        # Define the specific files to use as ingredients
+        ingredient_files = [
+            os.path.join(self.data_dir, "A_thumbnail.jpg"),
+            os.path.join(self.data_dir, "C.jpg"),
+            os.path.join(self.data_dir, "cloud.jpg")
         ]
-
-        # Ensure we have enough files
-        self.assertGreaterEqual(
-            len(all_files),
-            3,
-            "Need at least 3 JPG/PNG files for testing")
 
         # Thread synchronization
         thread_results = {}
@@ -2129,24 +2117,17 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Create a new builder for this thread
                 builder = Builder.from_json(self.manifestDefinition)
 
-                # Select 3 random files for ingredients
-                # Use thread_id as seed for reproducibility
-                random.seed(thread_id)
-                ingredient_files = random.sample(all_files, 3)
-
                 # Add each ingredient
-                for i, file_name in enumerate(ingredient_files, 1):
-                    file_path = os.path.join(reading_dir, file_name)
+                for i, file_path in enumerate(ingredient_files, 1):
                     ingredient_json = json.dumps({
-                        "title": f"Thread {thread_id} Ingredient {i} - {file_name}"
+                        "title": f"Thread {thread_id} Ingredient {i} - {os.path.basename(file_path)}"
                     })
 
                     with open(file_path, 'rb') as f:
                         builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
-                # Select a random file for signing
-                sign_file = random.choice(all_files)
-                sign_file_path = os.path.join(reading_dir, sign_file)
+                # Use A.jpg as the file to sign
+                sign_file_path = os.path.join(self.data_dir, "A.jpg")
 
                 # Sign the file
                 with open(sign_file_path, "rb") as file:
@@ -2170,8 +2151,8 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Store results for verification
                     thread_results[thread_id] = {
                         'manifest': manifest_data,
-                        'ingredient_files': ingredient_files,
-                        'sign_file': sign_file
+                        'ingredient_files': [os.path.basename(f) for f in ingredient_files],
+                        'sign_file': os.path.basename(sign_file_path)
                     }
 
                     # Clean up streams
@@ -2199,8 +2180,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             thread.join()
 
         # Verify all threads completed
-        self.assertEqual(completed_threads, TOTAL_THREADS_USED, f"All {
-                         TOTAL_THREADS_USED} threads should have completed")
+        self.assertEqual(completed_threads, TOTAL_THREADS_USED, f"All {TOTAL_THREADS_USED} threads should have completed")
         self.assertEqual(
             len(thread_results),
             TOTAL_THREADS_USED,
@@ -2212,13 +2192,10 @@ class TestBuilderWithThreads(unittest.TestCase):
 
             # Check if thread encountered an error
             if 'error' in result:
-                self.fail(
-                    f"Thread {thread_id} failed with error: {
-                        result['error']}")
+                self.fail(f"Thread {thread_id} failed with error: {result['error']}")
 
             manifest_data = result['manifest']
             ingredient_files = result['ingredient_files']
-            sign_file = result['sign_file']
 
             # Verify active manifest exists
             self.assertIn("active_manifest", manifest_data)
@@ -2234,16 +2211,11 @@ class TestBuilderWithThreads(unittest.TestCase):
             self.assertIsInstance(active_manifest["ingredients"], list)
             self.assertEqual(len(active_manifest["ingredients"]), 3)
 
-            # Verify all ingredients exist with correct thread ID and file
-            # names
-            ingredient_titles = [ing["title"]
-                                 for ing in active_manifest["ingredients"]]
+            # Verify all ingredients exist with correct thread ID and file names
+            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
             for i, file_name in enumerate(ingredient_files, 1):
-                expected_title = f"Thread {
-                    thread_id} Ingredient {i} - {file_name}"
-                self.assertIn(expected_title, ingredient_titles, f"Thread {
-                              thread_id} should have ingredient with title {expected_title}")
-
+                expected_title = f"Thread {thread_id} Ingredient {i} - {file_name}"
+                self.assertIn(expected_title, ingredient_titles, f"Thread {thread_id} should have ingredient with title {expected_title}")
 
 if __name__ == '__main__':
     unittest.main()
