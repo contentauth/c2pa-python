@@ -216,6 +216,8 @@ class TestReader(unittest.TestCase):
         """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
         file_path = os.path.join(self.data_dir, "files-for-reading-tests", "C_with_CAWG_data.jpg")
 
+        print("SDK version: ", sdk_version())
+
         with open(file_path, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
