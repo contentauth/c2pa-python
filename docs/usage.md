@@ -52,7 +52,7 @@ NOTE: For a comprehensive reference to the JSON manifest structure, see the [Man
 try:
     # Create a reader from a file path
     with Reader("path/to/media_file.jpg") as reader:
-        # Print the JSON for a manifest.
+        # Print manifest store as JSON
         print("Manifest store:", reader.json())
 
         # Get the active manifest.
@@ -126,7 +126,7 @@ try:
         # First parameter can be mimetype or extension of the file
         # But in any case we need something to identify the file type
         with Reader("image/jpeg", stream) as reader:
-            # Print the JSON for a manifest.
+            # Print manifest store as JSON, as extracted by the Reader
             print("manifest store:", reader.json())
 
             # Get the active manifest.
