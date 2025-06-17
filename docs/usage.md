@@ -6,7 +6,7 @@ This package works with media files in the [supported formats](https://github.co
 
 ## Import
 
-Import the API:
+Import the objects needed from the API:
 
 ```py
 from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
@@ -115,7 +115,7 @@ except Exception as e:
 
 ## Stream-based operation
 
-Instead of working with files, you can read, validate, and add a signed manifest to streamed data.  This example code does the same thing as the file-based example.
+Instead of working with files, you can read, validate, and add a signed manifest to streamed data. This example is similar to what the file-based example does.
 
 ### Read and validate C2PA data using streams
 
