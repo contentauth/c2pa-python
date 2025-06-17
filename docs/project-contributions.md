@@ -109,7 +109,7 @@ Run tests by following these steps:
     pip install pytest
     pytest
     ```
-  **Warning**: `pytest` often has issues when switching between virtual environments.
+    **Warning**: Using `pytest` can lead to issues if you often switch between virtual environments.
 
 ### Testing during bindings development
 
