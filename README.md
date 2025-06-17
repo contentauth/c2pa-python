@@ -23,7 +23,7 @@ Install the c2pa-python package from PyPI by running:
 pip install c2pa-python
 ```
 
-To use the module in Python code, import it like this:
+To use the module in Python code, import the module like this:
 
 ```python
 import c2pa
