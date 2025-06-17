@@ -1014,8 +1014,10 @@ class Reader:
 
             # Keep mime_type string alive
             try:
+                print("## Getting mimetype encoding")
                 self._mime_type_str = mime_type.encode('utf-8')
             except UnicodeError as e:
+                print("## Failed encoding on mimetype")
                 raise C2paError.Encoding(
                     self._error_messages['encoding_error'].format(
                         str(e)))
@@ -1102,8 +1104,10 @@ class Reader:
 
             with Stream(stream) as stream_obj:
                 if manifest_data is None:
+                    print("## Preparing to call _lib.c2pa_reader_from_stream")
                     self._reader = _lib.c2pa_reader_from_stream(
                         self._format_str, stream_obj._stream)
+                    print("## Called: _lib.c2pa_reader_from_stream")
                 else:
                     if not isinstance(manifest_data, bytes):
                         raise TypeError(self._error_messages['manifest_error'])
