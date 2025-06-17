@@ -113,7 +113,7 @@ def copy_artifacts_to_root():
     print(f"Copying from {SCRIPTS_ARTIFACTS_DIR} to {ROOT_ARTIFACTS_DIR}")
     shutil.copytree(SCRIPTS_ARTIFACTS_DIR, ROOT_ARTIFACTS_DIR)
     print("Done copying artifacts")
-    print("\nContents of artifacts directory:")
+    print("\nFolder content of artifacts directory:")
     for item in sorted(ROOT_ARTIFACTS_DIR.iterdir()):
         print(f"  {item.name}")
 
@@ -135,8 +135,7 @@ def main():
         if env_platform:
             print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
         platform_id = env_platform or get_platform_identifier()
-        print("## platform_id when downloading: ", platform_id)
-        print("## env_platform: ", env_platform)
+        print("Looking up releases for platform id: ", platform_id)
         platform_source = "environment variable" if env_platform else "auto-detection"
         print(f"Target platform: {platform_id} (set through{platform_source})")
 
