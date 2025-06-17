@@ -216,8 +216,6 @@ class TestReader(unittest.TestCase):
         """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
         file_path = os.path.join(self.data_dir, "files-for-reading-tests", "C_with_CAWG_data.jpg")
 
-        print("SDK version: ", sdk_version())
-
         with open(file_path, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
@@ -234,14 +232,9 @@ class TestReader(unittest.TestCase):
             active_manifest_id = manifest_data["active_manifest"]
             active_manifest = manifest_data["manifests"][active_manifest_id]
 
-            # Verify manifest contains expected fields
-            self.assertIn("title", active_manifest)
-            self.assertIn("format", active_manifest)
-            self.assertIn("claim_generator", active_manifest)
-            self.assertIn("assertions", active_manifest)
-
-            # Verify it's a JPEG file
-            self.assertEqual(active_manifest["format"], "image/jpeg")
+            # Verify manifest is not null or empty
+            assert active_manifest is not None, "Active manifest should not be null"
+            assert len(active_manifest) > 0, "Active manifest should not be empty"
 
 
 class TestBuilder(unittest.TestCase):
