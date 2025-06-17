@@ -62,6 +62,9 @@ def get_platform_identifier(cpu_arch: Optional[CPUArchitecture] = None) -> str:
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
+        print("## System is Linux, arch is: ", _get_architecture()())
+        if _get_architecture() in ['arm64', 'aarch64']:
+            return "aarch64-unknown-linux-gnu"
         return "x86_64-unknown-linux-gnu"
     else:
         raise ValueError(f"Unsupported operating system: {system}")
