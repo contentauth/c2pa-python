@@ -1,6 +1,8 @@
 # Usage examples
 
-## Adding a "Do Not Train" Assertion
+## Examples
+
+### Adding a "Do Not Train" Assertion
 
 The `examples/training.py` script demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
 
