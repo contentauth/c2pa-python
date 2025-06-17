@@ -24,4 +24,4 @@ python examples/training.py
 python examples/sign.py
 ```
 
-The examples will use test files from the `tests/fixtures` directory and output the results to the `output` directory. Read manifest store data will be shown in the console you run the examples from.
+The examples will use test files from the `tests/fixtures` directory and output the results to the temporary `output` directory. Read manifest store data will be shown in the console you run the examples from.
