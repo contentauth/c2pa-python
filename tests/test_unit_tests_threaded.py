@@ -2110,6 +2110,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Thread synchronization
         thread_results = {}
         completed_threads = 0
+        thread_lock = threading.Lock()  # Lock for thread-safe access to shared data
 
         def thread_work(thread_id):
             nonlocal completed_threads
@@ -2149,11 +2150,13 @@ class TestBuilderWithThreads(unittest.TestCase):
                     manifest_data = json.loads(json_data)
 
                     # Store results for verification
-                    thread_results[thread_id] = {
-                        'manifest': manifest_data,
-                        'ingredient_files': [os.path.basename(f) for f in ingredient_files],
-                        'sign_file': os.path.basename(sign_file_path)
-                    }
+                    with thread_lock:
+                        thread_results[thread_id] = {
+                            'manifest': manifest_data,
+                            'ingredient_files': [os.path.basename(f) for f in ingredient_files],
+                            'sign_file': os.path.basename(sign_file_path),
+                            'manifest_hash': hash(json.dumps(manifest_data, sort_keys=True))  # Add hash for comparison
+                        }
 
                     # Clean up streams
                     output.close()
@@ -2162,11 +2165,13 @@ class TestBuilderWithThreads(unittest.TestCase):
                 builder.close()
 
             except Exception as e:
-                thread_results[thread_id] = {
-                    'error': str(e)
-                }
+                with thread_lock:
+                    thread_results[thread_id] = {
+                        'error': str(e)
+                    }
             finally:
-                completed_threads += 1
+                with thread_lock:
+                    completed_threads += 1
 
         # Create and start threads
         threads = []
@@ -2186,6 +2191,10 @@ class TestBuilderWithThreads(unittest.TestCase):
             TOTAL_THREADS_USED,
             f"Should have results from all {TOTAL_THREADS_USED} threads")
 
+        # Collect all manifest hashes for comparison
+        manifest_hashes = set()
+        thread_manifest_data = {}
+
         # Verify results for each thread
         for thread_id in range(1, TOTAL_THREADS_USED + 1):
             result = thread_results[thread_id]
@@ -2196,6 +2205,11 @@ class TestBuilderWithThreads(unittest.TestCase):
 
             manifest_data = result['manifest']
             ingredient_files = result['ingredient_files']
+            manifest_hash = result['manifest_hash']
+
+            # Store manifest data for cross-thread comparison
+            thread_manifest_data[thread_id] = manifest_data
+            manifest_hashes.add(manifest_hash)
 
             # Verify active manifest exists
             self.assertIn("active_manifest", manifest_data)
@@ -2216,6 +2230,39 @@ class TestBuilderWithThreads(unittest.TestCase):
             for i, file_name in enumerate(ingredient_files, 1):
                 expected_title = f"Thread {thread_id} Ingredient {i} - {file_name}"
                 self.assertIn(expected_title, ingredient_titles, f"Thread {thread_id} should have ingredient with title {expected_title}")
+
+            # Verify no cross-thread contamination in ingredient titles
+            for other_thread_id in range(1, TOTAL_THREADS_USED + 1):
+                if other_thread_id != thread_id:
+                    for title in ingredient_titles:
+                        # Check for exact thread ID pattern to avoid false positives
+                        self.assertNotIn(
+                            f"Thread {other_thread_id} Ingredient",
+                            title,
+                            f"Thread {thread_id}'s manifest contains ingredient data from thread {other_thread_id}")
+
+        # Verify all manifests are unique (no data scrambling between threads)
+        self.assertEqual(
+            len(manifest_hashes),
+            TOTAL_THREADS_USED,
+            "Each thread should have a unique manifest (no data scrambling)")
+
+        # Additional verification: Compare manifest structures between threads
+        for thread_id in range(1, TOTAL_THREADS_USED + 1):
+            current_manifest = thread_manifest_data[thread_id]
+
+            # Verify manifest structure is consistent
+            self.assertIn("active_manifest", current_manifest)
+            self.assertIn("manifests", current_manifest)
+
+            # Verify no cross-thread contamination in manifest data
+            for other_thread_id in range(1, TOTAL_THREADS_USED + 1):
+                if other_thread_id != thread_id:
+                    other_manifest = thread_manifest_data[other_thread_id]
+                    self.assertNotEqual(
+                        current_manifest["active_manifest"],
+                        other_manifest["active_manifest"],
+                        f"Thread {thread_id} and {other_thread_id} share the same active manifest ID")
 
 if __name__ == '__main__':
     unittest.main()
