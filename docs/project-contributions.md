@@ -2,20 +2,25 @@
 
 The information in this page is primarily for those who wish to contribute to the c2pa-python library project itself, rather than those who simply wish to use it in an application.  For general contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-## Development Setup
+## Setup
 
 It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing:
 
 ```bash
 # Create virtual environment
 python -m venv .venv
-
-# Activate virtual environment
-# On Windows:
-.venv\Scripts\activate
-# On macOS/Linux:
-source .venv/bin/activate
 ```
+
+Activate the virtual environment.
+
+- On Windows:
+    ```bash
+    .venv\Scripts\activate
+    ```
+- On macOS/Linux:
+    ```bash
+    source .venv/bin/activate
+    ```
 
 Load project dependencies:
 
@@ -24,7 +29,7 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-Download library artifacts for the current version you want, eg v0.55.0:
+Download library artifacts for the current version you want, (for example, as shown below for v0.55.0):
 
 ```bash
 python scripts/download_artifacts.py c2pa-v0.55.0
@@ -36,10 +41,10 @@ Install the package in development mode:
 pip install -e .
 ```
 
-This will:
+This command:
 
-- Copy the appropriate libraries for your platform from `artifacts/` to `src/c2pa/libs/`
-- Install the package in development mode, allowing you to make changes to the Python code without reinstalling.
+- Copies the appropriate libraries for your platform from `artifacts/` to `src/c2pa/libs/`
+- Installs the package in development mode, so you can make changes to the Python code without reinstalling.
 
 ## Build from source
 
@@ -130,10 +135,10 @@ Run tests by following these steps:
     make test
     ```
 5. Alternatively, install pytest (if not already installed) and run it:
-  ```bash
-  pip install pytest
-  pytest
-  ```
+    ```bash
+    pip install pytest
+    pytest
+    ```
 
 ### Testing during bindings development
 
