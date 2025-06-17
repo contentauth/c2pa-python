@@ -247,8 +247,11 @@ def dynamically_load_library(
         # If specific library name is provided, only load that one
         lib = _load_single_library(lib_name, possible_paths)
         if not lib:
+            platform_id = get_platform_identifier()
+            current_arch = _get_architecture()
             logger.error(f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
-            raise RuntimeError(f"Could not find {lib_name} in any of the search paths")
+            logger.error(f"Platform: {platform_id}, Architecture: {current_arch}")
+            raise RuntimeError(f"Could not find {lib_name} in any of the search paths (Platform: {platform_id}, Architecture: {current_arch})")
         return lib
 
     # Default path (no library name provided in the environment)

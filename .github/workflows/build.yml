@@ -448,13 +448,30 @@ jobs:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          ls -la dist/
+          echo "=== Artifact Details ==="
+          for file in dist/*; do
+            echo "File: $file"
+            echo "Size: $(du -h $file | cut -f1)"
+            echo "Type: $(file $file)"
+            echo "---"
+          done
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           # Uncomment to use TestPyPI
-          # repository-url: https://test.pypi.org/legacy/
+          repository-url: https://test.pypi.org/legacy/
           verbose: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
           skip-existing: true
+      - name: Show PyPI upload results
+        run: |
+          echo "=== PyPI Upload Results ==="
+          echo "Check TestPyPI at: https://test.pypi.org/project/c2pa-python/"
+          echo "Uploaded files:"
+          ls -la dist/
 
