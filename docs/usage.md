@@ -2,7 +2,7 @@
 
 This package works with media files in the [supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md).
 
-> **Note**: For complete working examples, see the [examples folder](https://github.com/contentauth/c2pa-python/tree/main/examples) in the repository.
+For complete working examples, see the [examples folder](https://github.com/contentauth/c2pa-python/tree/main/examples) in the repository.
 
 ## Import
 
@@ -12,7 +12,8 @@ Import the objects needed from the API:
 from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
 ```
 
-> **Note**: Both `Builder` and `Reader` support being used as context managers (with `with` statements). It's recommended to use them with context managers to ensure proper resources and memory cleanup.
+You can use both `Builder` and `Reader` classes with context managers by using a `with` statement.
+Doing this is recommended to ensure proper resource and memory cleanup.
 
 ## Define manifest JSON
 
