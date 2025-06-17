@@ -2101,6 +2101,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         TOTAL_THREADS_USED = 12
 
         # Define the specific files to use as ingredients
+        # THose files should be valid to use as ingredient
         ingredient_files = [
             os.path.join(self.data_dir, "A_thumbnail.jpg"),
             os.path.join(self.data_dir, "C.jpg"),
