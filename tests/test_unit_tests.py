@@ -212,6 +212,35 @@ class TestReader(unittest.TestCase):
             except Exception as e:
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
+    def test_read_cawg_data_file(self):
+        """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
+        file_path = os.path.join(self.data_dir, "files-for-reading-tests", "C_with_CAWG_data.jpg")
+
+        with open(file_path, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            json_data = reader.json()
+            self.assertIsInstance(json_data, str)
+
+            # Parse the JSON and verify specific fields
+            manifest_data = json.loads(json_data)
+
+            # Verify basic manifest structure
+            self.assertIn("manifests", manifest_data)
+            self.assertIn("active_manifest", manifest_data)
+
+            # Get the active manifest
+            active_manifest_id = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify manifest contains expected fields
+            self.assertIn("title", active_manifest)
+            self.assertIn("format", active_manifest)
+            self.assertIn("claim_generator", active_manifest)
+            self.assertIn("assertions", active_manifest)
+
+            # Verify it's a JPEG file
+            self.assertEqual(active_manifest["format"], "image/jpeg")
+
 
 class TestBuilder(unittest.TestCase):
     def setUp(self):
