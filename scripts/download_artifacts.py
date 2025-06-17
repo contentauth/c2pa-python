@@ -136,6 +136,7 @@ def main():
             print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
         platform_id = env_platform or get_platform_identifier()
         print("Looking up releases for platform id: ", platform_id)
+        print("Environment variable set for lookup: ", env_platform)
         platform_source = "environment variable" if env_platform else "auto-detection"
         print(f"Target platform: {platform_id} (set through{platform_source})")
 
