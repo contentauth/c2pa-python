@@ -12,6 +12,8 @@ Import the objects needed from the API:
 from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
 ```
 
+> **Note**: Both `Builder` and `Reader` support being used as context managers (with `with` statements). It's recommended to use them with context managers to ensure proper resources and memory cleanup.
+
 ## Define manifest JSON
 
 The Python library works with both file-based and stream-based operations.
