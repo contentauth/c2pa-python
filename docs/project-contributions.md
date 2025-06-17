@@ -7,7 +7,6 @@ The information in this page is primarily for those who wish to contribute to th
 It is best to [set up a virtual environment](https://virtualenv.pypa.io/en/latest/installation.html) for development and testing:
 
 ```bash
-# Create virtual environment
 python -m venv .venv
 ```
 
@@ -46,32 +45,7 @@ This command:
 - Copies the appropriate libraries for your platform from `artifacts/` to `src/c2pa/libs/`
 - Installs the package in development mode, so you can make changes to the Python code without reinstalling.
 
-## Build from source
-
-To build from source on Linux, install `curl` and `rustup` then set up Python.
-
-First update `apt` then (if needed) install `curl`:
-
-```bash
-apt update
-apt install curl
-```
-
-Install Rust:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
-
-Install Python, `pip`, and `venv`:
-
-```bash
-apt install python3
-apt install pip
-apt install python3.11-venv
-python3 -m venv .venv
-```
+## Building wheels
 
 Build the wheel for your platform (from the root of the repository):
 
@@ -84,21 +58,17 @@ pip install -U pytest
 python3 -m build --wheel
 ```
 
-## Building wheels
-
-To build wheels for all platforms that have libraries in the `artifacts/` directory:
+To test local wheels locally, enter this command:
 
 ```bash
-python setup.py bdist_wheel
+make test-local-wheel-build
 ```
 
-You can use `twine` to verify the wheels have correct metadata:
+To verify the builds, enter this command:
 
 ```bash
-twine check dist/*
+make verify-wheel-build
 ```
-
-This will create platform-specific wheels in the `dist/` directory.
 
 ## Project structure
 
@@ -134,11 +104,12 @@ Run tests by following these steps:
     ```bash
     make test
     ```
-5. Alternatively, install pytest (if not already installed) and run it:
+5. Alternatively, install `pytest` (if not already installed) and run it:
     ```bash
     pip install pytest
     pytest
     ```
+  **Warning**: `pytest` often has issues when switching between virtual environments.
 
 ### Testing during bindings development
 
