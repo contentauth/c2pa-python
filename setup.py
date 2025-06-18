@@ -30,6 +30,7 @@ PLATFORM_FOLDERS = {
     'x86_64-apple-darwin': 'dylib',
     'x86_64-pc-windows-msvc': 'dll',
     'x86_64-unknown-linux-gnu': 'so',
+    'aarch64-unknown-linux-gnu': 'so',  # Add ARM Linux support
 }
 
 # Directory structure
@@ -51,6 +52,7 @@ def get_platform_identifier(cpu_arch = None) -> str:
     - x86_64-apple-darwin (for Mac x86_64)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
+    - aarch64-unknown-linux-gnu (for Linux ARM64)
     """
     system = platform.system().lower()
 
@@ -66,6 +68,8 @@ def get_platform_identifier(cpu_arch = None) -> str:
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
+        if platform.machine() == "aarch64":
+            return "aarch64-unknown-linux-gnu"
         return "x86_64-unknown-linux-gnu"
     else:
         raise ValueError(f"Unsupported operating system: {system}")

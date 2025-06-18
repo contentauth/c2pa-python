@@ -46,16 +46,21 @@ def get_platform_identifier():
     Returns one of:
     - universal-apple-darwin (for Mac)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
-    - x86_64-unknown-linux-gnu (for Linux 64-bit)
+    - x86_64-unknown-linux-gnu (for Linux x86_64)
+    - aarch64-unknown-linux-gnu (for Linux ARM64)
     """
     system = platform.system().lower()
+    machine = platform.machine().lower()
 
     if system == "darwin":
         return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        return "x86_64-unknown-linux-gnu"
+        if machine in ["arm64", "aarch64"]:
+            return "aarch64-unknown-linux-gnu"
+        else:
+            return "x86_64-unknown-linux-gnu"
     else:
         raise ValueError(f"Unsupported operating system: {system}")
 
@@ -105,8 +110,12 @@ def copy_artifacts_to_root():
     print("Copying artifacts from scripts/artifacts to root...")
     if ROOT_ARTIFACTS_DIR.exists():
         shutil.rmtree(ROOT_ARTIFACTS_DIR)
+    print(f"Copying from {SCRIPTS_ARTIFACTS_DIR} to {ROOT_ARTIFACTS_DIR}")
     shutil.copytree(SCRIPTS_ARTIFACTS_DIR, ROOT_ARTIFACTS_DIR)
     print("Done copying artifacts")
+    print("\nFolder content of artifacts directory:")
+    for item in sorted(ROOT_ARTIFACTS_DIR.iterdir()):
+        print(f"  {item.name}")
 
 def main():
     if len(sys.argv) < 2:
@@ -126,6 +135,8 @@ def main():
         if env_platform:
             print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
         platform_id = env_platform or get_platform_identifier()
+        print("Looking up releases for platform id: ", platform_id)
+        print("Environment variable set for lookup: ", env_platform)
         platform_source = "environment variable" if env_platform else "auto-detection"
         print(f"Target platform: {platform_id} (set through{platform_source})")
 

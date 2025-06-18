@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest ]
+        os: [ macos-latest, ubuntu-latest, ubuntu-24.04-arm ]
 
     steps:
       - name: Checkout repository
@@ -178,6 +178,8 @@ jobs:
         include:
           - target: x86_64
             runs-on: ubuntu-24.04
+          - target: aarch64
+            runs-on: ubuntu-24.04-arm
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -194,6 +196,8 @@ jobs:
         include:
           - target: x86_64
             runs-on: ubuntu-24.04
+          - target: aarch64
+            runs-on: ubuntu-24.04-arm
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -444,6 +448,10 @@ jobs:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded Artifacts"
+          ls -la dist/
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -453,4 +461,3 @@ jobs:
           verbose: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
           skip-existing: true
-
