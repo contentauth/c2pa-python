@@ -1725,22 +1725,23 @@ class Builder:
                 raise C2paError(
                     self._error_messages['archive_error'].format("Unknown error"))
 
-    def sign(
+    def _sign_internal(
             self,
             signer: Signer,
             format: str,
-            source: Any,
-            dest: Any = None) -> Optional[bytes]:
-        """Sign the builder's content and write to a destination stream.
+            source_stream: Stream,
+            dest_stream: Stream) -> int:
+        """Internal signing logic shared between sign() and sign_file() methods,
+        to use same native calls but expose different API surface.
 
         Args:
-            format: The MIME type or extension of the content
-            source: The source stream (any Python stream-like object)
-            dest: The destination stream (any Python stream-like object)
             signer: The signer to use
+            format: The MIME type or extension of the content
+            source_stream: The source stream
+            dest_stream: The destination stream
 
         Returns:
-            A tuple of (size of C2PA data, optional manifest bytes)
+            Size of C2PA data
 
         Raises:
             C2paError: If there was an error during signing
@@ -1748,14 +1749,11 @@ class Builder:
         if not self._builder:
             raise C2paError(self._error_messages['closed_error'])
 
-        # Convert Python streams to Stream objects
-        source_stream = Stream(source)
-        dest_stream = Stream(dest)
-
         try:
             format_str = format.encode('utf-8')
             manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
+            # c2pa_builder_sign uses streams
             result = _lib.c2pa_builder_sign(
                 self._builder,
                 format_str,
@@ -1770,66 +1768,72 @@ class Builder:
                 if error:
                     raise C2paError(error)
 
-            manifest_bytes = None
             if manifest_bytes_ptr:
-                # Convert the manifest bytes to a Python bytes object
-                size = result
-                manifest_bytes = bytes(manifest_bytes_ptr[:size])
+                # Free the manifest bytes pointer if it was allocated
                 _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
 
-            return manifest_bytes
+            return result
         finally:
             # Ensure both streams are cleaned up
             source_stream.close()
             dest_stream.close()
+
+    def sign(
+            self,
+            signer: Signer,
+            format: str,
+            source: Any,
+            dest: Any = None) -> None:
+        """Sign the builder's content and write to a destination stream.
+
+        Args:
+            format: The MIME type or extension of the content
+            source: The source stream (any Python stream-like object)
+            dest: The destination stream (any Python stream-like object)
+            signer: The signer to use
+
+        Raises:
+            C2paError: If there was an error during signing
+        """
+        # Convert Python streams to Stream objects
+        source_stream = Stream(source)
+        dest_stream = Stream(dest)
+
+        # Use the internal stream-base signing logic
+        self._sign_internal(signer, format, source_stream, dest_stream)
 
     def sign_file(self,
                   source_path: Union[str,
                                      Path],
                   dest_path: Union[str,
                                    Path],
-                  signer: Signer) -> tuple[int,
-                                           Optional[bytes]]:
+                  signer: Signer) -> int:
         """Sign a file and write the signed data to an output file.
 
         Args:
             source_path: Path to the source file
             dest_path: Path to write the signed file to
+            signer: The signer to use
 
         Returns:
-            A tuple of (size of C2PA data, optional manifest bytes)
+            Size of C2PA data
 
         Raises:
             C2paError: If there was an error during signing
         """
-        if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+        # Get the MIME type from the file extension
+        mime_type = mimetypes.guess_type(str(source_path))[0]
+        if not mime_type:
+            raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
 
-        source_path_str = str(source_path).encode('utf-8')
-        dest_path_str = str(dest_path).encode('utf-8')
-        manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
+        # Open source and destination files
+        with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
+            # Convert Python streams to Stream objects
+            source_stream = Stream(source_file)
+            dest_stream = Stream(dest_file)
 
-        result = _lib.c2pa_builder_sign_file(
-            self._builder,
-            source_path_str,
-            dest_path_str,
-            signer._signer,
-            ctypes.byref(manifest_bytes_ptr)
-        )
-
-        if result < 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-
-        manifest_bytes = None
-        if manifest_bytes_ptr:
-            # Convert the manifest bytes to a Python bytes object
-            size = result
-            manifest_bytes = bytes(manifest_bytes_ptr[:size])
-            _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
-
-        return result, manifest_bytes
+            # Use the internal stream-base signing logic
+            return self._sign_internal(signer, mime_type, source_stream, dest_stream)
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
