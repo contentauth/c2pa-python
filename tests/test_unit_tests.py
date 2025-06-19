@@ -404,7 +404,7 @@ class TestBuilder(unittest.TestCase):
         # Verify builder is closed
         with self.assertRaises(Error):
             builder.set_no_embed()
-    
+
     def test_builder_add_ingredient_on_closed_builder(self):
         """Test that exception is raised when trying to add ingredient after close."""
         builder = Builder(self.manifestDefinition)
@@ -709,12 +709,46 @@ class TestBuilder(unittest.TestCase):
             output.seek(0)
             with self.assertRaises(Error) as e:
                 Reader("image/jpeg", output)
-        
+
         self.assertIn("http://this_does_not_exist/foo.jpg", e.exception.message)
-        
+
         # Return back to default settings
         load_settings(r'{"verify": { "remote_manifest_fetch": true} }')
-        
+
+    def test_sign_file(self):
+        """Test signing a file using the sign_file method."""
+        import tempfile
+        import shutil
+
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+            result, manifest_bytes = builder.sign_file(
+                source_path=self.testPath,
+                dest_path=output_path,
+                signer=self.signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
