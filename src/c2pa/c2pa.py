@@ -1731,7 +1731,7 @@ class Builder:
             format: str,
             source_stream: Stream,
             dest_stream: Stream) -> tuple[int, Optional[bytes]]:
-        """Core signing logic shared between sign() and sign_file() methods,
+        """Internal signing logic shared between sign() and sign_file() methods,
         to use same native calls but expose different API surface.
 
         Args:
@@ -1804,7 +1804,7 @@ class Builder:
         source_stream = Stream(source)
         dest_stream = Stream(dest)
 
-        # Use the core signing logic
+        # Use the internal stream-base signing logic
         _, manifest_bytes = self._sign_internal(signer, format, source_stream, dest_stream)
         return manifest_bytes
 
@@ -1839,7 +1839,7 @@ class Builder:
             source_stream = Stream(source_file)
             dest_stream = Stream(dest_file)
 
-            # Use the core signing logic
+            # Use the internal stream-base signing logic
             return self._sign_internal(signer, mime_type, source_stream, dest_stream)
 
 
