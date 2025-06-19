@@ -1753,6 +1753,7 @@ class Builder:
             format_str = format.encode('utf-8')
             manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
+            # c2pa_builder_sign uses streams
             result = _lib.c2pa_builder_sign(
                 self._builder,
                 format_str,
