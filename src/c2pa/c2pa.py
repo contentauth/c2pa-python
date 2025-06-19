@@ -581,8 +581,7 @@ def read_file(path: Union[str, Path],
         "The read_file function is deprecated and will be removed in a future version. "
         "Please use the Reader class for reading C2PA metadata instead.",
         DeprecationWarning,
-        stacklevel=2
-    )
+        stacklevel=2)
 
     container = _StringContainer()
 
@@ -626,8 +625,7 @@ def sign_file(
         "The sign_file function is deprecated and will be removed in a future version. "
         "Please use the Builder class for signing and the Reader class for reading signed data instead.",
         DeprecationWarning,
-        stacklevel=2
-    )
+        stacklevel=2)
 
     try:
         # Create a signer from the signer info
@@ -641,7 +639,8 @@ def sign_file(
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
-                raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+                raise C2paError.NotSupported(
+                    f"Could not determine MIME type for file: {source_path}")
 
             # Sign the file using the builder
             manifest_bytes = builder.sign(
@@ -701,7 +700,8 @@ class Stream:
         Raises:
             TypeError: If the file object doesn't implement all required methods
         """
-        # Initialize _closed first to prevent AttributeError during garbage collection
+        # Initialize _closed first to prevent AttributeError during garbage
+        # collection
         self._closed = False
         self._initialized = False
         self._stream = None
@@ -1805,7 +1805,8 @@ class Builder:
         dest_stream = Stream(dest)
 
         # Use the internal stream-base signing logic
-        _, manifest_bytes = self._sign_internal(signer, format, source_stream, dest_stream)
+        _, manifest_bytes = self._sign_internal(
+            signer, format, source_stream, dest_stream)
         return manifest_bytes
 
     def sign_file(self,
@@ -1831,7 +1832,8 @@ class Builder:
         # Get the MIME type from the file extension
         mime_type = mimetypes.guess_type(str(source_path))[0]
         if not mime_type:
-            raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+            raise C2paError.NotSupported(
+                f"Could not determine MIME type for file: {source_path}")
 
         # Open source and destination files
         with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
@@ -1840,7 +1842,8 @@ class Builder:
             dest_stream = Stream(dest_file)
 
             # Use the internal stream-base signing logic
-            return self._sign_internal(signer, mime_type, source_stream, dest_stream)
+            return self._sign_internal(
+                signer, mime_type, source_stream, dest_stream)
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
