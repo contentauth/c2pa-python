@@ -1730,7 +1730,7 @@ class Builder:
             signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> tuple[int, Optional[bytes]]:
+            dest_stream: Stream) -> int:
         """Internal signing logic shared between sign() and sign_file() methods,
         to use same native calls but expose different API surface.
 
@@ -1741,7 +1741,7 @@ class Builder:
             dest_stream: The destination stream
 
         Returns:
-            A tuple of (size of C2PA data, optional manifest bytes)
+            Size of C2PA data
 
         Raises:
             C2paError: If there was an error during signing
@@ -1768,14 +1768,11 @@ class Builder:
                 if error:
                     raise C2paError(error)
 
-            manifest_bytes = None
             if manifest_bytes_ptr:
-                # Convert the manifest bytes to a Python bytes object
-                size = result
-                manifest_bytes = bytes(manifest_bytes_ptr[:size])
+                # Free the manifest bytes pointer if it was allocated
                 _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
 
-            return result, manifest_bytes
+            return result
         finally:
             # Ensure both streams are cleaned up
             source_stream.close()
@@ -1786,7 +1783,7 @@ class Builder:
             signer: Signer,
             format: str,
             source: Any,
-            dest: Any = None) -> Optional[bytes]:
+            dest: Any = None) -> None:
         """Sign the builder's content and write to a destination stream.
 
         Args:
@@ -1794,9 +1791,6 @@ class Builder:
             source: The source stream (any Python stream-like object)
             dest: The destination stream (any Python stream-like object)
             signer: The signer to use
-
-        Returns:
-            The manifest bytes if available, None otherwise
 
         Raises:
             C2paError: If there was an error during signing
@@ -1806,16 +1800,14 @@ class Builder:
         dest_stream = Stream(dest)
 
         # Use the internal stream-base signing logic
-        _, manifest_bytes = self._sign_internal(signer, format, source_stream, dest_stream)
-        return manifest_bytes
+        self._sign_internal(signer, format, source_stream, dest_stream)
 
     def sign_file(self,
                   source_path: Union[str,
                                      Path],
                   dest_path: Union[str,
                                    Path],
-                  signer: Signer) -> tuple[int,
-                                           Optional[bytes]]:
+                  signer: Signer) -> int:
         """Sign a file and write the signed data to an output file.
 
         Args:
@@ -1824,7 +1816,7 @@ class Builder:
             signer: The signer to use
 
         Returns:
-            A tuple of (size of C2PA data, optional manifest bytes)
+            Size of C2PA data
 
         Raises:
             C2paError: If there was an error during signing

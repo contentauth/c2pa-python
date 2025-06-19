@@ -322,13 +322,13 @@ class TestBuilder(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             builder.set_no_embed()
             output = io.BytesIO(bytearray())
-            manifest_data = builder.sign(
-                self.signer, "image/jpeg", file, output)
+            result_data = builder.sign(self.signer, "image/jpeg", file, output)
+
             output.seek(0)
-            reader = Reader("image/jpeg", output, manifest_data)
-            json_data = reader.json()
-            self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # When set_no_embed() is used, no manifest should be embedded in the file
+            # So reading from the file should fail
+            with self.assertRaises(Error):
+                reader = Reader("image/jpeg", output)
             output.close()
 
     def test_sign_all_files(self):
@@ -728,7 +728,7 @@ class TestBuilder(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            result, manifest_bytes = builder.sign_file(
+            result = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=self.signer
