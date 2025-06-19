@@ -1731,17 +1731,18 @@ class Builder:
             format: str,
             source_stream: Stream,
             dest_stream: Stream) -> tuple[int, Optional[bytes]]:
-        """Core signing logic shared between sign() and sign_file() methods.
-        
+        """Core signing logic shared between sign() and sign_file() methods,
+        to use same native calls but expose different API surface.
+
         Args:
             signer: The signer to use
             format: The MIME type or extension of the content
             source_stream: The source stream
             dest_stream: The destination stream
-            
+
         Returns:
             A tuple of (size of C2PA data, optional manifest bytes)
-            
+
         Raises:
             C2paError: If there was an error during signing
         """
