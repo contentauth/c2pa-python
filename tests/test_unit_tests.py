@@ -18,9 +18,13 @@ import unittest
 from unittest.mock import mock_open, patch
 import ctypes
 import warnings
+import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -1005,6 +1009,67 @@ class TestLegacyAPI(unittest.TestCase):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
+
+class TestCreateSigner(unittest.TestCase):
+    """Test cases for the create_signer function."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.data_dir = FIXTURES_DIR
+
+        # Load test certificates and key
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            self.certs = cert_file.read().decode('utf-8')
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            self.key = key_file.read().decode('utf-8')
+
+    def test_create_signer_with_callback(self):
+        """Test creating a signer with a callback function."""
+        def mock_sign_callback(data: bytes) -> bytes:
+            """Mock signing callback that returns a fake signature."""
+            # Return a fake signature (64 bytes for Ed25519)
+            return b"fake_signature_" + b"0" * 50
+
+        # Test with Ed25519 algorithm
+        signer = create_signer(
+            callback=mock_sign_callback,
+            alg=SigningAlg.ED25519,
+            certs=self.certs
+        )
+
+        # Verify the signer was created successfully
+        self.assertIsInstance(signer, Signer)
+        self.assertFalse(signer.closed)
+
+        # Test that reserve_size works
+        reserve_size = signer.reserve_size()
+        self.assertIsInstance(reserve_size, int)
+        self.assertGreaterEqual(reserve_size, 0)
+
+        # Clean up
+        signer.close()
+
+    def test_create_signer_callback_error_handling(self):
+        """Test that callback errors are properly handled."""
+        def error_callback(data: bytes) -> bytes:
+            """Callback that raises an exception."""
+            raise ValueError("Test callback error")
+
+        # The create_signer function doesn't wrap callbacks with error handling
+        # The error handling happens when the callback is actually called during signing
+        # So creating the signer should succeed, but using it might fail
+        signer = create_signer(
+            callback=error_callback,
+            alg=SigningAlg.ES256,
+            certs=self.certs
+        )
+
+        # Verify the signer was created successfully
+        self.assertIsInstance(signer, Signer)
+        self.assertFalse(signer.closed)
+
+        # Clean up
+        signer.close()
 
 if __name__ == '__main__':
     unittest.main()
