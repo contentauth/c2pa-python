@@ -752,6 +752,71 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+    def test_sign_file_callback_signer(self):
+        """Test signing a file using the sign_file method."""
+        import tempfile
+        import shutil
+
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+
+            # Create a real ES256 signing callback
+            def sign_callback(data: bytes) -> bytes:
+                """Real ES256 signing callback that creates actual signatures."""
+                # Load the private key from the test fixtures
+                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                    private_key_data = key_file.read()
+
+                # Load the private key using cryptography
+                private_key = serialization.load_pem_private_key(
+                    private_key_data,
+                    password=None,
+                    backend=default_backend()
+                )
+
+                # Create the signature using ES256 (ECDSA with SHA-256)
+                signature = private_key.sign(
+                    data,
+                    padding=None,  # ECDSA doesn't use padding
+                    algorithm=hashes.SHA256()
+                )
+
+                return signature
+
+            # Create signer with callback
+            signer = create_signer(
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            result = builder.sign_file(
+                source_path=self.testPath,
+                dest_path=output_path,
+                signer=signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):
@@ -1027,13 +1092,13 @@ class TestCreateSigner(unittest.TestCase):
         """Test creating a signer with a callback function."""
         def mock_sign_callback(data: bytes) -> bytes:
             """Mock signing callback that returns a fake signature."""
-            # Return a fake signature (64 bytes for Ed25519)
+            # Return a fake signature (64 bytes for ES256)
             return b"fake_signature_" + b"0" * 50
 
-        # Test with Ed25519 algorithm
+        # Test with ES256 algorithm
         signer = create_signer(
             callback=mock_sign_callback,
-            alg=SigningAlg.ED25519,
+            alg=SigningAlg.ES256,
             certs=self.certs
         )
 
