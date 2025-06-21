@@ -18,7 +18,6 @@ import unittest
 from unittest.mock import mock_open, patch
 import ctypes
 import warnings
-import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
@@ -38,7 +37,7 @@ ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.55.0", sdk_version())
+        self.assertIn("0.57.0", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -781,10 +780,13 @@ class TestBuilder(unittest.TestCase):
                 )
 
                 # Create the signature using ES256 (ECDSA with SHA-256)
+                # For ECDSA, we use the signature_algorithm_constructor
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+                
                 signature = private_key.sign(
                     data,
-                    padding=None,  # ECDSA doesn't use padding
-                    algorithm=hashes.SHA256()
+                    ec.ECDSA(hashes.SHA256())
                 )
 
                 return signature

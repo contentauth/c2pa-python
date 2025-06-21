@@ -9,6 +9,33 @@ from typing import Optional, Union, Callable, Any
 import time
 from .lib import dynamically_load_library
 import mimetypes
+import logging
+
+# Force output to stderr immediately
+sys.stderr.write("## c2pa module loading - logging setup starting\n")
+sys.stderr.flush()
+
+# Configure logging for the c2pa module
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True  # Force reconfiguration even if already configured
+)
+
+# Get the logger for this module
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Ensure the logger has a handler
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stderr)  # Force to stderr
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+sys.stderr.write("## c2pa module loading - logging setup complete\n")
+sys.stderr.flush()
 
 # Define required function names
 _REQUIRED_FUNCTIONS = [
@@ -1308,6 +1335,13 @@ class Signer:
             C2paError: If there was an error creating the signer
             C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        sys.stderr.write("## Signer.from_callback called\n")
+        sys.stderr.flush()
+        logger.info("Signer.from_callback called")
+        
         # Validate inputs before creating
         if not certs:
             raise C2paError(
@@ -1317,17 +1351,74 @@ class Signer:
             raise C2paError(
                 cls._error_messages['invalid_tsa'].format("Invalid TSA URL format"))
 
+        sys.stderr.write("## Creating wrapped_callback\n")
+        sys.stderr.flush()
+        logger.info("Creating wrapped_callback")
+
         # Create a wrapper callback that handles errors and memory management
-        def wrapped_callback(data: bytes) -> bytes:
+        def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
+            logger = logging.getLogger(__name__)
+
+            sys.stderr.write(f"## create_signer wrapped_callback: context: {context}, data_ptr: {data_ptr}, data_len: {data_len}, signed_bytes_ptr: {signed_bytes_ptr}, signed_len: {signed_len}\n")
+            sys.stderr.flush()
+            logger.debug(f"create_signer wrapped_callback called: context={context}, data_len={data_len}, signed_len={signed_len}")
+
             try:
+                if not data_ptr or data_len <= 0:
+                    error_msg = f"Invalid input: data_ptr={data_ptr}, data_len={data_len}"
+                    sys.stderr.write(f"## ERROR: {error_msg}\n")
+                    sys.stderr.flush()
+                    logger.error(error_msg)
+                    return 0  # Error: invalid input
+
+                # Convert C pointer to Python bytes
+                data = bytes(data_ptr[:data_len])
+                sys.stderr.write(f"## Converted data: {len(data)} bytes\n")
+                sys.stderr.flush()
+                logger.debug(f"Converted data: {len(data)} bytes")
+
                 if not data:
-                    raise ValueError("Empty data provided for signing")
-                return callback(data)
+                    error_msg = "Empty data after conversion"
+                    sys.stderr.write(f"## ERROR: {error_msg}\n")
+                    sys.stderr.flush()
+                    logger.error(error_msg)
+                    return 0  # Error: empty data
+
+                # Call the user's callback
+                sys.stderr.write("## Calling user callback...\n")
+                sys.stderr.flush()
+                logger.debug("Calling user callback...")
+                signature = callback(data)
+                sys.stderr.write(f"## User callback returned: {len(signature) if signature else 0} bytes\n")
+                sys.stderr.flush()
+                logger.debug(f"User callback returned: {len(signature) if signature else 0} bytes")
+
+                if not signature:
+                    error_msg = "User callback returned empty signature"
+                    sys.stderr.write(f"## ERROR: {error_msg}\n")
+                    sys.stderr.flush()
+                    logger.error(error_msg)
+                    return 0  # Error: empty signature
+
+                # Copy the signature back to the C buffer
+                actual_len = min(len(signature), signed_len)
+                sys.stderr.write(f"## Copying {actual_len} bytes to buffer (signature_len={len(signature)}, signed_len={signed_len})\n")
+                sys.stderr.flush()
+                logger.debug(f"Copying {actual_len} bytes to buffer")
+
+                for i in range(actual_len):
+                    signed_bytes_ptr[i] = signature[i]
+
+                sys.stderr.write(f"## Successfully copied signature, returning {actual_len}\n")
+                sys.stderr.flush()
+                logger.debug(f"Successfully copied signature, returning {actual_len}")
+                return actual_len  # Return the number of bytes written
             except Exception as e:
-                print(
-                    cls._error_messages['callback_error'].format(
-                        str(e)), file=sys.stderr)
-                raise C2paError.Signature(str(e))
+                error_msg = f"Exception in wrapped_callback: {e}"
+                sys.stderr.write(f"## ERROR: {error_msg}\n")
+                sys.stderr.flush()
+                logger.error(error_msg)
+                return 0  # Return 0 to indicate error
 
         # Encode strings with error handling
         try:
@@ -1339,13 +1430,25 @@ class Signer:
                     str(e)))
 
         # Create the signer with the wrapped callback
+        # Store the callback as an instance attribute to keep it alive
+        signer_instance = cls.__new__(cls)
+        signer_instance._callback_cb = SignerCallback(wrapped_callback)
+
+        sys.stderr.write("## About to call c2pa_signer_create from create_signer\n")
+        sys.stderr.flush()
+        logger.info("About to call c2pa_signer_create from create_signer")
+
         signer_ptr = _lib.c2pa_signer_create(
             None,  # context
-            SignerCallback(wrapped_callback),
+            signer_instance._callback_cb,
             alg,
             certs_bytes,
             tsa_url_bytes
         )
+
+        sys.stderr.write(f"## c2pa_signer_create returned: {signer_ptr}\n")
+        sys.stderr.flush()
+        logger.info(f"c2pa_signer_create returned: {signer_ptr}")
 
         if not signer_ptr:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -1353,7 +1456,12 @@ class Signer:
                 raise C2paError(error)
             raise C2paError("Failed to create signer")
 
-        return cls(signer_ptr)
+        # Initialize the signer instance
+        signer_instance._signer = signer_ptr
+        signer_instance._closed = False
+        signer_instance._error_messages = cls._error_messages
+
+        return signer_instance
 
     def __enter__(self):
         """Context manager entry."""
@@ -1895,6 +2003,13 @@ def create_signer(
         C2paError: If there was an error creating the signer
         C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    sys.stderr.write("## create_signer called\n")
+    sys.stderr.flush()
+    logger.info("create_signer called")
+    
     try:
         certs_bytes = certs.encode('utf-8')
         tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
@@ -1902,18 +2017,102 @@ def create_signer(
         raise C2paError.Encoding(
             f"Invalid UTF-8 characters in certificate data or TSA URL: {str(e)}")
 
+    sys.stderr.write("## About to call c2pa_signer_create from create_signer\n")
+    sys.stderr.flush()
+    logger.info("About to call c2pa_signer_create from create_signer")
+    
+    # Create a wrapper callback that handles errors and memory management
+    def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
+        logger = logging.getLogger(__name__)
+        
+        sys.stderr.write(f"## create_signer wrapped_callback: context: {context}, data_ptr: {data_ptr}, data_len: {data_len}, signed_bytes_ptr: {signed_bytes_ptr}, signed_len: {signed_len}\n")
+        sys.stderr.flush()
+        logger.debug(f"create_signer wrapped_callback called: context={context}, data_len={data_len}, signed_len={signed_len}")
+        
+        # Add immediate return for debugging
+        sys.stderr.write("## wrapped_callback entered - about to process\n")
+        sys.stderr.flush()
+        
+        try:
+            if not data_ptr or data_len <= 0:
+                error_msg = f"Invalid input: data_ptr={data_ptr}, data_len={data_len}"
+                sys.stderr.write(f"## ERROR: {error_msg}\n")
+                sys.stderr.flush()
+                logger.error(error_msg)
+                return 0  # Error: invalid input
+
+            # Convert C pointer to Python bytes
+            data = bytes(data_ptr[:data_len])
+            sys.stderr.write(f"## Converted data: {len(data)} bytes\n")
+            sys.stderr.flush()
+            logger.debug(f"Converted data: {len(data)} bytes")
+
+            if not data:
+                error_msg = "Empty data after conversion"
+                sys.stderr.write(f"## ERROR: {error_msg}\n")
+                sys.stderr.flush()
+                logger.error(error_msg)
+                return 0  # Error: empty data
+
+            # Call the user's callback
+            sys.stderr.write("## Calling user callback...\n")
+            sys.stderr.flush()
+            logger.debug("Calling user callback...")
+            signature = callback(data)
+            sys.stderr.write(f"## User callback returned: {len(signature) if signature else 0} bytes\n")
+            sys.stderr.flush()
+            logger.debug(f"User callback returned: {len(signature) if signature else 0} bytes")
+
+            if not signature:
+                error_msg = "User callback returned empty signature"
+                sys.stderr.write(f"## ERROR: {error_msg}\n")
+                sys.stderr.flush()
+                logger.error(error_msg)
+                return 0  # Error: empty signature
+
+            # Copy the signature back to the C buffer
+            actual_len = min(len(signature), signed_len)
+            sys.stderr.write(f"## Copying {actual_len} bytes to buffer (signature_len={len(signature)}, signed_len={signed_len})\n")
+            sys.stderr.flush()
+            logger.debug(f"Copying {actual_len} bytes to buffer")
+            
+            for i in range(actual_len):
+                signed_bytes_ptr[i] = signature[i]
+
+            sys.stderr.write(f"## Successfully copied signature, returning {actual_len}\n")
+            sys.stderr.flush()
+            logger.debug(f"Successfully copied signature, returning {actual_len}")
+            return actual_len  # Return the number of bytes written
+        except Exception as e:
+            error_msg = f"Exception in wrapped_callback: {e}"
+            sys.stderr.write(f"## ERROR: {error_msg}\n")
+            sys.stderr.flush()
+            logger.error(error_msg)
+            return 0  # Return 0 to indicate error
+    
+    # Store the callback to keep it alive
+    if not hasattr(create_signer, '_callbacks'):
+        create_signer._callbacks = []
+    
+    # Create the C callback and store it
+    c_callback = SignerCallback(wrapped_callback)
+    create_signer._callbacks.append(c_callback)  # Keep it alive
+    
     signer_ptr = _lib.c2pa_signer_create(
         None,  # context
-        SignerCallback(callback),
+        c_callback,  # Use the stored callback
         alg,
         certs_bytes,
         tsa_url_bytes
     )
 
+    sys.stderr.write(f"## c2pa_signer_create returned: {signer_ptr}\n")
+    sys.stderr.flush()
+    logger.info(f"c2pa_signer_create returned: {signer_ptr}")
+
     if not signer_ptr:
         error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
-            # More detailed error message when possible
             raise C2paError(error)
         raise C2paError("Failed to create signer")
 
