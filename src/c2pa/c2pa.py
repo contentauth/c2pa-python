@@ -1319,34 +1319,33 @@ class Signer:
 
         # Create a wrapper callback that handles errors and memory management
         def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
+            # Returns 0 on error as this case is handled in the native code gracefully
             try:
                 if not data_ptr or data_len <= 0:
                     return 0  # Error: invalid input
 
                 # Convert C pointer to Python bytes
                 data = bytes(data_ptr[:data_len])
-
                 if not data:
-                    return 0  # Error: empty data
+                    return 0  # Error: empty data, native code will handle it!
 
                 # Call the user's callback
                 signature = callback(data)
-
                 if not signature:
-                    return 0  # Error: empty signature
+                    return 0  # Error: empty signature, native code will handle that too!
 
                 # Copy the signature back to the C buffer
                 actual_len = min(len(signature), signed_len)
-                
                 for i in range(actual_len):
                     signed_bytes_ptr[i] = signature[i]
 
-                return actual_len  # Return the number of bytes written
+                # Native code expects the signed len to be returned, we oblige
+                return actual_len
             except Exception as e:
                 print(
                     cls._error_messages['callback_error'].format(
                         str(e)), file=sys.stderr)
-                return 0  # Return 0 to indicate error
+                return 0
 
         # Encode strings with error handling
         try:
@@ -1358,10 +1357,11 @@ class Signer:
                     str(e)))
 
         # Create the signer with the wrapped callback
-        # Store the callback as an instance attribute to keep it alive
+        # Store the callback as an instance attribute to keep it alive, as this prevents
+        # garbage colelction and lifetime issues.
         signer_instance = cls.__new__(cls)
         signer_instance._callback_cb = SignerCallback(wrapped_callback)
-        
+
         signer_ptr = _lib.c2pa_signer_create(
             None,  # context
             signer_instance._callback_cb,
@@ -1380,7 +1380,7 @@ class Signer:
         signer_instance._signer = signer_ptr
         signer_instance._closed = False
         signer_instance._error_messages = cls._error_messages
-        
+
         return signer_instance
 
     def __enter__(self):
