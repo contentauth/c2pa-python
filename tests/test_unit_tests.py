@@ -928,6 +928,14 @@ class TestBuilder(unittest.TestCase):
 
                 return signature
 
+            # Create signer with callback
+            signer = Signer.from_callback(
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
             # Import the new function
             from c2pa.c2pa import sign_file_with_callback_signer
 
@@ -936,10 +944,7 @@ class TestBuilder(unittest.TestCase):
                 source_path=self.testPath,
                 dest_path=output_path,
                 manifest=self.manifestDefinition,
-                callback=sign_callback,
-                alg=SigningAlg.ES256,
-                certs=self.certs.decode('utf-8'),
-                tsa_url="http://timestamp.digicert.com"
+                signer=signer
             )
 
             # Verify the output file was created

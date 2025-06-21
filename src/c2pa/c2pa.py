@@ -683,26 +683,18 @@ def sign_file_with_callback_signer(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
-    callback: Callable[[bytes], bytes],
-    alg: C2paSigningAlg,
-    certs: str,
-    tsa_url: Optional[str] = None,
-    data_dir: Optional[Union[str, Path]] = None
+    signer: 'Signer'
 ) -> bytes:
-    """Sign a file with a C2PA manifest using a callback signer.
+    """Sign a file with a C2PA manifest using a signer.
 
-    This function provides a shortcut to sign files using a callback-based signer
+    This function provides a shortcut to sign files using a signer
     and returns the raw manifest bytes.
 
     Args:
         source_path: Path to the source file
         dest_path: Path to write the signed file to
         manifest: The manifest JSON string
-        callback: Function that signs data and returns the signature
-        alg: The signing algorithm to use
-        certs: Certificate chain in PEM format
-        tsa_url: Optional RFC 3161 timestamp authority URL
-        data_dir: Optional directory to write binary resources to
+        signer: The signer to use
 
     Returns:
         The manifest bytes (binary data)
@@ -713,9 +705,6 @@ def sign_file_with_callback_signer(
         C2paError.NotSupported: If the file type cannot be determined
     """
     try:
-        # Create a signer from the callback
-        signer = Signer.from_callback(callback, alg, certs, tsa_url)
-
         # Create a builder from the manifest
         builder = Builder(manifest)
 
@@ -733,12 +722,6 @@ def sign_file_with_callback_signer(
             # Use the builder's internal signing logic
             result, manifest_bytes = builder._sign_internal(signer, mime_type, source_stream, dest_stream)
 
-            # If we have manifest bytes and a data directory, write them
-            if manifest_bytes and data_dir:
-                manifest_path = os.path.join(str(data_dir), 'manifest.json')
-                with open(manifest_path, 'wb') as f:
-                    f.write(manifest_bytes)
-
             return manifest_bytes
 
     except Exception as e:
@@ -755,8 +738,6 @@ def sign_file_with_callback_signer(
         # Ensure resources are cleaned up
         if 'builder' in locals():
             builder.close()
-        if 'signer' in locals():
-            signer.close()
 
 
 class Stream:
@@ -1349,10 +1330,6 @@ class Signer:
         Raises:
             C2paError: If there was an error creating the signer
         """
-        # Validate signer info before creating
-        if not signer_info.sign_cert or not signer_info.private_key:
-            raise C2paError("Missing certificate or private key")
-
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
         if not signer_ptr:
@@ -1360,8 +1337,7 @@ class Signer:
             if error:
                 # More detailed error message when possible
                 raise C2paError(error)
-            raise C2paError(
-                "Failed to create signer from configured signer info")
+            raise C2paError("Failed to create signer from info")
 
         return cls(signer_ptr)
 
@@ -1898,11 +1874,20 @@ class Builder:
 
             # Capture the manifest bytes if available
             manifest_bytes = b""
-            if manifest_bytes_ptr:
-                # Convert the C pointer to Python bytes
-                manifest_bytes = bytes(manifest_bytes_ptr[:result])
-                # Free the C-allocated memory
-                _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+            if manifest_bytes_ptr and result > 0:
+                try:
+                    # Convert the C pointer to Python bytes
+                    manifest_bytes = bytes(manifest_bytes_ptr[:result])
+                except Exception:
+                    # If there's any error accessing the memory, just return empty bytes
+                    manifest_bytes = b""
+                finally:
+                    # Always free the C-allocated memory, even if we failed to copy it
+                    try:
+                        _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+                    except Exception:
+                        # Ignore errors during cleanup
+                        pass
 
             return result, manifest_bytes
         finally:
