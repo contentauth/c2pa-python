@@ -1367,19 +1367,19 @@ class Signer:
                 if not data_ptr or data_len <= 0:
                     # Error: invalid input, native code will handle if seeing
                     # signature size being 0
-                    return 0
+                    return -1
 
                 # Convert C pointer to Python bytes
                 data = bytes(data_ptr[:data_len])
                 if not data:
                     # Error: empty data, native code will handle it!
-                    return 0
+                    return -1
 
                 # Call the user's callback
                 signature = callback(data)
                 if not signature:
                     # Error: empty signature, native code will handle that too!
-                    return 0
+                    return -1
 
                 # Copy the signature back to the C buffer (since callback is
                 # sued in native code)
@@ -1393,7 +1393,7 @@ class Signer:
                 print(
                     error_messages['callback_error'].format(
                         str(e)), file=sys.stderr)
-                return 0
+                return -1
 
         # Encode strings with error handling in case it's invalid UTF8
         try:
