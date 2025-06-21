@@ -936,12 +936,13 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            # Use the overloaded sign_file function with a Signer object
+            # Test with return_manifest_as_bytes=False (default) - should return JSON string
             result_json = sign_file(
                 self.testPath,
                 output_path,
                 self.manifestDefinition,
-                signer
+                signer,
+                False
             )
 
             # Verify the output file was created
@@ -955,6 +956,23 @@ class TestBuilder(unittest.TestCase):
             manifest_data = json.loads(result_json)
             self.assertIn("manifests", manifest_data)
             self.assertIn("active_manifest", manifest_data)
+
+            # Test with return_manifest_as_bytes=True - should return bytes
+            output_path_bytes = os.path.join(temp_dir, "signed_output_callback_bytes.jpg")
+            result_bytes = sign_file(
+                self.testPath,
+                output_path_bytes,
+                self.manifestDefinition,
+                signer,
+                True
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path_bytes))
+
+            # Verify the result is bytes (not JSON string)
+            self.assertIsInstance(result_bytes, bytes)
+            self.assertGreater(len(result_bytes), 0)
 
             # Read the signed file and verify the manifest contains expected content
             with open(output_path, "rb") as file:
@@ -989,16 +1007,30 @@ class TestBuilder(unittest.TestCase):
                 ta_url=b"http://timestamp.digicert.com"
             )
 
-            # Test with C2paSignerInfo parameter
+            # Test with C2paSignerInfo parameter - JSON return
             result_1 = sign_file(
                 self.testPath,
                 output_path_1,
                 self.manifestDefinition,
-                signer_info
+                signer_info,
+                False
             )
             
             self.assertIsInstance(result_1, str)
             self.assertTrue(os.path.exists(output_path_1))
+
+            # Test with C2paSignerInfo parameter - bytes return
+            output_path_1_bytes = os.path.join(temp_dir, "signed_output_1_bytes.jpg")
+            result_1_bytes = sign_file(
+                self.testPath,
+                output_path_1_bytes,
+                self.manifestDefinition,
+                signer_info,
+                True
+            )
+            
+            self.assertIsInstance(result_1_bytes, bytes)
+            self.assertTrue(os.path.exists(output_path_1_bytes))
 
             # Test with Signer object
             output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
@@ -1006,18 +1038,32 @@ class TestBuilder(unittest.TestCase):
             # Create a signer from the signer info
             signer = Signer.from_info(signer_info)
             
-            # Test with Signer parameter
+            # Test with Signer parameter - JSON return
             result_2 = sign_file(
                 self.testPath,
                 output_path_2,
                 self.manifestDefinition,
-                signer
+                signer,
+                False
             )
             
             self.assertIsInstance(result_2, str)
             self.assertTrue(os.path.exists(output_path_2))
+
+            # Test with Signer parameter - bytes return
+            output_path_2_bytes = os.path.join(temp_dir, "signed_output_2_bytes.jpg")
+            result_2_bytes = sign_file(
+                self.testPath,
+                output_path_2_bytes,
+                self.manifestDefinition,
+                signer,
+                True
+            )
             
-            # Both results should be similar (same manifest structure)
+            self.assertIsInstance(result_2_bytes, bytes)
+            self.assertTrue(os.path.exists(output_path_2_bytes))
+            
+            # Both JSON results should be similar (same manifest structure)
             manifest_1 = json.loads(result_1)
             manifest_2 = json.loads(result_2)
             
@@ -1025,6 +1071,10 @@ class TestBuilder(unittest.TestCase):
             self.assertIn("manifests", manifest_2)
             self.assertIn("active_manifest", manifest_1)
             self.assertIn("active_manifest", manifest_2)
+
+            # Both bytes results should be non-empty
+            self.assertGreater(len(result_1_bytes), 0)
+            self.assertGreater(len(result_2_bytes), 0)
 
         finally:
             # Clean up the temporary directory

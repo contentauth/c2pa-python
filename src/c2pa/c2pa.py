@@ -597,13 +597,10 @@ def sign_file(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
-    signer_info: C2paSignerInfo
-) -> str:
+    signer_info: C2paSignerInfo,
+    return_manifest_as_bytes: bool = False
+) -> Union[str, bytes]:
     """Sign a file with a C2PA manifest using signer info.
-
-    .. deprecated:: 0.10.0
-        This function is deprecated and will be removed in a future version.
-        Please use the Builder class for signing and the Reader class for reading signed data instead.
     """
     ...
 
@@ -612,13 +609,10 @@ def sign_file(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
-    signer: 'Signer'
-) -> str:
+    signer: 'Signer',
+    return_manifest_as_bytes: bool = False
+) -> Union[str, bytes]:
     """Sign a file with a C2PA manifest using a signer.
-
-    .. deprecated:: 0.10.0
-        This function is deprecated and will be removed in a future version.
-        Please use the Builder class for signing and the Reader class for reading signed data instead.
     """
     ...
 
@@ -626,8 +620,9 @@ def sign_file(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
-    signer_or_info: Union[C2paSignerInfo, 'Signer']
-) -> str:
+    signer_or_info: Union[C2paSignerInfo, 'Signer'],
+    return_manifest_as_bytes: bool = False
+) -> Union[str, bytes]:
     """Sign a file with a C2PA manifest.
     For now, this function is left here to provide a backwards-compatible API.
 
@@ -636,9 +631,10 @@ def sign_file(
         dest_path: Path to write the signed file to
         manifest: The manifest JSON string
         signer_or_info: Either a signer configuration or a signer object
+        return_manifest_as_bytes: If True, return manifest bytes instead of JSON string
 
     Returns:
-        The signed manifest as a JSON string
+        The signed manifest as a JSON string or bytes, depending on return_manifest_as_bytes
 
     Raises:
         C2paError: If there was an error signing the file
@@ -666,17 +662,28 @@ def sign_file(
                 raise C2paError.NotSupported(
                     f"Could not determine MIME type for file: {source_path}")
 
-            # Sign the file using the builder
-            builder.sign(
-                signer=signer,
-                format=mime_type,
-                source=source_file,
-                dest=dest_file
-            )
+            if return_manifest_as_bytes:
+                # Convert Python streams to Stream objects for internal signing
+                source_stream = Stream(source_file)
+                dest_stream = Stream(dest_file)
 
-            # Read the signed manifest from the destination file
-            with Reader(dest_path) as reader:
-                return reader.json()
+                # Use the builder's internal signing logic to get manifest bytes
+                result, manifest_bytes = builder._sign_internal(
+                    signer, mime_type, source_stream, dest_stream)
+
+                return manifest_bytes
+            else:
+                # Sign the file using the builder
+                builder.sign(
+                    signer=signer,
+                    format=mime_type,
+                    source=source_file,
+                    dest=dest_file
+                )
+
+                # Read the signed manifest from the destination file
+                with Reader(dest_path) as reader:
+                    return reader.json()
 
     except Exception as e:
         # Clean up destination file if it exists and there was an error
