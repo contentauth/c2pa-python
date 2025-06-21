@@ -783,7 +783,7 @@ class TestBuilder(unittest.TestCase):
                 # For ECDSA, we use the signature_algorithm_constructor
                 from cryptography.hazmat.primitives import hashes
                 from cryptography.hazmat.primitives.asymmetric import ec
-                
+
                 signature = private_key.sign(
                     data,
                     ec.ECDSA(hashes.SHA256())

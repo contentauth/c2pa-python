@@ -1320,21 +1320,27 @@ class Signer:
         # Create a wrapper callback that handles errors and memory management
         def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
             # Returns 0 on error as this case is handled in the native code gracefully
+            # The reason is that otherwise we ping-pong errors between native code and Python code,
+            # which can become tedious in handling. So we let the native code deal with it and
+            # raise the errors accordingly, since it already checks the signature length for correctness.
             try:
                 if not data_ptr or data_len <= 0:
-                    return 0  # Error: invalid input
+                    # Error: invalid input, native code will handle if seeing signature size being 0
+                    return 0
 
                 # Convert C pointer to Python bytes
                 data = bytes(data_ptr[:data_len])
                 if not data:
-                    return 0  # Error: empty data, native code will handle it!
+                    # Error: empty data, native code will handle it!
+                    return 0
 
                 # Call the user's callback
                 signature = callback(data)
                 if not signature:
-                    return 0  # Error: empty signature, native code will handle that too!
+                    # Error: empty signature, native code will handle that too!
+                    return 0
 
-                # Copy the signature back to the C buffer
+                # Copy the signature back to the C buffer (since callback is sued in native code)
                 actual_len = min(len(signature), signed_len)
                 for i in range(actual_len):
                     signed_bytes_ptr[i] = signature[i]
@@ -1347,7 +1353,7 @@ class Signer:
                         str(e)), file=sys.stderr)
                 return 0
 
-        # Encode strings with error handling
+        # Encode strings with error handling in case it's invalid UTF8
         try:
             certs_bytes = certs.encode('utf-8')
             tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
@@ -1358,12 +1364,12 @@ class Signer:
 
         # Create the signer with the wrapped callback
         # Store the callback as an instance attribute to keep it alive, as this prevents
-        # garbage colelction and lifetime issues.
+        # garbage collection and lifetime issues.
         signer_instance = cls.__new__(cls)
         signer_instance._callback_cb = SignerCallback(wrapped_callback)
 
         signer_ptr = _lib.c2pa_signer_create(
-            None,  # context
+            None,
             signer_instance._callback_cb,
             alg,
             certs_bytes,
@@ -1950,22 +1956,22 @@ def create_signer(
 
             # Copy the signature back to the C buffer
             actual_len = min(len(signature), signed_len)
-            
+
             for i in range(actual_len):
                 signed_bytes_ptr[i] = signature[i]
 
             return actual_len  # Return the number of bytes written
         except Exception as e:
             return 0  # Return 0 to indicate error
-    
+
     # Store the callback to keep it alive
     if not hasattr(create_signer, '_callbacks'):
         create_signer._callbacks = []
-    
+
     # Create the C callback and store it
     c_callback = SignerCallback(wrapped_callback)
     create_signer._callbacks.append(c_callback)  # Keep it alive
-    
+
     signer_ptr = _lib.c2pa_signer_create(
         None,  # context
         c_callback,  # Use the stored callback
