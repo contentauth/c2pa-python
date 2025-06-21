@@ -246,7 +246,7 @@ class TestBuilder(unittest.TestCase):
     def setUp(self):
         # Filter deprecation warnings for create_signer function
         warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
-        
+
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -1083,6 +1083,7 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
@@ -1338,6 +1339,7 @@ class TestLegacyAPI(unittest.TestCase):
             # Clean up
             if os.path.exists(output_path):
                 os.remove(output_path)
+
 
 if __name__ == '__main__':
     unittest.main()
