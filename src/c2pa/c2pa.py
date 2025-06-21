@@ -5,7 +5,7 @@ import sys
 import os
 import warnings
 from pathlib import Path
-from typing import Optional, Union, Callable, Any
+from typing import Optional, Union, Callable, Any, overload
 import time
 from .lib import dynamically_load_library
 import mimetypes
@@ -534,6 +534,15 @@ def read_ingredient_file(
         path: Union[str, Path], data_dir: Union[str, Path]) -> str:
     """Read a C2PA ingredient from a file.
 
+    .. deprecated:: 0.11.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Reader class for reading C2PA metadata instead.
+        Example:
+            ```python
+            with Reader(path) as reader:
+                manifest_json = reader.json()
+            ```
+
     Args:
         path: Path to the file to read
         data_dir: Directory to write binary resources to
@@ -544,6 +553,12 @@ def read_ingredient_file(
     Raises:
         C2paError: If there was an error reading the file
     """
+    warnings.warn(
+        "The read_ingredient_file function is deprecated and will be removed in a future version." 
+        "Please use Reader(path).json() for reading C2PA metadata instead.",
+        DeprecationWarning,
+        stacklevel=2)
+
     container = _StringContainer()
 
     container._path_str = str(path).encode('utf-8')
@@ -578,11 +593,10 @@ def read_file(path: Union[str, Path],
         C2paError: If there was an error reading the file
     """
     warnings.warn(
-        "The read_file function is deprecated and will be removed in a future version. "
+        "The read_file function is deprecated and will be removed in a future version."
         "Please use the Reader class for reading C2PA metadata instead.",
         DeprecationWarning,
-        stacklevel=2
-    )
+        stacklevel=2)
 
     container = _StringContainer()
 
@@ -593,45 +607,64 @@ def read_file(path: Union[str, Path],
     return _parse_operation_result_for_error(result)
 
 
+@overload
 def sign_file(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
     signer_info: C2paSignerInfo,
-    data_dir: Optional[Union[str, Path]] = None
-) -> str:
+    return_manifest_as_bytes: bool = False
+) -> Union[str, bytes]:
+    """Sign a file with a C2PA manifest using signer info.
+    """
+    ...
+
+@overload
+def sign_file(
+    source_path: Union[str, Path],
+    dest_path: Union[str, Path],
+    manifest: str,
+    signer: 'Signer',
+    return_manifest_as_bytes: bool = False
+) -> Union[str, bytes]:
+    """Sign a file with a C2PA manifest using a signer.
+    """
+    ...
+
+def sign_file(
+    source_path: Union[str, Path],
+    dest_path: Union[str, Path],
+    manifest: str,
+    signer_or_info: Union[C2paSignerInfo, 'Signer'],
+    return_manifest_as_bytes: bool = False
+) -> Union[str, bytes]:
     """Sign a file with a C2PA manifest.
     For now, this function is left here to provide a backwards-compatible API.
-
-    .. deprecated:: 0.10.0
-        This function is deprecated and will be removed in a future version.
-        Please use the Builder class for signing and the Reader class for reading signed data instead.
 
     Args:
         source_path: Path to the source file
         dest_path: Path to write the signed file to
         manifest: The manifest JSON string
-        signer_info: Signing configuration
-        data_dir: Optional directory to write binary resources to
+        signer_or_info: Either a signer configuration or a signer object
+        return_manifest_as_bytes: If True, return manifest bytes instead of JSON string
 
     Returns:
-        The signed manifest as a JSON string
+        The signed manifest as a JSON string or bytes, depending on return_manifest_as_bytes
 
     Raises:
         C2paError: If there was an error signing the file
         C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
         C2paError.NotSupported: If the file type cannot be determined
     """
-    warnings.warn(
-        "The sign_file function is deprecated and will be removed in a future version. "
-        "Please use the Builder class for signing and the Reader class for reading signed data instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
 
     try:
-        # Create a signer from the signer info
-        signer = Signer.from_info(signer_info)
+        # Determine if we have a signer or signer info
+        if isinstance(signer_or_info, C2paSignerInfo):
+            signer = Signer.from_info(signer_or_info)
+            own_signer = True
+        else:
+            signer = signer_or_info
+            own_signer = False
 
         # Create a builder from the manifest
         builder = Builder(manifest)
@@ -641,25 +674,31 @@ def sign_file(
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
-                raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+                raise C2paError.NotSupported(
+                    f"Could not determine MIME type for file: {source_path}")
 
-            # Sign the file using the builder
-            manifest_bytes = builder.sign(
-                signer=signer,
-                format=mime_type,
-                source=source_file,
-                dest=dest_file
-            )
+            if return_manifest_as_bytes:
+                # Convert Python streams to Stream objects for internal signing
+                source_stream = Stream(source_file)
+                dest_stream = Stream(dest_file)
 
-            # If we have manifest bytes and a data directory, write them
-            if manifest_bytes and data_dir:
-                manifest_path = os.path.join(str(data_dir), 'manifest.json')
-                with open(manifest_path, 'wb') as f:
-                    f.write(manifest_bytes)
+                # Use the builder's internal signing logic to get manifest bytes
+                result, manifest_bytes = builder._sign_internal(
+                    signer, mime_type, source_stream, dest_stream)
 
-            # Read the signed manifest from the destination file
-            with Reader(dest_path) as reader:
-                return reader.json()
+                return manifest_bytes
+            else:
+                # Sign the file using the builder
+                builder.sign(
+                    signer=signer,
+                    format=mime_type,
+                    source=source_file,
+                    dest=dest_file
+                )
+
+                # Read the signed manifest from the destination file
+                with Reader(dest_path) as reader:
+                    return reader.json()
 
     except Exception as e:
         # Clean up destination file if it exists and there was an error
@@ -675,7 +714,7 @@ def sign_file(
         # Ensure resources are cleaned up
         if 'builder' in locals():
             builder.close()
-        if 'signer' in locals():
+        if 'signer' in locals() and own_signer:
             signer.close()
 
 
@@ -701,7 +740,8 @@ class Stream:
         Raises:
             TypeError: If the file object doesn't implement all required methods
         """
-        # Initialize _closed first to prevent AttributeError during garbage collection
+        # Initialize _closed first to prevent AttributeError
+        # during garbage collection
         self._closed = False
         self._initialized = False
         self._stream = None
@@ -1269,10 +1309,6 @@ class Signer:
         Raises:
             C2paError: If there was an error creating the signer
         """
-        # Validate signer info before creating
-        if not signer_info.sign_cert or not signer_info.private_key:
-            raise C2paError("Missing certificate or private key")
-
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
         if not signer_ptr:
@@ -1280,8 +1316,7 @@ class Signer:
             if error:
                 # More detailed error message when possible
                 raise C2paError(error)
-            raise C2paError(
-                "Failed to create signer from configured signer info")
+            raise C2paError("Failed to create signer from configured signer_info")
 
         return cls(signer_ptr)
 
@@ -1308,40 +1343,95 @@ class Signer:
             C2paError: If there was an error creating the signer
             C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
         """
+        # Define error messages locally since they're instance attributes
+        error_messages = {
+            'closed_error': "Signer is closed",
+            'cleanup_error': "Error during cleanup: {}",
+            'signer_cleanup': "Error cleaning up signer: {}",
+            'size_error': "Error getting reserve size: {}",
+            'callback_error': "Error in signer callback: {}",
+            'info_error': "Error creating signer from info: {}",
+            'invalid_data': "Invalid data for signing: {}",
+            'invalid_certs': "Invalid certificate data: {}",
+            'invalid_tsa': "Invalid TSA URL: {}",
+            'encoding_error': "Invalid UTF-8 characters in input: {}"
+        }
+
         # Validate inputs before creating
         if not certs:
             raise C2paError(
-                cls._error_messages['invalid_certs'].format("Missing certificate data"))
+                error_messages['invalid_certs'].format("Missing certificate data"))
 
         if tsa_url and not tsa_url.startswith(('http://', 'https://')):
             raise C2paError(
-                cls._error_messages['invalid_tsa'].format("Invalid TSA URL format"))
+                error_messages['invalid_tsa'].format("Invalid TSA URL format"))
 
         # Create a wrapper callback that handles errors and memory management
-        def wrapped_callback(data: bytes) -> bytes:
+        def wrapped_callback(
+                context,
+                data_ptr,
+                data_len,
+                signed_bytes_ptr,
+                signed_len):
+            # Returns 0 on error as this case is handled in the native code gracefully
+            # The reason is that otherwise we ping-pong errors between native code and Python code,
+            # which can become tedious in handling. So we let the native code deal with it and
+            # raise the errors accordingly, since it already checks the
+            # signature length for correctness.
             try:
+                if not data_ptr or data_len <= 0:
+                    # Error: invalid input, invalid so return -1,
+                    # native code will handle it!
+                    return -1
+
+                # Convert C pointer to Python bytes
+                data = bytes(data_ptr[:data_len])
                 if not data:
-                    raise ValueError("Empty data provided for signing")
-                return callback(data)
+                    # Error: empty data, invalid so return -1,
+                    # native code will also handle it!
+                    return -1
+
+                # Call the user's callback
+                signature = callback(data)
+                if not signature:
+                    # Error: empty signature, invalid so return -1,
+                    # native code will handle that too!
+                    return -1
+
+                # Copy the signature back to the C buffer (since callback is
+                # used in native code)
+                actual_len = min(len(signature), signed_len)
+                # Use memmove for efficient memory copying instead of byte-by-byte loop
+                ctypes.memmove(signed_bytes_ptr, signature, actual_len)
+
+                # Native code expects the signed len to be returned, we oblige
+                return actual_len
             except Exception as e:
                 print(
-                    cls._error_messages['callback_error'].format(
+                    error_messages['callback_error'].format(
                         str(e)), file=sys.stderr)
-                raise C2paError.Signature(str(e))
+                # Error: exception raised, invalid so return -1,
+                # native code will handle the error when seeing -1
+                return -1
 
-        # Encode strings with error handling
+        # Encode strings with error handling in case it's invalid UTF8
         try:
             certs_bytes = certs.encode('utf-8')
             tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
         except UnicodeError as e:
             raise C2paError.Encoding(
-                cls._error_messages['encoding_error'].format(
+                error_messages['encoding_error'].format(
                     str(e)))
 
         # Create the signer with the wrapped callback
+        # Store the callback as an instance attribute to keep it alive, as this prevents
+        # garbage collection and lifetime issues.
+        signer_instance = cls.__new__(cls)
+        signer_instance._callback_cb = SignerCallback(wrapped_callback)
+
         signer_ptr = _lib.c2pa_signer_create(
-            None,  # context
-            SignerCallback(wrapped_callback),
+            None,
+            signer_instance._callback_cb,
             alg,
             certs_bytes,
             tsa_url_bytes
@@ -1353,7 +1443,12 @@ class Signer:
                 raise C2paError(error)
             raise C2paError("Failed to create signer")
 
-        return cls(signer_ptr)
+        # Initialize the signer instance
+        signer_instance._signer = signer_ptr
+        signer_instance._closed = False
+        signer_instance._error_messages = error_messages
+
+        return signer_instance
 
     def __enter__(self):
         """Context manager entry."""
@@ -1730,7 +1825,7 @@ class Builder:
             signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> int:
+            dest_stream: Stream) -> tuple[int, bytes]:
         """Internal signing logic shared between sign() and sign_file() methods,
         to use same native calls but expose different API surface.
 
@@ -1741,7 +1836,7 @@ class Builder:
             dest_stream: The destination stream
 
         Returns:
-            Size of C2PA data
+            A tuple of (size of C2PA data, manifest bytes)
 
         Raises:
             C2paError: If there was an error during signing
@@ -1768,11 +1863,26 @@ class Builder:
                 if error:
                     raise C2paError(error)
 
-            if manifest_bytes_ptr:
-                # Free the manifest bytes pointer if it was allocated
-                _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+            # Capture the manifest bytes if available
+            manifest_bytes = b""
+            if manifest_bytes_ptr and result > 0:
+                try:
+                    # Convert the C pointer to Python bytes
+                    manifest_bytes = bytes(manifest_bytes_ptr[:result])
+                except Exception:
+                    # If there's any error accessing the memory, just return
+                    # empty bytes
+                    manifest_bytes = b""
+                finally:
+                    # Always free the C-allocated memory,
+                    # even if we failed to copy manifest bytes
+                    try:
+                        _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+                    except Exception:
+                        # Ignore errors during cleanup
+                        pass
 
-            return result
+            return result, manifest_bytes
         finally:
             # Ensure both streams are cleaned up
             source_stream.close()
@@ -1800,6 +1910,7 @@ class Builder:
         dest_stream = Stream(dest)
 
         # Use the internal stream-base signing logic
+        # Ignore the return value since this method returns None
         self._sign_internal(signer, format, source_stream, dest_stream)
 
     def sign_file(self,
@@ -1807,7 +1918,7 @@ class Builder:
                                      Path],
                   dest_path: Union[str,
                                    Path],
-                  signer: Signer) -> int:
+                  signer: Signer) -> tuple[int, bytes]:
         """Sign a file and write the signed data to an output file.
 
         Args:
@@ -1816,7 +1927,7 @@ class Builder:
             signer: The signer to use
 
         Returns:
-            Size of C2PA data
+            A tuple of (size of C2PA data, manifest bytes)
 
         Raises:
             C2paError: If there was an error during signing
@@ -1824,7 +1935,8 @@ class Builder:
         # Get the MIME type from the file extension
         mime_type = mimetypes.guess_type(str(source_path))[0]
         if not mime_type:
-            raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+            raise C2paError.NotSupported(
+                f"Could not determine MIME type for file: {source_path}")
 
         # Open source and destination files
         with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
@@ -1833,7 +1945,9 @@ class Builder:
             dest_stream = Stream(dest_file)
 
             # Use the internal stream-base signing logic
-            return self._sign_internal(signer, mime_type, source_stream, dest_stream)
+            result, manifest_bytes = self._sign_internal(
+                signer, mime_type, source_stream, dest_stream)
+            return result, manifest_bytes
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
@@ -1882,6 +1996,14 @@ def create_signer(
 ) -> Signer:
     """Create a signer from a callback function.
 
+    .. deprecated:: 0.11.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Signer class method instead.
+        Example:
+            ```python
+            signer = Signer.from_callback(callback, alg, certs, tsa_url)
+            ```
+
     Args:
         callback: Function that signs data and returns the signature
         alg: The signing algorithm to use
@@ -1895,33 +2017,25 @@ def create_signer(
         C2paError: If there was an error creating the signer
         C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
     """
-    try:
-        certs_bytes = certs.encode('utf-8')
-        tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
-    except UnicodeError as e:
-        raise C2paError.Encoding(
-            f"Invalid UTF-8 characters in certificate data or TSA URL: {str(e)}")
+    warnings.warn(
+        "The create_signer function is deprecated and will be removed in a future version."
+        "Please use Signer.from_callback() instead.",
+        DeprecationWarning,
+        stacklevel=2)
 
-    signer_ptr = _lib.c2pa_signer_create(
-        None,  # context
-        SignerCallback(callback),
-        alg,
-        certs_bytes,
-        tsa_url_bytes
-    )
-
-    if not signer_ptr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            # More detailed error message when possible
-            raise C2paError(error)
-        raise C2paError("Failed to create signer")
-
-    return Signer(signer_ptr)
+    return Signer.from_callback(callback, alg, certs, tsa_url)
 
 
 def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
     """Create a signer from signer information.
+
+    .. deprecated:: 0.11.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Signer class method instead.
+        Example:
+            ```python
+            signer = Signer.from_info(signer_info)
+            ```
 
     Args:
         signer_info: The signer configuration
@@ -1932,20 +2046,13 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
     Raises:
         C2paError: If there was an error creating the signer
     """
-    signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
+    warnings.warn(
+        "The create_signer_from_info function is deprecated and will be removed in a future version."
+        "Please use Signer.from_info() instead.",
+        DeprecationWarning,
+        stacklevel=2)
 
-    if not signer_ptr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            # More detailed error message when possible
-            raise C2paError(error)
-        raise C2paError("Failed to create signer from info")
-
-    return Signer(signer_ptr)
-
-
-# Rename the old create_signer to _create_signer since it's now internal
-_create_signer = create_signer
+    return Signer.from_info(signer_info)
 
 
 def ed25519_sign(data: bytes, private_key: str) -> bytes:
@@ -1995,12 +2102,11 @@ __all__ = [
     'Reader',
     'Builder',
     'Signer',
-    'version',
     'load_settings',
     'read_file',
     'read_ingredient_file',
     'sign_file',
     'format_embeddable',
-    'ed25519_sign',
+    'version',
     'sdk_version'
 ]

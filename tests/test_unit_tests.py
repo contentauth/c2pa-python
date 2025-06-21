@@ -18,9 +18,14 @@ import unittest
 from unittest.mock import mock_open, patch
 import ctypes
 import warnings
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
+import tempfile
+import shutil
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -239,6 +244,9 @@ class TestReader(unittest.TestCase):
 
 class TestBuilder(unittest.TestCase):
     def setUp(self):
+        # Filter deprecation warnings for create_signer function
+        warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
+
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -536,16 +544,16 @@ class TestBuilder(unittest.TestCase):
             # Verify the first ingredient's title matches what we set
             first_ingredient = active_manifest["ingredients"][0]
             self.assertEqual(first_ingredient["title"], "Test Ingredient")
-            
+
             # Verify subsequent labels are unique and have a double underscore with a monotonically inc. index
             second_ingredient = active_manifest["ingredients"][1]
             self.assertTrue(second_ingredient["label"].endswith("__1"))
 
             third_ingredient = active_manifest["ingredients"][2]
             self.assertTrue(third_ingredient["label"].endswith("__2"))
-            
+
         builder.close()
-   
+
     def test_builder_sign_with_ingredient_from_stream(self):
         """Test Builder class operations with a real file using stream for ingredient."""
         # Test creating builder from JSON
@@ -717,9 +725,6 @@ class TestBuilder(unittest.TestCase):
 
     def test_sign_file(self):
         """Test signing a file using the sign_file method."""
-        import tempfile
-        import shutil
-
         # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
@@ -728,7 +733,7 @@ class TestBuilder(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            result = builder.sign_file(
+            result, manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=self.signer
@@ -737,12 +742,342 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
+            # Verify we got both result and manifest bytes
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:
                 reader = Reader("image/jpeg", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_callback_signer(self):
+        """Test signing a file using the sign_file method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+
+            # Create a real ES256 signing callback
+            def sign_callback(data: bytes) -> bytes:
+                """Real ES256 signing callback that creates actual signatures."""
+                # Load the private key from the test fixtures
+                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                    private_key_data = key_file.read()
+
+                # Load the private key using cryptography
+                private_key = serialization.load_pem_private_key(
+                    private_key_data,
+                    password=None,
+                    backend=default_backend()
+                )
+
+                # Create the signature using ES256 (ECDSA with SHA-256)
+                # For ECDSA, we use the signature_algorithm_constructor
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+
+                signature = private_key.sign(
+                    data,
+                    ec.ECDSA(hashes.SHA256())
+                )
+
+                return signature
+
+            # Create signer with callback
+            signer = create_signer(
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            result, manifest_bytes = builder.sign_file(
+                source_path=self.testPath,
+                dest_path=output_path,
+                signer=signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify we got both result and manifest bytes
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_callback_signer_from_callback(self):
+        """Test signing a file using the sign_file method with Signer.from_callback."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output_from_callback.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+
+            # Create a real ES256 signing callback
+            def sign_callback(data: bytes) -> bytes:
+                """Real ES256 signing callback that creates actual signatures."""
+                # Load the private key from the test fixtures
+                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                    private_key_data = key_file.read()
+
+                # Load the private key using cryptography
+                private_key = serialization.load_pem_private_key(
+                    private_key_data,
+                    password=None,
+                    backend=default_backend()
+                )
+
+                # Create the signature using ES256 (ECDSA with SHA-256)
+                # For ECDSA, we use the signature_algorithm_constructor
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+
+                signature = private_key.sign(
+                    data,
+                    ec.ECDSA(hashes.SHA256())
+                )
+
+                return signature
+
+            # Create signer with callback using Signer.from_callback
+            signer = Signer.from_callback(
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            result, manifest_bytes = builder.sign_file(
+                source_path=self.testPath,
+                dest_path=output_path,
+                signer=signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify we got both result and manifest bytes
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_using_callback_signer(self):
+        """Test signing a file using the sign_file function with a Signer object."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output_callback.jpg")
+
+            # Create a real ES256 signing callback
+            def sign_callback(data: bytes) -> bytes:
+                """Real ES256 signing callback that creates actual signatures."""
+                # Load the private key from the test fixtures
+                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                    private_key_data = key_file.read()
+
+                # Load the private key using cryptography
+                private_key = serialization.load_pem_private_key(
+                    private_key_data,
+                    password=None,
+                    backend=default_backend()
+                )
+
+                # Create the signature using ES256 (ECDSA with SHA-256)
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+
+                signature = private_key.sign(
+                    data,
+                    ec.ECDSA(hashes.SHA256())
+                )
+
+                return signature
+
+            # Create signer with callback
+            signer = Signer.from_callback(
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            # Test with return_manifest_as_bytes=False (default) - should return JSON string
+            result_json = sign_file(
+                self.testPath,
+                output_path,
+                self.manifestDefinition,
+                signer,
+                False
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify the result is a JSON string (not binary data)
+            self.assertIsInstance(result_json, str)
+            self.assertGreater(len(result_json), 0)
+
+            # Parse the JSON and verify it contains expected content
+            manifest_data = json.loads(result_json)
+            self.assertIn("manifests", manifest_data)
+            self.assertIn("active_manifest", manifest_data)
+
+            # Test with return_manifest_as_bytes=True - should return bytes
+            output_path_bytes = os.path.join(temp_dir, "signed_output_callback_bytes.jpg")
+            result_bytes = sign_file(
+                self.testPath,
+                output_path_bytes,
+                self.manifestDefinition,
+                signer,
+                True
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path_bytes))
+
+            # Verify the result is bytes (not JSON string)
+            self.assertIsInstance(result_bytes, bytes)
+            self.assertGreater(len(result_bytes), 0)
+
+            # Read the signed file and verify the manifest contains expected content
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                file_manifest_json = reader.json()
+                self.assertIn("Python Test", file_manifest_json)
+                self.assertNotIn("validation_status", file_manifest_json)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_overloads(self):
+        """Test that the overloaded sign_file function works with both parameter types."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Test with C2paSignerInfo
+            output_path_1 = os.path.join(temp_dir, "signed_output_1.jpg")
+            
+            # Load test certificates and key
+            with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+                certs = cert_file.read()
+            with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                key = key_file.read()
+
+            # Create signer info
+            signer_info = C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=certs,
+                private_key=key,
+                ta_url=b"http://timestamp.digicert.com"
+            )
+
+            # Test with C2paSignerInfo parameter - JSON return
+            result_1 = sign_file(
+                self.testPath,
+                output_path_1,
+                self.manifestDefinition,
+                signer_info,
+                False
+            )
+            
+            self.assertIsInstance(result_1, str)
+            self.assertTrue(os.path.exists(output_path_1))
+
+            # Test with C2paSignerInfo parameter - bytes return
+            output_path_1_bytes = os.path.join(temp_dir, "signed_output_1_bytes.jpg")
+            result_1_bytes = sign_file(
+                self.testPath,
+                output_path_1_bytes,
+                self.manifestDefinition,
+                signer_info,
+                True
+            )
+            
+            self.assertIsInstance(result_1_bytes, bytes)
+            self.assertTrue(os.path.exists(output_path_1_bytes))
+
+            # Test with Signer object
+            output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
+            
+            # Create a signer from the signer info
+            signer = Signer.from_info(signer_info)
+            
+            # Test with Signer parameter - JSON return
+            result_2 = sign_file(
+                self.testPath,
+                output_path_2,
+                self.manifestDefinition,
+                signer,
+                False
+            )
+            
+            self.assertIsInstance(result_2, str)
+            self.assertTrue(os.path.exists(output_path_2))
+
+            # Test with Signer parameter - bytes return
+            output_path_2_bytes = os.path.join(temp_dir, "signed_output_2_bytes.jpg")
+            result_2_bytes = sign_file(
+                self.testPath,
+                output_path_2_bytes,
+                self.manifestDefinition,
+                signer,
+                True
+            )
+            
+            self.assertIsInstance(result_2_bytes, bytes)
+            self.assertTrue(os.path.exists(output_path_2_bytes))
+            
+            # Both JSON results should be similar (same manifest structure)
+            manifest_1 = json.loads(result_1)
+            manifest_2 = json.loads(result_2)
+            
+            self.assertIn("manifests", manifest_1)
+            self.assertIn("manifests", manifest_2)
+            self.assertIn("active_manifest", manifest_1)
+            self.assertIn("active_manifest", manifest_2)
+
+            # Both bytes results should be non-empty
+            self.assertGreater(len(result_1_bytes), 0)
+            self.assertGreater(len(result_2_bytes), 0)
 
         finally:
             # Clean up the temporary directory
@@ -892,6 +1227,7 @@ class TestLegacyAPI(unittest.TestCase):
         # Filter specific deprecation warnings for legacy API tests
         warnings.filterwarnings("ignore", message="The read_file function is deprecated")
         warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
+        warnings.filterwarnings("ignore", message="The read_ingredient_file function is deprecated")
 
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -996,8 +1332,7 @@ class TestLegacyAPI(unittest.TestCase):
                 self.testPath,
                 output_path,
                 manifest_json,
-                signer_info,
-                temp_data_dir
+                signer_info
             )
 
         finally:
