@@ -2100,6 +2100,5 @@ __all__ = [
     'sign_file',
     'sign_file_using_callback_signer',
     'format_embeddable',
-    'ed25519_sign',
     'sdk_version'
 ]
