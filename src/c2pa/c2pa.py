@@ -725,8 +725,8 @@ class Stream:
         Raises:
             TypeError: If the file object doesn't implement all required methods
         """
-        # Initialize _closed first to prevent AttributeError during garbage
-        # collection
+        # Initialize _closed first to prevent AttributeError
+        # during garbage collection
         self._closed = False
         self._initialized = False
         self._stream = None
@@ -1301,7 +1301,7 @@ class Signer:
             if error:
                 # More detailed error message when possible
                 raise C2paError(error)
-            raise C2paError("Failed to create signer from info")
+            raise C2paError("Failed to create signer from configured signer_info")
 
         return cls(signer_ptr)
 
@@ -1855,8 +1855,8 @@ class Builder:
                     # empty bytes
                     manifest_bytes = b""
                 finally:
-                    # Always free the C-allocated memory, even if we failed to
-                    # copy it
+                    # Always free the C-allocated memory,
+                    # even if we failed to copy manifest bytes
                     try:
                         _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                     except Exception:
