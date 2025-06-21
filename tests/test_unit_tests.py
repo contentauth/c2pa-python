@@ -25,7 +25,7 @@ import tempfile
 import shutil
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, sign_file_with_callback_signer
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, sign_file_using_callback_signer
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -895,8 +895,8 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
-    def test_sign_file_with_callback_signer(self):
-        """Test signing a file using the sign_file_with_callback_signer function."""
+    def test_sign_file_using_callback_signer(self):
+        """Test signing a file using the sign_file_using_callback_signer function."""
         # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
@@ -937,10 +937,10 @@ class TestBuilder(unittest.TestCase):
             )
 
             # Import the new function
-            from c2pa.c2pa import sign_file_with_callback_signer
+            from c2pa.c2pa import sign_file_using_callback_signer
 
-            # Use the sign_file_with_callback_signer function
-            manifest_bytes = sign_file_with_callback_signer(
+            # Use the sign_file_using_callback_signer function
+            manifest_bytes = sign_file_using_callback_signer(
                 source_path=self.testPath,
                 dest_path=output_path,
                 manifest=self.manifestDefinition,

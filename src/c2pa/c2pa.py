@@ -679,7 +679,7 @@ def sign_file(
             signer.close()
 
 
-def sign_file_with_callback_signer(
+def sign_file_using_callback_signer(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
@@ -2084,7 +2084,7 @@ __all__ = [
     'read_file',
     'read_ingredient_file',
     'sign_file',
-    'sign_file_with_callback_signer',
+    'sign_file_using_callback_signer',
     'format_embeddable',
     'ed25519_sign',
     'sdk_version'
