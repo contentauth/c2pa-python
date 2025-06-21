@@ -679,6 +679,114 @@ def sign_file(
             signer.close()
 
 
+def sign_file_with_callback_signer(
+    source_path: Union[str, Path],
+    dest_path: Union[str, Path],
+    manifest: str,
+    callback: Callable[[bytes], bytes],
+    alg: C2paSigningAlg,
+    certs: str,
+    tsa_url: Optional[str] = None,
+    data_dir: Optional[Union[str, Path]] = None
+) -> bytes:
+    """Sign a file with a C2PA manifest using a callback signer.
+
+    This function provides a shortcut to sign files using a callback-based signer
+    and returns the raw manifest bytes.
+
+    Args:
+        source_path: Path to the source file
+        dest_path: Path to write the signed file to
+        manifest: The manifest JSON string
+        callback: Function that signs data and returns the signature
+        alg: The signing algorithm to use
+        certs: Certificate chain in PEM format
+        tsa_url: Optional RFC 3161 timestamp authority URL
+        data_dir: Optional directory to write binary resources to
+
+    Returns:
+        The manifest bytes (binary data)
+
+    Raises:
+        C2paError: If there was an error signing the file
+        C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
+        C2paError.NotSupported: If the file type cannot be determined
+    """
+    try:
+        # Create a signer from the callback
+        signer = Signer.from_callback(callback, alg, certs, tsa_url)
+
+        # Create a builder from the manifest
+        builder = Builder(manifest)
+
+        # Open source and destination files
+        with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
+            # Get the MIME type from the file extension
+            mime_type = mimetypes.guess_type(str(source_path))[0]
+            if not mime_type:
+                raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+
+            # Convert Python streams to Stream objects
+            source_stream = Stream(source_file)
+            dest_stream = Stream(dest_file)
+
+            # Use the internal signing logic to get manifest bytes
+            format_str = mime_type.encode('utf-8')
+            manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
+
+            # Call the native signing function
+            result = _lib.c2pa_builder_sign(
+                builder._builder,
+                format_str,
+                source_stream._stream,
+                dest_stream._stream,
+                signer._signer,
+                ctypes.byref(manifest_bytes_ptr)
+            )
+
+            if result < 0:
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
+                if error:
+                    raise C2paError(error)
+
+            # Capture the manifest bytes if available
+            manifest_bytes = b""
+            if manifest_bytes_ptr:
+                # Convert the C pointer to Python bytes
+                manifest_bytes = bytes(manifest_bytes_ptr[:result])
+                # Free the C-allocated memory
+                _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+
+            # If we have manifest bytes and a data directory, write them
+            if manifest_bytes and data_dir:
+                manifest_path = os.path.join(str(data_dir), 'manifest.json')
+                with open(manifest_path, 'wb') as f:
+                    f.write(manifest_bytes)
+
+            return manifest_bytes
+
+    except Exception as e:
+        # Clean up destination file if it exists and there was an error
+        if os.path.exists(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass  # Ignore cleanup errors
+
+        # Re-raise the error
+        raise C2paError(f"Error signing file: {str(e)}")
+    finally:
+        # Ensure resources are cleaned up
+        if 'builder' in locals():
+            builder.close()
+        if 'signer' in locals():
+            signer.close()
+        if 'source_stream' in locals():
+            source_stream.close()
+        if 'dest_stream' in locals():
+            dest_stream.close()
+
+
 class Stream:
     # Class-level counter for generating unique stream IDs
     # (useful for tracing streams usage in debug)
@@ -2083,6 +2191,7 @@ __all__ = [
     'read_file',
     'read_ingredient_file',
     'sign_file',
+    'sign_file_with_callback_signer',
     'format_embeddable',
     'ed25519_sign',
     'sdk_version'

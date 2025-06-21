@@ -25,7 +25,7 @@ import tempfile
 import shutil
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, sign_file_with_callback_signer
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -541,16 +541,16 @@ class TestBuilder(unittest.TestCase):
             # Verify the first ingredient's title matches what we set
             first_ingredient = active_manifest["ingredients"][0]
             self.assertEqual(first_ingredient["title"], "Test Ingredient")
-            
+
             # Verify subsequent labels are unique and have a double underscore with a monotonically inc. index
             second_ingredient = active_manifest["ingredients"][1]
             self.assertTrue(second_ingredient["label"].endswith("__1"))
 
             third_ingredient = active_manifest["ingredients"][2]
             self.assertTrue(third_ingredient["label"].endswith("__2"))
-            
+
         builder.close()
-   
+
     def test_builder_sign_with_ingredient_from_stream(self):
         """Test Builder class operations with a real file using stream for ingredient."""
         # Test creating builder from JSON
@@ -875,6 +875,80 @@ class TestBuilder(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_with_callback_signer(self):
+        """Test signing a file using the sign_file_with_callback_signer function."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output_callback.jpg")
+
+            # Create a real ES256 signing callback
+            def sign_callback(data: bytes) -> bytes:
+                """Real ES256 signing callback that creates actual signatures."""
+                # Load the private key from the test fixtures
+                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                    private_key_data = key_file.read()
+
+                # Load the private key using cryptography
+                private_key = serialization.load_pem_private_key(
+                    private_key_data,
+                    password=None,
+                    backend=default_backend()
+                )
+
+                # Create the signature using ES256 (ECDSA with SHA-256)
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+
+                signature = private_key.sign(
+                    data,
+                    ec.ECDSA(hashes.SHA256())
+                )
+
+                return signature
+
+            # Import the new function
+            from c2pa.c2pa import sign_file_with_callback_signer
+
+            # Use the sign_file_with_callback_signer function
+            manifest_bytes = sign_file_with_callback_signer(
+                source_path=self.testPath,
+                dest_path=output_path,
+                manifest=self.manifestDefinition,
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify the manifest bytes are binary data (not JSON text)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+            
+            # Try to decode as UTF-8 to see if it's text-based (it shouldn't be)
+            try:
+                manifest_bytes.decode('utf-8')
+                # If we get here, it's text-based, which is unexpected
+                self.fail("Manifest bytes should be binary data, not UTF-8 text")
+            except UnicodeDecodeError:
+                # This is expected - manifest bytes should be binary
+                pass
+
+            # Read the signed file and verify the manifest contains expected content
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                file_manifest_json = reader.json()
+                self.assertIn("Python Test", file_manifest_json)
+                self.assertNotIn("validation_status", file_manifest_json)
 
         finally:
             # Clean up the temporary directory
