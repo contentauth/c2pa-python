@@ -730,7 +730,7 @@ class TestBuilder(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            result = builder.sign_file(
+            result, manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=self.signer
@@ -738,6 +738,11 @@ class TestBuilder(unittest.TestCase):
 
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
+
+            # Verify we got both result and manifest bytes
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
 
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:
@@ -795,7 +800,7 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            result = builder.sign_file(
+            result, manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=signer
@@ -803,6 +808,11 @@ class TestBuilder(unittest.TestCase):
 
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
+
+            # Verify we got both result and manifest bytes
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
 
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:
@@ -860,7 +870,7 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            result = builder.sign_file(
+            result, manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=signer
@@ -868,6 +878,11 @@ class TestBuilder(unittest.TestCase):
 
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
+
+            # Verify we got both result and manifest bytes
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
 
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:

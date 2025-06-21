@@ -730,32 +730,8 @@ def sign_file_with_callback_signer(
             source_stream = Stream(source_file)
             dest_stream = Stream(dest_file)
 
-            # Use the internal signing logic to get manifest bytes
-            format_str = mime_type.encode('utf-8')
-            manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
-
-            # Call the native signing function
-            result = _lib.c2pa_builder_sign(
-                builder._builder,
-                format_str,
-                source_stream._stream,
-                dest_stream._stream,
-                signer._signer,
-                ctypes.byref(manifest_bytes_ptr)
-            )
-
-            if result < 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-
-            # Capture the manifest bytes if available
-            manifest_bytes = b""
-            if manifest_bytes_ptr:
-                # Convert the C pointer to Python bytes
-                manifest_bytes = bytes(manifest_bytes_ptr[:result])
-                # Free the C-allocated memory
-                _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+            # Use the builder's internal signing logic
+            result, manifest_bytes = builder._sign_internal(signer, mime_type, source_stream, dest_stream)
 
             # If we have manifest bytes and a data directory, write them
             if manifest_bytes and data_dir:
@@ -781,10 +757,6 @@ def sign_file_with_callback_signer(
             builder.close()
         if 'signer' in locals():
             signer.close()
-        if 'source_stream' in locals():
-            source_stream.close()
-        if 'dest_stream' in locals():
-            dest_stream.close()
 
 
 class Stream:
@@ -1886,7 +1858,7 @@ class Builder:
             signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> int:
+            dest_stream: Stream) -> tuple[int, bytes]:
         """Internal signing logic shared between sign() and sign_file() methods,
         to use same native calls but expose different API surface.
 
@@ -1897,7 +1869,7 @@ class Builder:
             dest_stream: The destination stream
 
         Returns:
-            Size of C2PA data
+            A tuple of (size of C2PA data, manifest bytes)
 
         Raises:
             C2paError: If there was an error during signing
@@ -1924,11 +1896,15 @@ class Builder:
                 if error:
                     raise C2paError(error)
 
+            # Capture the manifest bytes if available
+            manifest_bytes = b""
             if manifest_bytes_ptr:
-                # Free the manifest bytes pointer if it was allocated
+                # Convert the C pointer to Python bytes
+                manifest_bytes = bytes(manifest_bytes_ptr[:result])
+                # Free the C-allocated memory
                 _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
 
-            return result
+            return result, manifest_bytes
         finally:
             # Ensure both streams are cleaned up
             source_stream.close()
@@ -1956,6 +1932,7 @@ class Builder:
         dest_stream = Stream(dest)
 
         # Use the internal stream-base signing logic
+        # Ignore the return value since this method returns None
         self._sign_internal(signer, format, source_stream, dest_stream)
 
     def sign_file(self,
@@ -1963,7 +1940,7 @@ class Builder:
                                      Path],
                   dest_path: Union[str,
                                    Path],
-                  signer: Signer) -> int:
+                  signer: Signer) -> tuple[int, bytes]:
         """Sign a file and write the signed data to an output file.
 
         Args:
@@ -1972,7 +1949,7 @@ class Builder:
             signer: The signer to use
 
         Returns:
-            Size of C2PA data
+            A tuple of (size of C2PA data, manifest bytes)
 
         Raises:
             C2paError: If there was an error during signing
@@ -1989,7 +1966,8 @@ class Builder:
             dest_stream = Stream(dest_file)
 
             # Use the internal stream-base signing logic
-            return self._sign_internal(signer, mime_type, source_stream, dest_stream)
+            result, manifest_bytes = self._sign_internal(signer, mime_type, source_stream, dest_stream)
+            return result, manifest_bytes
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
