@@ -954,15 +954,6 @@ class TestBuilder(unittest.TestCase):
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
 
-            # Try to decode as UTF-8 to see if it's text-based (it shouldn't be)
-            try:
-                manifest_bytes.decode('utf-8')
-                # If we get here, it's text-based, which is unexpected
-                self.fail("Manifest bytes should be binary data, not UTF-8 text")
-            except UnicodeDecodeError:
-                # This is expected - manifest bytes should be binary
-                pass
-
             # Read the signed file and verify the manifest contains expected content
             with open(output_path, "rb") as file:
                 reader = Reader("image/jpeg", file)

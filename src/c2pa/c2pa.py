@@ -581,8 +581,7 @@ def read_file(path: Union[str, Path],
         "The read_file function is deprecated and will be removed in a future version. "
         "Please use the Reader class for reading C2PA metadata instead.",
         DeprecationWarning,
-        stacklevel=2
-    )
+        stacklevel=2)
 
     container = _StringContainer()
 
@@ -626,8 +625,7 @@ def sign_file(
         "The sign_file function is deprecated and will be removed in a future version. "
         "Please use the Builder class for signing and the Reader class for reading signed data instead.",
         DeprecationWarning,
-        stacklevel=2
-    )
+        stacklevel=2)
 
     try:
         # Create a signer from the signer info
@@ -641,7 +639,8 @@ def sign_file(
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
-                raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+                raise C2paError.NotSupported(
+                    f"Could not determine MIME type for file: {source_path}")
 
             # Sign the file using the builder
             manifest_bytes = builder.sign(
@@ -713,14 +712,16 @@ def sign_file_using_callback_signer(
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
-                raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+                raise C2paError.NotSupported(
+                    f"Could not determine MIME type for file: {source_path}")
 
             # Convert Python streams to Stream objects
             source_stream = Stream(source_file)
             dest_stream = Stream(dest_file)
 
             # Use the builder's internal signing logic
-            result, manifest_bytes = builder._sign_internal(signer, mime_type, source_stream, dest_stream)
+            result, manifest_bytes = builder._sign_internal(
+                signer, mime_type, source_stream, dest_stream)
 
             return manifest_bytes
 
@@ -762,7 +763,8 @@ class Stream:
         Raises:
             TypeError: If the file object doesn't implement all required methods
         """
-        # Initialize _closed first to prevent AttributeError during garbage collection
+        # Initialize _closed first to prevent AttributeError during garbage
+        # collection
         self._closed = False
         self._initialized = False
         self._stream = None
@@ -1388,14 +1390,21 @@ class Signer:
                 error_messages['invalid_tsa'].format("Invalid TSA URL format"))
 
         # Create a wrapper callback that handles errors and memory management
-        def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
+        def wrapped_callback(
+                context,
+                data_ptr,
+                data_len,
+                signed_bytes_ptr,
+                signed_len):
             # Returns 0 on error as this case is handled in the native code gracefully
             # The reason is that otherwise we ping-pong errors between native code and Python code,
             # which can become tedious in handling. So we let the native code deal with it and
-            # raise the errors accordingly, since it already checks the signature length for correctness.
+            # raise the errors accordingly, since it already checks the
+            # signature length for correctness.
             try:
                 if not data_ptr or data_len <= 0:
-                    # Error: invalid input, native code will handle if seeing signature size being 0
+                    # Error: invalid input, native code will handle if seeing
+                    # signature size being 0
                     return 0
 
                 # Convert C pointer to Python bytes
@@ -1410,7 +1419,8 @@ class Signer:
                     # Error: empty signature, native code will handle that too!
                     return 0
 
-                # Copy the signature back to the C buffer (since callback is sued in native code)
+                # Copy the signature back to the C buffer (since callback is
+                # sued in native code)
                 actual_len = min(len(signature), signed_len)
                 for i in range(actual_len):
                     signed_bytes_ptr[i] = signature[i]
@@ -1879,10 +1889,12 @@ class Builder:
                     # Convert the C pointer to Python bytes
                     manifest_bytes = bytes(manifest_bytes_ptr[:result])
                 except Exception:
-                    # If there's any error accessing the memory, just return empty bytes
+                    # If there's any error accessing the memory, just return
+                    # empty bytes
                     manifest_bytes = b""
                 finally:
-                    # Always free the C-allocated memory, even if we failed to copy it
+                    # Always free the C-allocated memory, even if we failed to
+                    # copy it
                     try:
                         _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                     except Exception:
@@ -1942,7 +1954,8 @@ class Builder:
         # Get the MIME type from the file extension
         mime_type = mimetypes.guess_type(str(source_path))[0]
         if not mime_type:
-            raise C2paError.NotSupported(f"Could not determine MIME type for file: {source_path}")
+            raise C2paError.NotSupported(
+                f"Could not determine MIME type for file: {source_path}")
 
         # Open source and destination files
         with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
@@ -1951,7 +1964,8 @@ class Builder:
             dest_stream = Stream(dest_file)
 
             # Use the internal stream-base signing logic
-            result, manifest_bytes = self._sign_internal(signer, mime_type, source_stream, dest_stream)
+            result, manifest_bytes = self._sign_internal(
+                signer, mime_type, source_stream, dest_stream)
             return result, manifest_bytes
 
 
