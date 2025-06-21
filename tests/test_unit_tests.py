@@ -244,6 +244,9 @@ class TestReader(unittest.TestCase):
 
 class TestBuilder(unittest.TestCase):
     def setUp(self):
+        # Filter deprecation warnings for create_signer function
+        warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
+        
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -1223,6 +1226,7 @@ class TestLegacyAPI(unittest.TestCase):
         # Filter specific deprecation warnings for legacy API tests
         warnings.filterwarnings("ignore", message="The read_file function is deprecated")
         warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
+        warnings.filterwarnings("ignore", message="The read_ingredient_file function is deprecated")
 
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
