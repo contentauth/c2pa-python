@@ -1308,14 +1308,28 @@ class Signer:
             C2paError: If there was an error creating the signer
             C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
         """
+        # Define error messages locally since they're instance attributes
+        error_messages = {
+            'closed_error': "Signer is closed",
+            'cleanup_error': "Error during cleanup: {}",
+            'signer_cleanup': "Error cleaning up signer: {}",
+            'size_error': "Error getting reserve size: {}",
+            'callback_error': "Error in signer callback: {}",
+            'info_error': "Error creating signer from info: {}",
+            'invalid_data': "Invalid data for signing: {}",
+            'invalid_certs': "Invalid certificate data: {}",
+            'invalid_tsa': "Invalid TSA URL: {}",
+            'encoding_error': "Invalid UTF-8 characters in input: {}"
+        }
+
         # Validate inputs before creating
         if not certs:
             raise C2paError(
-                cls._error_messages['invalid_certs'].format("Missing certificate data"))
+                error_messages['invalid_certs'].format("Missing certificate data"))
 
         if tsa_url and not tsa_url.startswith(('http://', 'https://')):
             raise C2paError(
-                cls._error_messages['invalid_tsa'].format("Invalid TSA URL format"))
+                error_messages['invalid_tsa'].format("Invalid TSA URL format"))
 
         # Create a wrapper callback that handles errors and memory management
         def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
@@ -1349,7 +1363,7 @@ class Signer:
                 return actual_len
             except Exception as e:
                 print(
-                    cls._error_messages['callback_error'].format(
+                    error_messages['callback_error'].format(
                         str(e)), file=sys.stderr)
                 return 0
 
@@ -1359,7 +1373,7 @@ class Signer:
             tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
         except UnicodeError as e:
             raise C2paError.Encoding(
-                cls._error_messages['encoding_error'].format(
+                error_messages['encoding_error'].format(
                     str(e)))
 
         # Create the signer with the wrapped callback
@@ -1385,7 +1399,7 @@ class Signer:
         # Initialize the signer instance
         signer_instance._signer = signer_ptr
         signer_instance._closed = False
-        signer_instance._error_messages = cls._error_messages
+        signer_instance._error_messages = error_messages
 
         return signer_instance
 
@@ -1973,7 +1987,7 @@ def create_signer(
     create_signer._callbacks.append(c_callback)  # Keep it alive
 
     signer_ptr = _lib.c2pa_signer_create(
-        None,  # context
+        None,
         c_callback,  # Use the stored callback
         alg,
         certs_bytes,

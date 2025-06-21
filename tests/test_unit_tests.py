@@ -21,6 +21,8 @@ import warnings
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
+import tempfile
+import shutil
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
 from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
@@ -720,9 +722,6 @@ class TestBuilder(unittest.TestCase):
 
     def test_sign_file(self):
         """Test signing a file using the sign_file method."""
-        import tempfile
-        import shutil
-
         # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
@@ -753,9 +752,6 @@ class TestBuilder(unittest.TestCase):
 
     def test_sign_file_callback_signer(self):
         """Test signing a file using the sign_file method."""
-        import tempfile
-        import shutil
-
         # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
@@ -819,6 +815,70 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+    def test_sign_file_callback_signer_from_callback(self):
+        """Test signing a file using the sign_file method with Signer.from_callback."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output_from_callback.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+
+            # Create a real ES256 signing callback
+            def sign_callback(data: bytes) -> bytes:
+                """Real ES256 signing callback that creates actual signatures."""
+                # Load the private key from the test fixtures
+                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                    private_key_data = key_file.read()
+
+                # Load the private key using cryptography
+                private_key = serialization.load_pem_private_key(
+                    private_key_data,
+                    password=None,
+                    backend=default_backend()
+                )
+
+                # Create the signature using ES256 (ECDSA with SHA-256)
+                # For ECDSA, we use the signature_algorithm_constructor
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+
+                signature = private_key.sign(
+                    data,
+                    ec.ECDSA(hashes.SHA256())
+                )
+
+                return signature
+
+            # Create signer with callback using Signer.from_callback
+            signer = Signer.from_callback(
+                callback=sign_callback,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            result = builder.sign_file(
+                source_path=self.testPath,
+                dest_path=output_path,
+                signer=signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
 
 class TestStream(unittest.TestCase):
     def setUp(self):
