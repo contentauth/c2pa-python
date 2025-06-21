@@ -534,6 +534,15 @@ def read_ingredient_file(
         path: Union[str, Path], data_dir: Union[str, Path]) -> str:
     """Read a C2PA ingredient from a file.
 
+    .. deprecated:: 0.11.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Reader class for reading C2PA metadata instead.
+        Example:
+            ```python
+            with Reader(path) as reader:
+                manifest_json = reader.json()
+            ```
+
     Args:
         path: Path to the file to read
         data_dir: Directory to write binary resources to
@@ -544,6 +553,12 @@ def read_ingredient_file(
     Raises:
         C2paError: If there was an error reading the file
     """
+    warnings.warn(
+        "The read_ingredient_file function is deprecated and will be removed in a future version." 
+        "Please use Reader(path).json() for reading C2PA metadata instead.",
+        DeprecationWarning,
+        stacklevel=2)
+
     container = _StringContainer()
 
     container._path_str = str(path).encode('utf-8')
@@ -1382,7 +1397,7 @@ class Signer:
                     return -1
 
                 # Copy the signature back to the C buffer (since callback is
-                # sued in native code)
+                # used in native code)
                 actual_len = min(len(signature), signed_len)
                 for i in range(actual_len):
                     signed_bytes_ptr[i] = signature[i]
@@ -1977,6 +1992,14 @@ def create_signer(
 ) -> Signer:
     """Create a signer from a callback function.
 
+    .. deprecated:: 0.11.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Signer class method instead.
+        Example:
+            ```python
+            signer = Signer.from_callback(callback, alg, certs, tsa_url)
+            ```
+
     Args:
         callback: Function that signs data and returns the signature
         alg: The signing algorithm to use
@@ -1990,11 +2013,25 @@ def create_signer(
         C2paError: If there was an error creating the signer
         C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
     """
+    warnings.warn(
+        "The create_signer function is deprecated and will be removed in a future version."
+        "Please use Signer.from_callback() instead.",
+        DeprecationWarning,
+        stacklevel=2)
+
     return Signer.from_callback(callback, alg, certs, tsa_url)
 
 
 def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
     """Create a signer from signer information.
+
+    .. deprecated:: 0.11.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Signer class method instead.
+        Example:
+            ```python
+            signer = Signer.from_info(signer_info)
+            ```
 
     Args:
         signer_info: The signer configuration
@@ -2005,6 +2042,12 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
     Raises:
         C2paError: If there was an error creating the signer
     """
+    warnings.warn(
+        "The create_signer_from_info function is deprecated and will be removed in a future version."
+        "Please use Signer.from_info() instead.",
+        DeprecationWarning,
+        stacklevel=2)
+
     return Signer.from_info(signer_info)
 
 
