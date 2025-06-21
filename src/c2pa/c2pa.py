@@ -1399,8 +1399,8 @@ class Signer:
                 # Copy the signature back to the C buffer (since callback is
                 # used in native code)
                 actual_len = min(len(signature), signed_len)
-                for i in range(actual_len):
-                    signed_bytes_ptr[i] = signature[i]
+                # Use memmove for efficient memory copying instead of byte-by-byte loop
+                ctypes.memmove(signed_bytes_ptr, signature, actual_len)
 
                 # Native code expects the signed len to be returned, we oblige
                 return actual_len
