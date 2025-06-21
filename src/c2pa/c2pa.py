@@ -2029,16 +2029,7 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
     Raises:
         C2paError: If there was an error creating the signer
     """
-    signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
-
-    if not signer_ptr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            # More detailed error message when possible
-            raise C2paError(error)
-        raise C2paError("Failed to create signer from info")
-
-    return Signer(signer_ptr)
+    return Signer.from_info(signer_info)
 
 
 def ed25519_sign(data: bytes, private_key: str) -> bytes:
