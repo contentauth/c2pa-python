@@ -5,7 +5,7 @@ import sys
 import os
 import warnings
 from pathlib import Path
-from typing import Optional, Union, Callable, Any
+from typing import Optional, Union, Callable, Any, overload
 import time
 from .lib import dynamically_load_library
 import mimetypes
@@ -578,7 +578,7 @@ def read_file(path: Union[str, Path],
         C2paError: If there was an error reading the file
     """
     warnings.warn(
-        "The read_file function is deprecated and will be removed in a future version. "
+        "The read_file function is deprecated and will be removed in a future version."
         "Please use the Reader class for reading C2PA metadata instead.",
         DeprecationWarning,
         stacklevel=2)
@@ -592,26 +592,50 @@ def read_file(path: Union[str, Path],
     return _parse_operation_result_for_error(result)
 
 
+@overload
 def sign_file(
     source_path: Union[str, Path],
     dest_path: Union[str, Path],
     manifest: str,
-    signer_info: C2paSignerInfo,
-    data_dir: Optional[Union[str, Path]] = None
+    signer_info: C2paSignerInfo
 ) -> str:
-    """Sign a file with a C2PA manifest.
-    For now, this function is left here to provide a backwards-compatible API.
+    """Sign a file with a C2PA manifest using signer info.
 
     .. deprecated:: 0.10.0
         This function is deprecated and will be removed in a future version.
         Please use the Builder class for signing and the Reader class for reading signed data instead.
+    """
+    ...
+
+@overload
+def sign_file(
+    source_path: Union[str, Path],
+    dest_path: Union[str, Path],
+    manifest: str,
+    signer: 'Signer'
+) -> str:
+    """Sign a file with a C2PA manifest using a signer.
+
+    .. deprecated:: 0.10.0
+        This function is deprecated and will be removed in a future version.
+        Please use the Builder class for signing and the Reader class for reading signed data instead.
+    """
+    ...
+
+def sign_file(
+    source_path: Union[str, Path],
+    dest_path: Union[str, Path],
+    manifest: str,
+    signer_or_info: Union[C2paSignerInfo, 'Signer']
+) -> str:
+    """Sign a file with a C2PA manifest.
+    For now, this function is left here to provide a backwards-compatible API.
 
     Args:
         source_path: Path to the source file
         dest_path: Path to write the signed file to
         manifest: The manifest JSON string
-        signer_info: Signing configuration
-        data_dir: Optional directory to write binary resources to
+        signer_or_info: Either a signer configuration or a signer object
 
     Returns:
         The signed manifest as a JSON string
@@ -621,15 +645,15 @@ def sign_file(
         C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
         C2paError.NotSupported: If the file type cannot be determined
     """
-    warnings.warn(
-        "The sign_file function is deprecated and will be removed in a future version. "
-        "Please use the Builder class for signing and the Reader class for reading signed data instead.",
-        DeprecationWarning,
-        stacklevel=2)
 
     try:
-        # Create a signer from the signer info
-        signer = Signer.from_info(signer_info)
+        # Determine if we have a signer or signer info
+        if isinstance(signer_or_info, C2paSignerInfo):
+            signer = Signer.from_info(signer_or_info)
+            own_signer = True
+        else:
+            signer = signer_or_info
+            own_signer = False
 
         # Create a builder from the manifest
         builder = Builder(manifest)
@@ -643,18 +667,12 @@ def sign_file(
                     f"Could not determine MIME type for file: {source_path}")
 
             # Sign the file using the builder
-            manifest_bytes = builder.sign(
+            builder.sign(
                 signer=signer,
                 format=mime_type,
                 source=source_file,
                 dest=dest_file
             )
-
-            # If we have manifest bytes and a data directory, write them
-            if manifest_bytes and data_dir:
-                manifest_path = os.path.join(str(data_dir), 'manifest.json')
-                with open(manifest_path, 'wb') as f:
-                    f.write(manifest_bytes)
 
             # Read the signed manifest from the destination file
             with Reader(dest_path) as reader:
@@ -674,71 +692,8 @@ def sign_file(
         # Ensure resources are cleaned up
         if 'builder' in locals():
             builder.close()
-        if 'signer' in locals():
+        if 'signer' in locals() and own_signer:
             signer.close()
-
-
-def sign_file_using_callback_signer(
-    source_path: Union[str, Path],
-    dest_path: Union[str, Path],
-    manifest: str,
-    signer: 'Signer'
-) -> bytes:
-    """Sign a file with a C2PA manifest using a signer.
-
-    This function provides a shortcut to sign files using a signer
-    and returns the raw manifest bytes.
-
-    Args:
-        source_path: Path to the source file
-        dest_path: Path to write the signed file to
-        manifest: The manifest JSON string
-        signer: The signer to use
-
-    Returns:
-        The manifest bytes (binary data)
-
-    Raises:
-        C2paError: If there was an error signing the file
-        C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
-        C2paError.NotSupported: If the file type cannot be determined
-    """
-    try:
-        # Create a builder from the manifest
-        builder = Builder(manifest)
-
-        # Open source and destination files
-        with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
-            # Get the MIME type from the file extension
-            mime_type = mimetypes.guess_type(str(source_path))[0]
-            if not mime_type:
-                raise C2paError.NotSupported(
-                    f"Could not determine MIME type for file: {source_path}")
-
-            # Convert Python streams to Stream objects
-            source_stream = Stream(source_file)
-            dest_stream = Stream(dest_file)
-
-            # Use the builder's internal signing logic
-            result, manifest_bytes = builder._sign_internal(
-                signer, mime_type, source_stream, dest_stream)
-
-            return manifest_bytes
-
-    except Exception as e:
-        # Clean up destination file if it exists and there was an error
-        if os.path.exists(dest_path):
-            try:
-                os.remove(dest_path)
-            except OSError:
-                pass  # Ignore cleanup errors
-
-        # Re-raise the error
-        raise C2paError(f"Error signing file: {str(e)}")
-    finally:
-        # Ensure resources are cleaned up
-        if 'builder' in locals():
-            builder.close()
 
 
 class Stream:
@@ -2093,12 +2048,11 @@ __all__ = [
     'Reader',
     'Builder',
     'Signer',
-    'version',
     'load_settings',
     'read_file',
     'read_ingredient_file',
     'sign_file',
-    'sign_file_using_callback_signer',
     'format_embeddable',
+    'version',
     'sdk_version'
 ]

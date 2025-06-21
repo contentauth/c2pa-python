@@ -25,7 +25,7 @@ import tempfile
 import shutil
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, sign_file_using_callback_signer
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -896,7 +896,7 @@ class TestBuilder(unittest.TestCase):
             shutil.rmtree(temp_dir)
 
     def test_sign_file_using_callback_signer(self):
-        """Test signing a file using the sign_file_using_callback_signer function."""
+        """Test signing a file using the sign_file function with a Signer object."""
         # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
@@ -936,23 +936,25 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            # Import the new function
-            from c2pa.c2pa import sign_file_using_callback_signer
-
-            # Use the sign_file_using_callback_signer function
-            manifest_bytes = sign_file_using_callback_signer(
-                source_path=self.testPath,
-                dest_path=output_path,
-                manifest=self.manifestDefinition,
-                signer=signer
+            # Use the overloaded sign_file function with a Signer object
+            result_json = sign_file(
+                self.testPath,
+                output_path,
+                self.manifestDefinition,
+                signer
             )
 
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
-            # Verify the manifest bytes are binary data (not JSON text)
-            self.assertIsInstance(manifest_bytes, bytes)
-            self.assertGreater(len(manifest_bytes), 0)
+            # Verify the result is a JSON string (not binary data)
+            self.assertIsInstance(result_json, str)
+            self.assertGreater(len(result_json), 0)
+
+            # Parse the JSON and verify it contains expected content
+            manifest_data = json.loads(result_json)
+            self.assertIn("manifests", manifest_data)
+            self.assertIn("active_manifest", manifest_data)
 
             # Read the signed file and verify the manifest contains expected content
             with open(output_path, "rb") as file:
@@ -960,6 +962,69 @@ class TestBuilder(unittest.TestCase):
                 file_manifest_json = reader.json()
                 self.assertIn("Python Test", file_manifest_json)
                 self.assertNotIn("validation_status", file_manifest_json)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_overloads(self):
+        """Test that the overloaded sign_file function works with both parameter types."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Test with C2paSignerInfo
+            output_path_1 = os.path.join(temp_dir, "signed_output_1.jpg")
+            
+            # Load test certificates and key
+            with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+                certs = cert_file.read()
+            with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+                key = key_file.read()
+
+            # Create signer info
+            signer_info = C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=certs,
+                private_key=key,
+                ta_url=b"http://timestamp.digicert.com"
+            )
+
+            # Test with C2paSignerInfo parameter
+            result_1 = sign_file(
+                self.testPath,
+                output_path_1,
+                self.manifestDefinition,
+                signer_info
+            )
+            
+            self.assertIsInstance(result_1, str)
+            self.assertTrue(os.path.exists(output_path_1))
+
+            # Test with Signer object
+            output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
+            
+            # Create a signer from the signer info
+            signer = Signer.from_info(signer_info)
+            
+            # Test with Signer parameter
+            result_2 = sign_file(
+                self.testPath,
+                output_path_2,
+                self.manifestDefinition,
+                signer
+            )
+            
+            self.assertIsInstance(result_2, str)
+            self.assertTrue(os.path.exists(output_path_2))
+            
+            # Both results should be similar (same manifest structure)
+            manifest_1 = json.loads(result_1)
+            manifest_2 = json.loads(result_2)
+            
+            self.assertIn("manifests", manifest_1)
+            self.assertIn("manifests", manifest_2)
+            self.assertIn("active_manifest", manifest_1)
+            self.assertIn("active_manifest", manifest_2)
 
         finally:
             # Clean up the temporary directory
@@ -1212,8 +1277,7 @@ class TestLegacyAPI(unittest.TestCase):
                 self.testPath,
                 output_path,
                 manifest_json,
-                signer_info,
-                temp_data_dir
+                signer_info
             )
 
         finally:
