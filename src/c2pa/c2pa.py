@@ -2014,64 +2014,7 @@ def create_signer(
         C2paError: If there was an error creating the signer
         C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
     """
-    try:
-        certs_bytes = certs.encode('utf-8')
-        tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
-    except UnicodeError as e:
-        raise C2paError.Encoding(
-            f"Invalid UTF-8 characters in certificate data or TSA URL: {str(e)}")
-
-    # Create a wrapper callback that handles errors and memory management
-    def wrapped_callback(context, data_ptr, data_len, signed_bytes_ptr, signed_len):
-        try:
-            if not data_ptr or data_len <= 0:
-                return 0  # Error: invalid input
-
-            # Convert C pointer to Python bytes
-            data = bytes(data_ptr[:data_len])
-
-            if not data:
-                return 0  # Error: empty data
-
-            # Call the user's callback
-            signature = callback(data)
-
-            if not signature:
-                return 0  # Error: empty signature
-
-            # Copy the signature back to the C buffer
-            actual_len = min(len(signature), signed_len)
-
-            for i in range(actual_len):
-                signed_bytes_ptr[i] = signature[i]
-
-            return actual_len  # Return the number of bytes written
-        except Exception as e:
-            return 0  # Return 0 to indicate error
-
-    # Store the callback to keep it alive
-    if not hasattr(create_signer, '_callbacks'):
-        create_signer._callbacks = []
-
-    # Create the C callback and store it
-    c_callback = SignerCallback(wrapped_callback)
-    create_signer._callbacks.append(c_callback)  # Keep it alive
-
-    signer_ptr = _lib.c2pa_signer_create(
-        None,
-        c_callback,  # Use the stored callback
-        alg,
-        certs_bytes,
-        tsa_url_bytes
-    )
-
-    if not signer_ptr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(error)
-        raise C2paError("Failed to create signer")
-
-    return Signer(signer_ptr)
+    return Signer.from_callback(callback, alg, certs, tsa_url)
 
 
 def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
@@ -2096,10 +2039,6 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
         raise C2paError("Failed to create signer from info")
 
     return Signer(signer_ptr)
-
-
-# Rename the old create_signer to _create_signer since it's now internal
-_create_signer = create_signer
 
 
 def ed25519_sign(data: bytes, private_key: str) -> bytes:

@@ -953,7 +953,7 @@ class TestBuilder(unittest.TestCase):
             # Verify the manifest bytes are binary data (not JSON text)
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
-            
+
             # Try to decode as UTF-8 to see if it's text-based (it shouldn't be)
             try:
                 manifest_bytes.decode('utf-8')
