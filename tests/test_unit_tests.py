@@ -774,16 +774,16 @@ class TestBuilder(unittest.TestCase):
 
     def test_sign_file_callback_signer(self):
         """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
+
         temp_dir = tempfile.mkdtemp()
+
         try:
-            # Create a temporary output file path
             output_path = os.path.join(temp_dir, "signed_output.jpg")
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
 
-            # Create signer with callback
+            # Create signer with callback using create_signer function
             signer = create_signer(
                 callback=self.callback_signer_es256,
                 alg=SigningAlg.ES256,
@@ -800,7 +800,7 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
-            # Verify we got both result and manifest bytes
+            # Verify results
             self.assertIsInstance(result, int)
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
@@ -813,18 +813,17 @@ class TestBuilder(unittest.TestCase):
                 self.assertNotIn("validation_status", json_data)
 
         finally:
-            # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
-    def test_sign_file_callback_signer_from_callback(self):
+    def test_builder_sign_file_callback_signer_from_callback(self):
         """Test signing a file using the sign_file method with Signer.from_callback."""
-        # Create a temporary directory for the test
+
         temp_dir = tempfile.mkdtemp()
         try:
-            # Create a temporary output file path
+
             output_path = os.path.join(temp_dir, "signed_output_from_callback.jpg")
 
-            # Use the sign_file method
+            # Will use the sign_file method
             builder = Builder(self.manifestDefinition)
 
             # Create signer with callback using Signer.from_callback
@@ -844,7 +843,7 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
-            # Verify we got both result and manifest bytes
+            # Verify results
             self.assertIsInstance(result, int)
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
@@ -857,13 +856,13 @@ class TestBuilder(unittest.TestCase):
                 self.assertNotIn("validation_status", json_data)
 
         finally:
-            # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
-    def test_sign_file_using_callback_signer(self):
+    def test_sign_file_using_callback_signer_overloads(self):
         """Test signing a file using the sign_file function with a Signer object."""
         # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
+
         try:
             # Create a temporary output file path
             output_path = os.path.join(temp_dir, "signed_output_callback.jpg")
@@ -876,7 +875,7 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            # Test with return_manifest_as_bytes=False (default) - should return JSON string
+            # Overload that returns a JSON string
             result_json = sign_file(
                 self.testPath,
                 output_path,
@@ -888,17 +887,16 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
-            # Verify the result is a JSON string (not binary data)
+            # Verify the result is JSON
             self.assertIsInstance(result_json, str)
             self.assertGreater(len(result_json), 0)
 
-            # Parse the JSON and verify it contains expected content
             manifest_data = json.loads(result_json)
             self.assertIn("manifests", manifest_data)
             self.assertIn("active_manifest", manifest_data)
 
-            # Test with return_manifest_as_bytes=True - should return bytes
             output_path_bytes = os.path.join(temp_dir, "signed_output_callback_bytes.jpg")
+            # Overload that returns bytes
             result_bytes = sign_file(
                 self.testPath,
                 output_path_bytes,
@@ -910,7 +908,7 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path_bytes))
 
-            # Verify the result is bytes (not JSON string)
+            # Verify the result is bytes
             self.assertIsInstance(result_bytes, bytes)
             self.assertGreater(len(result_bytes), 0)
 
@@ -922,7 +920,6 @@ class TestBuilder(unittest.TestCase):
                 self.assertNotIn("validation_status", file_manifest_json)
 
         finally:
-            # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
     def test_sign_file_overloads(self):
