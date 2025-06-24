@@ -19,7 +19,7 @@ from unittest.mock import mock_open, patch
 import ctypes
 import warnings
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, ec
 from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
@@ -291,6 +291,20 @@ class TestBuilder(unittest.TestCase):
                 }
             ]
         }
+
+        # Define an example ES256 callback signer
+        def callback_signer_es256(data: bytes) -> bytes:
+            private_key = serialization.load_pem_private_key(
+                self.key,
+                password=None,
+                backend=default_backend()
+            )
+            signature = private_key.sign(
+                data,
+                ec.ECDSA(hashes.SHA256())
+            )
+            return signature
+        self.callback_signer_es256 = callback_signer_es256
 
     def test_reserve_size_on_closed_signer(self):
         self.signer.close()
@@ -769,35 +783,9 @@ class TestBuilder(unittest.TestCase):
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
 
-            # Create a real ES256 signing callback
-            def sign_callback(data: bytes) -> bytes:
-                """Real ES256 signing callback that creates actual signatures."""
-                # Load the private key from the test fixtures
-                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
-                    private_key_data = key_file.read()
-
-                # Load the private key using cryptography
-                private_key = serialization.load_pem_private_key(
-                    private_key_data,
-                    password=None,
-                    backend=default_backend()
-                )
-
-                # Create the signature using ES256 (ECDSA with SHA-256)
-                # For ECDSA, we use the signature_algorithm_constructor
-                from cryptography.hazmat.primitives import hashes
-                from cryptography.hazmat.primitives.asymmetric import ec
-
-                signature = private_key.sign(
-                    data,
-                    ec.ECDSA(hashes.SHA256())
-                )
-
-                return signature
-
             # Create signer with callback
             signer = create_signer(
-                callback=sign_callback,
+                callback=self.callback_signer_es256,
                 alg=SigningAlg.ES256,
                 certs=self.certs.decode('utf-8'),
                 tsa_url="http://timestamp.digicert.com"
@@ -839,35 +827,9 @@ class TestBuilder(unittest.TestCase):
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
 
-            # Create a real ES256 signing callback
-            def sign_callback(data: bytes) -> bytes:
-                """Real ES256 signing callback that creates actual signatures."""
-                # Load the private key from the test fixtures
-                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
-                    private_key_data = key_file.read()
-
-                # Load the private key using cryptography
-                private_key = serialization.load_pem_private_key(
-                    private_key_data,
-                    password=None,
-                    backend=default_backend()
-                )
-
-                # Create the signature using ES256 (ECDSA with SHA-256)
-                # For ECDSA, we use the signature_algorithm_constructor
-                from cryptography.hazmat.primitives import hashes
-                from cryptography.hazmat.primitives.asymmetric import ec
-
-                signature = private_key.sign(
-                    data,
-                    ec.ECDSA(hashes.SHA256())
-                )
-
-                return signature
-
             # Create signer with callback using Signer.from_callback
             signer = Signer.from_callback(
-                callback=sign_callback,
+                callback=self.callback_signer_es256,
                 alg=SigningAlg.ES256,
                 certs=self.certs.decode('utf-8'),
                 tsa_url="http://timestamp.digicert.com"
@@ -906,34 +868,9 @@ class TestBuilder(unittest.TestCase):
             # Create a temporary output file path
             output_path = os.path.join(temp_dir, "signed_output_callback.jpg")
 
-            # Create a real ES256 signing callback
-            def sign_callback(data: bytes) -> bytes:
-                """Real ES256 signing callback that creates actual signatures."""
-                # Load the private key from the test fixtures
-                with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
-                    private_key_data = key_file.read()
-
-                # Load the private key using cryptography
-                private_key = serialization.load_pem_private_key(
-                    private_key_data,
-                    password=None,
-                    backend=default_backend()
-                )
-
-                # Create the signature using ES256 (ECDSA with SHA-256)
-                from cryptography.hazmat.primitives import hashes
-                from cryptography.hazmat.primitives.asymmetric import ec
-
-                signature = private_key.sign(
-                    data,
-                    ec.ECDSA(hashes.SHA256())
-                )
-
-                return signature
-
             # Create signer with callback
             signer = Signer.from_callback(
-                callback=sign_callback,
+                callback=self.callback_signer_es256,
                 alg=SigningAlg.ES256,
                 certs=self.certs.decode('utf-8'),
                 tsa_url="http://timestamp.digicert.com"
@@ -995,7 +932,7 @@ class TestBuilder(unittest.TestCase):
         try:
             # Test with C2paSignerInfo
             output_path_1 = os.path.join(temp_dir, "signed_output_1.jpg")
-            
+
             # Load test certificates and key
             with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
                 certs = cert_file.read()
@@ -1018,7 +955,7 @@ class TestBuilder(unittest.TestCase):
                 signer_info,
                 False
             )
-            
+
             self.assertIsInstance(result_1, str)
             self.assertTrue(os.path.exists(output_path_1))
 
@@ -1031,16 +968,16 @@ class TestBuilder(unittest.TestCase):
                 signer_info,
                 True
             )
-            
+
             self.assertIsInstance(result_1_bytes, bytes)
             self.assertTrue(os.path.exists(output_path_1_bytes))
 
             # Test with Signer object
             output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
-            
+
             # Create a signer from the signer info
             signer = Signer.from_info(signer_info)
-            
+
             # Test with Signer parameter - JSON return
             result_2 = sign_file(
                 self.testPath,
@@ -1049,7 +986,7 @@ class TestBuilder(unittest.TestCase):
                 signer,
                 False
             )
-            
+
             self.assertIsInstance(result_2, str)
             self.assertTrue(os.path.exists(output_path_2))
 
@@ -1062,14 +999,14 @@ class TestBuilder(unittest.TestCase):
                 signer,
                 True
             )
-            
+
             self.assertIsInstance(result_2_bytes, bytes)
             self.assertTrue(os.path.exists(output_path_2_bytes))
-            
+
             # Both JSON results should be similar (same manifest structure)
             manifest_1 = json.loads(result_1)
             manifest_2 = json.loads(result_2)
-            
+
             self.assertIn("manifests", manifest_1)
             self.assertIn("manifests", manifest_2)
             self.assertIn("active_manifest", manifest_1)
@@ -1239,11 +1176,10 @@ class TestLegacyAPI(unittest.TestCase):
     def tearDown(self):
         """Clean up temporary files after each test."""
         if os.path.exists(self.temp_data_dir):
-            import shutil
             shutil.rmtree(self.temp_data_dir)
 
     def test_invalid_settings_str(self):
-        """Test loading a malformed settings string.""" 
+        """Test loading a malformed settings string."""
         with self.assertRaises(Error):
             load_settings(r'{"verify": { "remote_manifest_fetch": false }')
 
