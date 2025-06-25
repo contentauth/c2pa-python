@@ -1918,7 +1918,6 @@ class Builder:
         dest_stream = Stream(dest)
 
         # Use the internal stream-base signing logic
-        # Ignore the return value since this method returns None
         self._sign_internal(signer, format, source_stream, dest_stream)
 
     def sign_file(self,
