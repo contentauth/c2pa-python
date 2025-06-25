@@ -1388,8 +1388,8 @@ class Signer:
                 if data_len > 1024 * 1024:  # 1MB limit
                     return -1
 
-                # Convert C pointer to Python bytes
-                data = bytes(data_ptr[:data_len])
+                # Convert C pointer to Python bytes using direct memory access
+                data = bytes(ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_ubyte * data_len)).contents)
                 if not data:
                     # Error: empty data, invalid so return -1,
                     # native code will also handle it!
