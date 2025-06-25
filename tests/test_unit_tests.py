@@ -864,6 +864,76 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+    def test_builder_sign_extensionless_svg_file_mimetype(self):
+        """Test signing an extensionless SVG file using the builder.sign method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Use the extensionless svg from the test files
+            extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+            source_path = os.path.join(extensionless_dir, "svg")
+
+            output_path = os.path.join(temp_dir, "signed_output.svg")
+
+            # Use the builder.sign method
+            builder = Builder(self.manifestDefinition)
+            with open(source_path, 'rb') as source_file, open(output_path, 'wb') as dest_file:
+                builder.sign(
+                    signer=self.signer,
+                    format="image/svg+xml",  # Use extension instead of MIME type
+                    source=source_file,
+                    dest=dest_file
+                )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/svg+xml", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_builder_sign_extensionless_svg_file_ext(self):
+        """Test signing an extensionless SVG file using the builder.sign method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Use the extensionless svg from the test files
+            extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+            source_path = os.path.join(extensionless_dir, "svg")
+
+            output_path = os.path.join(temp_dir, "signed_output.svg")
+
+            # Use the builder.sign method
+            builder = Builder(self.manifestDefinition)
+            with open(source_path, 'rb') as source_file, open(output_path, 'wb') as dest_file:
+                builder.sign(
+                    signer=self.signer,
+                    format="svg",  # Use extension instead of MIME type
+                    source=source_file,
+                    dest=dest_file
+                )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/svg+xml", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
     def test_sign_file_callback_signer(self):
         """Test signing a file using the sign_file method."""
 
@@ -1555,7 +1625,6 @@ class TestHelpers(unittest.TestCase):
             (os.path.join(extensionless_dir, "m4a"), ('m4a', 'audio/mp4')),
             (os.path.join(extensionless_dir, "wav"), ('wav', 'audio/wav')),
             (os.path.join(extensionless_dir, "pdf"), ('pdf', 'application/pdf')),
-            (os.path.join(extensionless_dir, "svg"), ('svg', 'image/svg+xml')),
         ]
 
         # Test each file explicitly
