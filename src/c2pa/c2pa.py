@@ -150,6 +150,72 @@ SignerCallback = ctypes.CFUNCTYPE(
             ctypes.c_ubyte), ctypes.c_size_t)
 
 
+def _guess_mime_type_using_magic_number(file_path: Union[str, Path]) -> Optional[tuple[str, str]]:
+    """Guess MIME type by reading file header bytes.
+    Currently supports:
+    - SVG files (start with <?xml or <svg)
+    - Image formats: PNG, JPEG, GIF, TIFF, WebP, AVIF, HEIC, HEIF, DNG
+    - Video formats: MP4, MOV, AVI
+    - Audio formats: MP3, M4A, WAV
+    - Document formats: PDF
+    Args:
+        file_path: Path to the file to check
+    Returns:
+        Tuple of (extension, mime_type) if detected, None otherwise
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            # Read first 1024 bytes to check for file signatures
+            header = f.read(1024)
+
+        # Convert to string for easier pattern matching (for text-based formats)
+        header_str = header.decode('utf-8', errors='ignore').strip()
+
+        # Check for SVG signatures
+        if header_str.startswith('<?xml') and '<svg' in header_str:
+            return ('svg', 'image/svg+xml')
+        elif header_str.startswith('<svg'):
+            return ('svg', 'image/svg+xml')
+
+        # Check for PDF signature
+        if header.startswith(b'%PDF'):
+            return ('pdf', 'application/pdf')
+
+        # Check for image formats
+        if header.startswith(b'\x89PNG\r\n\x1a\n'):
+            return ('png', 'image/png')
+        elif header.startswith(b'\xff\xd8\xff'):
+            return ('jpg', 'image/jpeg')
+        elif header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
+            return ('gif', 'image/gif')
+        elif header.startswith(b'II*\x00') or header.startswith(b'MM\x00*'):
+            return ('tiff', 'image/tiff')
+        elif header.startswith(b'RIFF') and header[8:12] == b'WEBP':
+            return ('webp', 'image/webp')
+        elif header.startswith(b'\x00\x00\x00\x20ftypavif'):
+            return ('avif', 'image/avif')
+
+        # Check for audio formats
+        elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb') or header.startswith(b'\xff\xf3'):
+            return ('mp3', 'audio/mpeg')
+        elif header.startswith(b'\x00\x00\x00\x20ftypM4A') or header.startswith(b'\x00\x00\x00\x1cftypM4A'):
+            return ('m4a', 'audio/mp4')
+        elif header.startswith(b'RIFF') and header[8:12] == b'WAVE':
+            return ('wav', 'audio/wav')
+
+        # Check for video formats
+        # MP4: look for 'ftyp' at offset 4 and major brand in common MP4 video brands
+        # Generally catches MP4-based formats that were not caught above
+        elif header[4:8] == b'ftyp' and header[8:12] in {b'mp41', b'mp42', b'isom', b'iso2', b'avc1', b'dash', b'M4V '}:
+            return ('mp4', 'video/mp4')
+        elif header.startswith(b'RIFF') and header[8:12] == b'AVI ':
+            return ('avi', 'video/x-msvideo')
+
+        return None
+    except Exception:
+        return None
+
+
 class StreamContext(ctypes.Structure):
     """Opaque structure for stream context."""
     _fields_ = []  # Empty as it's opaque in the C API
