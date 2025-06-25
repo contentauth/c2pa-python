@@ -152,12 +152,10 @@ SignerCallback = ctypes.CFUNCTYPE(
 
 def _guess_mime_type_using_magic_number(file_path: Union[str, Path]) -> Optional[tuple[str, str]]:
     """Guess MIME type by reading file header bytes.
-    Currently supports:
-    - SVG files (start with <?xml or <svg)
-    - Image formats: PNG, JPEG, GIF, TIFF, WebP, AVIF, HEIC, HEIF, DNG
-    - Video formats: MP4, MOV, AVI
-    - Audio formats: MP3, M4A, WAV
-    - Document formats: PDF
+    Currently supports a limited set of files, as this is best effort.
+    You should consider adding extensions to filepaths to ensure we don't
+    have to guess too much.
+
     Args:
         file_path: Path to the file to check
     Returns:
@@ -194,6 +192,8 @@ def _guess_mime_type_using_magic_number(file_path: Union[str, Path]) -> Optional
             return ('webp', 'image/webp')
         elif header.startswith(b'\x00\x00\x00\x20ftypavif'):
             return ('avif', 'image/avif')
+        elif header.startswith(b'\x00\x00\x00\x18ftypmif1') or header.startswith(b'\x00\x00\x00\x18ftypmsf1') or header.startswith(b'\x00\x00\x00\x18ftypheic') or header.startswith(b'\x00\x00\x00\x18ftypheix'):
+            return ('heic', 'image/heic')
 
         # Check for audio formats
         elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb') or header.startswith(b'\xff\xf3'):

@@ -1468,6 +1468,7 @@ class TestHelpers(unittest.TestCase):
             (os.path.join(extensionless_dir, "png"), ('png', 'image/png')),
             (os.path.join(extensionless_dir, "jpg"), ('jpg', 'image/jpeg')),
             (os.path.join(extensionless_dir, "gif"), ('gif', 'image/gif')),
+            (os.path.join(extensionless_dir, "heic"), ('heic', 'image/heic')),
             (os.path.join(extensionless_dir, "tiff"), ('tiff', 'image/tiff')),
             (os.path.join(extensionless_dir, "webp"), ('webp', 'image/webp')),
             (os.path.join(extensionless_dir, "avif"), ('avif', 'image/avif')),
