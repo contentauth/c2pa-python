@@ -815,6 +815,44 @@ class TestBuilder(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_sign_file_callback_signer_managed(self):
+        """Test signing a file using the sign_file method with context managers."""
+
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            output_path = os.path.join(temp_dir, "signed_output_managed.jpg")
+
+            # Create builder and signer with context managers
+            with Builder(self.manifestDefinition) as builder, create_signer(
+                callback=self.callback_signer_es256,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            ) as signer:
+
+                # Sign the file
+                result, manifest_bytes = builder.sign_file(
+                    source_path=self.testPath,
+                    dest_path=output_path,
+                    signer=signer
+                )
+
+            # Verify results
+            self.assertTrue(os.path.exists(output_path))
+            self.assertIsInstance(result, int)
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
+            # Verify signed data can be read
+            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            shutil.rmtree(temp_dir)
+
     def test_builder_sign_file_callback_signer_from_callback(self):
         """Test signing a file using the sign_file method with Signer.from_callback."""
 
