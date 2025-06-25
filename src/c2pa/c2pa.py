@@ -1114,7 +1114,7 @@ class Reader:
         """Create a new Reader.
 
         Args:
-            format_or_path: The format or path to read from
+            format_or_path: The format (eg. file extension) or path to read from
             stream: Optional stream to read from (any Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
@@ -1922,7 +1922,7 @@ class Builder:
 
         Args:
             signer: The signer to use
-            format: The MIME type or extension of the content
+            format: The MIME type or extension of the content (extension preferred)
             source_stream: The source stream
             dest_stream: The destination stream
 
@@ -1990,7 +1990,7 @@ class Builder:
         """Sign the builder's content and write to a destination stream.
 
         Args:
-            format: The MIME type or extension of the content
+            format: The MIME type or extension of the content (extension preferred)
             source: The source stream (any Python stream-like object)
             dest: The destination stream (any Python stream-like object)
             signer: The signer to use
