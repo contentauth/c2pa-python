@@ -1017,6 +1017,40 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+    def test_sign_file_callback_signer_reports_error(self):
+        """Test signing a file using the sign_file method with a callback that reports an error."""
+
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            output_path = os.path.join(temp_dir, "signed_output.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+
+            # Define a callback that always returns -1 to simulate an error
+            def error_callback_signer(data: bytes) -> bytes:
+                # Return -1 to indicate an error condition
+                return -1
+
+            # Create signer with error callback using create_signer function
+            signer = create_signer(
+                callback=error_callback_signer,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            # The signing operation should fail due to the error callback
+            with self.assertRaises(Error):
+                result, manifest_bytes = builder.sign_file(
+                    source_path=self.testPath,
+                    dest_path=output_path,
+                    signer=signer
+                )
+
+        finally:
+            shutil.rmtree(temp_dir)
 
 class TestStream(unittest.TestCase):
     def setUp(self):
