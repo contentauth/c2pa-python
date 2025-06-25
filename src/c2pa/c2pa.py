@@ -1388,8 +1388,11 @@ class Signer:
                 if data_len > 1024 * 1024:  # 1MB limit
                     return -1
 
-                # Convert C pointer to Python bytes using direct memory access
-                data = bytes(ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_ubyte * data_len)).contents)
+                # Recover signed data (copy, to avoid lifetime issues)
+                temp_buffer = (ctypes.c_ubyte * data_len)()
+                ctypes.memmove(temp_buffer, data_ptr, data_len)
+                data = bytes(temp_buffer)
+
                 if not data:
                     # Error: empty data, invalid so return -1,
                     # native code will also handle it!
@@ -1874,7 +1877,9 @@ class Builder:
             if manifest_bytes_ptr and result > 0:
                 try:
                     # Convert the C pointer to Python bytes
-                    manifest_bytes = bytes(manifest_bytes_ptr[:result])
+                    temp_buffer = (ctypes.c_ubyte * result)()
+                    ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
+                    manifest_bytes = bytes(temp_buffer)
                 except Exception:
                     # If there's any error accessing the memory, just return
                     # empty bytes
