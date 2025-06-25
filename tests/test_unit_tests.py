@@ -1095,6 +1095,8 @@ class TestBuilder(unittest.TestCase):
 
             # Define a callback that always returns None to simulate an error
             def error_callback_signer(data: bytes) -> bytes:
+                # Could alternatively also raise an error
+                # raise RuntimeError("Simulated signing error")
                 return None
 
             # Create signer with error callback using create_signer function
