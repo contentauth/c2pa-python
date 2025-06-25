@@ -293,6 +293,7 @@ class TestBuilder(unittest.TestCase):
         }
 
         # Define an example ES256 callback signer
+        self.callback_signer_alg = "Es256"
         def callback_signer_es256(data: bytes) -> bytes:
             private_key = serialization.load_pem_private_key(
                 self.key,
@@ -806,11 +807,18 @@ class TestBuilder(unittest.TestCase):
             self.assertGreater(len(manifest_bytes), 0)
 
             # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
+            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
-                self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)
+
+                # Parse the JSON and verify the signature algorithm
+                manifest_data = json.loads(json_data)
+                active_manifest_id = manifest_data["active_manifest"]
+                active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                self.assertIn("signature_info", active_manifest)
+                signature_info = active_manifest["signature_info"]
+                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
 
         finally:
             shutil.rmtree(temp_dir)
@@ -850,6 +858,16 @@ class TestBuilder(unittest.TestCase):
                 self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)
 
+                # Parse the JSON and verify the signature algorithm
+                manifest_data = json.loads(json_data)
+                active_manifest_id = manifest_data["active_manifest"]
+                active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                # Verify the signature_info contains the correct algorithm
+                self.assertIn("signature_info", active_manifest)
+                signature_info = active_manifest["signature_info"]
+                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
+
         finally:
             shutil.rmtree(temp_dir)
 
@@ -887,11 +905,20 @@ class TestBuilder(unittest.TestCase):
             self.assertGreater(len(manifest_bytes), 0)
 
             # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
+            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)
+
+                # Parse the JSON and verify the signature algorithm
+                manifest_data = json.loads(json_data)
+                active_manifest_id = manifest_data["active_manifest"]
+                active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                # Verify the signature_info contains the correct algorithm
+                self.assertIn("signature_info", active_manifest)
+                signature_info = active_manifest["signature_info"]
+                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
 
         finally:
             shutil.rmtree(temp_dir)
@@ -1066,10 +1093,9 @@ class TestBuilder(unittest.TestCase):
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
 
-            # Define a callback that always returns -1 to simulate an error
+            # Define a callback that always returns None to simulate an error
             def error_callback_signer(data: bytes) -> bytes:
-                # Return -1 to indicate an error condition
-                return -1
+                return None
 
             # Create signer with error callback using create_signer function
             signer = create_signer(
