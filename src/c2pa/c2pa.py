@@ -1112,7 +1112,8 @@ class Reader:
                         self._format_str, self._own_stream._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
-                        raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
+                        raise TypeError(
+                            Reader._ERROR_MESSAGES['manifest_error'])
                     manifest_array = (
                         ctypes.c_ubyte *
                         len(manifest_data))(
@@ -1155,7 +1156,8 @@ class Reader:
                         self._format_str, stream_obj._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
-                        raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
+                        raise TypeError(
+                            Reader._ERROR_MESSAGES['manifest_error'])
                     manifest_array = (
                         ctypes.c_ubyte *
                         len(manifest_data))(
@@ -1520,7 +1522,9 @@ class Signer:
 
             return result
         except Exception as e:
-            raise C2paError(Signer._ERROR_MESSAGES['size_error'].format(str(e)))
+            raise C2paError(
+                Signer._ERROR_MESSAGES['size_error'].format(
+                    str(e)))
 
     @property
     def closed(self) -> bool:
