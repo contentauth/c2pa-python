@@ -1279,9 +1279,6 @@ class Signer:
 
         Note: This constructor is not meant to be called directly.
         Use from_info() or from_callback() instead.
-
-        Args:
-            signer_ptr: Pointer to the C2PA signer
         """
         self._signer = signer_ptr
         self._closed = False
