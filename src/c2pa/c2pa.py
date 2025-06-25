@@ -208,6 +208,9 @@ def _guess_mime_type_using_magic_number(file_path: Union[str, Path]) -> Optional
         # Generally catches MP4-based formats that were not caught above
         elif header[4:8] == b'ftyp' and header[8:12] in {b'mp41', b'mp42', b'isom', b'iso2', b'avc1', b'dash', b'M4V '}:
             return ('mp4', 'video/mp4')
+        # MOV: look for 'ftyp' at offset 4 and major brand in common QuickTime brands
+        elif header[4:8] == b'ftyp' and header[8:12] in {b'qt  ', b'M4V '}:
+            return ('mov', 'video/quicktime')
         elif header.startswith(b'RIFF') and header[8:12] == b'AVI ':
             return ('avi', 'video/x-msvideo')
 

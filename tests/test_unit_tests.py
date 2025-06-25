@@ -1555,6 +1555,7 @@ class TestHelpers(unittest.TestCase):
             (os.path.join(extensionless_dir, "m4a"), ('m4a', 'audio/mp4')),
             (os.path.join(extensionless_dir, "wav"), ('wav', 'audio/wav')),
             (os.path.join(extensionless_dir, "pdf"), ('pdf', 'application/pdf')),
+            (os.path.join(extensionless_dir, "svg"), ('svg', 'image/svg+xml')),
         ]
 
         # Test each file explicitly
