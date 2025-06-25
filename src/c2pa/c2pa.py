@@ -999,6 +999,19 @@ class Stream:
 class Reader:
     """High-level wrapper for C2PA Reader operations."""
 
+    # Class-level error messages to avoid recreation
+    _ERROR_MESSAGES = {
+        'unsupported': "Unsupported format",
+        'io_error': "IO error: {}",
+        'manifest_error': "Invalid manifest data: must be bytes",
+        'reader_error': "Failed to create reader: {}",
+        'cleanup_error': "Error during cleanup: {}",
+        'stream_error': "Error cleaning up stream: {}",
+        'file_error': "Error cleaning up file: {}",
+        'reader_cleanup_error': "Error cleaning up reader: {}",
+        'encoding_error': "Invalid UTF-8 characters in input: {}"
+    }
+
     def __init__(self,
                  format_or_path: Union[str,
                                        Path],
@@ -1018,21 +1031,10 @@ class Reader:
 
         self._reader = None
         self._own_stream = None
-        self._error_messages = {
-            'unsupported': "Unsupported format",
-            'ioError': "IO error: {}",
-            'manifestError': "Invalid manifest data: must be bytes",
-            'readerError': "Failed to create reader: {}",
-            'cleanupError': "Error during cleanup: {}",
-            'streamError': "Error cleaning up stream: {}",
-            'fileError': "Error cleaning up file: {}",
-            'readerCleanupError': "Error cleaning up reader: {}",
-            'encodingError': "Invalid UTF-8 characters in input: {}"
-        }
 
         # Check for unsupported format
         if format_or_path == "badFormat":
-            raise C2paError.NotSupported(self._error_messages['unsupported'])
+            raise C2paError.NotSupported(self._ERROR_MESSAGES['unsupported'])
 
         if stream is None:
             # Create a stream from the file path
@@ -1054,7 +1056,7 @@ class Reader:
                 self._mime_type_str = mime_type.encode('utf-8')
             except UnicodeError as e:
                 raise C2paError.Encoding(
-                    self._error_messages['encoding_error'].format(
+                    self._ERROR_MESSAGES['encoding_error'].format(
                         str(e)))
 
             try:
@@ -1075,7 +1077,7 @@ class Reader:
                     if error:
                         raise C2paError(error)
                     raise C2paError(
-                        self._error_messages['reader_error'].format("Unknown error"))
+                        self._ERROR_MESSAGES['reader_error'].format("Unknown error"))
 
                 # Store the file to close it later
                 self._file = file
@@ -1086,7 +1088,7 @@ class Reader:
                 if hasattr(self, '_file'):
                     self._file.close()
                 raise C2paError.Io(
-                    self._error_messages['io_error'].format(
+                    self._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         elif isinstance(stream, str):
             # If stream is a string, treat it as a path and try to open it
@@ -1100,7 +1102,7 @@ class Reader:
                         self._format_str, self._own_stream._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
-                        raise TypeError(self._error_messages['manifest_error'])
+                        raise TypeError(self._ERROR_MESSAGES['manifest_error'])
                     manifest_array = (
                         ctypes.c_ubyte *
                         len(manifest_data))(
@@ -1121,7 +1123,7 @@ class Reader:
                     if error:
                         raise C2paError(error)
                     raise C2paError(
-                        self._error_messages['reader_error'].format("Unknown error"))
+                        self._ERROR_MESSAGES['reader_error'].format("Unknown error"))
 
                 self._file = file
             except Exception as e:
@@ -1130,7 +1132,7 @@ class Reader:
                 if hasattr(self, '_file'):
                     self._file.close()
                 raise C2paError.Io(
-                    self._error_messages['io_error'].format(
+                    self._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         else:
             # Use the provided stream
@@ -1143,7 +1145,7 @@ class Reader:
                         self._format_str, stream_obj._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
-                        raise TypeError(self._error_messages['manifest_error'])
+                        raise TypeError(self._ERROR_MESSAGES['manifest_error'])
                     manifest_array = (
                         ctypes.c_ubyte *
                         len(manifest_data))(
@@ -1158,7 +1160,7 @@ class Reader:
                     if error:
                         raise C2paError(error)
                     raise C2paError(
-                        self._error_messages['reader_error'].format("Unknown error"))
+                        self._ERROR_MESSAGES['reader_error'].format("Unknown error"))
 
     def __enter__(self):
         return self
@@ -1188,7 +1190,7 @@ class Reader:
                     _lib.c2pa_reader_free(self._reader)
                 except Exception as e:
                     print(
-                        self._error_messages['reader_cleanup'].format(
+                        self._ERROR_MESSAGES['reader_cleanup_error'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._reader = None
@@ -1199,7 +1201,7 @@ class Reader:
                     self._own_stream.close()
                 except Exception as e:
                     print(
-                        self._error_messages['stream_error'].format(
+                        self._ERROR_MESSAGES['stream_error'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._own_stream = None
@@ -1210,7 +1212,7 @@ class Reader:
                     self._file.close()
                 except Exception as e:
                     print(
-                        self._error_messages['file_error'].format(
+                        self._ERROR_MESSAGES['file_error'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._file = None
@@ -1220,7 +1222,7 @@ class Reader:
                 self._strings.clear()
         except Exception as e:
             print(
-                self._error_messages['cleanup_error'].format(
+                self._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
         finally:
             self._closed = True
@@ -1273,6 +1275,20 @@ class Reader:
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
 
+    # Class-level error messages to avoid recreation
+    _ERROR_MESSAGES = {
+        'closed_error': "Signer is closed",
+        'cleanup_error': "Error during cleanup: {}",
+        'signer_cleanup': "Error cleaning up signer: {}",
+        'size_error': "Error getting reserve size: {}",
+        'callback_error': "Error in signer callback: {}",
+        'info_error': "Error creating signer from info: {}",
+        'invalid_data': "Invalid data for signing: {}",
+        'invalid_certs': "Invalid certificate data: {}",
+        'invalid_tsa': "Invalid TSA URL: {}",
+        'encoding_error': "Invalid UTF-8 characters in input: {}"
+    }
+
     def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
         """Initialize a new Signer instance.
 
@@ -1281,17 +1297,6 @@ class Signer:
         """
         self._signer = signer_ptr
         self._closed = False
-        self._error_messages = {
-            'closed_error': "Signer is closed",
-            'cleanup_error': "Error during cleanup: {}",
-            'signer_cleanup': "Error cleaning up signer: {}",
-            'size_error': "Error getting reserve size: {}",
-            'callback_error': "Error in signer callback: {}",
-            'info_error': "Error creating signer from info: {}",
-            'invalid_data': "Invalid data for signing: {}",
-            'invalid_certs': "Invalid certificate data: {}",
-            'invalid_tsa': "Invalid TSA URL: {}"
-        }
 
     @classmethod
     def from_info(cls, signer_info: C2paSignerInfo) -> 'Signer':
@@ -1340,28 +1345,14 @@ class Signer:
             C2paError: If there was an error creating the signer
             C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
         """
-        # Define error messages locally since they're instance attributes
-        error_messages = {
-            'closed_error': "Signer is closed",
-            'cleanup_error': "Error during cleanup: {}",
-            'signer_cleanup': "Error cleaning up signer: {}",
-            'size_error': "Error getting reserve size: {}",
-            'callback_error': "Error in signer callback: {}",
-            'info_error': "Error creating signer from info: {}",
-            'invalid_data': "Invalid data for signing: {}",
-            'invalid_certs': "Invalid certificate data: {}",
-            'invalid_tsa': "Invalid TSA URL: {}",
-            'encoding_error': "Invalid UTF-8 characters in input: {}"
-        }
-
         # Validate inputs before creating
         if not certs:
             raise C2paError(
-                error_messages['invalid_certs'].format("Missing certificate data"))
+                cls._ERROR_MESSAGES['invalid_certs'].format("Missing certificate data"))
 
         if tsa_url and not tsa_url.startswith(('http://', 'https://')):
             raise C2paError(
-                error_messages['invalid_tsa'].format("Invalid TSA URL format"))
+                cls._ERROR_MESSAGES['invalid_tsa'].format("Invalid TSA URL format"))
 
         # Create a wrapper callback that handles errors and memory management
         def wrapped_callback(
@@ -1411,7 +1402,7 @@ class Signer:
                 return actual_len
             except Exception as e:
                 print(
-                    error_messages['callback_error'].format(
+                    cls._ERROR_MESSAGES['callback_error'].format(
                         str(e)), file=sys.stderr)
                 # Error: exception raised, invalid so return -1,
                 # native code will handle the error when seeing -1
@@ -1424,7 +1415,7 @@ class Signer:
             tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url and isinstance(tsa_url, str) else tsa_url
         except UnicodeError as e:
             raise C2paError.Encoding(
-                error_messages['encoding_error'].format(
+                cls._ERROR_MESSAGES['encoding_error'].format(
                     str(e)))
 
         # Create the callback object using the callback function
@@ -1458,7 +1449,7 @@ class Signer:
     def __enter__(self):
         """Context manager entry."""
         if self._closed:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -1481,13 +1472,13 @@ class Signer:
                     _lib.c2pa_signer_free(self._signer)
                 except Exception as e:
                     print(
-                        self._error_messages['signer_cleanup'].format(
+                        self._ERROR_MESSAGES['signer_cleanup'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._signer = None
         except Exception as e:
             print(
-                self._error_messages['cleanup_error'].format(
+                self._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
         finally:
             self._closed = True
@@ -1502,7 +1493,7 @@ class Signer:
             C2paError: If there was an error getting the size
         """
         if self._closed or not self._signer:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         try:
             result = _lib.c2pa_signer_reserve_size(self._signer)
@@ -1515,7 +1506,7 @@ class Signer:
 
             return result
         except Exception as e:
-            raise C2paError(self._error_messages['size_error'].format(str(e)))
+            raise C2paError(self._ERROR_MESSAGES['size_error'].format(str(e)))
 
     @property
     def closed(self) -> bool:
@@ -1530,6 +1521,22 @@ class Signer:
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
 
+    # Class-level error messages to avoid recreation
+    _ERROR_MESSAGES = {
+        'builder_error': "Failed to create builder: {}",
+        'cleanup_error': "Error during cleanup: {}",
+        'builder_cleanup': "Error cleaning up builder: {}",
+        'closed_error': "Builder is closed",
+        'manifest_error': "Invalid manifest data: must be string or dict",
+        'url_error': "Error setting remote URL: {}",
+        'resource_error': "Error adding resource: {}",
+        'ingredient_error': "Error adding ingredient: {}",
+        'archive_error': "Error writing archive: {}",
+        'sign_error': "Error during signing: {}",
+        'encoding_error': "Invalid UTF-8 characters in manifest: {}",
+        'json_error': "Failed to serialize manifest JSON: {}"
+    }
+
     def __init__(self, manifest_json: Any):
         """Initialize a new Builder instance.
 
@@ -1542,34 +1549,20 @@ class Builder:
             C2paError.Json: If the manifest JSON cannot be serialized
         """
         self._builder = None
-        self._error_messages = {
-            'builder_error': "Failed to create builder: {}",
-            'cleanup_error': "Error during cleanup: {}",
-            'builder_cleanup': "Error cleaning up builder: {}",
-            'closed_error': "Builder is closed",
-            'manifest_error': "Invalid manifest data: must be string or dict",
-            'url_error': "Error setting remote URL: {}",
-            'resource_error': "Error adding resource: {}",
-            'ingredient_error': "Error adding ingredient: {}",
-            'archive_error': "Error writing archive: {}",
-            'sign_error': "Error during signing: {}",
-            'encoding_error': "Invalid UTF-8 characters in manifest: {}",
-            'json_error': "Failed to serialize manifest JSON: {}"
-        }
 
         if not isinstance(manifest_json, str):
             try:
                 manifest_json = json.dumps(manifest_json)
             except (TypeError, ValueError) as e:
                 raise C2paError.Json(
-                    self._error_messages['json_error'].format(
+                    self._ERROR_MESSAGES['json_error'].format(
                         str(e)))
 
         try:
             json_str = manifest_json.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
-                self._error_messages['encoding_error'].format(
+                self._ERROR_MESSAGES['encoding_error'].format(
                     str(e)))
 
         self._builder = _lib.c2pa_builder_from_json(json_str)
@@ -1579,7 +1572,7 @@ class Builder:
             if error:
                 raise C2paError(error)
             raise C2paError(
-                self._error_messages['builder_error'].format("Unknown error"))
+                self._ERROR_MESSAGES['builder_error'].format("Unknown error"))
 
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
@@ -1647,13 +1640,13 @@ class Builder:
                     _lib.c2pa_builder_free(self._builder)
                 except Exception as e:
                     print(
-                        self._error_messages['builder_cleanup'].format(
+                        self._ERROR_MESSAGES['builder_cleanup'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._builder = None
         except Exception as e:
             print(
-                self._error_messages['cleanup_error'].format(
+                self._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
         finally:
             self._closed = True
@@ -1677,7 +1670,7 @@ class Builder:
         This is useful when creating cloud or sidecar manifests.
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
         _lib.c2pa_builder_set_no_embed(self._builder)
 
     def set_remote_url(self, remote_url: str):
@@ -1693,7 +1686,7 @@ class Builder:
             C2paError: If there was an error setting the remote URL
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         url_str = remote_url.encode('utf-8')
         result = _lib.c2pa_builder_set_remote_url(self._builder, url_str)
@@ -1703,7 +1696,7 @@ class Builder:
             if error:
                 raise C2paError(error)
             raise C2paError(
-                self._error_messages['url_error'].format("Unknown error"))
+                self._ERROR_MESSAGES['url_error'].format("Unknown error"))
 
     def add_resource(self, uri: str, stream: Any):
         """Add a resource to the builder.
@@ -1716,7 +1709,7 @@ class Builder:
             C2paError: If there was an error adding the resource
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
@@ -1728,7 +1721,7 @@ class Builder:
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    self._error_messages['resource_error'].format("Unknown error"))
+                    self._ERROR_MESSAGES['resource_error'].format("Unknown error"))
 
     def add_ingredient(self, ingredient_json: str, format: str, source: Any):
         """Add an ingredient to the builder.
@@ -1743,14 +1736,14 @@ class Builder:
             C2paError.Encoding: If the ingredient JSON contains invalid UTF-8 characters
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         try:
             ingredient_str = ingredient_json.encode('utf-8')
             format_str = format.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
-                self._error_messages['encoding_error'].format(
+                self._ERROR_MESSAGES['encoding_error'].format(
                     str(e)))
 
         source_stream = Stream(source)
@@ -1762,7 +1755,7 @@ class Builder:
             if error:
                 raise C2paError(error)
             raise C2paError(
-                self._error_messages['ingredient_error'].format("Unknown error"))
+                self._ERROR_MESSAGES['ingredient_error'].format("Unknown error"))
 
     def add_ingredient_from_stream(
             self,
@@ -1781,14 +1774,14 @@ class Builder:
             C2paError.Encoding: If the ingredient JSON or format contains invalid UTF-8 characters
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         try:
             ingredient_str = ingredient_json.encode('utf-8')
             format_str = format.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
-                self._error_messages['encoding_error'].format(
+                self._ERROR_MESSAGES['encoding_error'].format(
                     str(e)))
 
         with Stream(source) as source_stream:
@@ -1800,7 +1793,7 @@ class Builder:
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    self._error_messages['ingredient_error'].format("Unknown error"))
+                    self._ERROR_MESSAGES['ingredient_error'].format("Unknown error"))
 
     def to_archive(self, stream: Any):
         """Write an archive of the builder to a stream.
@@ -1812,7 +1805,7 @@ class Builder:
             C2paError: If there was an error writing the archive
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_to_archive(
@@ -1823,7 +1816,7 @@ class Builder:
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    self._error_messages['archive_error'].format("Unknown error"))
+                    self._ERROR_MESSAGES['archive_error'].format("Unknown error"))
 
     def _sign_internal(
             self,
@@ -1847,7 +1840,7 @@ class Builder:
             C2paError: If there was an error during signing
         """
         if not self._builder:
-            raise C2paError(self._error_messages['closed_error'])
+            raise C2paError(self._ERROR_MESSAGES['closed_error'])
 
         try:
             format_str = format.encode('utf-8')
