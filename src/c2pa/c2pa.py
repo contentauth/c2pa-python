@@ -1038,15 +1038,6 @@ class Reader:
 
         if stream is None:
             # Create a stream from the file path
-
-            # Check if mimetypes is already imported to avoid duplicate imports
-            # This is important because mimetypes initialization can be expensive
-            # and we want to reuse the existing module if it's already loaded
-            if 'mimetypes' not in sys.modules:
-                import mimetypes
-            else:
-                mimetypes = sys.modules['mimetypes']
-
             path = str(format_or_path)
             mime_type = mimetypes.guess_type(
                 path)[0]
