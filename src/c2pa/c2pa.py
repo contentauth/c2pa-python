@@ -734,11 +734,20 @@ class Stream:
     # of the stream ID ensures uniqueness even after counter reset
     _MAX_STREAM_ID = 2**31 - 1
 
-    # Class-level error messages to avoid recreation
+    # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'stream_error': "Error cleaning up stream: {}",
         'callback_error': "Error cleaning up callback {}: {}",
-        'cleanup_error': "Error during cleanup: {}"
+        'cleanup_error': "Error during cleanup: {}",
+        'read': "Stream is closed or not initialized during read operation",
+        'memory_error': "Memory error during stream operation: {}",
+        'read_error': "Error during read operation: {}",
+        'seek': "Stream is closed or not initialized during seek operation",
+        'seek_error': "Error during seek operation: {}",
+        'write': "Stream is closed or not initialized during write operation",
+        'write_error': "Error during write operation: {}",
+        'flush': "Stream is closed or not initialized during flush operation",
+        'flush_error': "Error during flush operation: {}"
     }
 
     def __init__(self, file):
@@ -963,7 +972,7 @@ class Stream:
                     _lib.c2pa_release_stream(self._stream)
                 except Exception as e:
                     print(
-                        self._ERROR_MESSAGES['stream_error'].format(
+                        Stream._ERROR_MESSAGES['stream_error'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._stream = None
@@ -975,13 +984,13 @@ class Stream:
                         setattr(self, attr, None)
                     except Exception as e:
                         print(
-                            self._ERROR_MESSAGES['callback_error'].format(
+                            Stream._ERROR_MESSAGES['callback_error'].format(
                                 attr, str(e)), file=sys.stderr)
 
             # Note: We don't close self._file as we don't own it
         except Exception as e:
             print(
-                self._ERROR_MESSAGES['cleanup_error'].format(
+                Stream._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
         finally:
             self._closed = True
