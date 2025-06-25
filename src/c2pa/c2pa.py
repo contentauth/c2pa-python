@@ -1276,7 +1276,7 @@ class Reader:
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
 
-    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner), callback_cb: Optional[SignerCallback] = None):
+    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
         """Initialize a new Signer instance.
 
         Note: This constructor is not meant to be called directly.
@@ -1284,10 +1284,8 @@ class Signer:
 
         Args:
             signer_ptr: Pointer to the C2PA signer
-            callback_cb: Optional callback function (for callback-based signers)
         """
         self._signer = signer_ptr
-        self._callback_cb = callback_cb  # Keep callback alive to prevent garbage collection
         self._closed = False
         self._error_messages = {
             'closed_error': "Signer is closed",
@@ -1446,7 +1444,14 @@ class Signer:
             raise C2paError("Failed to create signer")
 
         # Create and return the signer instance with the callback
-        return cls(signer_ptr, callback_cb)
+        signer_instance = cls(signer_ptr)
+
+        # Keep callback alive on the object to prevent gc of the callback
+        # So the callback will live as long as the signer leaves,
+        # and there is a 1:1 relationship between signer and callback.
+        signer_instance._callback_cb = callback_cb
+
+        return signer_instance
 
     def __enter__(self):
         """Context manager entry."""
