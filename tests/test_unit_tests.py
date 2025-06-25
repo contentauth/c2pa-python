@@ -345,7 +345,7 @@ class TestBuilder(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             builder.set_no_embed()
             output = io.BytesIO(bytearray())
-            result_data = builder.sign(self.signer, "image/jpeg", file, output)
+            builder.sign(self.signer, "image/jpeg", file, output)
 
             output.seek(0)
             # When set_no_embed() is used, no manifest should be embedded in the file
