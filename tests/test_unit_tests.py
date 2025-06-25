@@ -871,6 +871,69 @@ class TestBuilder(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_sign_file_callback_signer_managed_multiple_uses(self):
+        """Test that a signer can be used multiple times with context managers."""
+
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            # Create builder and signer with context managers
+            with Builder(self.manifestDefinition) as builder, create_signer(
+                callback=self.callback_signer_es256,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            ) as signer:
+
+                # First signing operation
+                output_path_1 = os.path.join(temp_dir, "signed_output_1.jpg")
+                result_1, manifest_bytes_1 = builder.sign_file(
+                    source_path=self.testPath,
+                    dest_path=output_path_1,
+                    signer=signer
+                )
+
+                # Verify first signing was successful
+                self.assertTrue(os.path.exists(output_path_1))
+                self.assertIsInstance(result_1, int)
+                self.assertIsInstance(manifest_bytes_1, bytes)
+                self.assertGreater(len(manifest_bytes_1), 0)
+
+                # Second signing operation with the same signer
+                # This is to verify we don't free the signer or the callback too early
+                output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
+                result_2, manifest_bytes_2 = builder.sign_file(
+                    source_path=self.testPath,
+                    dest_path=output_path_2,
+                    signer=signer
+                )
+
+                # Verify second signing was successful
+                self.assertTrue(os.path.exists(output_path_2))
+                self.assertIsInstance(result_2, int)
+                self.assertIsInstance(manifest_bytes_2, bytes)
+                self.assertGreater(len(manifest_bytes_2), 0)
+
+                # Verify both files contain valid C2PA data
+                for output_path in [output_path_1, output_path_2]:
+                    with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
+                        json_data = reader.json()
+                        self.assertIn("Python Test", json_data)
+                        self.assertNotIn("validation_status", json_data)
+
+                        # Parse the JSON and verify the signature algorithm
+                        manifest_data = json.loads(json_data)
+                        active_manifest_id = manifest_data["active_manifest"]
+                        active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                        # Verify the signature_info contains the correct algorithm
+                        self.assertIn("signature_info", active_manifest)
+                        signature_info = active_manifest["signature_info"]
+                        self.assertEqual(signature_info["alg"], self.callback_signer_alg)
+
+        finally:
+            shutil.rmtree(temp_dir)
+
     def test_builder_sign_file_callback_signer_from_callback(self):
         """Test signing a file using the sign_file method with Signer.from_callback."""
 
