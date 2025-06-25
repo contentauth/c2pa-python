@@ -554,7 +554,7 @@ def read_ingredient_file(
         C2paError: If there was an error reading the file
     """
     warnings.warn(
-        "The read_ingredient_file function is deprecated and will be removed in a future version." 
+        "The read_ingredient_file function is deprecated and will be removed in a future version."
         "Please use Reader(path).json() for reading C2PA metadata instead.",
         DeprecationWarning,
         stacklevel=2)
@@ -619,6 +619,7 @@ def sign_file(
     """
     ...
 
+
 @overload
 def sign_file(
     source_path: Union[str, Path],
@@ -630,6 +631,7 @@ def sign_file(
     """Sign a file with a C2PA manifest using a signer.
     """
     ...
+
 
 def sign_file(
     source_path: Union[str, Path],
@@ -682,7 +684,8 @@ def sign_file(
                 source_stream = Stream(source_file)
                 dest_stream = Stream(dest_file)
 
-                # Use the builder's internal signing logic to get manifest bytes
+                # Use the builder's internal signing logic to get manifest
+                # bytes
                 result, manifest_bytes = builder._sign_internal(
                     signer, mime_type, source_stream, dest_stream)
 
@@ -1309,7 +1312,8 @@ class Signer:
             if error:
                 # More detailed error message when possible
                 raise C2paError(error)
-            raise C2paError("Failed to create signer from configured signer_info")
+            raise C2paError(
+                "Failed to create signer from configured signer_info")
 
         return cls(signer_ptr)
 
@@ -1386,7 +1390,8 @@ class Signer:
                 # Copy the signature back to the C buffer
                 # (since callback is used in native code)
                 actual_len = min(len(signature), signed_len)
-                # Use memmove for efficient memory copying instead of byte-by-byte loop
+                # Use memmove for efficient memory copying instead of
+                # byte-by-byte loop
                 ctypes.memmove(signed_bytes_ptr, signature, actual_len)
 
                 # Native code expects the signed len to be returned, we oblige
@@ -1402,8 +1407,10 @@ class Signer:
         # Encode strings with error handling in case it's invalid UTF8
         try:
             # Only encode if not already bytes, avoid unnecessary encoding
-            certs_bytes = certs.encode('utf-8') if isinstance(certs, str) else certs
-            tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url and isinstance(tsa_url, str) else tsa_url
+            certs_bytes = certs.encode(
+                'utf-8') if isinstance(certs, str) else certs
+            tsa_url_bytes = tsa_url.encode(
+                'utf-8') if tsa_url and isinstance(tsa_url, str) else tsa_url
         except UnicodeError as e:
             raise C2paError.Encoding(
                 cls._ERROR_MESSAGES['encoding_error'].format(
@@ -1878,7 +1885,6 @@ class Builder:
             # Ensure both streams are cleaned up
             source_stream.close()
             dest_stream.close()
-
 
     def sign(
             self,
