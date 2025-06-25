@@ -734,6 +734,13 @@ class Stream:
     # of the stream ID ensures uniqueness even after counter reset
     _MAX_STREAM_ID = 2**31 - 1
 
+    # Class-level error messages to avoid recreation
+    _ERROR_MESSAGES = {
+        'stream_error': "Error cleaning up stream: {}",
+        'callback_error': "Error cleaning up callback {}: {}",
+        'cleanup_error': "Error during cleanup: {}"
+    }
+
     def __init__(self, file):
         """Initialize a new Stream wrapper around a file-like object.
 
@@ -956,7 +963,7 @@ class Stream:
                     _lib.c2pa_release_stream(self._stream)
                 except Exception as e:
                     print(
-                        self._error_messages['stream_error'].format(
+                        self._ERROR_MESSAGES['stream_error'].format(
                             str(e)), file=sys.stderr)
                 finally:
                     self._stream = None
@@ -968,13 +975,13 @@ class Stream:
                         setattr(self, attr, None)
                     except Exception as e:
                         print(
-                            self._error_messages['callback_error'].format(
+                            self._ERROR_MESSAGES['callback_error'].format(
                                 attr, str(e)), file=sys.stderr)
 
             # Note: We don't close self._file as we don't own it
         except Exception as e:
             print(
-                self._error_messages['cleanup_error'].format(
+                self._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
         finally:
             self._closed = True
