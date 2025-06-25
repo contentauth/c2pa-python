@@ -1018,7 +1018,7 @@ class Stream:
 class Reader:
     """High-level wrapper for C2PA Reader operations."""
 
-    # Class-level error messages to avoid recreation
+    # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'unsupported': "Unsupported format",
         'io_error': "IO error: {}",
@@ -1287,7 +1287,7 @@ class Reader:
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
 
-    # Class-level error messages to avoid recreation
+    # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'closed_error': "Signer is closed",
         'cleanup_error': "Error during cleanup: {}",
@@ -1539,7 +1539,7 @@ class Signer:
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
 
-    # Class-level error messages to avoid recreation
+    # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'builder_error': "Failed to create builder: {}",
         'cleanup_error': "Error during cleanup: {}",
