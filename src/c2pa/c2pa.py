@@ -742,8 +742,14 @@ def sign_file(
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
-                raise C2paError.NotSupported(
-                    f"Could not determine MIME type for file: {source_path}")
+                # If the file is extensionless, we may not be able to properly guess
+                # So we attempt one more guessing round here
+                other_mimetype_guess = _guess_mime_type_using_magic_number(source_path)
+                if other_mimetype_guess:
+                    mime_type, _ = other_mimetype_guess
+                else:
+                  raise C2paError.NotSupported(
+                      f"Could not determine MIME type for file: {source_path}")
 
             if return_manifest_as_bytes:
                 # Convert Python streams to Stream objects for internal signing
@@ -2018,8 +2024,14 @@ class Builder:
         # Get the MIME type from the file extension
         mime_type = mimetypes.guess_type(str(source_path))[0]
         if not mime_type:
-            raise C2paError.NotSupported(
-                f"Could not determine MIME type for file: {source_path}")
+            # If the file is extensionless, we may not be able to properly guess
+            # So we attempt one more guessing round here
+            other_mimetype_guess = _guess_mime_type_using_magic_number(source_path)
+            if other_mimetype_guess:
+                mime_type, _ = other_mimetype_guess
+            else:
+              raise C2paError.NotSupported(
+                  f"Could not determine MIME type for file: {source_path}")
 
         # Open source and destination files
         with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
