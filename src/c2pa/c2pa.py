@@ -1381,9 +1381,13 @@ class Signer:
             # which can become tedious in handling. So we let the native code deal with it and
             # raise the errors accordingly, since it already does checks.
             try:
-                if not data_ptr or data_len <= 0:
+                if not data_ptr or data_len <= 0 or not signed_bytes_ptr or signed_len <= 0:
                     # Error: invalid input, invalid so return -1,
                     # native code will handle it!
+                    return -1
+
+                # Validate buffer sizes before memory operations
+                if data_len > 1024 * 1024:  # 1MB limit
                     return -1
 
                 # Convert C pointer to Python bytes
@@ -1418,8 +1422,9 @@ class Signer:
 
         # Encode strings with error handling in case it's invalid UTF8
         try:
-            certs_bytes = certs.encode('utf-8')
-            tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url else None
+            # Only encode if not already bytes, avoid unnecessary encoding
+            certs_bytes = certs.encode('utf-8') if isinstance(certs, str) else certs
+            tsa_url_bytes = tsa_url.encode('utf-8') if tsa_url and isinstance(tsa_url, str) else tsa_url
         except UnicodeError as e:
             raise C2paError.Encoding(
                 error_messages['encoding_error'].format(
