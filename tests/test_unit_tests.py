@@ -354,6 +354,21 @@ class TestBuilder(unittest.TestCase):
                 reader = Reader("image/jpeg", output)
             output.close()
 
+    def test_remote_sign_using_returned_bytes(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            builder.set_no_embed()
+            with io.BytesIO() as output_buffer:
+                _, manifest_data = builder.sign(
+                    self.signer, "image/jpeg", file, output_buffer)
+                output_buffer.seek(0)
+                read_buffer = io.BytesIO(output_buffer.getvalue())
+
+                with Reader("image/jpeg", read_buffer, manifest_data) as reader:
+                    manifest_data = reader.json()
+                    self.assertIn("Python Test", manifest_data)
+                    self.assertNotIn("validation_status", manifest_data)
+
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
         signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
