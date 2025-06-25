@@ -746,13 +746,11 @@ class Stream:
         self._initialized = False
         self._stream = None
 
-        # Generate unique stream ID with timestamp
-        timestamp = int(time.time() * 1000)  # milliseconds since epoch
-
+        # Generate unique stream ID efficiently using object ID and counter
         # Safely increment stream ID with overflow protection
         if Stream._next_stream_id >= Stream._MAX_STREAM_ID:
             Stream._next_stream_id = 0  # Reset to 0 if we hit the maximum
-        self._stream_id = f"{timestamp}-{Stream._next_stream_id}"
+        self._stream_id = f"{id(self)}-{Stream._next_stream_id}"
         Stream._next_stream_id += 1
 
         # Rest of the existing initialization code...
