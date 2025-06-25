@@ -1276,13 +1276,18 @@ class Reader:
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
 
-    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
+    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner), callback_cb: Optional[SignerCallback] = None):
         """Initialize a new Signer instance.
 
         Note: This constructor is not meant to be called directly.
         Use from_info() or from_callback() instead.
+
+        Args:
+            signer_ptr: Pointer to the C2PA signer
+            callback_cb: Optional callback function (for callback-based signers)
         """
         self._signer = signer_ptr
+        self._callback_cb = callback_cb  # Keep callback alive to prevent garbage collection
         self._closed = False
         self._error_messages = {
             'closed_error': "Signer is closed",
@@ -1373,11 +1378,10 @@ class Signer:
                 data_len,
                 signed_bytes_ptr,
                 signed_len):
-            # Returns 0 on error as this case is handled in the native code gracefully
+            # Returns -1 on error as it is what the native code expects.
             # The reason is that otherwise we ping-pong errors between native code and Python code,
             # which can become tedious in handling. So we let the native code deal with it and
-            # raise the errors accordingly, since it already checks the
-            # signature length for correctness.
+            # raise the errors accordingly, since it already does checks.
             try:
                 if not data_ptr or data_len <= 0:
                     # Error: invalid input, invalid so return -1,
@@ -1398,8 +1402,8 @@ class Signer:
                     # native code will handle that too!
                     return -1
 
-                # Copy the signature back to the C buffer (since callback is
-                # used in native code)
+                # Copy the signature back to the C buffer
+                # (since callback is used in native code)
                 actual_len = min(len(signature), signed_len)
                 # Use memmove for efficient memory copying instead of byte-by-byte loop
                 ctypes.memmove(signed_bytes_ptr, signature, actual_len)
@@ -1423,15 +1427,13 @@ class Signer:
                 error_messages['encoding_error'].format(
                     str(e)))
 
-        # Create the signer with the wrapped callback
-        # Store the callback as an instance attribute to keep it alive, as this prevents
-        # garbage collection and lifetime issues.
-        signer_instance = cls.__new__(cls)
-        signer_instance._callback_cb = SignerCallback(wrapped_callback)
+        # Create the callback object using the callback function
+        callback_cb = SignerCallback(wrapped_callback)
 
+        # Create the signer with the wrapped callback
         signer_ptr = _lib.c2pa_signer_create(
             None,
-            signer_instance._callback_cb,
+            callback_cb,
             alg,
             certs_bytes,
             tsa_url_bytes
@@ -1443,12 +1445,8 @@ class Signer:
                 raise C2paError(error)
             raise C2paError("Failed to create signer")
 
-        # Initialize the signer instance
-        signer_instance._signer = signer_ptr
-        signer_instance._closed = False
-        signer_instance._error_messages = error_messages
-
-        return signer_instance
+        # Create and return the signer instance with the callback
+        return cls(signer_ptr, callback_cb)
 
     def __enter__(self):
         """Context manager entry."""
@@ -1887,6 +1885,7 @@ class Builder:
             # Ensure both streams are cleaned up
             source_stream.close()
             dest_stream.close()
+
 
     def sign(
             self,
