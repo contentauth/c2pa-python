@@ -1335,7 +1335,6 @@ class TestBuilder(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
-
 class TestStream(unittest.TestCase):
     def setUp(self):
         # Create a temporary file for testing
