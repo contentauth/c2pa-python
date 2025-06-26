@@ -686,7 +686,7 @@ def sign_file(
 
                 # Use the builder's internal signing logic to get manifest
                 # bytes
-                result, manifest_bytes = builder._sign_internal(
+                manifest_bytes = builder._sign_internal(
                     signer, mime_type, source_stream, dest_stream)
 
                 return manifest_bytes
@@ -1900,7 +1900,7 @@ class Builder:
                         # Ignore errors during cleanup
                         pass
 
-            return result, manifest_bytes
+            return manifest_bytes
         finally:
             # Ensure both streams are cleaned up
             source_stream.close()
@@ -1962,9 +1962,8 @@ class Builder:
             dest_stream = Stream(dest_file)
 
             # Use the internal stream-base signing logic
-            result, manifest_bytes = self._sign_internal(
+            return self._sign_internal(
                 signer, mime_type, source_stream, dest_stream)
-            return result, manifest_bytes
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:

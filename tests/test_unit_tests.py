@@ -359,7 +359,7 @@ class TestBuilder(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             builder.set_no_embed()
             with io.BytesIO() as output_buffer:
-                _, manifest_data = builder.sign(
+                manifest_data = builder.sign(
                     self.signer, "image/jpeg", file, output_buffer)
                 output_buffer.seek(0)
                 read_buffer = io.BytesIO(output_buffer.getvalue())
@@ -732,7 +732,7 @@ class TestBuilder(unittest.TestCase):
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
             d = output.read()
-            self.assertIn(b'provenance="http://this_does_not_exist/foo.jpg"', d)    
+            self.assertIn(b'provenance="http://this_does_not_exist/foo.jpg"', d)
 
     def test_builder_set_remote_url_no_embed(self):
         """Test setting the remote url of a builder with no embed flag."""
@@ -763,7 +763,7 @@ class TestBuilder(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            result, manifest_bytes = builder.sign_file(
+            manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=self.signer
@@ -771,11 +771,6 @@ class TestBuilder(unittest.TestCase):
 
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
-
-            # Verify we got both result and manifest bytes
-            self.assertIsInstance(result, int)
-            self.assertIsInstance(manifest_bytes, bytes)
-            self.assertGreater(len(manifest_bytes), 0)
 
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:
@@ -807,7 +802,7 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            result, manifest_bytes = builder.sign_file(
+            manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=signer
@@ -817,7 +812,6 @@ class TestBuilder(unittest.TestCase):
             self.assertTrue(os.path.exists(output_path))
 
             # Verify results
-            self.assertIsInstance(result, int)
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
 
@@ -855,7 +849,7 @@ class TestBuilder(unittest.TestCase):
             ) as signer:
 
                 # Sign the file
-                result, manifest_bytes = builder.sign_file(
+                manifest_bytes = builder.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path,
                     signer=signer
@@ -863,7 +857,6 @@ class TestBuilder(unittest.TestCase):
 
             # Verify results
             self.assertTrue(os.path.exists(output_path))
-            self.assertIsInstance(result, int)
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
 
@@ -902,7 +895,7 @@ class TestBuilder(unittest.TestCase):
 
                 # First signing operation
                 output_path_1 = os.path.join(temp_dir, "signed_output_1.jpg")
-                result_1, manifest_bytes_1 = builder.sign_file(
+                manifest_bytes_1 = builder.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path_1,
                     signer=signer
@@ -910,14 +903,13 @@ class TestBuilder(unittest.TestCase):
 
                 # Verify first signing was successful
                 self.assertTrue(os.path.exists(output_path_1))
-                self.assertIsInstance(result_1, int)
                 self.assertIsInstance(manifest_bytes_1, bytes)
                 self.assertGreater(len(manifest_bytes_1), 0)
 
                 # Second signing operation with the same signer
                 # This is to verify we don't free the signer or the callback too early
                 output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
-                result_2, manifest_bytes_2 = builder.sign_file(
+                manifest_bytes_2 = builder.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path_2,
                     signer=signer
@@ -925,7 +917,6 @@ class TestBuilder(unittest.TestCase):
 
                 # Verify second signing was successful
                 self.assertTrue(os.path.exists(output_path_2))
-                self.assertIsInstance(result_2, int)
                 self.assertIsInstance(manifest_bytes_2, bytes)
                 self.assertGreater(len(manifest_bytes_2), 0)
 
@@ -968,7 +959,7 @@ class TestBuilder(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             )
 
-            result, manifest_bytes = builder.sign_file(
+            manifest_bytes = builder.sign_file(
                 source_path=self.testPath,
                 dest_path=output_path,
                 signer=signer
@@ -978,7 +969,6 @@ class TestBuilder(unittest.TestCase):
             self.assertTrue(os.path.exists(output_path))
 
             # Verify results
-            self.assertIsInstance(result, int)
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
 
@@ -1187,7 +1177,7 @@ class TestBuilder(unittest.TestCase):
 
             # The signing operation should fail due to the error callback
             with self.assertRaises(Error):
-                result, manifest_bytes = builder.sign_file(
+                builder.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path,
                     signer=signer
