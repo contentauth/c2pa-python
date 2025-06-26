@@ -796,7 +796,7 @@ class TestBuilder(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            result, manifest_bytes = builder.sign_file(
+            manifest_bytes = builder.sign_file(
                 source_path=source_path,
                 dest_path=output_path,
                 signer=self.signer
@@ -805,8 +805,7 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
-            # Verify we got both result and manifest bytes
-            self.assertIsInstance(result, int)
+            # Verify
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
 
@@ -834,7 +833,7 @@ class TestBuilder(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            result, manifest_bytes = builder.sign_file(
+            manifest_bytes = builder.sign_file(
                 source_path=source_path,
                 dest_path=output_path,
                 signer=self.signer
@@ -843,8 +842,7 @@ class TestBuilder(unittest.TestCase):
             # Verify the output file was created
             self.assertTrue(os.path.exists(output_path))
 
-            # Verify we got both result and manifest bytes
-            self.assertIsInstance(result, int)
+            # Verify output
             self.assertIsInstance(manifest_bytes, bytes)
             self.assertGreater(len(manifest_bytes), 0)
 
