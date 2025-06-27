@@ -64,7 +64,7 @@ try:
         manifest = json.loads(reader.json())
         active_manifest = manifest["manifests"][manifest["active_manifest"]]
         if active_manifest:
-            # get the uri to the manifest's thumbnail and write it to a file
+            # Get the uri to the manifest's thumbnail and write it to a file
             uri = active_manifest["thumbnail"]["identifier"]
             with open("thumbnail_v2.jpg", "wb") as f:
                 reader.resource_to_stream(uri, f)
