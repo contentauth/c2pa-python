@@ -75,6 +75,39 @@ except Exception as err:
 
 ### Add a signed manifest
 
+#### Conceptual overview
+
+```mermaid
+sequenceDiagram
+    participant App as User Application
+    participant Signer as Signer
+    participant Builder as Builder
+    participant Reader as Reader
+
+    Note over App: File-based signing
+
+    App->>Signer: Create from certificate/key data
+    Signer-->>App: Signer instance
+
+    App->>Builder: Create with manifest as JSON
+    Builder-->>App: Builder instance
+
+    Note over Builder,Signer: The created Signer is a parameter to Builder.sign()
+    App->>Builder: builder.sign(signer, format, source_file, dest_file)
+
+    Builder-->>App: Return manifest bytes
+
+    Note over App: Reading back signed data
+
+    App->>Reader: Create reader(dest_file_path)
+    Reader-->>App: Reader instance
+
+    App->>Reader: reader.json()
+    Reader-->>App: Return manifest JSON
+```
+
+#### Example
+
 **WARNING**: This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production may be insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
 Use a `Builder` to add a manifest to an asset:
@@ -147,7 +180,46 @@ except Exception as err:
     print(err)
 ```
 
-### Add a signed manifest to a stream
+### Add a signed manifest
+
+#### Conceptual overview
+
+```mermaid
+sequenceDiagram
+    participant App as User Application
+    participant Signer as Signer
+    participant Builder as Builder
+    participant Reader as Reader
+    participant Stream as Stream
+
+    Note over App: Stream-based signing
+
+    App->>Signer: Create from cert/key
+    Signer-->>App: Signer instance
+
+    App->>Builder: Create with manifest JSON
+    Builder-->>App: Builder instance
+
+    App->>Stream: Open source stream
+    App->>Stream: Open destination stream
+
+    Note over Builder,Signer: The created Signer is a parameter to Builder.sign()
+    App->>Builder: builder.sign(signer, format, source, dest)
+
+    Builder->>Stream: Write signed data to dest stream
+    Builder-->>App: Return manifest bytes
+
+    Note over App: Reading back signed data
+
+    App->>Reader: Create reader(format, stream)
+    Reader->>Stream: Read C2PA data
+    Reader-->>App: Reader instance
+
+    App->>Reader: reader.json()
+    Reader-->>App: Return manifest JSON
+```
+
+#### Example
 
 **WARNING**: This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production may be insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
