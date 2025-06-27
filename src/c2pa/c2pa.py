@@ -1922,7 +1922,7 @@ class Builder:
 
         Args:
             signer: The signer to use
-            format: The MIME type or extension of the content (extension preferred)
+            format: The MIME type or extension of the content
             source_stream: The source stream
             dest_stream: The destination stream
 
@@ -1990,7 +1990,7 @@ class Builder:
         """Sign the builder's content and write to a destination stream.
 
         Args:
-            format: The MIME type or extension of the content (extension preferred)
+            format: The MIME type or extension of the content
             source: The source stream (any Python stream-like object)
             dest: The destination stream (any Python stream-like object)
             signer: The signer to use
