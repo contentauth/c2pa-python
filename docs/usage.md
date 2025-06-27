@@ -53,8 +53,6 @@ An asset file may contain many manifests in a manifest store. The most recent ma
 
 NOTE: For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
 
-Example for file-based reading:
-
 ```py
 try:
     # Create a reader from a file path
