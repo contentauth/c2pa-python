@@ -95,6 +95,13 @@ class TestReader(unittest.TestCase):
             with self.assertRaises(Error):
                 reader.json()
 
+    def test_reader_streams_with_nested(self):
+        with open(self.testPath, "rb") as file:
+            with Reader("image/jpeg", file) as reader:
+                manifest_store = json.loads(reader.json())
+                title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+                self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
+
     def test_reader_close_cleanup(self):
         """Test that close properly cleans up all resources."""
         with open(self.testPath, "rb") as file:

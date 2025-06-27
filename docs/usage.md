@@ -12,7 +12,7 @@ Import the objects needed from the API:
 from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
 ```
 
-You can use both `Builder` and `Reader` classes with context managers by using a `with` statement.
+You can use both `Builder`, `Reader` and `Signer` classes with context managers by using a `with` statement.
 Doing this is recommended to ensure proper resource and memory cleanup.
 
 ## Define manifest JSON
@@ -25,13 +25,15 @@ manifest_json = json.dumps({
     "claim_generator": "python_test/0.1",
     "assertions": [
     {
-      "label": "c2pa.training-mining",
+      "label": "cawg.training-mining",
       "data": {
         "entries": {
-          "c2pa.ai_generative_training": { "use": "notAllowed" },
-          "c2pa.ai_inference": { "use": "notAllowed" },
-          "c2pa.ai_training": { "use": "notAllowed" },
-          "c2pa.data_mining": { "use": "notAllowed" }
+          "cawg.ai_inference": {
+            "use": "notAllowed"
+          },
+          "cawg.ai_generative_training": {
+            "use": "notAllowed"
+          }
         }
       }
     }
@@ -50,6 +52,8 @@ This examines the specified media file for C2PA data and generates a report of a
 An asset file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map. The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream` using the associated `identifier` field values and a `uri`.
 
 NOTE: For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
+
+Example for file-based reading:
 
 ```py
 try:
@@ -106,7 +110,7 @@ try:
             with open("path/to/source.jpg", "rb") as source_file, open("path/to/output.jpg", "wb") as dest_file:
                 manifest_bytes = builder.sign(signer, "image/jpeg", source_file, dest_file)
 
-            # Verify the signed file
+        # Verify the signed file by reading data from the signed output file
         with Reader("path/to/output.jpg") as reader:
             manifest_store = json.loads(reader.json())
             active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -126,13 +130,13 @@ Instead of working with files, you can read, validate, and add a signed manifest
 try:
     # Create a reader from a format and stream
     with open("path/to/media_file.jpg", "rb") as stream:
-        # First parameter can be mimetype or extension of the file
+        # First parameter should be the type of the file (here, we use the mimetype)
         # But in any case we need something to identify the file type
         with Reader("image/jpeg", stream) as reader:
             # Print manifest store as JSON, as extracted by the Reader
             print("manifest store:", reader.json())
 
-            # Get the active manifest.
+            # Get the active manifest
             manifest = json.loads(reader.json())
             active_manifest = manifest["manifests"][manifest["active_manifest"]]
             if active_manifest:
@@ -158,7 +162,7 @@ try:
         cert_data = cert_file.read()
         key_data = key_file.read()
 
-        # Create signer info
+        # Create signer info using the read certificate and key data
         signer_info = C2paSignerInfo(
             alg=C2paSigningAlg.PS256,
             cert=cert_data,
@@ -166,14 +170,15 @@ try:
             timestamp_url="http://timestamp.digicert.com"
         )
 
-        # Create signer using the defined SignerInfo
+        # Create a Signer using the SignerInfo defined previously
         signer = Signer.from_info(signer_info)
 
-        # Create builder with manifest and add ingredients
+        # Create a Builder with manifest and add ingredients
         with Builder(manifest_json) as builder:
-            # Add any ingredients if needed
+            # Add any ingredients as needed
             with open("path/to/ingredient.jpg", "rb") as ingredient_file:
                 ingredient_json = json.dumps({"title": "Ingredient Image"})
+                # Here the ingredient is added using streams
                 builder.add_ingredient(ingredient_json, "image/jpeg", ingredient_file)
 
             # Sign using streams
@@ -182,6 +187,7 @@ try:
 
             # Verify the signed file
             with open("path/to/output.jpg", "rb") as stream:
+                # Create a Reader to read data
                 with Reader("image/jpeg", stream) as reader:
                     manifest_store = json.loads(reader.json())
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
