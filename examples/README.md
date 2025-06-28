@@ -8,7 +8,9 @@ The `examples/training.py` script demonstrates how to add a "Do Not Train" asser
 
 ### Signing and Verifying Assets
 
-The `examples/sign.py` script shows how to sign an asset with a C2PA manifest and verify it.
+The `examples/sign.py` script shows how to sign an asset with a C2PA manifest and verify it using a callback signer. Callback signers let you define signing logic, eg. where to load keys from.
+
+The `examples/sign_info.py` script shows how to sign an asset with a C2PA manifest and verify it using a "default" signer created with the needed signer information.
 
 ## Running the Examples
 
@@ -21,6 +23,11 @@ Then you can run the examples with the following commands:
 python examples/training.py
 
 # Run the signing and verification example
+# In this example, signing is done with a Signer created using SignerInfo
+python examples/sign_info.py
+
+# Run the signing and verification example
+# In this example, signing is done using a callback signer
 python examples/sign.py
 ```
 
