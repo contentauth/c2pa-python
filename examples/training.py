@@ -129,7 +129,6 @@ try:
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
     for assertion in manifest["assertions"]:
-        print(assertion)
         if assertion["label"] == "cawg.training-mining":
             if getitem(assertion, ("data","entries","cawg.ai_generative_training","use")) == "notAllowed":
                 allowed = False
