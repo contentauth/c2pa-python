@@ -58,15 +58,17 @@ manifest_definition = {
     "ingredients": [],
     "assertions": [
         {
-            'label': 'stds.schema-org.CreativeWork',
-            'data': {
-                '@context': 'http://schema.org/',
-                '@type': 'CreativeWork',
-                'author': [
-                    {'@type': 'Person', 'name': 'Example User'}
+            "label": "c2pa.actions",
+            "data": {
+                "actions": [
+                    {
+                        "action": "c2pa.created",
+                        "parameters": {
+                            # could hold additional information about this step
+                        }
+                    }
                 ]
-            },
-            'kind': 'Json'
+            }
         }
     ]
 }
