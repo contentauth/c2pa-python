@@ -19,6 +19,10 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 
+# Note: Builder, Reader, and Signer support being used as context managers
+# (with 'with' statements), but this example shows manual usage which requires
+# explicitly calling the close() function to clean up resources.
+
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
@@ -30,11 +34,6 @@ print("c2pa version:")
 version = c2pa.sdk_version()
 print(version)
 
-# Read existing C2PA metadata from the file
-print("\nReading existing C2PA metadata:")
-with open(fixtures_dir + "C.jpg", "rb") as file:
-    reader = c2pa.Reader("image/jpeg", file)
-    print(reader.json())
 
 # Load certificates and private key (here from the test fixtures)
 # This is OK for development, but in production you should use a
@@ -85,6 +84,7 @@ manifest_definition = {
                         "action": "c2pa.created",
                         "parameters": {
                             # could hold additional information about this step
+                            # eg. model used, etc.
                         }
                     }
                 ]
@@ -100,19 +100,21 @@ builder = c2pa.Builder(manifest_definition)
 # which will use the callback signer
 print("\nSigning the image file...")
 builder.sign_file(
-    source_path=fixtures_dir + "C.jpg",
-    dest_path=output_dir + "C_signed.jpg",
+    source_path=fixtures_dir + "A.jpg",
+    dest_path=output_dir + "A_signed.jpg",
     signer=signer
 )
 
-# Clean up the signer
+# Clean up
 signer.close()
+builder.close()
 
-# Read the signed image to verify
+# Re-Read the signed image to verify
 print("\nReading signed image metadata:")
-with open(output_dir + "C_signed.jpg", "rb") as file:
+with open(output_dir + "A_signed.jpg", "rb") as file:
     reader = c2pa.Reader("image/jpeg", file)
     print(reader.json())
+    reader.close()
 
 print("\nExample completed successfully!")
 
