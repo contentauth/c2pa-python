@@ -1025,6 +1025,57 @@ class TestBuilder(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_builder_sign_file_callback_signer_from_callback_V2(self):
+        """Test signing a file using the sign_file method with Signer.from_callback."""
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+
+            output_path = os.path.join(temp_dir, "signed_output_from_callback.jpg")
+
+            # Will use the sign_file method
+            builder = Builder(self.manifestDefinitionV2)
+
+            # Create signer with callback using Signer.from_callback
+            signer = Signer.from_callback(
+                callback=self.callback_signer_es256,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+            manifest_bytes = builder.sign_file(
+                source_path=self.testPath,
+                dest_path=output_path,
+                signer=signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify results
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+                # Parse the JSON and verify the signature algorithm
+                manifest_data = json.loads(json_data)
+                active_manifest_id = manifest_data["active_manifest"]
+                active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                # Verify the signature_info contains the correct algorithm
+                self.assertIn("signature_info", active_manifest)
+                signature_info = active_manifest["signature_info"]
+                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
+
+        finally:
+            shutil.rmtree(temp_dir)
+
     def test_sign_file_using_callback_signer_overloads(self):
         """Test signing a file using the sign_file function with a Signer object."""
         # Create a temporary directory for the test
@@ -1247,7 +1298,6 @@ class TestBuilder(unittest.TestCase):
                     self.assertIn("Python Test Image V2", json_data)
                     self.assertNotIn("validation_status", json_data)
 
-                # Clean up
                 output.close()
 
 class TestStream(unittest.TestCase):
