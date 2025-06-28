@@ -299,6 +299,33 @@ class TestBuilder(unittest.TestCase):
             ]
         }
 
+        # Define a V2 manifest as a dictionary
+        self.manifestDefinitionV2 = {
+            "claim_generator": "python_test",
+            "claim_generator_info": [{
+                "name": "python_test",
+                "version": "0.0.1",
+            }],
+            "claim_version": 2,
+            "format": "image/jpeg",
+            "title": "Python Test Image V2",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "parameters": {
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
         # Define an example ES256 callback signer
         self.callback_signer_alg = "Es256"
         def callback_signer_es256(data: bytes) -> bytes:
@@ -1197,6 +1224,31 @@ class TestBuilder(unittest.TestCase):
 
         finally:
             shutil.rmtree(temp_dir)
+
+    def test_signing_manifest_v2(self):
+        """Test signing and reading a V2 manifest.
+        V2 manifests have a slightly different structure.
+        """
+        with open(self.testPath, "rb") as file:
+            # Create a builder with the V2 manifest definition using context manager
+            with Builder(self.manifestDefinitionV2) as builder:
+                output = io.BytesIO(bytearray())
+
+                # Sign as usual...
+                builder.sign(self.signer, "image/jpeg", file, output)
+
+                output.seek(0)
+
+                # Read the signed file and verify the manifest using context manager
+                with Reader("image/jpeg", output) as reader:
+                    json_data = reader.json()
+
+                    # Basic verification of the manifest
+                    self.assertIn("Python Test Image V2", json_data)
+                    self.assertNotIn("validation_status", json_data)
+
+                # Clean up
+                output.close()
 
 class TestStream(unittest.TestCase):
     def setUp(self):
