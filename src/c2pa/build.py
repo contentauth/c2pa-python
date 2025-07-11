@@ -1,15 +1,16 @@
+import io
+import json
 import os
 import sys
-import json
-import requests
-from pathlib import Path
 import zipfile
-import io
+from pathlib import Path
 from typing import Optional
 
+import requests
+
 # Constants
-REPO_OWNER = "contentauth"
-REPO_NAME = "c2pa-rs"
+REPO_OWNER = "Kingsleyyy21"
+REPO_NAME = "c2pa_EPUB_Extension"
 GITHUB_API_BASE = "https://api.github.com"
 ARTIFACTS_DIR = Path("artifacts")
 
@@ -39,8 +40,7 @@ def download_artifact(url: str, platform_name: str) -> None:
         # Extract all files to the platform directory
         zip_ref.extractall(platform_dir)
 
-    print(f"Successfully downloaded and extracted artifacts for {
-          platform_name}")
+    print(f"Successfully downloaded and extracted artifacts for {platform_name}")
 
 
 def download_artifacts() -> None:
@@ -55,17 +55,17 @@ def download_artifacts() -> None:
         print(f"Found release: {release['tag_name']}")
 
         # Download each asset
-        for asset in release['assets']:
+        for asset in release["assets"]:
             # Skip non-zip files
-            if not asset['name'].endswith('.zip'):
+            if not asset["name"].endswith(".zip"):
                 continue
 
             # Determine platform from asset name
             # Example: c2pa-rs-v1.0.0-macosx-arm64.zip
-            platform_name = asset['name'].split('-')[-1].replace('.zip', '')
+            platform_name = asset["name"].split("-")[-1].replace(".zip", "")
 
             # Download and extract the artifact
-            download_artifact(asset['browser_download_url'], platform_name)
+            download_artifact(asset["browser_download_url"], platform_name)
 
         print("\nAll artifacts have been downloaded successfully!")
 
@@ -80,18 +80,13 @@ def download_artifacts() -> None:
 def inject_version():
     """Inject the version from pyproject.toml into src/c2pa/__init__.py as __version__."""
     import toml
+
     pyproject_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "..",
-            "pyproject.toml"))
+        os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml")
+    )
     init_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "c2pa",
-            "__init__.py"))
+        os.path.join(os.path.dirname(__file__), "..", "c2pa", "__init__.py")
+    )
     with open(pyproject_path, "r") as f:
         pyproject = toml.load(f)
     version = pyproject["project"]["version"]

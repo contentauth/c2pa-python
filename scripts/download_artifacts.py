@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-import os
-import sys
-import requests
-from pathlib import Path
-import zipfile
 import io
-import shutil
+import os
 import platform
-import subprocess
+import shutil
+
+# import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+import requests
 
 # Constants
-REPO_OWNER = "contentauth"
-REPO_NAME = "c2pa-rs"
+REPO_OWNER = "Kingsleyyy21"
+REPO_NAME = "c2pa_EPUB_Extension"
 GITHUB_API_BASE = "https://api.github.com"
 SCRIPTS_ARTIFACTS_DIR = Path("scripts/artifacts")
 ROOT_ARTIFACTS_DIR = Path("artifacts")
+
 
 def detect_os():
     """Detect the operating system and return the corresponding platform identifier."""
@@ -28,6 +31,7 @@ def detect_os():
     else:
         raise ValueError(f"Unsupported operating system: {system}")
 
+
 def detect_arch():
     """Detect the CPU architecture and return the corresponding identifier."""
     machine = platform.machine().lower()
@@ -39,6 +43,7 @@ def detect_arch():
         return "aarch64"
     else:
         raise ValueError(f"Unsupported CPU architecture: {machine}")
+
 
 def get_platform_identifier():
     """Get the full platform identifier (arch-os) for the current system,
@@ -64,16 +69,18 @@ def get_platform_identifier():
     else:
         raise ValueError(f"Unsupported operating system: {system}")
 
+
 def get_release_by_tag(tag):
     """Get release information for a specific tag from GitHub."""
     url = f"{GITHUB_API_BASE}/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}"
     print(f"Fetching release information from {url}...")
     headers = {}
-    if 'GITHUB_TOKEN' in os.environ:
-        headers['Authorization'] = f"token {os.environ['GITHUB_TOKEN']}"
+    if "GITHUB_TOKEN" in os.environ:
+        headers["Authorization"] = f"token {os.environ['GITHUB_TOKEN']}"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     return response.json()
+
 
 def download_and_extract_libs(url, platform_name):
     """Download a zip artifact and extract only the libs folder."""
@@ -82,8 +89,8 @@ def download_and_extract_libs(url, platform_name):
     platform_dir.mkdir(parents=True, exist_ok=True)
 
     headers = {}
-    if 'GITHUB_TOKEN' in os.environ:
-        headers['Authorization'] = f"token {os.environ['GITHUB_TOKEN']}"
+    if "GITHUB_TOKEN" in os.environ:
+        headers["Authorization"] = f"token {os.environ['GITHUB_TOKEN']}"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
 
@@ -101,6 +108,7 @@ def download_and_extract_libs(url, platform_name):
 
     print(f"Done downloading and extracting libraries for {platform_name}")
 
+
 def copy_artifacts_to_root():
     """Copy the artifacts folder from scripts/artifacts to the root of the repository."""
     if not SCRIPTS_ARTIFACTS_DIR.exists():
@@ -116,6 +124,7 @@ def copy_artifacts_to_root():
     print("\nFolder content of artifacts directory:")
     for item in sorted(ROOT_ARTIFACTS_DIR.iterdir()):
         print(f"  {item.name}")
+
 
 def main():
     if len(sys.argv) < 2:
@@ -133,7 +142,9 @@ def main():
         # Get the platform identifier for the current system
         env_platform = os.environ.get("C2PA_LIBS_PLATFORM")
         if env_platform:
-            print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
+            print(
+                f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}"
+            )
         platform_id = env_platform or get_platform_identifier()
         print("Looking up releases for platform id: ", platform_id)
         print("Environment variable set for lookup: ", env_platform)
@@ -146,14 +157,16 @@ def main():
 
         # Find the matching asset in the release
         matching_asset = None
-        for asset in release['assets']:
-            if asset['name'] == expected_asset_name:
+        for asset in release["assets"]:
+            if asset["name"] == expected_asset_name:
                 matching_asset = asset
                 break
 
         if matching_asset:
             print(f"Found matching asset: {matching_asset['name']}")
-            download_and_extract_libs(matching_asset['browser_download_url'], platform_id)
+            download_and_extract_libs(
+                matching_asset["browser_download_url"], platform_id
+            )
             print("\nArtifacts have been downloaded and extracted successfully!")
             copy_artifacts_to_root()
         else:
@@ -165,6 +178,7 @@ def main():
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

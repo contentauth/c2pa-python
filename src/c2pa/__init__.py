@@ -1,3 +1,4 @@
+__version__ = "0.12.0"
 try:
     from importlib.metadata import version
     __version__ = version("c2pa-python")
