@@ -80,7 +80,7 @@ Run the "do not train" assertion example:
 python examples/training.py
 ```
 
-### Run the signing and verification example:
+### Run the signing and verification example
 
 In this example, signing is done with a Signer created using SignerInfo:
 
@@ -88,7 +88,7 @@ In this example, signing is done with a Signer created using SignerInfo:
 python examples/sign_info.py
 ```
 
-### Run the signing and verification example
+### Run the callback signing and verification example
 
 In this example, signing is done using a callback signer:
 
