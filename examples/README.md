@@ -1,34 +1,99 @@
-# Usage examples
+# Python example code 
 
-## Examples
+The `examples` directory contains some small examples of using the Python library.
+The examples use asset files from the `tests/fixtures` directory, save the resulting signed assets to the temporary `output` directory, and display manifest store data and other output to the console.
 
-### Adding a "Do Not Train" Assertion
+## Signing and verifying assets
 
-The `examples/training.py` script demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
+The [`examples/sign.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/sign.py) script shows how to sign an asset with a C2PA manifest and verify the asset.
 
-### Signing and Verifying Assets
 
 The `examples/sign.py` script shows how to sign an asset with a C2PA manifest and verify it using a callback signer. Callback signers let you define signing logic, eg. where to load keys from.
 
 The `examples/sign_info.py` script shows how to sign an asset with a C2PA manifest and verify it using a "default" signer created with the needed signer information.
+These statements create a `builder` object with the specified manifest JSON (omitted in the snippet below), call `builder.sign()` to sign and attach the manifest to the source file, `tests/fixtures/C.jpg`, and save the signed asset to the output file, `output/C_signed.jpg`:
 
-## Running the Examples
+```py
+manifest_definition = {
+  // ... JSON omitted here
+}
 
-To run the examples, make sure you have the c2pa-python package installed and you're in the root directory of the project. We recommend working using virtual environments (venv).
+builder = c2pa.Builder(manifest_definition)
 
-Then you can run the examples with the following commands:
+with open(fixtures_dir + "C.jpg", "rb") as source:
+    with open(output_dir + "C_signed.jpg", "wb") as dest:
+        result = builder.sign(signer, "image/jpeg", source, dest)
+```
+
+Then these statements read and verify the signed asset:
+
+```py
+print("\nReading signed image metadata:")
+with open(output_dir + "C_signed.jpg", "rb") as file:
+    reader = c2pa.Reader("image/jpeg", file)
+    print(reader.json())
+```
+
+## Adding a "do not train" assertion
+
+The [`examples/training.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/training.py) script shows how to add a "do not train" assertion to an asset, then verify the asset and display to the console whether its manifest indicates ML training is allowed.
+
+These statements sign the asset using a stream:
+
+```py
+    with open(testFile, "rb") as source_file:
+        with open(testOutputFile, "wb") as dest_file:
+            result = builder.sign(signer, "image/jpeg", source_file, dest_file)
+```
+
+These statements verify the asset and check its attached manifest for a "do not train" assertion:
+
+```py
+allowed = True # opt out model, assume training is ok if the assertion doesn't exist
+try:
+    # Create reader using the current API
+    reader = c2pa.Reader(testOutputFile)
+    manifest_store = json.loads(reader.json())
+
+    manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+    for assertion in manifest["assertions"]:
+        if assertion["label"] == "c2pa.training-mining":
+            if getitem(assertion, ("data","entries","c2pa.ai_training","use")) == "notAllowed":
+                allowed = False
+
+    # get the ingredient thumbnail and save it to a file using resource_to_stream
+    uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
+    with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
+        reader.resource_to_stream(uri, thumbnail_output)
+
+except Exception as err:
+    sys.exit(err)
+```
+
+## Running the examples
+
+To run the examples, make sure you have the c2pa-python package installed (`pip install c2pa-python`) and you're in the root directory of the project. We recommend working using virtual environments (venv). Then run the examples as shown below.
+
+Run the "do not train" assertion example:
 
 ```bash
-# Run the "Do Not Train" assertion example
 python examples/training.py
+```
 
-# Run the signing and verification example
-# In this example, signing is done with a Signer created using SignerInfo
+### Run the signing and verification example:
+
+In this example, signing is done with a Signer created using SignerInfo:
+
+```bash
 python examples/sign_info.py
+```
 
-# Run the signing and verification example
-# In this example, signing is done using a callback signer
+### Run the signing and verification example
+
+In this example, signing is done using a callback signer:
+
+```bash
 python examples/sign.py
 ```
 
-The examples will use test files from the `tests/fixtures` directory and output the results to the temporary `output` directory. Read manifest store data will be shown in the console you run the examples from.
+
