@@ -205,6 +205,49 @@ class C2paSignerInfo(ctypes.Structure):
         ("ta_url", ctypes.c_char_p),
     ]
 
+    # Mapping from C2paSigningAlg enum to string representation
+    _ALG_MAPPING = {
+        C2paSigningAlg.ES256: b"es256",
+        C2paSigningAlg.ES384: b"es384",
+        C2paSigningAlg.ES512: b"es512",
+        C2paSigningAlg.PS256: b"ps256",
+        C2paSigningAlg.PS384: b"ps384",
+        C2paSigningAlg.PS512: b"ps512",
+        C2paSigningAlg.ED25519: b"ed25519",
+    }
+
+    def __init__(self, alg=None, sign_cert=None, private_key=None, ta_url=None):
+        """Initialize C2paSignerInfo with optional parameters.
+
+        Args:
+            alg: The signing algorithm, either as a C2paSigningAlg enum or string or bytes
+            (will be converted accordingly to bytes for native library use)
+            sign_cert: The signing certificate as a string
+            private_key: The private key as a string
+            ta_url: The timestamp authority URL as bytes
+        """
+        # Handle alg parameter - can be C2paSigningAlg enum or string
+        if alg is not None:
+            if isinstance(alg, C2paSigningAlg):
+                # Convert enum to string representation
+                alg_str = self._ALG_MAPPING.get(alg)
+                if alg_str is None:
+                    raise ValueError(f"Unsupported signing algorithm: {alg}")
+                alg = alg_str
+            elif isinstance(alg, str):
+                # Convert string to bytes
+                alg = alg.encode('utf-8')
+            elif isinstance(alg, bytes):
+                # Already in bytes format
+                pass
+            else:
+                raise TypeError(f"alg must be C2paSigningAlg enum, string, or bytes, got {type(alg)}")
+        else:
+            alg = None
+
+        # Call parent constructor with processed values
+        super().__init__(alg, sign_cert, private_key, ta_url)
+
 
 class C2paReader(ctypes.Structure):
     """Opaque structure for reader context."""

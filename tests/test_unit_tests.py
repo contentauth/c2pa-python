@@ -1391,7 +1391,69 @@ class TestLegacyAPI(unittest.TestCase):
         self.assertIn("manifests", file_data)
         self.assertIn(expected_manifest_id, file_data["manifests"])
 
-    def test_sign_file(self):
+    def test_sign_file_alg_as_enum(self):
+        """Test signing a file with C2PA manifest."""
+        # Set up test paths
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+        output_path = os.path.join(temp_data_dir, "signed_output.jpg")
+
+        # Load test certificates and key
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            key = key_file.read()
+
+        # Create signer info
+        signer_info = C2paSignerInfo(
+            alg=SigningAlg.ES256,
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+
+        # Create a simple manifest
+        manifest = {
+            "claim_generator": "python_internals_test",
+            "claim_generator_info": [{
+                "name": "python_internals_test",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Signed Image",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # Convert manifest to JSON string
+        manifest_json = json.dumps(manifest)
+
+        try:
+            # Sign the file
+            result_json = sign_file(
+                self.testPath,
+                output_path,
+                manifest_json,
+                signer_info
+            )
+
+        finally:
+            # Clean up
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_sign_file_alg_as_bytes(self):
         """Test signing a file with C2PA manifest."""
         # Set up test paths
         temp_data_dir = os.path.join(self.data_dir, "temp_data")
