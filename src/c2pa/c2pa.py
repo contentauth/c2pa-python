@@ -226,7 +226,7 @@ class C2paSignerInfo(ctypes.Structure):
             private_key: The private key as a string
             ta_url: The timestamp authority URL as bytes
         """
-        # Handle alg parameter - can be C2paSigningAlg enum or string
+        # Handle alg parameter: can be C2paSigningAlg enum or string (or bytes), convert as needed
         if alg is not None:
             if isinstance(alg, C2paSigningAlg):
                 # Convert enum to string representation
@@ -235,23 +235,23 @@ class C2paSignerInfo(ctypes.Structure):
                     raise ValueError(f"Unsupported signing algorithm: {alg}")
                 alg = alg_str
             elif isinstance(alg, str):
-                # Convert string to bytes
+                # String to bytes, as requested by native lib
                 alg = alg.encode('utf-8')
             elif isinstance(alg, bytes):
-                # Already in bytes format
+                # In bytes already
                 pass
             else:
                 raise TypeError(f"alg must be C2paSigningAlg enum, string, or bytes, got {type(alg)}")
         else:
             alg = None
 
-        # Handle ta_url parameter - convert string to bytes if needed
+        # Handle ta_url parameter: convert string to bytes as needed
         if ta_url is not None:
             if isinstance(ta_url, str):
-                # Convert string to bytes
+                # String to bytes, as requested by native lib
                 ta_url = ta_url.encode('utf-8')
             elif isinstance(ta_url, bytes):
-                # Already in bytes format
+                # In bytes already
                 pass
             else:
                 raise TypeError(f"ta_url must be string or bytes, got {type(ta_url)}")

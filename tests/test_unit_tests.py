@@ -1409,7 +1409,7 @@ class TestLegacyAPI(unittest.TestCase):
             alg=SigningAlg.ES256,
             sign_cert=certs,
             private_key=key,
-            ta_url="http://timestamp.digicert.com"
+            ta_url=b"http://timestamp.digicert.com"
         )
 
         # Create a simple manifest
