@@ -245,6 +245,17 @@ class C2paSignerInfo(ctypes.Structure):
         else:
             alg = None
 
+        # Handle ta_url parameter - convert string to bytes if needed
+        if ta_url is not None:
+            if isinstance(ta_url, str):
+                # Convert string to bytes
+                ta_url = ta_url.encode('utf-8')
+            elif isinstance(ta_url, bytes):
+                # Already in bytes format
+                pass
+            else:
+                raise TypeError(f"ta_url must be string or bytes, got {type(ta_url)}")
+
         # Call parent constructor with processed values
         super().__init__(alg, sign_cert, private_key, ta_url)
 
