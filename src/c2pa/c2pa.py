@@ -205,7 +205,8 @@ class C2paSignerInfo(ctypes.Structure):
         ("ta_url", ctypes.c_char_p),
     ]
 
-    # Mapping from C2paSigningAlg enum to string representation
+    # Mapping from C2paSigningAlg enum to string representation,
+    # as the enum value currently maps by default to an integer value.
     _ALG_MAPPING = {
         C2paSigningAlg.ES256: b"es256",
         C2paSigningAlg.ES384: b"es384",
