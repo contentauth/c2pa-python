@@ -125,7 +125,7 @@ class C2paSigningAlg(enum.IntEnum):
 
 # Mapping from C2paSigningAlg enum to string representation,
 # as the enum value currently maps by default to an integer value.
-_ALG_MAPPING = {
+_ALG_TO_STRING_BYTES_MAPPING = {
     C2paSigningAlg.ES256: b"es256",
     C2paSigningAlg.ES384: b"es384",
     C2paSigningAlg.ES512: b"es512",
@@ -232,7 +232,7 @@ class C2paSignerInfo(ctypes.Structure):
         if alg is not None:
             if isinstance(alg, C2paSigningAlg):
                 # Convert enum to string representation
-                alg_str = _ALG_MAPPING.get(alg)
+                alg_str = _ALG_TO_STRING_BYTES_MAPPING.get(alg)
                 if alg_str is None:
                     raise ValueError(f"Unsupported signing algorithm: {alg}")
                 alg = alg_str
