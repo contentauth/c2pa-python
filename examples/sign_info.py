@@ -10,21 +10,24 @@
 # specific language governing permissions and limitations under
 # each license.
 
+###############################################################
+# This example shows an "older" way of signing,
+# and is left here as reference.
+# Please refer to sign.py for the recommended implementation.
+###############################################################
+
 # This example shows how to sign an image with a C2PA manifest
-# using a callback signer and read the metadata added to the image.
+# and read the metadata added to the image.
 
 import os
 import c2pa
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.backends import default_backend
+
+fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
+output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
 # Note: Builder, Reader, and Signer support being used as context managers
 # (with 'with' statements), but this example shows manual usage which requires
 # explicitly calling the close() function to clean up resources.
-
-fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
-output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
 # Ensure the output directory exists
 if not os.path.exists(output_dir):
@@ -34,44 +37,36 @@ print("c2pa version:")
 version = c2pa.sdk_version()
 print(version)
 
+# Read existing C2PA metadata from the file
+print("\nReading existing C2PA metadata:")
+with open(fixtures_dir + "C.jpg", "rb") as file:
+    reader = c2pa.Reader("image/jpeg", file)
+    print(reader.json())
+    reader.close()
 
-# Load certificates and private key (here from the test fixtures)
-# This is OK for development, but in production you should use a
-# secure way to load the certificates and private key.
+# Create a signer from certificate and key files
 certs = open(fixtures_dir + "es256_certs.pem", "rb").read()
 key = open(fixtures_dir + "es256_private.key", "rb").read()
 
-# Define a callback signer function
-def callback_signer_es256(data: bytes) -> bytes:
-    """Callback function that signs data using ES256 algorithm."""
-    private_key = serialization.load_pem_private_key(
-        key,
-        password=None,
-        backend=default_backend()
-    )
-    signature = private_key.sign(
-        data,
-        ec.ECDSA(hashes.SHA256())
-    )
-    return signature
-
-# Create a signer using the callback function we defined
-signer = c2pa.Signer.from_callback(
-    callback=callback_signer_es256,
-    alg=c2pa.C2paSigningAlg.ES256,
-    certs=certs.decode('utf-8'),
-    tsa_url="http://timestamp.digicert.com"
+# Define Signer information
+signer_info = c2pa.C2paSignerInfo(
+    alg=b"es256",  # Use bytes instead of encoded string
+    sign_cert=certs,
+    private_key=key,
+    ta_url=b"http://timestamp.digicert.com"  # Use bytes and add timestamp URL
 )
 
+# Create the Signer from the information
+signer = c2pa.Signer.from_info(signer_info)
+
 # Create a manifest definition as a dictionary
-# This manifest follows the V2 manifest format
+# This examples signs using a V1 manifest
 manifest_definition = {
     "claim_generator": "python_example",
     "claim_generator_info": [{
         "name": "python_example",
         "version": "0.0.1",
     }],
-    "claim_version": 2,
     "format": "image/jpeg",
     "title": "Python Example Image",
     "ingredients": [],
@@ -84,7 +79,6 @@ manifest_definition = {
                         "action": "c2pa.created",
                         "parameters": {
                             # could hold additional information about this step
-                            # eg. model used, etc.
                         }
                     }
                 ]
@@ -96,25 +90,22 @@ manifest_definition = {
 # Create the builder with the manifest definition
 builder = c2pa.Builder(manifest_definition)
 
-# Sign the image with the signer created above,
-# which will use the callback signer
-print("\nSigning the image file...")
-builder.sign_file(
-    source_path=fixtures_dir + "A.jpg",
-    dest_path=output_dir + "A_signed.jpg",
-    signer=signer
-)
+# Sign the image
+print("\nSigning the image...")
+with open(fixtures_dir + "C.jpg", "rb") as source:
+    with open(output_dir + "C_signed.jpg", "wb") as dest:
+        result = builder.sign(signer, "image/jpeg", source, dest)
 
-# Clean up
-signer.close()
-builder.close()
-
-# Re-Read the signed image to verify
+# Read the signed image to verify
 print("\nReading signed image metadata:")
-with open(output_dir + "A_signed.jpg", "rb") as file:
+with open(output_dir + "C_signed.jpg", "rb") as file:
     reader = c2pa.Reader("image/jpeg", file)
     print(reader.json())
     reader.close()
+
+# Clean up resources manually, since we are not using with statements
+signer.close()
+builder.close()
 
 print("\nExample completed successfully!")
 
