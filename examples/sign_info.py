@@ -10,6 +10,12 @@
 # specific language governing permissions and limitations under
 # each license.
 
+###############################################################
+# This example shows an "older" way of signing,
+# and is left here as reference.
+# Please refer to sign.py for the recommended implementation.
+###############################################################
+
 # This example shows how to sign an image with a C2PA manifest
 # and read the metadata added to the image.
 
