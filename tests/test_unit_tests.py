@@ -248,6 +248,15 @@ class TestReader(unittest.TestCase):
             assert active_manifest is not None, "Active manifest should not be null"
             assert len(active_manifest) > 0, "Active manifest should not be empty"
 
+    def test_reader_file_with_known_error(self):
+        fixtures_dir = os.path.join(os.path.dirname(__file__), "fixtures", "known-files")
+        testFilePath = os.path.join(fixtures_dir, "adobe-20220124-E-clm-CAICAI.jpg")
+        with open(testFilePath, "rb") as file:
+            with Reader("image/jpeg", file) as reader:
+                manifest_store = json.loads(reader.json())
+                title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+                print(manifest_store)
+
 
 class TestBuilder(unittest.TestCase):
     def setUp(self):
@@ -1436,7 +1445,6 @@ class TestStream(unittest.TestCase):
         stream.close()
         # Flushing closed stream should return -1
         self.assertEqual(flush_cb(None), -1)
-
 
 class TestLegacyAPI(unittest.TestCase):
     def setUp(self):
