@@ -150,6 +150,75 @@ SignerCallback = ctypes.CFUNCTYPE(
             ctypes.c_ubyte), ctypes.c_size_t)
 
 
+def _guess_mime_type_using_magic_number(file_path: Union[str, Path]) -> Optional[tuple[str, str]]:
+    """Guess MIME type by reading file header bytes.
+    Currently supports a limited set of files, as this is best effort.
+    You should consider adding extensions to filepaths to ensure we don't
+    have to guess too much.
+
+    Args:
+        file_path: Path to the file to check
+    Returns:
+        Tuple of (extension, mime_type) if detected, None otherwise
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            # Read first 1024 bytes to check for file signatures
+            header = f.read(1024)
+
+        # Convert to string for easier pattern matching (for text-based formats)
+        header_str = header.decode('utf-8', errors='ignore').strip()
+
+        # Check for SVG signatures
+        if header_str.startswith('<?xml') and '<svg' in header_str:
+            return ('svg', 'image/svg+xml')
+        elif header_str.startswith('<svg'):
+            return ('svg', 'image/svg+xml')
+
+        # Check for PDF signature
+        if header.startswith(b'%PDF'):
+            return ('pdf', 'application/pdf')
+
+        # Check for image formats
+        if header.startswith(b'\x89PNG\r\n\x1a\n'):
+            return ('png', 'image/png')
+        elif header.startswith(b'\xff\xd8\xff'):
+            return ('jpg', 'image/jpeg')
+        elif header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
+            return ('gif', 'image/gif')
+        elif header.startswith(b'II*\x00') or header.startswith(b'MM\x00*'):
+            return ('tiff', 'image/tiff')
+        elif header.startswith(b'RIFF') and header[8:12] == b'WEBP':
+            return ('webp', 'image/webp')
+        elif header.startswith(b'\x00\x00\x00\x20ftypavif'):
+            return ('avif', 'image/avif')
+        elif header.startswith(b'\x00\x00\x00\x18ftypmif1') or header.startswith(b'\x00\x00\x00\x18ftypmsf1') or header.startswith(b'\x00\x00\x00\x18ftypheic') or header.startswith(b'\x00\x00\x00\x18ftypheix'):
+            return ('heic', 'image/heic')
+
+        # Check for audio formats
+        elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb') or header.startswith(b'\xff\xf3'):
+            return ('mp3', 'audio/mpeg')
+        elif header.startswith(b'\x00\x00\x00\x20ftypM4A') or header.startswith(b'\x00\x00\x00\x1cftypM4A'):
+            return ('m4a', 'audio/mp4')
+        elif header.startswith(b'RIFF') and header[8:12] == b'WAVE':
+            return ('wav', 'audio/wav')
+
+        # Check for video formats
+        # MP4: look for 'ftyp' at offset 4 and major brand in common MP4 video brands
+        # Generally catches MP4-based formats that were not caught above
+        elif header[4:8] == b'ftyp' and header[8:12] in {b'mp41', b'mp42', b'isom', b'iso2', b'avc1', b'dash', b'M4V '}:
+            return ('mp4', 'video/mp4')
+        # MOV: look for 'ftyp' at offset 4 and major brand in common QuickTime brands
+        elif header[4:8] == b'ftyp' and header[8:12] in {b'qt  ', b'M4V '}:
+            return ('mov', 'video/quicktime')
+        elif header.startswith(b'RIFF') and header[8:12] == b'AVI ':
+            return ('avi', 'video/x-msvideo')
+
+        return None
+    except Exception:
+        return None
+
+
 class StreamContext(ctypes.Structure):
     """Opaque structure for stream context."""
     _fields_ = []  # Empty as it's opaque in the C API
@@ -676,8 +745,14 @@ def sign_file(
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
-                raise C2paError.NotSupported(
-                    f"Could not determine MIME type for file: {source_path}")
+                # If the file is extensionless, we may not be able to properly guess
+                # So we attempt one more guessing round here
+                other_mimetype_guess = _guess_mime_type_using_magic_number(source_path)
+                if other_mimetype_guess:
+                    mime_type, _ = other_mimetype_guess
+                else:
+                  raise C2paError.NotSupported(
+                      f"Could not determine MIME type for file: {source_path}")
 
             if return_manifest_as_bytes:
                 # Convert Python streams to Stream objects for internal signing
@@ -1039,7 +1114,7 @@ class Reader:
         """Create a new Reader.
 
         Args:
-            format_or_path: The format or path to read from
+            format_or_path: The format (eg. file extension) or path to read from
             stream: Optional stream to read from (any Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
@@ -1952,8 +2027,14 @@ class Builder:
         # Get the MIME type from the file extension
         mime_type = mimetypes.guess_type(str(source_path))[0]
         if not mime_type:
-            raise C2paError.NotSupported(
-                f"Could not determine MIME type for file: {source_path}")
+            # If the file is extensionless, we may not be able to properly guess
+            # So we attempt one more guessing round here
+            other_mimetype_guess = _guess_mime_type_using_magic_number(source_path)
+            if other_mimetype_guess:
+                mime_type, _ = other_mimetype_guess
+            else:
+              raise C2paError.NotSupported(
+                  f"Could not determine MIME type for file: {source_path}")
 
         # Open source and destination files
         with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:

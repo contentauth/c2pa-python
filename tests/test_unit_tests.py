@@ -25,7 +25,7 @@ import tempfile
 import shutil
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, _guess_mime_type_using_magic_number
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -817,6 +817,150 @@ class TestBuilder(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+    def test_sign_extensionless_jpg_file(self):
+        """Test signing a file using the sign_file method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Use the extensionless jpg from the test files
+            extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+            source_path = os.path.join(extensionless_dir, "jpg")
+
+            output_path = os.path.join(temp_dir, "signed_output.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+            manifest_bytes = builder.sign_file(
+                source_path=source_path,
+                dest_path=output_path,
+                signer=self.signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_extensionless_svg_file(self):
+        """Test signing an extensionless SVG file using the sign_file method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Use the extensionless svg from the test files
+            extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+            source_path = os.path.join(extensionless_dir, "svg")
+
+            output_path = os.path.join(temp_dir, "signed_output.svg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+            manifest_bytes = builder.sign_file(
+                source_path=source_path,
+                dest_path=output_path,
+                signer=self.signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Verify output
+            self.assertIsInstance(manifest_bytes, bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/svg+xml", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_builder_sign_extensionless_svg_file_mimetype(self):
+        """Test signing an extensionless SVG file using the builder.sign method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Use the extensionless svg from the test files
+            extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+            source_path = os.path.join(extensionless_dir, "svg")
+
+            output_path = os.path.join(temp_dir, "signed_output.svg")
+
+            # Use the builder.sign method
+            builder = Builder(self.manifestDefinition)
+            with open(source_path, 'rb') as source_file, open(output_path, 'wb') as dest_file:
+                builder.sign(
+                    signer=self.signer,
+                    format="image/svg+xml",  # Use extension instead of MIME type
+                    source=source_file,
+                    dest=dest_file
+                )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/svg+xml", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_builder_sign_extensionless_svg_file_ext(self):
+        """Test signing an extensionless SVG file using the builder.sign method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Use the extensionless svg from the test files
+            extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+            source_path = os.path.join(extensionless_dir, "svg")
+
+            output_path = os.path.join(temp_dir, "signed_output.svg")
+
+            # Use the builder.sign method
+            builder = Builder(self.manifestDefinition)
+            with open(source_path, 'rb') as source_file, open(output_path, 'wb') as dest_file:
+                builder.sign(
+                    signer=self.signer,
+                    format="svg",  # Use extension instead of MIME type
+                    source=source_file,
+                    dest=dest_file
+                )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("image/svg+xml", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
     def test_sign_file_callback_signer(self):
         """Test signing a file using the sign_file method."""
 
@@ -1554,6 +1698,51 @@ class TestLegacyAPI(unittest.TestCase):
             # Clean up
             if os.path.exists(output_path):
                 os.remove(output_path)
+
+
+class TestHelpers(unittest.TestCase):
+    def test_guess_mime_type_using_magic_number(self):
+        """Test the _guess_mime_type_using_magic_number function with various file formats."""
+        extensionless_dir = os.path.join(FIXTURES_DIR, "extensionless-files")
+
+        # Test cases with explicit file paths and expected results
+        test_cases = [
+            (os.path.join(extensionless_dir, "svg"), ('svg', 'image/svg+xml')),
+            (os.path.join(extensionless_dir, "png"), ('png', 'image/png')),
+            (os.path.join(extensionless_dir, "jpg"), ('jpg', 'image/jpeg')),
+            (os.path.join(extensionless_dir, "gif"), ('gif', 'image/gif')),
+            (os.path.join(extensionless_dir, "heic"), ('heic', 'image/heic')),
+            (os.path.join(extensionless_dir, "tiff"), ('tiff', 'image/tiff')),
+            (os.path.join(extensionless_dir, "webp"), ('webp', 'image/webp')),
+            (os.path.join(extensionless_dir, "avif"), ('avif', 'image/avif')),
+            (os.path.join(extensionless_dir, "mp4"), ('mp4', 'video/mp4')),
+            (os.path.join(extensionless_dir, "avi"), ('avi', 'video/x-msvideo')),
+            (os.path.join(extensionless_dir, "mp3"), ('mp3', 'audio/mpeg')),
+            (os.path.join(extensionless_dir, "m4a"), ('m4a', 'audio/mp4')),
+            (os.path.join(extensionless_dir, "wav"), ('wav', 'audio/wav')),
+            (os.path.join(extensionless_dir, "pdf"), ('pdf', 'application/pdf')),
+        ]
+
+        # Test each file explicitly
+        for file_path, expected_result in test_cases:
+            filename = os.path.basename(file_path)
+            with self.subTest(filename=filename):
+                result = _guess_mime_type_using_magic_number(file_path)
+
+                # Verify the result matches expectations
+                self.assertIsNotNone(result, f"Failed to detect type for {filename}")
+                self.assertEqual(result, expected_result,
+                               f"Expected {expected_result} for {filename}, got {result}")
+
+                # Verify extension matches filename
+                expected_extension = filename
+                self.assertEqual(result[0], expected_extension,
+                               f"Extension mismatch for {filename}: expected {expected_extension}, got {result[0]}")
+
+        # Test with non-existent file
+        non_existent_path = os.path.join(extensionless_dir, "non_existent_file")
+        result = _guess_mime_type_using_magic_number(non_existent_path)
+        self.assertIsNone(result, "Should return None for non-existent file")
 
 
 if __name__ == '__main__':
