@@ -1764,27 +1764,7 @@ class Builder:
             C2paError: If there was an error adding the ingredient
             C2paError.Encoding: If the ingredient JSON contains invalid UTF-8 characters
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-
-        try:
-            ingredient_str = ingredient_json.encode('utf-8')
-            format_str = format.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
-
-        source_stream = Stream(source)
-        result = _lib.c2pa_builder_add_ingredient_from_stream(
-            self._builder, ingredient_str, format_str, source_stream._stream)
-
-        if result != 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['ingredient_error'].format("Unknown error"))
+        return self.add_ingredient_from_stream(ingredient_json, format, source)
 
     def add_ingredient_from_stream(
             self,
