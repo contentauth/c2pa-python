@@ -1773,7 +1773,7 @@ class Builder:
             format: str,
             source: Any):
         """Add an ingredient from a stream to the builder.
-        Explicitly named API requiring a stream.
+        Explicitly named API requiring a stream as input parameter.
 
         Args:
             ingredient_json: The JSON ingredient definition
@@ -1810,9 +1810,9 @@ class Builder:
             self,
             ingredient_json: str,
             format: str,
-            filepath: str):
+            filepath: Union[str, Path]):
         """Add an ingredient from a file path to the builder.
-        THis is a legacy method.
+        This is a legacy method.
 
         .. deprecated:: 0.13.0
            This method is deprecated and will be removed in a future version.
@@ -1821,7 +1821,7 @@ class Builder:
         Args:
             ingredient_json: The JSON ingredient definition
             format: The MIME type or extension of the ingredient
-            filepath: The path to the file containing the ingredient data
+            filepath: The path to the file containing the ingredient data (can be a string or Path object)
 
         Raises:
             C2paError: If there was an error adding the ingredient
@@ -1836,8 +1836,11 @@ class Builder:
         )
 
         try:
+            # Convert Path object to string if necessary
+            filepath_str = str(filepath)
+
             # Does the stream handling to use add_ingredient_from_stream
-            with open(filepath, 'rb') as file_stream:
+            with open(filepath_str, 'rb') as file_stream:
                 self.add_ingredient_from_stream(ingredient_json, format, file_stream)
         except FileNotFoundError:
             raise FileNotFoundError(f"File not found: {filepath}")
