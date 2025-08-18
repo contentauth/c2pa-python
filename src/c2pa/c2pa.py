@@ -1852,7 +1852,7 @@ class Builder:
             signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> tuple[int, bytes]:
+            dest_stream: Stream) -> bytes:
         """Internal signing logic shared between sign() and sign_file() methods,
         to use same native calls but expose different API surface.
 
@@ -1946,7 +1946,7 @@ class Builder:
                                      Path],
                   dest_path: Union[str,
                                    Path],
-                  signer: Signer) -> tuple[int, bytes]:
+                  signer: Signer) -> bytes:
         """Sign a file and write the signed data to an output file.
 
         Args:

@@ -1568,6 +1568,8 @@ class TestLegacyAPI(unittest.TestCase):
                 "name": "python_internals_test",
                 "version": "0.0.1",
             }],
+            # Claim version has become mandatory for signing v1 claims
+            "claim_version": 1,
             "format": "image/jpeg",
             "title": "Python Test Signed Image",
             "ingredients": [],
