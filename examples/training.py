@@ -42,25 +42,7 @@ import operator
 def getitem(d, key):
     return reduce(operator.getitem, key, d)
 
-
-# This function signs data with PS256 using a private key
-def sign_ps256(data: bytes, key: bytes) -> bytes:
-    private_key = serialization.load_pem_private_key(
-        key,
-        password=None,
-    )
-    signature = private_key.sign(
-        data,
-        padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH
-        ),
-        hashes.SHA256()
-    )
-    return signature
-
 # First create an asset with a do not train assertion
-
 # Define a manifest with the do not train assertion
 manifest_json = {
     "claim_generator_info": [{
@@ -72,19 +54,19 @@ manifest_json = {
         "format": "image/jpeg",
         "identifier": "thumbnail"
     },
-    "assertions": [
-    {
-      "label": "c2pa.training-mining",
-      "data": {
-        "entries": {
-          "c2pa.ai_generative_training": { "use": "notAllowed" },
-          "c2pa.ai_inference": { "use": "notAllowed" },
-          "c2pa.ai_training": { "use": "notAllowed" },
-          "c2pa.data_mining": { "use": "notAllowed" }
+    "assertions": [{
+        "label": "cawg.training-mining",
+        "data": {
+            "entries": {
+                "cawg.ai_inference": {
+                    "use": "notAllowed"
+                },
+                "cawg.ai_generative_training": {
+                    "use": "notAllowed"
+                }
+            }
         }
-      }
-    }
-  ]
+    }]
 }
 
 ingredient_json = {
@@ -145,9 +127,10 @@ try:
     manifest_store = json.loads(reader.json())
 
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
     for assertion in manifest["assertions"]:
-        if assertion["label"] == "c2pa.training-mining":
-            if getitem(assertion, ("data","entries","c2pa.ai_training","use")) == "notAllowed":
+        if assertion["label"] == "cawg.training-mining":
+            if getitem(assertion, ("data","entries","cawg.ai_generative_training","use")) == "notAllowed":
                 allowed = False
 
     # get the ingredient thumbnail and save it to a file using resource_to_stream
