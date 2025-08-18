@@ -812,6 +812,33 @@ class TestBuilder(unittest.TestCase):
         # Return back to default settings
         load_settings(r'{"verify": { "remote_manifest_fetch": true} }')
 
+    def test_sign_single_file(self):
+        """Test signing a file using the sign_file method."""
+        # Create a temporary directory for the test
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output.jpg")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+
+            with open(self.testPath, "rb") as file:
+              builder.sign(self.signer, "image/jpeg", file, output)
+              output.seek(0)
+
+              # Read the signed file and verify the manifest
+              reader = Reader("image/jpeg", output)
+              json_data = reader.json()
+              self.assertIn("Python Test", json_data)
+              self.assertNotIn("validation_status", json_data)
+              output.close()
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
     def test_sign_file(self):
         """Test signing a file using the sign_file method."""
         # Create a temporary directory for the test
@@ -823,9 +850,9 @@ class TestBuilder(unittest.TestCase):
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
             manifest_bytes = builder.sign_file(
-                source_path=self.testPath,
-                dest_path=output_path,
-                signer=self.signer
+                self.testPath,
+                output_path,
+                self.signer
             )
 
             # Verify the output file was created

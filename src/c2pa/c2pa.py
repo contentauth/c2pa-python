@@ -6,7 +6,7 @@ import os
 import warnings
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
-import time
+import io
 from .lib import dynamically_load_library
 import mimetypes
 
@@ -1955,15 +1955,23 @@ class Builder:
             raise C2paError.NotSupported(
                 f"Could not determine MIME type for file: {source_path}")
 
-        # Open source and destination files
-        with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
+        # Open source file and create BytesIO for destination
+        with open(source_path, 'rb') as source_file:
             # Convert Python streams to Stream objects
             source_stream = Stream(source_file)
-            dest_stream = Stream(dest_file)
+            dest_stream = Stream(io.BytesIO(bytearray()))
 
             # Use the internal stream-base signing logic
-            return self._sign_internal(
+            # Sign the content to the BytesIO stream
+            result = self._sign_internal(
                 signer, mime_type, source_stream, dest_stream)
+
+            # Write the signed content from BytesIO to the destination file
+            dest_stream._file.seek(0)  # Reset to beginning of stream
+            with open(dest_path, 'wb') as dest_file:
+                dest_file.write(dest_stream._file.getvalue())
+
+            return result
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
