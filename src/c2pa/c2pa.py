@@ -1753,7 +1753,7 @@ class Builder:
                     Builder._ERROR_MESSAGES['resource_error'].format("Unknown error"))
 
     def add_ingredient(self, ingredient_json: str, format: str, source: Any):
-        """Add an ingredient to the builder.
+        """Add an ingredient to the builder (facade method).
         The added ingredient's source should be a stream-like object, eg. and open file.
 
         Args:
@@ -1836,12 +1836,12 @@ class Builder:
         )
 
         try:
+            # Does the stream handling to use add_ingredient_from_stream
             with open(filepath, 'rb') as file_stream:
                 self.add_ingredient_from_stream(ingredient_json, format, file_stream)
         except FileNotFoundError:
             raise FileNotFoundError(f"File not found: {filepath}")
         except Exception as e:
-            # Re-raise C2paError and other exceptions as-is
             raise e
 
     def to_archive(self, stream: Any):

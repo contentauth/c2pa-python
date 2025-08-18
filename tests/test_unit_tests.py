@@ -1348,13 +1348,12 @@ class TestBuilder(unittest.TestCase):
 
     def test_builder_add_ingredient_from_file_path(self):
         """Test Builder class add_ingredient_from_file_path method."""
+
         # Suppress the specific deprecation warning for this test, as this is a legacy method
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
 
-            # Test creating builder from JSON
             builder = Builder.from_json(self.manifestDefinition)
-            assert builder._builder is not None
 
             # Test adding ingredient from file path
             ingredient_json = '{"test": "ingredient_from_file_path"}'
@@ -1364,9 +1363,8 @@ class TestBuilder(unittest.TestCase):
 
     def test_builder_sign_with_ingredient_from_file(self):
         """Test Builder class operations with an ingredient added from file path."""
-        # Test creating builder from JSON
+
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
 
         # Test adding ingredient from file path
         ingredient_json = '{"title": "Test Ingredient From File"}'
