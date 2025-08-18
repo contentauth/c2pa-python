@@ -39,7 +39,7 @@ ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.58.0", sdk_version())
+        self.assertIn("0.59.1", sdk_version())
 
 
 class TestReader(unittest.TestCase):
