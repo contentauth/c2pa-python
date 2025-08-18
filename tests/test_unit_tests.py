@@ -1346,61 +1346,6 @@ class TestBuilder(unittest.TestCase):
 
                 output.close()
 
-    def test_builder_add_ingredient_from_file_path(self):
-        """Test Builder class add_ingredient_from_file_path method."""
-
-        # Suppress the specific deprecation warning for this test, as this is a legacy method
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-
-            builder = Builder.from_json(self.manifestDefinition)
-
-            # Test adding ingredient from file path
-            ingredient_json = '{"test": "ingredient_from_file_path"}'
-            builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath)
-
-            builder.close()
-
-    def test_builder_sign_with_ingredient_from_file(self):
-        """Test Builder class operations with an ingredient added from file path."""
-
-        builder = Builder.from_json(self.manifestDefinition)
-
-        # Test adding ingredient from file path
-        ingredient_json = '{"title": "Test Ingredient From File"}'
-        # Suppress the specific deprecation warning for this test, as this is a legacy method
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath3)
-
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertTrue(len(active_manifest["ingredients"]) > 0)
-
-            # Verify the first ingredient's title matches what we set
-            first_ingredient = active_manifest["ingredients"][0]
-            self.assertEqual(first_ingredient["title"], "Test Ingredient From File")
-
-        builder.close()
-
 
 class TestStream(unittest.TestCase):
     def setUp(self):
@@ -1549,6 +1494,48 @@ class TestLegacyAPI(unittest.TestCase):
 
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
+        self.testPath2 = INGREDIENT_TEST_FILE
+        self.testPath3 = os.path.join(self.data_dir, "A_thumbnail.jpg")
+
+        # Load test certificates and key
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            self.certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            self.key = key_file.read()
+
+        # Create a local ES256 signer with certs and a timestamp server
+        self.signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        self.signer = Signer.from_info(self.signer_info)
+
+        # Define a manifest as a dictionary
+        self.manifestDefinition = {
+            "claim_generator": "python_internals_test",
+            "claim_generator_info": [{
+                "name": "python_internals_test",
+                "version": "0.0.1",
+            }],
+            "claim_version": 1,
+            "format": "image/jpeg",
+            "title": "Python Test Image",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
 
         # Create temp directory for tests
         self.temp_data_dir = os.path.join(self.data_dir, "temp_data")
@@ -1658,6 +1645,61 @@ class TestLegacyAPI(unittest.TestCase):
             # Clean up
             if os.path.exists(output_path):
                 os.remove(output_path)
+
+    def test_builder_sign_with_ingredient_from_file(self):
+        """Test Builder class operations with an ingredient added from file path."""
+
+        builder = Builder.from_json(self.manifestDefinition)
+
+        # Test adding ingredient from file path
+        ingredient_json = '{"title": "Test Ingredient From File"}'
+        # Suppress the specific deprecation warning for this test, as this is a legacy method
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath3)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient From File")
+
+        builder.close()
+
+    def test_builder_add_ingredient_from_file_path(self):
+        """Test Builder class add_ingredient_from_file_path method."""
+
+        # Suppress the specific deprecation warning for this test, as this is a legacy method
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+
+            builder = Builder.from_json(self.manifestDefinition)
+
+            # Test adding ingredient from file path
+            ingredient_json = '{"test": "ingredient_from_file_path"}'
+            builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath)
+
+            builder.close()
 
 
 if __name__ == '__main__':
