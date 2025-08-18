@@ -306,6 +306,7 @@ class TestBuilder(unittest.TestCase):
                 "name": "python_test",
                 "version": "0.0.1",
             }],
+            "claim_version": 1,
             "format": "image/jpeg",
             "title": "Python Test Image",
             "ingredients": [],
