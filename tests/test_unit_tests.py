@@ -226,7 +226,7 @@ class TestReader(unittest.TestCase):
 
     def test_read_cawg_data_file(self):
         """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
-        file_path = os.path.join(self.data_dir, "files-for-reading-tests", "C_with_CAWG_data.jpg")
+        file_path = os.path.join(self.data_dir, "C_with_CAWG_data.jpg")
 
         with open(file_path, "rb") as file:
             reader = Reader("image/jpeg", file)
