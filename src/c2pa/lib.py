@@ -16,14 +16,9 @@ from enum import Enum
 # Debug flag for library loading
 DEBUG_LIBRARY_LOADING = False
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    force=True  # Force configuration even if already configured
-)
-# Create a module-specific logger
+# Create a module-specific logger with NullHandler to avoid interfering with global configuration
 logger = logging.getLogger("c2pa")
+logger.addHandler(logging.NullHandler())
 
 
 class CPUArchitecture(Enum):
