@@ -22,7 +22,8 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     force=True  # Force configuration even if already configured
 )
-logger = logging.getLogger(__name__)
+# Create a module-specific logger
+logger = logging.getLogger("c2pa")
 
 
 class CPUArchitecture(Enum):
