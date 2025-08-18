@@ -671,8 +671,8 @@ def sign_file(
         # Create a builder from the manifest
         builder = Builder(manifest)
 
-        # Open source and destination files
-        with open(source_path, 'rb') as source_file, open(dest_path, 'wb') as dest_file:
+        # Open source file and create BytesIO for destination
+        with open(source_path, 'rb') as source_file:
             # Get the MIME type from the file extension
             mime_type = mimetypes.guess_type(str(source_path))[0]
             if not mime_type:
@@ -682,22 +682,33 @@ def sign_file(
             if return_manifest_as_bytes:
                 # Convert Python streams to Stream objects for internal signing
                 source_stream = Stream(source_file)
-                dest_stream = Stream(dest_file)
+                dest_stream = Stream(io.BytesIO(bytearray()))
 
                 # Use the builder's internal signing logic to get manifest
                 # bytes
                 manifest_bytes = builder._sign_internal(
                     signer, mime_type, source_stream, dest_stream)
 
+                # Write the signed content from BytesIO to the destination file
+                dest_stream._file.seek(0)  # Reset to beginning of stream
+                with open(dest_path, 'wb') as dest_file:
+                    dest_file.write(dest_stream._file.getvalue())
+
                 return manifest_bytes
             else:
-                # Sign the file using the builder
+                # Sign the file using the builder with BytesIO destination
+                dest_stream = io.BytesIO(bytearray())
                 builder.sign(
                     signer=signer,
                     format=mime_type,
                     source=source_file,
-                    dest=dest_file
+                    dest=dest_stream
                 )
+
+                # Write the signed content from BytesIO to the destination file
+                dest_stream.seek(0)  # Reset to beginning of stream
+                with open(dest_path, 'wb') as dest_file:
+                    dest_file.write(dest_stream.getvalue())
 
                 # Read the signed manifest from the destination file
                 with Reader(dest_path) as reader:

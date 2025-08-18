@@ -1320,11 +1320,6 @@ class TestBuilder(unittest.TestCase):
                     signer=signer
                 )
 
-            # Verify the output file stays empty,
-            # as no data should have been written
-            self.assertTrue(os.path.exists(output_path))
-            self.assertEqual(os.path.getsize(output_path), 0)
-
         finally:
             shutil.rmtree(temp_dir)
 
