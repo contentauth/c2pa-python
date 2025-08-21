@@ -123,6 +123,19 @@ class C2paSigningAlg(enum.IntEnum):
     ED25519 = 6
 
 
+# Mapping from C2paSigningAlg enum to string representation,
+# as the enum value currently maps by default to an integer value.
+_ALG_TO_STRING_BYTES_MAPPING = {
+    C2paSigningAlg.ES256: b"es256",
+    C2paSigningAlg.ES384: b"es384",
+    C2paSigningAlg.ES512: b"es512",
+    C2paSigningAlg.PS256: b"ps256",
+    C2paSigningAlg.PS384: b"ps384",
+    C2paSigningAlg.PS512: b"ps512",
+    C2paSigningAlg.ED25519: b"ed25519",
+}
+
+
 # Define callback types
 ReadCallback = ctypes.CFUNCTYPE(
     ctypes.c_ssize_t,
@@ -204,6 +217,45 @@ class C2paSignerInfo(ctypes.Structure):
         ("private_key", ctypes.c_char_p),
         ("ta_url", ctypes.c_char_p),
     ]
+
+    def __init__(self, alg, sign_cert, private_key, ta_url):
+        """Initialize C2paSignerInfo with optional parameters.
+
+        Args:
+            alg: The signing algorithm, either as a C2paSigningAlg enum or string or bytes
+            (will be converted accordingly to bytes for native library use)
+            sign_cert: The signing certificate as a string
+            private_key: The private key as a string
+            ta_url: The timestamp authority URL as bytes
+        """
+        # Handle alg parameter: can be C2paSigningAlg enum or string (or bytes), convert as needed
+        if isinstance(alg, C2paSigningAlg):
+            # Convert enum to string representation
+            alg_str = _ALG_TO_STRING_BYTES_MAPPING.get(alg)
+            if alg_str is None:
+                raise ValueError(f"Unsupported signing algorithm: {alg}")
+            alg = alg_str
+        elif isinstance(alg, str):
+            # String to bytes, as requested by native lib
+            alg = alg.encode('utf-8')
+        elif isinstance(alg, bytes):
+            # In bytes already
+            pass
+        else:
+            raise TypeError(f"alg must be C2paSigningAlg enum, string, or bytes, got {type(alg)}")
+
+        # Handle ta_url parameter: allow string or bytes, convert string to bytes as needed
+        if isinstance(ta_url, str):
+            # String to bytes, as requested by native lib
+            ta_url = ta_url.encode('utf-8')
+        elif isinstance(ta_url, bytes):
+            # In bytes already
+            pass
+        else:
+            raise TypeError(f"ta_url must be string or bytes, got {type(ta_url)}")
+
+        # Call parent constructor with processed values
+        super().__init__(alg, sign_cert, private_key, ta_url)
 
 
 class C2paReader(ctypes.Structure):
