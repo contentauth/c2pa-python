@@ -218,7 +218,7 @@ class C2paSignerInfo(ctypes.Structure):
         ("ta_url", ctypes.c_char_p),
     ]
 
-    def __init__(self, alg=None, sign_cert=None, private_key=None, ta_url=None):
+    def __init__(self, alg, sign_cert, private_key, ta_url):
         """Initialize C2paSignerInfo with optional parameters.
 
         Args:
@@ -229,34 +229,30 @@ class C2paSignerInfo(ctypes.Structure):
             ta_url: The timestamp authority URL as bytes
         """
         # Handle alg parameter: can be C2paSigningAlg enum or string (or bytes), convert as needed
-        if alg is not None:
-            if isinstance(alg, C2paSigningAlg):
-                # Convert enum to string representation
-                alg_str = _ALG_TO_STRING_BYTES_MAPPING.get(alg)
-                if alg_str is None:
-                    raise ValueError(f"Unsupported signing algorithm: {alg}")
-                alg = alg_str
-            elif isinstance(alg, str):
-                # String to bytes, as requested by native lib
-                alg = alg.encode('utf-8')
-            elif isinstance(alg, bytes):
-                # In bytes already
-                pass
-            else:
-                raise TypeError(f"alg must be C2paSigningAlg enum, string, or bytes, got {type(alg)}")
+        if isinstance(alg, C2paSigningAlg):
+            # Convert enum to string representation
+            alg_str = _ALG_TO_STRING_BYTES_MAPPING.get(alg)
+            if alg_str is None:
+                raise ValueError(f"Unsupported signing algorithm: {alg}")
+            alg = alg_str
+        elif isinstance(alg, str):
+            # String to bytes, as requested by native lib
+            alg = alg.encode('utf-8')
+        elif isinstance(alg, bytes):
+            # In bytes already
+            pass
         else:
-            alg = None
+            raise TypeError(f"alg must be C2paSigningAlg enum, string, or bytes, got {type(alg)}")
 
-        # Handle ta_url parameter: convert string to bytes as needed
-        if ta_url is not None:
-            if isinstance(ta_url, str):
-                # String to bytes, as requested by native lib
-                ta_url = ta_url.encode('utf-8')
-            elif isinstance(ta_url, bytes):
-                # In bytes already
-                pass
-            else:
-                raise TypeError(f"ta_url must be string or bytes, got {type(ta_url)}")
+        # Handle ta_url parameter: allow string or bytes, convert string to bytes as needed
+        if isinstance(ta_url, str):
+            # String to bytes, as requested by native lib
+            ta_url = ta_url.encode('utf-8')
+        elif isinstance(ta_url, bytes):
+            # In bytes already
+            pass
+        else:
+            raise TypeError(f"ta_url must be string or bytes, got {type(ta_url)}")
 
         # Call parent constructor with processed values
         super().__init__(alg, sign_cert, private_key, ta_url)

@@ -28,7 +28,7 @@ build-python:
 
 # Performs a complete rebuild of the development environment
 rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
-	@echo "Development rebuild done!"
+	@echo "Development rebuild done"
 
 run-examples:
 	python3 ./examples/sign.py
