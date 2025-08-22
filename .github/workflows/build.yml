@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+        os: [ macos-latest, ubuntu-latest, ubuntu-24.04-arm ]
 
     steps:
       - name: Checkout repository
@@ -105,7 +105,7 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    runs-on: [windows-latest, windows-2022]
+    runs-on: [ windows-latest, windows-2022 ]
 
     steps:
       - name: Checkout repository
@@ -331,6 +331,7 @@ jobs:
     needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
+      runs-on: macos-latest
       artifact-name: wheels-macos-${{ matrix.target }}
       architecture: ${{ matrix.target }}
       c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
@@ -458,7 +459,7 @@ jobs:
         run: |
           echo "Downloaded Artifacts"
           ls -la dist/
-      - name: Publish to TestPyPI
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
