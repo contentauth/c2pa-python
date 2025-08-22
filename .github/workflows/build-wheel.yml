@@ -72,6 +72,9 @@ jobs:
             rm -f /io/dist/*-linux_*.whl
           "
 
+          # Install twine to verify wheels
+          pip install twine
+
           # Verify the wheel was built
           echo "Contents of dist directory:"
           ls -la dist/
@@ -94,6 +97,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
           pip install wheel
+          pip install twine
 
           # Download native artifacts
           Write-Host "Starting artifact download process..."
@@ -121,6 +125,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
           pip install wheel
+          pip install twine
 
           # Download native artifacts
           python scripts/download_artifacts.py $C2PA_VERSION

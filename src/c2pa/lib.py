@@ -45,7 +45,7 @@ def get_platform_identifier() -> str:
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        if _get_architecture() in [CPUArchitecture.ARM64, CPUArchitecture.AARCH64]:
+        if _get_architecture() in [CPUArchitecture.ARM64.value, CPUArchitecture.AARCH64.value]:
             return "aarch64-unknown-linux-gnu"
         return "x86_64-unknown-linux-gnu"
     else:
@@ -62,9 +62,9 @@ def _get_architecture() -> str:
     if sys.platform == "darwin":
         # On macOS, we need to check if we're running under Rosetta
         if platform.processor() == 'arm':
-            return CPUArchitecture.ARM64
+            return CPUArchitecture.ARM64.value
         else:
-            return CPUArchitecture.ARM64.X86_64
+            return CPUArchitecture.X86_64.value
     elif sys.platform == "linux":
         return platform.machine()
     elif sys.platform == "win32":
