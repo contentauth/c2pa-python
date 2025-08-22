@@ -82,6 +82,8 @@ jobs:
           find dist -name "*.whl" | wc -l
           echo "Wheel filenames:"
           find dist -name "*.whl" -exec basename {} \;
+          echo "Verifying wheelsusing twine check"
+          twine check dist/*
 
       - name: Build Windows wheel (x64)
         if: runner.os == 'Windows'
@@ -139,6 +141,9 @@ jobs:
             mv "$wheel" "${wheel/macosx_10_9_universal2/macosx_10_9_universal2}"
           done
           cd ..
+
+          echo "Verifying wheelsusing twine check"
+          twine check dist/*
 
       - name: Log wheel filename
         if: runner.os == 'Linux' || runner.os == 'macOS'
