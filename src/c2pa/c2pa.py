@@ -1893,7 +1893,7 @@ class Builder:
             signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> tuple[int, bytes]:
+            dest_stream: Stream) -> bytes:
         """Internal signing logic shared between sign() and sign_file() methods,
         to use same native calls but expose different API surface.
 
@@ -1904,7 +1904,7 @@ class Builder:
             dest_stream: The destination stream
 
         Returns:
-            A tuple of (size of C2PA data, manifest bytes)
+            Manifest bytes
 
         Raises:
             C2paError: If there was an error during signing
