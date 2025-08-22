@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest, ubuntu-24.04-arm ]
+        os: [ macos-latest, ubuntu-latest, ubuntu-24.04-arm]
 
     steps:
       - name: Checkout repository
@@ -105,7 +105,7 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    runs-on: windows-latest
+    runs-on: [windows-latest, windows-2022]
 
     steps:
       - name: Checkout repository
@@ -326,19 +326,22 @@ jobs:
           .\venv\Scripts\pytest .\tests\test_unit_tests.py -v
 
   build-macos-wheel:
-    name: Build macOS wheel
+    name: Build macOS wheel (Universal)
     uses: ./.github/workflows/build-wheel.yml
     needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
       artifact-name: wheels-macos-${{ matrix.target }}
-      runs-on: macos-latest
+      architecture: ${{ matrix.target }}
       c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
-        target: [aarch64]
+        include:
+          - target: universal2
+            runs-on: macos-latest
+
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -347,12 +350,15 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
   test-built-macos-wheel:
-    name: Test macOS built wheel
+    name: Test macOS built wheel (Universal)
     needs: build-macos-wheel
     runs-on: macos-latest
     strategy:
       matrix:
-        target: [aarch64]
+        include:
+          - target: universal2
+            runs-on: macos-latest
+
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -452,7 +458,7 @@ jobs:
         run: |
           echo "Downloaded Artifacts"
           ls -la dist/
-      - name: Publish to PyPI
+      - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist

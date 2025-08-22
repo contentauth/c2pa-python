@@ -109,8 +109,8 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name win_amd64
 
-      - name: Build macOS wheel (Apple Silicon)
-        if: runner.os == 'macOS' && runner.arch == 'arm64'
+      - name: Build macOS wheel (Universal)
+        if: runner == 'macos-latest'
         run: |
           # Create necessary directories
           mkdir -p artifacts
@@ -126,12 +126,12 @@ jobs:
           python scripts/download_artifacts.py $C2PA_VERSION
 
           # Build wheel
-          python setup.py bdist_wheel --plat-name macosx_11_0_arm64
+          python setup.py bdist_wheel --plat-name macosx_10_9_universal2
 
           # Rename wheel to ensure unique filename
           cd dist
           for wheel in *.whl; do
-            mv "$wheel" "${wheel/macosx_11_0_arm64/macosx_11_0_arm64}"
+            mv "$wheel" "${wheel/macosx_10_9_universal2/macosx_10_9_universal2}"
           done
           cd ..
 
