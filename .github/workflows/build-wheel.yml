@@ -110,7 +110,7 @@ jobs:
           python setup.py bdist_wheel --plat-name win_amd64
 
       - name: Build macOS wheel (Universal)
-        if: runner == 'macos-latest'
+        if: runner.os == 'macOS'
         run: |
           # Create necessary directories
           mkdir -p artifacts
