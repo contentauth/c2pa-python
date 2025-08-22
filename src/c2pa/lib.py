@@ -255,11 +255,7 @@ def dynamically_load_library(
     # Default path (no library name provided in the environment)
     c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
     if not c2pa_lib:
-        logger.error(
-            f"Could not find {c2pa_lib_name} in any of the search paths: {
-                [
-                    str(p) for p in possible_paths]}")
-        raise RuntimeError(
-            f"Could not find {c2pa_lib_name} in any of the search paths")
+        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+        raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib
