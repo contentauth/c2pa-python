@@ -21,6 +21,13 @@ logger = logging.getLogger("c2pa")
 logger.addHandler(logging.NullHandler())
 
 
+class CPUArchitecture(Enum):
+    """CPU architecture enum for platform-specific identifiers."""
+    AARCH64 = "aarch64"
+    X86_64 = "x86_64"
+    ARM64 = "arm64"
+
+
 def get_platform_identifier() -> str:
     """Get the platform identifier (arch-os) for the current system,
     matching the downloaded identifiers used by the Github publisher.
@@ -38,7 +45,7 @@ def get_platform_identifier() -> str:
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        if _get_architecture() in ['arm64', 'aarch64']:
+        if _get_architecture() in [CPUArchitecture.ARM64, CPUArchitecture.AARCH64]:
             return "aarch64-unknown-linux-gnu"
         return "x86_64-unknown-linux-gnu"
     else:
@@ -55,9 +62,9 @@ def _get_architecture() -> str:
     if sys.platform == "darwin":
         # On macOS, we need to check if we're running under Rosetta
         if platform.processor() == 'arm':
-            return 'arm64'
+            return CPUArchitecture.ARM64
         else:
-            return 'x86_64'
+            return CPUArchitecture.ARM64.X86_64
     elif sys.platform == "linux":
         return platform.machine()
     elif sys.platform == "win32":
