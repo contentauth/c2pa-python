@@ -82,7 +82,9 @@ jobs:
           find dist -name "*.whl" | wc -l
           echo "Wheel filenames:"
           find dist -name "*.whl" -exec basename {} \;
-          echo "Verifying wheelsusing twine check"
+
+          # Verify wheel structure
+          echo "Verifying wheels using twine check"
           twine check dist/*
 
       - name: Build Windows wheel (x64)
@@ -115,6 +117,9 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name win_amd64
 
+          # Verify wheel structure
+          twine check dist/*
+
       - name: Build macOS wheel (Universal)
         if: runner.os == 'macOS'
         run: |
@@ -142,7 +147,8 @@ jobs:
           done
           cd ..
 
-          echo "Verifying wheelsusing twine check"
+          # Verify wheel structure
+          echo "Verifying wheels using twine check"
           twine check dist/*
 
       - name: Log wheel filename
