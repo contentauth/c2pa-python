@@ -105,7 +105,7 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    runs-on: [ windows-latest, windows-2022 ]
+    runs-on: windows-latest
 
     steps:
       - name: Checkout repository

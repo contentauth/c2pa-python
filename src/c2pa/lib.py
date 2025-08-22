@@ -21,12 +21,6 @@ logger = logging.getLogger("c2pa")
 logger.addHandler(logging.NullHandler())
 
 
-class CPUArchitecture(Enum):
-    """CPU architecture enum for platform-specific identifiers."""
-    AARCH64 = "aarch64"
-    X86_64 = "x86_64"
-
-
 def get_platform_identifier() -> str:
     """Get the platform identifier (arch-os) for the current system,
     matching the downloaded identifiers used by the Github publisher.
