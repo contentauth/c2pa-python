@@ -32,20 +32,14 @@ class CPUArchitecture(Enum):
 
 
 def get_platform_identifier() -> str:
-    """Get the full platform identifier (arch-os) for the current system,
+    """Get the platform identifier (arch-os) for the current system,
     matching the downloaded identifiers used by the Github publisher.
 
-    Args:
-        cpu_arch: Optional CPU architecture for macOS.
-        If not provided, returns universal build.
-        Only used on macOS systems.
-
     Returns one of:
-    - universal-apple-darwin (for Mac, when cpu_arch is None)
-    - aarch64-apple-darwin (for Mac ARM64)
-    - x86_64-apple-darwin (for Mac x86_64)
+    - universal-apple-darwin (for Mac, ARM or Intel)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
+    - aarch64-unknown-linux-gnu (for Linux ARM)
     """
     system = platform.system().lower()
 
@@ -77,7 +71,8 @@ def _get_architecture() -> str:
     elif sys.platform == "linux":
         return platform.machine()
     elif sys.platform == "win32":
-        # win32 will cover all Windows versions (the 32 is a historical quirk)
+        # win32 will cover all Windows versions
+        # (the 32 is a historical quirk)
         return platform.machine()
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
@@ -95,7 +90,8 @@ def _get_platform_dir() -> str:
     elif sys.platform == "linux":
         return "unknown-linux-gnu"
     elif sys.platform == "win32":
-        # win32 will cover all Windows versions (the 32 is a historical quirk)
+        # win32 will cover all Windows versions
+        # (the 32 is a historical quirk)
         return "pc-windows-msvc"
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")

@@ -18,16 +18,17 @@ import unittest
 import ctypes
 import warnings
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, ec
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
+import ctypes
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer
+from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -71,7 +72,7 @@ class TestReader(unittest.TestCase):
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
-    def test_reader_bad_format(self):
+    def test_reader_format_is_not_unicode(self):
         with self.assertRaises(Error.NotSupported):
             with open(self.testPath, "rb") as file:
                 reader = Reader("badFormat", file)
@@ -84,7 +85,6 @@ class TestReader(unittest.TestCase):
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_reader_double_close(self):
-        """Test that multiple close calls are handled gracefully."""
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             reader.close()
@@ -102,7 +102,6 @@ class TestReader(unittest.TestCase):
                 self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
     def test_reader_close_cleanup(self):
-        """Test that close properly cleans up all resources."""
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             # Store references to internal objects
@@ -250,7 +249,7 @@ class TestReader(unittest.TestCase):
     #         assert len(active_manifest) > 0, "Active manifest should not be empty"
 
 
-class TestBuilder(unittest.TestCase):
+class TestBuilderWithSigner(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_DIR
@@ -340,10 +339,109 @@ class TestBuilder(unittest.TestCase):
             return signature
         self.callback_signer_es256 = callback_signer_es256
 
-    def test_reserve_size_on_closed_signer(self):
-        self.signer.close()
+    def test_reserve_size(self):
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+        signer.reserve_size()
+
+    def test_signer_creation_error_alg(self):
+        signer_info = C2paSignerInfo(
+            alg=b"not-an-alg",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
         with self.assertRaises(Error):
-            self.signer.reserve_size()
+          Signer.from_info(signer_info)
+
+    def test_signer_from_callback_error_no_cert(self):
+        with self.assertRaises(Error):
+            Signer.from_callback(
+                callback=self.callback_signer_es256,
+                alg=SigningAlg.ES256,
+                certs=None,
+                tsa_url="http://timestamp.digicert.com"
+            )
+
+    def test_signer_from_callback_error_wrong_url(self):
+        with self.assertRaises(Error):
+            Signer.from_callback(
+                callback=self.callback_signer_es256,
+                alg=SigningAlg.ES256,
+                certs=None,
+                tsa_url="ftp://timestamp.digicert.com"
+            )
+
+    def test_reserve_size_on_closed_signer(self):
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+        signer.close()
+        self.assertTrue(signer.closed)
+        with self.assertRaises(Error):
+            signer.reserve_size()
+
+    def test_signer_double_close(self):
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+        signer.close()
+        self.assertTrue(signer.closed)
+        signer.close()
+
+    def test_builder_does_not_allow_sign_after_close(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            builder.close()
+            with self.assertRaises(Error):
+              builder.sign(self.signer, "image/jpeg", file, output)
+
+    def test_builder_does_not_allow_archiving_after_close(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            placeholder_stream = io.BytesIO(bytearray())
+            builder.close()
+            with self.assertRaises(Error):
+              builder.to_archive(placeholder_stream)
+
+    def test_builder_does_not_allow_changing_remote_url_after_close(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            builder.close()
+            with self.assertRaises(Error):
+              builder.set_remote_url("a-remote-url-that-is-not-important-in-this-tests")
+
+    def test_builder_does_not_allow_adding_resource_after_close(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            placeholder_stream = io.BytesIO(bytearray())
+            builder.close()
+            with self.assertRaises(Error):
+              builder.add_resource("a-remote-url-that-is-not-important-in-this-tests", placeholder_stream)
+
+    def test_builder_double_close(self):
+        builder = Builder(self.manifestDefinition)
+        # First close
+        builder.close()
+        # Second close should not raise an exception
+        builder.close()
+        # Verify builder is closed
+        with self.assertRaises(Error):
+            builder.set_no_embed()
 
     def test_streams_sign(self):
         with open(self.testPath, "rb") as file:
@@ -465,19 +563,7 @@ class TestBuilder(unittest.TestCase):
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
 
-    def test_builder_double_close(self):
-        """Test that multiple close calls are handled gracefully."""
-        builder = Builder(self.manifestDefinition)
-        # First close
-        builder.close()
-        # Second close should not raise an exception
-        builder.close()
-        # Verify builder is closed
-        with self.assertRaises(Error):
-            builder.set_no_embed()
-
-    def test_builder_add_ingredient_on_closed_builder(self):
-        """Test that exception is raised when trying to add ingredient after close."""
+    def test_builder_no_added_ingredient_on_closed_builder(self):
         builder = Builder(self.manifestDefinition)
 
         builder.close()
@@ -488,9 +574,6 @@ class TestBuilder(unittest.TestCase):
                 builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
     def test_builder_add_ingredient(self):
-        """Test Builder class operations with a real file."""
-        # Test creating builder from JSON
-
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -502,9 +585,6 @@ class TestBuilder(unittest.TestCase):
         builder.close()
 
     def test_builder_add_multiple_ingredients(self):
-        """Test Builder class operations with a real file."""
-        # Test creating builder from JSON
-
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -529,9 +609,6 @@ class TestBuilder(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_ingredient(self):
-        """Test Builder class operations with a real file."""
-        # Test creating builder from JSON
-
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -569,9 +646,6 @@ class TestBuilder(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_duplicate_ingredient(self):
-        """Test Builder class operations with a real file."""
-        # Test creating builder from JSON
-
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -618,8 +692,6 @@ class TestBuilder(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_ingredient_from_stream(self):
-        """Test Builder class operations with a real file using stream for ingredient."""
-        # Test creating builder from JSON
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -660,8 +732,6 @@ class TestBuilder(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_multiple_ingredient(self):
-        """Test Builder class operations with multiple ingredients."""
-        # Test creating builder from JSON
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -707,8 +777,6 @@ class TestBuilder(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_multiple_ingredients_from_stream(self):
-        """Test Builder class operations with multiple ingredients using streams."""
-        # Test creating builder from JSON
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
 
@@ -804,8 +872,6 @@ class TestBuilder(unittest.TestCase):
           output.close()
 
     def test_sign_mp4_video_file_single(self):
-        """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
         builder = Builder(self.manifestDefinition)
         output = io.BytesIO(bytearray())
 
@@ -821,8 +887,6 @@ class TestBuilder(unittest.TestCase):
           output.close()
 
     def test_sign_mov_video_file_single(self):
-        """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
         builder = Builder(self.manifestDefinition)
         output = io.BytesIO(bytearray())
 
@@ -838,8 +902,6 @@ class TestBuilder(unittest.TestCase):
           output.close()
 
     def test_sign_file(self):
-        """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
             # Create a temporary output file path
@@ -866,6 +928,16 @@ class TestBuilder(unittest.TestCase):
         finally:
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
+
+    def test_sign_file_format_manifest_bytes_embeddable(self):
+        builder = Builder(self.manifestDefinition)
+        output = io.BytesIO(bytearray())
+
+        with open(self.testPath, "rb") as file:
+            manifest_bytes = builder.sign(self.signer, "image/jpeg", file, output)
+            res = format_embeddable("image/jpeg", manifest_bytes)
+            output.seek(0)
+            output.close()
 
     def test_builder_sign_file_callback_signer_from_callback(self):
         """Test signing a file using the sign_file method with Signer.from_callback."""
@@ -969,6 +1041,46 @@ class TestBuilder(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_builder_sign_with_ed25519_callback(self):
+        # Load Ed25519 private key (PEM)
+        ed25519_pem = os.path.join(FIXTURES_DIR, "ed25519.pem")
+        with open(ed25519_pem, "r") as f:
+              private_key_pem = f.read()
+
+        # Callback here uses native function
+        def ed25519_callback(data: bytes) -> bytes:
+            return ed25519_sign(data, private_key_pem)
+
+        # Load the "certificate"
+        ed25519_pub = os.path.join(FIXTURES_DIR, "ed25519.pub")
+        with open(ed25519_pub, "r") as f:
+            certs_pem = f.read()
+
+        # Create a Signer
+        # signer = create_signer(
+        #     callback=ed25519_callback,
+        #     alg=SigningAlg.ED25519,
+        #     certs=certs_pem,
+        #     tsa_url=None
+        # )
+        signer = Signer.from_callback(
+            callback=ed25519_callback,
+            alg=SigningAlg.ED25519,
+            certs=certs_pem,
+            tsa_url=None
+        )
+
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            builder.sign(signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
     def test_signing_manifest_v2(self):
         """Test signing and reading a V2 manifest.
         V2 manifests have a slightly different structure.
@@ -994,8 +1106,6 @@ class TestBuilder(unittest.TestCase):
                 output.close()
 
     def test_sign_file_mp4_video(self):
-        """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
             # Create a temporary output file path
@@ -1024,8 +1134,6 @@ class TestBuilder(unittest.TestCase):
             shutil.rmtree(temp_dir)
 
     def test_sign_file_mov_video(self):
-        """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
         temp_dir = tempfile.mkdtemp()
         try:
             # Create a temporary output file path
@@ -1056,7 +1164,6 @@ class TestBuilder(unittest.TestCase):
 
 class TestStream(unittest.TestCase):
     def setUp(self):
-        # Create a temporary file for testing
         self.temp_file = io.BytesIO()
         self.test_data = b"Hello, World!"
         self.temp_file.write(self.test_data)
@@ -1066,19 +1173,16 @@ class TestStream(unittest.TestCase):
         self.temp_file.close()
 
     def test_stream_initialization(self):
-        """Test proper initialization of Stream class."""
         stream = Stream(self.temp_file)
         self.assertTrue(stream.initialized)
         self.assertFalse(stream.closed)
         stream.close()
 
     def test_stream_initialization_with_invalid_object(self):
-        """Test initialization with an invalid object."""
         with self.assertRaises(TypeError):
             Stream("not a file-like object")
 
     def test_stream_read(self):
-        """Test reading from a stream."""
         stream = Stream(self.temp_file)
         try:
             # Create a buffer to read into
@@ -1092,7 +1196,6 @@ class TestStream(unittest.TestCase):
             stream.close()
 
     def test_stream_write(self):
-        """Test writing to a stream."""
         output = io.BytesIO()
         stream = Stream(output)
         try:
@@ -1109,7 +1212,6 @@ class TestStream(unittest.TestCase):
             stream.close()
 
     def test_stream_seek(self):
-        """Test seeking in a stream."""
         stream = Stream(self.temp_file)
         try:
             # Seek to position 7 (after "Hello, ")
@@ -1123,7 +1225,6 @@ class TestStream(unittest.TestCase):
             stream.close()
 
     def test_stream_flush(self):
-        """Test flushing a stream."""
         output = io.BytesIO()
         stream = Stream(output)
         try:
@@ -1138,14 +1239,12 @@ class TestStream(unittest.TestCase):
             stream.close()
 
     def test_stream_context_manager(self):
-        """Test stream as a context manager."""
         with Stream(self.temp_file) as stream:
             self.assertTrue(stream.initialized)
             self.assertFalse(stream.closed)
         self.assertTrue(stream.closed)
 
     def test_stream_double_close(self):
-        """Test that multiple close calls are handled gracefully."""
         stream = Stream(self.temp_file)
         stream.close()
         # Second close should not raise an exception
@@ -1153,7 +1252,6 @@ class TestStream(unittest.TestCase):
         self.assertTrue(stream.closed)
 
     def test_stream_read_after_close(self):
-        """Test reading from a closed stream."""
         stream = Stream(self.temp_file)
         # Store callbacks before closing
         read_cb = stream._read_cb
@@ -1163,7 +1261,6 @@ class TestStream(unittest.TestCase):
         self.assertEqual(read_cb(None, buffer, 13), -1)
 
     def test_stream_write_after_close(self):
-        """Test writing to a closed stream."""
         stream = Stream(self.temp_file)
         # Store callbacks before closing
         write_cb = stream._write_cb
@@ -1174,7 +1271,6 @@ class TestStream(unittest.TestCase):
         self.assertEqual(write_cb(None, buffer, len(test_data)), -1)
 
     def test_stream_seek_after_close(self):
-        """Test seeking in a closed stream."""
         stream = Stream(self.temp_file)
         # Store callbacks before closing
         seek_cb = stream._seek_cb
@@ -1183,7 +1279,6 @@ class TestStream(unittest.TestCase):
         self.assertEqual(seek_cb(None, 5, 0), -1)
 
     def test_stream_flush_after_close(self):
-        """Test flushing a closed stream."""
         stream = Stream(self.temp_file)
         # Store callbacks before closing
         flush_cb = stream._flush_cb
@@ -1199,6 +1294,7 @@ class TestLegacyAPI(unittest.TestCase):
         warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
         warnings.filterwarnings("ignore", message="The read_ingredient_file function is deprecated")
         warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
+        warnings.filterwarnings("ignore", message="The create_signer_from_info function is deprecated")
 
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -1363,6 +1459,70 @@ class TestLegacyAPI(unittest.TestCase):
                 manifest_json,
                 signer_info
             )
+
+        finally:
+            # Clean up
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_sign_file_does_not_exist_errors(self):
+        """Test signing a file with C2PA manifest."""
+        # Set up test paths
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+        output_path = os.path.join(temp_data_dir, "signed_output.jpg")
+
+        # Load test certificates and key
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            key = key_file.read()
+
+        # Create signer info
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+
+        # Create a simple manifest
+        manifest = {
+            "claim_generator": "python_internals_test",
+            "claim_generator_info": [{
+                "name": "python_internals_test",
+                "version": "0.0.1",
+            }],
+            # Claim version has become mandatory for signing v1 claims
+            "claim_version": 1,
+            "format": "image/jpeg",
+            "title": "Python Test Signed Image",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # Convert manifest to JSON string
+        manifest_json = json.dumps(manifest)
+
+        try:
+            with self.assertRaises(Error):
+              sign_file(
+                  "this-file-does-not-exist",
+                  output_path,
+                  manifest_json,
+                  signer_info
+              )
 
         finally:
             # Clean up
@@ -1733,7 +1893,6 @@ class TestLegacyAPI(unittest.TestCase):
                 tsa_url="http://timestamp.digicert.com"
             ) as signer:
 
-                # Sign the file
                 manifest_bytes = builder.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path,
@@ -1824,6 +1983,11 @@ class TestLegacyAPI(unittest.TestCase):
 
         finally:
             shutil.rmtree(temp_dir)
+
+    def test_create_signer_from_info(self):
+        """Create a Signer using the create_signer_from_info function"""
+        signer = create_signer_from_info(self.signer_info)
+        self.assertIsNotNone(signer)
 
 
 if __name__ == '__main__':

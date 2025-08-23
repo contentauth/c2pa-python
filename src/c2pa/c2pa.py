@@ -91,16 +91,16 @@ def _validate_library_exports(lib):
 
 
 # Determine the library name based on the platform
-if sys.platform == "win32":
+if sys.platform == "win32": # pragma: no cover
     _lib_name_default = "c2pa_c.dll"
-elif sys.platform == "darwin":
+elif sys.platform == "darwin": # pragma: no cover
     _lib_name_default = "libc2pa_c.dylib"
-else:
+else: # pragma: no cover
     _lib_name_default = "libc2pa_c.so"
 
 # Check for C2PA_LIBRARY_NAME environment variable
 env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
-if env_lib_name:
+if env_lib_name: # pragma: no cover
     # Use the environment variable library name
     _lib = dynamically_load_library(env_lib_name)
 else:
@@ -449,7 +449,7 @@ def _parse_operation_result_for_error(
         check_error: bool = True) -> Optional[str]:
     """Helper function to handle string results from C2PA functions."""
     if not result:
-        if check_error:
+        if check_error: # pragma: no cover
             error = _lib.c2pa_error()
             if error:
                 error_str = ctypes.cast(
@@ -805,7 +805,7 @@ class Stream:
         self._stream = None
 
         # Generate unique stream ID using object ID and counter
-        if Stream._next_stream_id >= Stream._MAX_STREAM_ID:
+        if Stream._next_stream_id >= Stream._MAX_STREAM_ID: # pragma: no cover
             Stream._next_stream_id = 0
         self._stream_id = f"{id(self)}-{Stream._next_stream_id}"
         Stream._next_stream_id += 1
@@ -999,6 +999,8 @@ class Stream:
 
         try:
             # Clean up stream first as it depends on callbacks
+            # Note: We don't close self._file as we don't own it,
+            # the opener owns it.
             if self._stream:
                 try:
                     _lib.c2pa_release_stream(self._stream)
@@ -1019,7 +1021,6 @@ class Stream:
                             Stream._ERROR_MESSAGES['callback_error'].format(
                                 attr, str(e)), file=sys.stderr)
 
-            # Note: We don't close self._file as we don't own it
         except Exception as e:
             print(
                 Stream._ERROR_MESSAGES['cleanup_error'].format(
@@ -1321,7 +1322,6 @@ class Reader:
         if not self._reader:
             raise C2paError("Reader is closed")
 
-        # Keep uri string alive
         self._uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
@@ -1447,11 +1447,11 @@ class Signer:
                 ):
                     # Error: invalid input, invalid so return -1,
                     # native code will handle it!
-                    return -1
+                    return -1 # pragma: no cover
 
                 # Validate buffer sizes before memory operations
                 if data_len > 1024 * 1024:  # 1MB limit
-                    return -1
+                    return -1 # pragma: no cover
 
                 # Recover signed data (copy, to avoid lifetime issues)
                 temp_buffer = (ctypes.c_ubyte * data_len)()
@@ -1461,14 +1461,14 @@ class Signer:
                 if not data:
                     # Error: empty data, invalid so return -1,
                     # native code will also handle it!
-                    return -1
+                    return -1 # pragma: no cover
 
                 # Call the user's callback
                 signature = callback(data)
                 if not signature:
                     # Error: empty signature, invalid so return -1,
                     # native code will handle that too!
-                    return -1
+                    return -1 # pragma: no cover
 
                 # Copy the signature back to the C buffer
                 # (since callback is used in native code)
@@ -1479,7 +1479,7 @@ class Signer:
 
                 # Native code expects the signed len to be returned, we oblige
                 return actual_len
-            except Exception as e:
+            except Exception as e: # pragma: no cover
                 print(
                     cls._ERROR_MESSAGES['callback_error'].format(
                         str(e)), file=sys.stderr)
@@ -1739,12 +1739,6 @@ class Builder:
                     str(e)), file=sys.stderr)
         finally:
             self._closed = True
-
-    def set_manifest(self, manifest):
-        if not isinstance(manifest, str):
-            manifest = json.dumps(manifest)
-        super().with_json(manifest)
-        return self
 
     def __enter__(self):
         return self

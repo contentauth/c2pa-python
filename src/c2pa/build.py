@@ -1,11 +1,9 @@
 import os
 import sys
-import json
 import requests
 from pathlib import Path
 import zipfile
 import io
-from typing import Optional
 
 # Constants
 REPO_OWNER = "contentauth"
@@ -44,7 +42,8 @@ def download_artifact(url: str, platform_name: str) -> None:
 
 
 def download_artifacts() -> None:
-    """Main function to download artifacts. Can be called as a script or from hatch."""
+    """Main function to download artifacts.
+    Can be called as a script or from hatch."""
     try:
         # Create artifacts directory if it doesn't exist
         ARTIFACTS_DIR.mkdir(exist_ok=True)
@@ -78,7 +77,8 @@ def download_artifacts() -> None:
 
 
 def inject_version():
-    """Inject the version from pyproject.toml into src/c2pa/__init__.py as __version__."""
+    """Inject the version from pyproject.toml
+    into src/c2pa/__init__.py as __version__."""
     import toml
     pyproject_path = os.path.abspath(
         os.path.join(
