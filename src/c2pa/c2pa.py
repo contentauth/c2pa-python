@@ -467,10 +467,20 @@ def _convert_to_py_string(value) -> str:
     if value is None:
         return ""
 
-    # Convert to Python string and free the Rust-allocated memory
-    py_string = ctypes.cast(value, ctypes.c_char_p).value.decode('utf-8')
-    _lib.c2pa_string_free(value)
+    py_string = ""
+    ptr = ctypes.cast(value, ctypes.c_char_p)
 
+    # Only if we got a valid pointer
+    if ptr and ptr.value is not None:
+        try:
+            py_string = ptr.value.decode('utf-8', errors='replace')
+        except Exception:
+            py_string = ""
+
+        # Free the Rust-allocated memory
+        _lib.c2pa_string_free(value)
+
+    # In case of invalid pointer, no free (avoids double-free)
     return py_string
 
 
@@ -1407,7 +1417,7 @@ class Reader:
             The number of bytes written
 
         Raises:
-            C2paError: If there was an error writing the resource
+            C2paError: If there was an error writing the resource to stream
         """
         if not self._reader:
             raise C2paError("Reader is closed")
@@ -1452,6 +1462,9 @@ class Signer:
         """
         self._signer = signer_ptr
         self._closed = False
+
+        # Set only for signers which are callback signers
+        self._callback_cb = None
 
     @classmethod
     def from_info(cls, signer_info: C2paSignerInfo) -> 'Signer':
