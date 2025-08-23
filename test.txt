@@ -1,1 +1,0 @@
-python3 ./tests/test_unit_tests.py
