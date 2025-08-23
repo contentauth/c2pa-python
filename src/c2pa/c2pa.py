@@ -490,7 +490,7 @@ def _convert_to_py_string(value) -> str:
 
 def _parse_operation_result_for_error(
         result: ctypes.c_void_p | None,
-        check_error: bool = True) -> str | None:
+        check_error: bool = True) -> Optional[str]:
     """Helper function to handle string results from C2PA functions."""
     if not result:  # pragma: no cover
         if check_error:
