@@ -33,8 +33,9 @@ from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_s
 PROJECT_PATH = os.getcwd()
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 DEFAULT_TEST_FILE_NAME = "C.jpg"
+INGREDIENT_TEST_FILE_NAME = "A.jpg"
 DEFAULT_TEST_FILE = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
-INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "A.jpg")
+INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 class TestC2paSdk(unittest.TestCase):
@@ -816,7 +817,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         assert builder._builder is not None
 
         # Test adding ingredient
-        ingredient_json = '{"title": "Test Ingredient"}'
+        ingredient_json = '{ "title": "Test Ingredient" }'
         with open(self.testPath3, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
@@ -837,6 +838,12 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn(active_manifest_id, manifest_data["manifests"])
             active_manifest = manifest_data["manifests"][active_manifest_id]
 
+            # Verify thumbnail for manifest is here
+            self.assertIn("thumbnail", active_manifest)
+            thumbnail_data = active_manifest["thumbnail"]
+            self.assertIn("format", thumbnail_data)
+            self.assertIn("identifier", thumbnail_data)
+
             # Verify ingredients array exists in active manifest
             self.assertIn("ingredients", active_manifest)
             self.assertIsInstance(active_manifest["ingredients"], list)
@@ -847,6 +854,53 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertEqual(first_ingredient["title"], "Test Ingredient")
 
         builder.close()
+
+    def test_builder_sign_with_setting_no_thumbnail_and_ingredient(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # The following removes the manifest's thumbnail
+        load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+
+        # Test adding ingredient
+        ingredient_json = '{ "title": "Test Ingredient" }'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            #print(json_data)
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # There should be no thumbnail anymore here
+            self.assertNotIn("thumbnail", active_manifest)
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+
+        builder.close()
+
+        # Settings are global, so we reset to the default "true" here
+        load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
     def test_builder_sign_with_duplicate_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
@@ -1634,6 +1688,59 @@ class TestLegacyAPI(unittest.TestCase):
         self.assertEqual(ingredient_data["title"], DEFAULT_TEST_FILE_NAME)
         self.assertEqual(ingredient_data["format"], "image/jpeg")
         self.assertIn("thumbnail", ingredient_data)
+
+    def test_read_ingredient_file_who_has_no_manifest(self):
+        """Test reading a C2PA ingredient from a file."""
+        # Test reading ingredient from file with data_dir
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+
+        load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+
+        ingredient_json_with_dir = read_ingredient_file(self.testPath2, temp_data_dir)
+
+        # Verify some fields
+        ingredient_data = json.loads(ingredient_json_with_dir)
+        self.assertEqual(ingredient_data["title"], INGREDIENT_TEST_FILE_NAME)
+        self.assertEqual(ingredient_data["format"], "image/jpeg")
+        self.assertIn("thumbnail", ingredient_data)
+
+    def test_compare_read_ingredient_file_with_builder_added_ingredient(self):
+        """Test reading a C2PA ingredient from a file."""
+        # Test reading ingredient from file with data_dir
+        temp_data_dir = os.path.join(self.data_dir, "temp_data")
+        os.makedirs(temp_data_dir, exist_ok=True)
+
+        ingredient_json_with_dir = read_ingredient_file(self.testPath2, temp_data_dir)
+
+        # Ingredient fields from read_ingredient_file
+        ingredient_data = json.loads(ingredient_json_with_dir)
+
+        # Compare with ingredient added by Builder
+        builder = Builder.from_json(self.manifestDefinition)
+        # Only the title is needed (filename), since title not extracted or guessed from filename
+        ingredient_json = '{ "title" : "A.jpg" }'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+            # Get ingredient fields from signed manifest
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+            active_manifest_id = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+            only_ingredient = active_manifest["ingredients"][0]
+
+            self.assertEqual(ingredient_data["title"], only_ingredient["title"])
+            self.assertEqual(ingredient_data["format"], only_ingredient["format"])
+            self.assertEqual(ingredient_data["document_id"], only_ingredient["document_id"])
+            self.assertEqual(ingredient_data["instance_id"], only_ingredient["instance_id"])
+            self.assertEqual(ingredient_data["relationship"], only_ingredient["relationship"])
 
     def test_read_file(self):
         """Test reading a C2PA ingredient from a file."""

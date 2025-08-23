@@ -47,6 +47,10 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_supported_mime_types',
 ]
 
+# TODO Bindings:
+# c2pa_reader_is_embedded
+# c2pa_reader_remote_url
+
 
 def _validate_library_exports(lib):
     """Validate that all required functions are present in the loaded library.
@@ -579,7 +583,8 @@ def load_settings(settings: str, format: str = "json") -> None:
 
 def read_ingredient_file(
         path: Union[str, Path], data_dir: Union[str, Path]) -> str:
-    """Read a C2PA ingredient from a file.
+    """Read a file as C2PA ingredient.
+    This creates the JSON string that would be used as the ingredient JSON.
 
     .. deprecated:: 0.11.0
         This function is deprecated and will be removed in a future version.
@@ -588,6 +593,13 @@ def read_ingredient_file(
             ```python
             with Reader(path) as reader:
                 manifest_json = reader.json()
+            ```
+
+        To add ingredients to a manifest, please use the Builder class.
+        Example:
+            ```
+            with open(ingredient_file_path, 'rb') as f:
+                builder.add_ingredient(ingredient_json, "image/jpeg", f)
             ```
 
     Args:
@@ -603,7 +615,9 @@ def read_ingredient_file(
     warnings.warn(
         "The read_ingredient_file function is deprecated and will be "
         "removed in a future version. Please use Reader(path).json() for "
-        "reading C2PA metadata instead.",
+        "reading C2PA metadata instead, or "
+        "Builder.add_ingredient(json, format, stream) to add ingredients "
+        "to a manifest.",
         DeprecationWarning,
         stacklevel=2,
     )
