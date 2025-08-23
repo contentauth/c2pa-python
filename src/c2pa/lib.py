@@ -10,7 +10,7 @@ import ctypes
 import logging
 import platform
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 from enum import Enum
 
 # Debug flag for library loading
@@ -31,7 +31,7 @@ class CPUArchitecture(Enum):
     X86_64 = "x86_64"
 
 
-def get_platform_identifier(cpu_arch: Optional[CPUArchitecture] = None) -> str:
+def get_platform_identifier() -> str:
     """Get the full platform identifier (arch-os) for the current system,
     matching the downloaded identifiers used by the Github publisher.
 
@@ -50,15 +50,7 @@ def get_platform_identifier(cpu_arch: Optional[CPUArchitecture] = None) -> str:
     system = platform.system().lower()
 
     if system == "darwin":
-        if cpu_arch is None:
-            return "universal-apple-darwin"
-        elif cpu_arch == CPUArchitecture.AARCH64:
-            return "aarch64-apple-darwin"
-        elif cpu_arch == CPUArchitecture.X86_64:
-            return "x86_64-apple-darwin"
-        else:
-            raise ValueError(
-                f"Unsupported CPU architecture for macOS: {cpu_arch}")
+        return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
@@ -122,7 +114,8 @@ def _load_single_library(lib_name: str,
         The loaded library or None if loading failed
     """
     if DEBUG_LIBRARY_LOADING:
-        logger.info(f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
+        logger.info(
+            f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
     current_arch = _get_architecture()
     if DEBUG_LIBRARY_LOADING:
         logger.info(f"Current architecture: {current_arch}")
@@ -139,10 +132,12 @@ def _load_single_library(lib_name: str,
             except Exception as e:
                 error_msg = str(e)
                 if "incompatible architecture" in error_msg:
-                    logger.error(f"Architecture mismatch: Library at {lib_path} is not compatible with current architecture {current_arch}")
+                    logger.error(
+                        f"Architecture mismatch: Library at {lib_path} is not compatible with current architecture {current_arch}")
                     logger.error(f"Error details: {error_msg}")
                 else:
-                    logger.error(f"Failed to load library from {lib_path}: {e}")
+                    logger.error(
+                        f"Failed to load library from {lib_path}: {e}")
         else:
             logger.debug(f"Library not found at: {lib_path}")
     return None
@@ -200,9 +195,12 @@ def dynamically_load_library(
     Load the dynamic library containing the C-API based on the platform.
 
     Args:
-        lib_name: Optional specific library name to load. If provided, only this library will be loaded.
-        This enables to potentially load wrapper libraries of the C-API that may have an other name
-        (the presence of required symbols will nevertheless be verified once the library is loaded).
+        lib_name: Optional specific library name to load.
+          If provided, only this library will be loaded.
+        This enables to potentially load wrapper libraries
+        of the C-API that may have an other name
+        (the presence of required symbols will nevertheless
+        be verified once the library is loaded).
 
     Returns:
         The loaded library or None if loading failed
@@ -233,13 +231,14 @@ def dynamically_load_library(
             if lib:
                 return lib
             else:
-                logger.error(f"Could not find library {env_lib_name} in any of the search paths")
+                logger.error(
+                    f"Could not find library {env_lib_name} in any of the search paths")
                 # Continue with normal loading if environment variable library
                 # name fails
         except Exception as e:
             logger.error(f"Failed to load library from C2PA_LIBRARY_NAME: {e}")
-            # Continue with normal loading if environment variable library name
-            # fails
+            # Continue with normal loading if
+            # environment variable library name fails
 
     possible_paths = _get_possible_search_paths()
 
@@ -249,15 +248,22 @@ def dynamically_load_library(
         if not lib:
             platform_id = get_platform_identifier()
             current_arch = _get_architecture()
-            logger.error(f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
-            logger.error(f"Platform: {platform_id}, Architecture: {current_arch}")
-            raise RuntimeError(f"Could not find {lib_name} in any of the search paths (Platform: {platform_id}, Architecture: {current_arch})")
+            logger.error(
+                f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+            logger.error(
+                f"Platform: {platform_id}, Architecture: {current_arch}")
+            raise RuntimeError(
+                f"Could not find {lib_name} in any of the search paths (Platform: {platform_id}, Architecture: {current_arch})")
         return lib
 
     # Default path (no library name provided in the environment)
     c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
     if not c2pa_lib:
-        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
-        raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
+        logger.error(
+            f"Could not find {c2pa_lib_name} in any of the search paths: {
+                [
+                    str(p) for p in possible_paths]}")
+        raise RuntimeError(
+            f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib

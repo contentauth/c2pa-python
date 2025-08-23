@@ -52,7 +52,7 @@ def _validate_library_exports(lib):
 
     1. Security:
        - Prevents loading of libraries that might be missing critical functions
-       - Ensures the library has all expected functionality before any code execution
+       - Ensures the library has expected functionality before code execution
        - Helps detect tampered or incomplete libraries
 
     2. Reliability:
@@ -61,7 +61,8 @@ def _validate_library_exports(lib):
        - Ensures all required functionality is available before use
 
     3. Version Compatibility:
-       - Helps detect version mismatches where the library doesn't have all expected functions
+       - Helps detect version mismatches where the library
+          doesn't have all expected functions
        - Prevents partial functionality that could lead to undefined behavior
        - Ensures the library matches the expected API version
 
@@ -69,9 +70,10 @@ def _validate_library_exports(lib):
         lib: The loaded library object
 
     Raises:
-        ImportError: If any required function is missing, with a detailed message listing
-                    the missing functions. This helps diagnose issues with the library
-                    installation or version compatibility.
+        ImportError: If any required function is missing,
+                    with a detailed message listing
+                    the missing functions. This helps diagnose issues
+                    with the library installation or version compatibility.
     """
     missing_functions = []
     for func_name in _REQUIRED_FUNCTIONS:
@@ -80,8 +82,11 @@ def _validate_library_exports(lib):
 
     if missing_functions:
         raise ImportError(
-            f"Library is missing required functions symbols: {', '.join(missing_functions)}\n"
-            "This could indicate an incomplete or corrupted library installation or a version mismatch between the library and this Python wrapper"
+            f"Library is missing required function symbols: "
+            f"{', '.join(missing_functions)}\n"
+            "This could indicate an incomplete or corrupted library "
+            "installation or a version mismatch between the library "
+            "and this Python wrapper."
         )
 
 
@@ -163,9 +168,10 @@ class C2paSigner(ctypes.Structure):
 class C2paStream(ctypes.Structure):
     """A C2paStream is a Rust Read/Write/Seek stream that can be created in C.
 
-    This class represents a low-level stream interface that bridges Python and Rust/C code.
-    It implements the Rust Read/Write/Seek traits in C, allowing for efficient data transfer
-    between Python and the C2PA library without unnecessary copying.
+    This class represents a low-level stream interface that bridges Python
+    and Rust/C code. It implements the Rust Read/Write/Seek traits in C,
+    allowing for efficient data transfer between Python and the C2PA library
+    without unnecessary copying.
 
     The stream is used for various operations including:
     - Reading manifest data from files
@@ -173,14 +179,14 @@ class C2paStream(ctypes.Structure):
     - Handling binary resources
     - Managing ingredient data
 
-    The structure contains function pointers that implement the stream operations:
+    The structure contains function pointers that implement stream operations:
     - reader: Function to read data from the stream
     - seeker: Function to change the stream position
     - writer: Function to write data to the stream
     - flusher: Function to flush any buffered data
 
-    This is a critical component for performance as it allows direct memory access
-    between Python and the C2PA library without intermediate copies.
+    This is a critical component for performance as it allows direct memory
+    access between Python and the C2PA library without intermediate copies.
     """
     _fields_ = [
         # Opaque context pointer for the stream
@@ -304,9 +310,11 @@ _setup_function(
             ctypes.c_ubyte)], None)
 _setup_function(
     _lib.c2pa_builder_data_hashed_placeholder, [
-        ctypes.POINTER(C2paBuilder), ctypes.c_size_t, ctypes.c_char_p, ctypes.POINTER(
-            ctypes.POINTER(
-                ctypes.c_ubyte))], ctypes.c_int64)
+        ctypes.POINTER(C2paBuilder), ctypes.c_size_t, ctypes.c_char_p,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))
+    ],
+    ctypes.c_int64,
+)
 
 # Set up additional function prototypes
 _setup_function(_lib.c2pa_builder_sign_data_hashed_embeddable,
@@ -419,13 +427,16 @@ class C2paError(Exception):
 
 
 class _StringContainer:
-    """Container class to hold encoded strings and prevent them from being garbage collected.
+    """Container class to hold encoded strings,
+    and prevent them from being garbage collected.
 
-    This class is used to store encoded strings that need to remain in memory
-    while being used by C functions. The strings are stored as instance attributes
+    This class is used to store encoded strings
+    that need to remain in memory while being used by C functions.
+    The strings are stored as instance attributes,
     to prevent them from being garbage collected.
 
-    This is an internal implementation detail and should not be used outside this module.
+    This is an internal implementation detail
+    and should not be used outside this module.
     """
 
     def __init__(self):
@@ -444,7 +455,6 @@ def _parse_operation_result_for_error(
                 error_str = ctypes.cast(
                     error, ctypes.c_char_p).value.decode('utf-8')
                 _lib.c2pa_string_free(error)
-                print("## error_str:", error_str)
                 parts = error_str.split(' ', 1)
                 if len(parts) > 1:
                     error_type, message = parts
@@ -503,8 +513,6 @@ def sdk_version() -> str:
 def version() -> str:
     """Get the C2PA library version."""
     result = _lib.c2pa_version()
-    # print(f"Type: {type(result)}")
-    # print(f"Address: {hex(result)}")
     py_string = ctypes.cast(result, ctypes.c_char_p).value.decode("utf-8")
     _lib.c2pa_string_free(result)  # Free the Rust-allocated memory
     return py_string
@@ -554,10 +562,12 @@ def read_ingredient_file(
         C2paError: If there was an error reading the file
     """
     warnings.warn(
-        "The read_ingredient_file function is deprecated and will be removed in a future version."
-        "Please use Reader(path).json() for reading C2PA metadata instead.",
+        "The read_ingredient_file function is deprecated and will be "
+        "removed in a future version. Please use Reader(path).json() for "
+        "reading C2PA metadata instead.",
         DeprecationWarning,
-        stacklevel=2)
+        stacklevel=2,
+    )
 
     container = _StringContainer()
 
@@ -593,10 +603,12 @@ def read_file(path: Union[str, Path],
         C2paError: If there was an error reading the file
     """
     warnings.warn(
-        "The read_file function is deprecated and will be removed in a future version."
-        "Please use the Reader class for reading C2PA metadata instead.",
+        "The read_file function is deprecated and will be removed in a "
+        "future version. Please use the Reader class for reading C2PA "
+        "metadata instead.",
         DeprecationWarning,
-        stacklevel=2)
+        stacklevel=2,
+    )
 
     container = _StringContainer()
 
@@ -643,21 +655,36 @@ def sign_file(
     """Sign a file with a C2PA manifest.
     For now, this function is left here to provide a backwards-compatible API.
 
+    .. deprecated:: 0.13.0
+        This function is deprecated and will be removed in a future version.
+        Use :meth:`Builder.sign` instead.
+
     Args:
         source_path: Path to the source file
         dest_path: Path to write the signed file to
         manifest: The manifest JSON string
         signer_or_info: Either a signer configuration or a signer object
-        return_manifest_as_bytes: If True, return manifest bytes instead of JSON string
+        return_manifest_as_bytes: If True, return manifest bytes instead
+        of JSON string
 
     Returns:
-        The signed manifest as a JSON string or bytes, depending on return_manifest_as_bytes
+        The signed manifest as a JSON string or bytes, depending
+        on return_manifest_as_bytes
 
     Raises:
         C2paError: If there was an error signing the file
-        C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
+        C2paError.Encoding: If any of the string inputs contain
+          invalid UTF-8 characters
         C2paError.NotSupported: If the file type cannot be determined
     """
+
+    warnings.warn(
+        "The sign_file function is deprecated and will be removed in a "
+        "future version. Please use the Builder object and Builder.sign() "
+        "instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     try:
         # Determine if we have a signer or signer info
@@ -765,10 +792,11 @@ class Stream:
         """Initialize a new Stream wrapper around a file-like object.
 
         Args:
-            file: A file-like object that implements read, write, seek, tell, and flush methods
+            file: A file-like object that implements
+              read, write, seek, tell, and flush methods
 
         Raises:
-            TypeError: If the file object doesn't implement all required methods
+            TypeError: The file object doesn't implement all required methods
         """
         # Initialize _closed first to prevent AttributeError
         # during garbage collection
@@ -790,15 +818,17 @@ class Stream:
         if missing_methods:
             raise TypeError(
                 "Object must be a stream-like object with methods: {}. Missing: {}".format(
-                    ', '.join(required_methods),
-                    ', '.join(missing_methods)))
+                    ", ".join(required_methods),
+                    ", ".join(missing_methods),
+                )
+            )
 
         self._file = file
 
         def read_callback(ctx, data, length):
             """Callback function for reading data from the Python stream.
 
-            This function is called by the C2PA library when it needs to read data.
+            This function is called by C2PA library when it needs to read data.
             It handles:
             - Stream state validation
             - Memory safety
@@ -814,11 +844,9 @@ class Stream:
                 Number of bytes read, or -1 on error
             """
             if not self._initialized or self._closed:
-                # print(self._error_messages['read'], file=sys.stderr)
                 return -1
             try:
                 if not data or length <= 0:
-                    # print(self._error_messages['memory_error'].format("Invalid read parameters"), file=sys.stderr)
                     return -1
 
                 buffer = self._file.read(length)
@@ -834,8 +862,7 @@ class Stream:
                 # Direct memory copy for better performance
                 ctypes.memmove(data, buffer_view, actual_length)
                 return actual_length
-            except Exception as e:
-                # print(self._error_messages['read_error'].format(str(e)), file=sys.stderr)
+            except Exception:
                 return -1
 
         def seek_callback(ctx, offset, whence):
@@ -856,19 +883,17 @@ class Stream:
                 New position in the stream, or -1 on error
             """
             if not self._initialized or self._closed:
-                # print(self._error_messages['seek'], file=sys.stderr)
                 return -1
             try:
                 self._file.seek(offset, whence)
                 return self._file.tell()
-            except Exception as e:
-                # print(self._error_messages['seek_error'].format(str(e)), file=sys.stderr)
+            except Exception:
                 return -1
 
         def write_callback(ctx, data, length):
             """Callback function for writing data to the Python stream.
 
-            This function is called by the C2PA library when it needs to write data.
+            This function is called by C2PA library when needing to write data.
             It handles:
             - Stream state validation
             - Memory safety
@@ -884,11 +909,9 @@ class Stream:
                 Number of bytes written, or -1 on error
             """
             if not self._initialized or self._closed:
-                # print(self._error_messages['write'], file=sys.stderr)
                 return -1
             try:
                 if not data or length <= 0:
-                    # print(self._error_messages['memory_error'].format("Invalid write parameters"), file=sys.stderr)
                     return -1
 
                 # Create a temporary buffer to safely handle the data
@@ -902,8 +925,7 @@ class Stream:
                 finally:
                     # Ensure temporary buffer is cleared
                     ctypes.memset(temp_buffer, 0, length)
-            except Exception as e:
-                # print(self._error_messages['write_error'].format(str(e)), file=sys.stderr)
+            except Exception:
                 return -1
 
         def flush_callback(ctx):
@@ -921,13 +943,11 @@ class Stream:
                 0 on success, -1 on error
             """
             if not self._initialized or self._closed:
-                # print(self._error_messages['flush'], file=sys.stderr)
                 return -1
             try:
                 self._file.flush()
                 return 0
-            except Exception as e:
-                # print(self._error_messages['flush_error'].format(str(e)), file=sys.stderr)
+            except Exception:
                 return -1
 
         # Create callbacks that will be kept alive by being instance attributes
@@ -968,8 +988,9 @@ class Stream:
     def close(self):
         """Release the stream resources.
 
-        This method ensures all resources are properly cleaned up, even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup completes.
+        This method ensures all resources are properly cleaned up,
+        even if errors occur during cleanup.
+        Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
 
@@ -1051,12 +1072,13 @@ class Reader:
 
         Args:
             format_or_path: The format or path to read from
-            stream: Optional stream to read from (any Python stream-like object)
+            stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
         Raises:
             C2paError: If there was an error creating the reader
-            C2paError.Encoding: If any of the string inputs contain invalid UTF-8 characters
+            C2paError.Encoding: If any of the string inputs
+              contain invalid UTF-8 characters
         """
 
         self._reader = None
@@ -1098,7 +1120,10 @@ class Reader:
                     if error:
                         raise C2paError(error)
                     raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
+                            )
+                        )
 
                 # Store the file to close it later
                 self._file = file
@@ -1130,11 +1155,13 @@ class Reader:
                         len(manifest_data))(
                         *
                         manifest_data)
-                    self._reader = _lib.c2pa_reader_from_manifest_data_and_stream(
-                        self._format_str,
-                        self._own_stream._stream,
-                        manifest_array,
-                        len(manifest_data)
+                    self._reader = (
+                        _lib.c2pa_reader_from_manifest_data_and_stream(
+                            self._format_str,
+                            self._own_stream._stream,
+                            manifest_array,
+                            len(manifest_data),
+                        )
                     )
 
                 if not self._reader:
@@ -1145,7 +1172,10 @@ class Reader:
                     if error:
                         raise C2paError(error)
                     raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
+                        )
+                    )
 
                 self._file = file
             except Exception as e:
@@ -1174,8 +1204,14 @@ class Reader:
                         len(manifest_data))(
                         *
                         manifest_data)
-                    self._reader = _lib.c2pa_reader_from_manifest_data_and_stream(
-                        self._format_str, stream_obj._stream, manifest_array, len(manifest_data))
+                    self._reader = (
+                        _lib.c2pa_reader_from_manifest_data_and_stream(
+                            self._format_str,
+                            stream_obj._stream,
+                            manifest_array,
+                            len(manifest_data)
+                        )
+                    )
 
                 if not self._reader:
                     error = _parse_operation_result_for_error(
@@ -1183,7 +1219,10 @@ class Reader:
                     if error:
                         raise C2paError(error)
                     raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
+                        )
+                    )
 
     def __enter__(self):
         return self
@@ -1194,8 +1233,9 @@ class Reader:
     def close(self):
         """Release the reader resources.
 
-        This method ensures all resources are properly cleaned up, even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup completes.
+        This method ensures all resources are properly cleaned up,
+        even if errors occur during cleanup.
+        Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
 
@@ -1367,16 +1407,23 @@ class Signer:
 
         Raises:
             C2paError: If there was an error creating the signer
-            C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
+            C2paError.Encoding: If the certificate data or TSA URL
+              contains invalid UTF-8 characters
         """
         # Validate inputs before creating
         if not certs:
             raise C2paError(
-                cls._ERROR_MESSAGES['invalid_certs'].format("Missing certificate data"))
+                cls._ERROR_MESSAGES['invalid_certs'].format(
+                    "Missing certificate data"
+                )
+            )
 
         if tsa_url and not tsa_url.startswith(('http://', 'https://')):
             raise C2paError(
-                cls._ERROR_MESSAGES['invalid_tsa'].format("Invalid TSA URL format"))
+                cls._ERROR_MESSAGES['invalid_tsa'].format(
+                    "Invalid TSA URL format"
+                )
+            )
 
         # Create a wrapper callback that handles errors and memory management
         def wrapped_callback(
@@ -1386,11 +1433,18 @@ class Signer:
                 signed_bytes_ptr,
                 signed_len):
             # Returns -1 on error as it is what the native code expects.
-            # The reason is that otherwise we ping-pong errors between native code and Python code,
-            # which can become tedious in handling. So we let the native code deal with it and
+            # The reason is that otherwise we ping-pong errors
+            # between native code and Python code,
+            # which can become tedious in handling.
+            # So we let the native code deal with it and
             # raise the errors accordingly, since it already does checks.
             try:
-                if not data_ptr or data_len <= 0 or not signed_bytes_ptr or signed_len <= 0:
+                if (
+                    not data_ptr
+                    or data_len <= 0
+                    or not signed_bytes_ptr
+                    or signed_len <= 0
+                ):
                     # Error: invalid input, invalid so return -1,
                     # native code will handle it!
                     return -1
@@ -1486,8 +1540,9 @@ class Signer:
     def close(self):
         """Release the signer resources.
 
-        This method ensures all resources are properly cleaned up, even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup completes.
+        This method ensures all resources are properly cleaned up,
+        even if errors occur during cleanup.
+        Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
         if self._closed:
@@ -1574,7 +1629,7 @@ class Builder:
 
         Raises:
             C2paError: If there was an error creating the builder
-            C2paError.Encoding: If the manifest JSON contains invalid UTF-8 characters
+            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
         self._builder = None
@@ -1601,7 +1656,10 @@ class Builder:
             if error:
                 raise C2paError(error)
             raise C2paError(
-                Builder._ERROR_MESSAGES['builder_error'].format("Unknown error"))
+                Builder._ERROR_MESSAGES['builder_error'].format(
+                    "Unknown error"
+                )
+            )
 
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
@@ -1623,13 +1681,14 @@ class Builder:
         """Create a new Builder from an archive stream.
 
         Args:
-            stream: The stream containing the archive (any Python stream-like object)
+            stream: The stream containing the archive
+                (any Python stream-like object)
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating the builder from the archive
+            C2paError: If there was an error creating the builder from archive
         """
         builder = cls({})
         stream_obj = Stream(stream)
@@ -1651,8 +1710,9 @@ class Builder:
     def close(self):
         """Release the builder resources.
 
-        This method ensures all resources are properly cleaned up, even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup completes.
+        This method ensures all resources are properly cleaned up,
+        even if errors occur during cleanup.
+        Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
         # Track if we've already cleaned up
@@ -1695,7 +1755,8 @@ class Builder:
     def set_no_embed(self):
         """Set the no-embed flag.
 
-        When set, the builder will not embed a C2PA manifest store into the asset when signing.
+        When set, the builder will not embed a C2PA manifest store
+        into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
         if not self._builder:
@@ -1705,7 +1766,7 @@ class Builder:
     def set_remote_url(self, remote_url: str):
         """Set the remote URL.
 
-        When set, the builder will embed a remote URL into the asset when signing.
+        When set, the builder embeds a remote URL into the asset when signing.
         This is useful when creating cloud based Manifests.
 
         Args:
@@ -1732,7 +1793,8 @@ class Builder:
 
         Args:
             uri: The URI to identify the resource
-            stream: The stream containing the resource data (any Python stream-like object)
+            stream: The stream containing the resource data
+              (any Python stream-like object)
 
         Raises:
             C2paError: If there was an error adding the resource
@@ -1750,20 +1812,26 @@ class Builder:
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    Builder._ERROR_MESSAGES['resource_error'].format("Unknown error"))
+                    Builder._ERROR_MESSAGES['resource_error'].format(
+                        "Unknown error"
+                    )
+                )
 
     def add_ingredient(self, ingredient_json: str, format: str, source: Any):
         """Add an ingredient to the builder (facade method).
-        The added ingredient's source should be a stream-like object, eg. and open file.
+        The added ingredient's source should be a stream-like object
+        (for instance, a file opened as stream).
 
         Args:
             ingredient_json: The JSON ingredient definition
             format: The MIME type or extension of the ingredient
-            source: The stream containing the ingredient data (any Python stream-like object)
+            source: The stream containing the ingredient data
+              (any Python stream-like object)
 
         Raises:
             C2paError: If there was an error adding the ingredient
-            C2paError.Encoding: If the ingredient JSON contains invalid UTF-8 characters
+            C2paError.Encoding: If the ingredient JSON contains
+              invalid UTF-8 characters
         """
         return self.add_ingredient_from_stream(ingredient_json, format, source)
 
@@ -1778,11 +1846,13 @@ class Builder:
         Args:
             ingredient_json: The JSON ingredient definition
             format: The MIME type or extension of the ingredient
-            source: The stream containing the ingredient data (any Python stream-like object)
+            source: The stream containing the ingredient data
+              (any Python stream-like object)
 
         Raises:
             C2paError: If there was an error adding the ingredient
-            C2paError.Encoding: If the ingredient JSON or format contains invalid UTF-8 characters
+            C2paError.Encoding: If the ingredient JSON or format
+              contains invalid UTF-8 characters
         """
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
@@ -1796,15 +1866,24 @@ class Builder:
                     str(e)))
 
         with Stream(source) as source_stream:
-            result = _lib.c2pa_builder_add_ingredient_from_stream(
-                self._builder, ingredient_str, format_str, source_stream._stream)
+            result = (
+                _lib.c2pa_builder_add_ingredient_from_stream(
+                    self._builder,
+                    ingredient_str,
+                    format_str,
+                    source_stream._stream
+                )
+            )
 
             if result != 0:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    Builder._ERROR_MESSAGES['ingredient_error'].format("Unknown error"))
+                    Builder._ERROR_MESSAGES['ingredient_error'].format(
+                        "Unknown error"
+                    )
+                )
 
     def add_ingredient_from_file_path(
             self,
@@ -1821,18 +1900,21 @@ class Builder:
         Args:
             ingredient_json: The JSON ingredient definition
             format: The MIME type or extension of the ingredient
-            filepath: The path to the file containing the ingredient data (can be a string or Path object)
+            filepath: The path to the file containing the ingredient data
+              (can be a string or Path object)
 
         Raises:
             C2paError: If there was an error adding the ingredient
-            C2paError.Encoding: If the ingredient JSON or format contains invalid UTF-8 characters
+            C2paError.Encoding: If the ingredient JSON or format
+              contains invalid UTF-8 characters
             FileNotFoundError: If the file at the specified path does not exist
         """
         warnings.warn(
-            "add_ingredient_from_file_path is deprecated and will be removed in a future version. "
-            "Use add_ingredient with a file stream instead.",
+            "add_ingredient_from_file_path is deprecated and will "
+            "be removed in a future version. Use add_ingredient "
+            "with a file stream instead.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
         try:
@@ -1841,7 +1923,8 @@ class Builder:
 
             # Does the stream handling to use add_ingredient_from_stream
             with open(filepath_str, 'rb') as file_stream:
-                self.add_ingredient_from_stream(ingredient_json, format, file_stream)
+                self.add_ingredient_from_stream(
+                    ingredient_json, format, file_stream)
         except FileNotFoundError:
             raise FileNotFoundError(f"File not found: {filepath}")
         except Exception as e:
@@ -1851,7 +1934,8 @@ class Builder:
         """Write an archive of the builder to a stream.
 
         Args:
-            stream: The stream to write the archive to (any Python stream-like object)
+            stream: The stream to write the archive to
+              (any Python stream-like object)
 
         Raises:
             C2paError: If there was an error writing the archive
@@ -1868,7 +1952,10 @@ class Builder:
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    Builder._ERROR_MESSAGES['archive_error'].format("Unknown error"))
+                  Builder._ERROR_MESSAGES["archive_error"].format(
+                      "Unknown error"
+                  )
+                )
 
     def _sign_internal(
             self,
@@ -1876,7 +1963,7 @@ class Builder:
             format: str,
             source_stream: Stream,
             dest_stream: Stream) -> bytes:
-        """Internal signing logic shared between sign() and sign_file() methods,
+        """Internal signing logic shared between sign() and sign_file() methods
         to use same native calls but expose different API surface.
 
         Args:
@@ -2073,13 +2160,15 @@ def create_signer(
 
     Raises:
         C2paError: If there was an error creating the signer
-        C2paError.Encoding: If the certificate data or TSA URL contains invalid UTF-8 characters
+        C2paError.Encoding: If the certificate data or TSA URL
+          contains invalid UTF-8 characters
     """
     warnings.warn(
-        "The create_signer function is deprecated and will be removed in a future version."
-        "Please use Signer.from_callback() instead.",
+        "The create_signer function is deprecated and will be removed in a "
+        "future version. Please use Signer.from_callback() instead.",
         DeprecationWarning,
-        stacklevel=2)
+        stacklevel=2,
+    )
 
     return Signer.from_callback(callback, alg, certs, tsa_url)
 
@@ -2105,10 +2194,11 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
         C2paError: If there was an error creating the signer
     """
     warnings.warn(
-        "The create_signer_from_info function is deprecated and will be removed in a future version."
-        "Please use Signer.from_info() instead.",
+        "The create_signer_from_info function is deprecated and will be "
+        "removed in a future version. Please use Signer.from_info() instead.",
         DeprecationWarning,
-        stacklevel=2)
+        stacklevel=2,
+    )
 
     return Signer.from_info(signer_info)
 
@@ -2125,7 +2215,7 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
 
     Raises:
         C2paError: If there was an error signing the data
-        C2paError.Encoding: If the private key contains invalid UTF-8 characters
+        C2paError.Encoding: If the private key contains invalid UTF-8 chars
     """
     data_array = (ctypes.c_ubyte * len(data))(*data)
     try:

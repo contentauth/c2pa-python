@@ -103,7 +103,8 @@ class TestReaderWithThreads(unittest.TestCase):
             '.avi': 'video/x-msvideo',
             '.mp3': 'audio/mpeg',
             '.m4a': 'audio/mp4',
-            '.wav': 'audio/wav'
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
         }
 
         # Skip system files
