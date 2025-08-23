@@ -284,7 +284,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
             self.key = key_file.read()
 
-        # Create a local Ps256 signer with certs and a timestamp server
+        # Create a local Es256 signer with certs and a timestamp server
         self.signer_info = C2paSignerInfo(
             alg=b"es256",
             sign_cert=self.certs,
@@ -1177,6 +1177,34 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:
                 reader = Reader("image/jpeg", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_video(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed_output.mp4")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinition)
+            builder.sign_file(
+                os.path.join(FIXTURES_DIR, "video1.mp4"),
+                output_path,
+                self.signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("video/mp4", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)

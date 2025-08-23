@@ -175,7 +175,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
             self.key = key_file.read()
 
-        # Create a local Ps256 signer with certs and a timestamp server
+        # Create a local Es256 signer with certs and a timestamp server
         self.signer_info = C2paSignerInfo(
             alg=b"es256",
             sign_cert=self.certs,
