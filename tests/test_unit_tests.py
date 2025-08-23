@@ -44,15 +44,29 @@ class TestC2paSdk(unittest.TestCase):
 
 class TestReader(unittest.TestCase):
     def setUp(self):
-        # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
+
+    def test_can_retrieve_reader_supported_mimetypes(self):
+        result1 = Reader.get_supported_mime_types()
+        self.assertTrue(len(result1) > 0)
+
+        # Cache hit
+        result2 = Reader.get_supported_mime_types()
+        self.assertTrue(len(result2) > 0)
+
+        self.assertEqual(result1, result2)
 
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_reader_detects_unsupported_mimetype_on_stream(self):
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error.NotSupported):
+              Reader("mimetype/does-not-exist", file)
 
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
@@ -66,23 +80,30 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_stream_read_string_stream_mimetype_not_supported(self):
+        with self.assertRaises(Error.NotSupported):
+            # xyz is actually an extension that is recognized
+            # as mimetype chemical/x-xyz
+            Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
+
+    def test_stream_read_string_stream_mimetype_not_recognized(self):
+        with self.assertRaises(Error.NotSupported):
+            Reader(os.path.join(FIXTURES_DIR, "C.test"))
+
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_reader_detects_unsupported_mimetype_on_file(self):
+        with self.assertRaises(Error.NotSupported):
+            Reader("mimetype/does-not-exist", self.testPath)
 
     def test_stream_read_filepath_as_stream_and_parse(self):
         with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
-
-    def test_settings_trust(self):
-        # load_settings_file("tests/fixtures/settings.toml")
-        with open(self.testPath, "rb") as file:
-            reader = Reader("image/jpeg", file)
-            json_data = reader.json()
-            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_reader_double_close(self):
         with open(self.testPath, "rb") as file:
@@ -171,6 +192,7 @@ class TestReader(unittest.TestCase):
                 with open(file_path, "rb") as file:
                     reader = Reader(mime_type, file)
                     json_data = reader.json()
+                    reader.close()
                     self.assertIsInstance(json_data, str)
                     # Verify the manifest contains expected fields
                     manifest = json.loads(json_data)
@@ -215,6 +237,7 @@ class TestReader(unittest.TestCase):
                     parsed_extension = ext[1:]
                     reader = Reader(parsed_extension, file)
                     json_data = reader.json()
+                    reader.close()
                     self.assertIsInstance(json_data, str)
                     # Verify the manifest contains expected fields
                     manifest = json.loads(json_data)
@@ -339,6 +362,16 @@ class TestBuilderWithSigner(unittest.TestCase):
             return signature
         self.callback_signer_es256 = callback_signer_es256
 
+    def test_can_retrieve_builder_supported_mimetypes(self):
+        result1 = Builder.get_supported_mime_types()
+        self.assertTrue(len(result1) > 0)
+
+        # Cache-hit
+        result2 = Builder.get_supported_mime_types()
+        self.assertTrue(len(result2) > 0)
+
+        self.assertEqual(result1, result2)
+
     def test_reserve_size(self):
         signer_info = C2paSignerInfo(
             alg=b"es256",
@@ -447,11 +480,141 @@ class TestBuilderWithSigner(unittest.TestCase):
         with self.assertRaises(Error):
             builder.set_no_embed()
 
-    def test_streams_sign(self):
+    def test_streams_sign_recover_bytes_only(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
+            self.assertIsNotNone(manifest_bytes)
+
+    def test_streams_sign_with_es256_alg_v1_manifest(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinition)
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
+    def test_streams_sign_with_es256_alg(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
+    def test_streams_sign_with_es256_alg_2(self):
+        with open(self.testPath2, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
+    def test_sign_with_ed25519_alg(self):
+        with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "ed25519.pem"), "rb") as key_file:
+            key = key_file.read()
+
+        signer_info = C2paSignerInfo(
+            alg=b"ed25519",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+            builder.sign(signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
+    def test_sign_with_ed25519_alg_2(self):
+        with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "ed25519.pem"), "rb") as key_file:
+            key = key_file.read()
+
+        signer_info = C2paSignerInfo(
+            alg=b"ed25519",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+
+        with open(self.testPath2, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+            builder.sign(signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
+    def test_sign_with_ps256_alg(self):
+        with open(os.path.join(self.data_dir, "ps256.pub"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "ps256.pem"), "rb") as key_file:
+            key = key_file.read()
+
+        signer_info = C2paSignerInfo(
+            alg=b"ps256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+            builder.sign(signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
+
+    def test_sign_with_ps256_alg_2(self):
+        with open(os.path.join(self.data_dir, "ps256.pub"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "ps256.pem"), "rb") as key_file:
+            key = key_file.read()
+
+        signer_info = C2paSignerInfo(
+            alg=b"ps256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+
+        with open(self.testPath2, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+            builder.sign(signer, "image/jpeg", file, output)
             output.seek(0)
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
@@ -475,6 +638,25 @@ class TestBuilderWithSigner(unittest.TestCase):
             archive.close()
             output.close()
 
+    def test_archive_sign_with_added_ingredient(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            archive = io.BytesIO(bytearray())
+            builder.to_archive(archive)
+            builder = Builder.from_archive(archive)
+            output = io.BytesIO(bytearray())
+            ingredient_json = '{"test": "ingredient"}'
+            with open(self.testPath, 'rb') as f:
+                builder.add_ingredient(ingredient_json, "image/jpeg", f)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            archive.close()
+            output.close()
+
     def test_remote_sign(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinition)
@@ -486,12 +668,27 @@ class TestBuilderWithSigner(unittest.TestCase):
             # When set_no_embed() is used, no manifest should be embedded in the file
             # So reading from the file should fail
             with self.assertRaises(Error):
-                reader = Reader("image/jpeg", output)
+                Reader("image/jpeg", output)
             output.close()
 
     def test_remote_sign_using_returned_bytes(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinition)
+            builder.set_no_embed()
+            with io.BytesIO() as output_buffer:
+                manifest_data = builder.sign(
+                    self.signer, "image/jpeg", file, output_buffer)
+                output_buffer.seek(0)
+                read_buffer = io.BytesIO(output_buffer.getvalue())
+
+                with Reader("image/jpeg", read_buffer, manifest_data) as reader:
+                    manifest_data = reader.json()
+                    self.assertIn("Python Test", manifest_data)
+                    self.assertNotIn("validation_status", manifest_data)
+
+    def test_remote_sign_using_returned_bytes_V2(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
             builder.set_no_embed()
             with io.BytesIO() as output_buffer:
                 manifest_data = builder.sign(
@@ -556,11 +753,13 @@ class TestBuilderWithSigner(unittest.TestCase):
                         builder = Builder(self.manifestDefinition)
                         output = io.BytesIO(bytearray())
                         builder.sign(self.signer, mime_type, file, output)
+                        builder.close()
                         output.seek(0)
                         reader = Reader(mime_type, output)
                         json_data = reader.json()
                         self.assertIn("Python Test", json_data)
                         self.assertNotIn("validation_status", json_data)
+                        reader.close()
                         output.close()
                 except Error.NotSupported:
                     continue
@@ -860,7 +1059,6 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_sign_single(self):
         """Test signing a file using the sign_file method."""
-        # Create a temporary directory for the test
         builder = Builder(self.manifestDefinition)
         output = io.BytesIO(bytearray())
 
@@ -913,7 +1111,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            manifest_bytes = builder.sign_file(
+            builder.sign_file(
                 self.testPath,
                 output_path,
                 self.signer
@@ -1045,7 +1243,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_builder_sign_with_ed25519_callback(self):
+    def test_builder_sign_with_native_ed25519_callback(self):
         # Load Ed25519 private key (PEM)
         ed25519_pem = os.path.join(FIXTURES_DIR, "ed25519.pem")
         with open(ed25519_pem, "r") as f:
@@ -1055,7 +1253,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def ed25519_callback(data: bytes) -> bytes:
             return ed25519_sign(data, private_key_pem)
 
-        # Load the "certificate"
+        # Load the certificate (PUB)
         ed25519_pub = os.path.join(FIXTURES_DIR, "ed25519.pub")
         with open(ed25519_pub, "r") as f:
             certs_pem = f.read()
@@ -1079,10 +1277,12 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(signer, "image/jpeg", file, output)
             output.seek(0)
+            builder.close()
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
+            reader.close()
             output.close()
 
     def test_signing_manifest_v2(self):
@@ -1109,6 +1309,13 @@ class TestBuilderWithSigner(unittest.TestCase):
 
                 output.close()
 
+    def test_builder_does_not_sign_unsupported_format(self):
+        with open(self.testPath, "rb") as file:
+            with Builder(self.manifestDefinitionV2) as builder:
+                output = io.BytesIO(bytearray())
+                with self.assertRaises(Error.NotSupported):
+                    builder.sign(self.signer, "mimetype/not-supported", file, output)
+
     def test_sign_file_mp4_video(self):
         temp_dir = tempfile.mkdtemp()
         try:
@@ -1117,7 +1324,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
-            manifest_bytes = builder.sign_file(
+            builder.sign_file(
                 os.path.join(FIXTURES_DIR, "video1.mp4"),
                 output_path,
                 self.signer
@@ -1157,6 +1364,46 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file:
                 reader = Reader("mov", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+            # Verify also signed file using manifest bytes
+            with Reader("mov", output_path, manifest_bytes) as reader:
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up the temporary directory
+            shutil.rmtree(temp_dir)
+
+    def test_sign_file_mov_video_V2(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create a temporary output file path
+            output_path = os.path.join(temp_dir, "signed-C-recorded-as-mov.mov")
+
+            # Use the sign_file method
+            builder = Builder(self.manifestDefinitionV2)
+            manifest_bytes = builder.sign_file(
+                os.path.join(FIXTURES_DIR, "C-recorded-as-mov.mov"),
+                output_path,
+                self.signer
+            )
+
+            # Verify the output file was created
+            self.assertTrue(os.path.exists(output_path))
+
+            # Read the signed file and verify the manifest
+            with open(output_path, "rb") as file:
+                reader = Reader("mov", file)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+            # Verify also signed file using manifest bytes
+            with Reader("mov", output_path, manifest_bytes) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 self.assertNotIn("validation_status", json_data)

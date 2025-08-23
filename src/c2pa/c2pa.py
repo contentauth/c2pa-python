@@ -42,6 +42,9 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_signer_free',
     'c2pa_ed25519_sign',
     'c2pa_signature_free',
+    'c2pa_free_string_array',
+    'c2pa_reader_supported_mime_types',
+    'c2pa_builder_supported_mime_types',
 ]
 
 
@@ -77,10 +80,10 @@ def _validate_library_exports(lib):
     """
     missing_functions = []
     for func_name in _REQUIRED_FUNCTIONS:
-        if not hasattr(lib, func_name): # pragma: no cover
+        if not hasattr(lib, func_name):  # pragma: no cover
             missing_functions.append(func_name)
 
-    if missing_functions: # pragma: no cover
+    if missing_functions:  # pragma: no cover
         raise ImportError(
             f"Library is missing required function symbols: "
             f"{', '.join(missing_functions)}\n"
@@ -91,16 +94,16 @@ def _validate_library_exports(lib):
 
 
 # Determine the library name based on the platform
-if sys.platform == "win32": # pragma: no cover
+if sys.platform == "win32":  # pragma: no cover
     _lib_name_default = "c2pa_c.dll"
-elif sys.platform == "darwin": # pragma: no cover
+elif sys.platform == "darwin":  # pragma: no cover
     _lib_name_default = "libc2pa_c.dylib"
-else: # pragma: no cover
+else:  # pragma: no cover
     _lib_name_default = "libc2pa_c.so"
 
 # Check for C2PA_LIBRARY_NAME environment variable
 env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
-if env_lib_name: # pragma: no cover
+if env_lib_name:  # pragma: no cover
     # Use the environment variable library name
     _lib = dynamically_load_library(env_lib_name)
 else:
@@ -229,7 +232,7 @@ def _setup_function(func, argtypes, restype=None):
     func.restype = restype
 
 
-# Set up function prototypes
+# Set up function prototypes (some may need the types defined above)
 _setup_function(_lib.c2pa_create_stream,
                 [ctypes.POINTER(StreamContext),
                  ReadCallback,
@@ -239,9 +242,13 @@ _setup_function(_lib.c2pa_create_stream,
                 ctypes.POINTER(C2paStream))
 
 # Add release_stream prototype
-_setup_function(_lib.c2pa_release_stream, [ctypes.POINTER(C2paStream)], None)
+_setup_function(
+    _lib.c2pa_release_stream,
+    [ctypes.POINTER(C2paStream)],
+    None
+)
 
-# Set up core function prototypes
+# Set up function prototypes not attached to an API object
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_string_free, [ctypes.c_void_p], None)
@@ -249,13 +256,12 @@ _setup_function(
     _lib.c2pa_load_settings, [
         ctypes.c_char_p, ctypes.c_char_p], ctypes.c_int)
 _setup_function(
-    _lib.c2pa_read_file, [
-        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
-_setup_function(
-    _lib.c2pa_read_ingredient_file, [
-        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
+    _lib.c2pa_free_string_array,
+    [ctypes.POINTER(ctypes.c_char_p), ctypes.c_size_t],
+    None
+)
 
-# Set up Reader and Builder function prototypes
+# Set up Reader function prototypes
 _setup_function(_lib.c2pa_reader_from_stream,
                 [ctypes.c_char_p, ctypes.POINTER(C2paStream)],
                 ctypes.POINTER(C2paReader))
@@ -269,6 +275,11 @@ _setup_function(
         ctypes.POINTER(C2paReader)], ctypes.c_void_p)
 _setup_function(_lib.c2pa_reader_resource_to_stream, [ctypes.POINTER(
     C2paReader), ctypes.c_char_p, ctypes.POINTER(C2paStream)], ctypes.c_int64)
+_setup_function(
+    _lib.c2pa_reader_supported_mime_types,
+    [ctypes.POINTER(ctypes.c_size_t)],
+    ctypes.POINTER(ctypes.c_char_p)
+)
 
 # Set up Builder function prototypes
 _setup_function(
@@ -291,8 +302,6 @@ _setup_function(_lib.c2pa_builder_add_ingredient_from_stream,
                  ctypes.c_char_p,
                  ctypes.POINTER(C2paStream)],
                 ctypes.c_int)
-
-# Set up additional Builder function prototypes
 _setup_function(_lib.c2pa_builder_to_archive,
                 [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
                 ctypes.c_int)
@@ -315,8 +324,6 @@ _setup_function(
     ],
     ctypes.c_int64,
 )
-
-# Set up additional function prototypes
 _setup_function(_lib.c2pa_builder_sign_data_hashed_embeddable,
                 [ctypes.POINTER(C2paBuilder),
                  ctypes.POINTER(C2paSigner),
@@ -341,8 +348,14 @@ _setup_function(_lib.c2pa_signer_create,
 _setup_function(_lib.c2pa_signer_from_info,
                 [ctypes.POINTER(C2paSignerInfo)],
                 ctypes.POINTER(C2paSigner))
+_setup_function(
+    _lib.c2pa_read_file, [
+        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
+_setup_function(
+    _lib.c2pa_read_ingredient_file, [
+        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
 
-# Set up final function prototypes
+# Set up Signer function prototypes
 _setup_function(
     _lib.c2pa_signer_reserve_size, [
         ctypes.POINTER(C2paSigner)], ctypes.c_int64)
@@ -356,6 +369,11 @@ _setup_function(
     _lib.c2pa_signature_free, [
         ctypes.POINTER(
             ctypes.c_ubyte)], None)
+_setup_function(
+    _lib.c2pa_builder_supported_mime_types,
+    [ctypes.POINTER(ctypes.c_size_t)],
+    ctypes.POINTER(ctypes.c_char_p)
+)
 
 
 class C2paError(Exception):
@@ -448,7 +466,7 @@ def _parse_operation_result_for_error(
         result: ctypes.c_void_p,
         check_error: bool = True) -> Optional[str]:
     """Helper function to handle string results from C2PA functions."""
-    if not result: # pragma: no cover
+    if not result:  # pragma: no cover
         if check_error:
             error = _lib.c2pa_error()
             if error:
@@ -537,6 +555,7 @@ def load_settings(settings: str, format: str = "json") -> None:
         error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             raise C2paError(error)
+    return result
 
 
 def read_ingredient_file(
@@ -710,6 +729,7 @@ def sign_file(
             if return_manifest_as_bytes:
                 # Convert Python streams to Stream objects for internal signing
                 source_stream = Stream(source_file)
+                # In-memory buffer stream that will be flushed to file
                 dest_stream = Stream(io.BytesIO(bytearray()))
 
                 # Use the builder's internal signing logic to get manifest
@@ -717,10 +737,13 @@ def sign_file(
                 manifest_bytes = builder._sign_internal(
                     signer, mime_type, source_stream, dest_stream)
 
+                source_stream.close()
+
                 # Write the signed content from BytesIO to the destination file
-                dest_stream._file.seek(0)  # Reset to beginning of stream
+                dest_stream._file_like_stream.seek(0)  # Reset to beginning of stream
                 with open(dest_path, 'wb') as dest_file:
-                    dest_file.write(dest_stream._file.getvalue())
+                    dest_file.write(dest_stream._file_like_stream.getvalue())
+                dest_stream.close()
 
                 return manifest_bytes
             else:
@@ -789,15 +812,17 @@ class Stream:
         'flush_error': "Error during flush operation: {}"
     }
 
-    def __init__(self, file):
-        """Initialize a new Stream wrapper around a file-like object.
+    def __init__(self, file_like_stream):
+        """Initialize a new Stream wrapper around a file-like object
+        (or an in-memory stream).
 
         Args:
-            file: A file-like object that implements
-              read, write, seek, tell, and flush methods
+            file_like_stream: A file-like stream object or an in-memory stream
+              that implements read, write, seek, tell, and flush methods
 
         Raises:
-            TypeError: The file object doesn't implement all required methods
+            TypeError: The file stream object doesn't
+              implement all required methods
         """
         # Initialize _closed first to prevent AttributeError
         # during garbage collection
@@ -806,7 +831,7 @@ class Stream:
         self._stream = None
 
         # Generate unique stream ID using object ID and counter
-        if Stream._next_stream_id >= Stream._MAX_STREAM_ID: # pragma: no cover
+        if Stream._next_stream_id >= Stream._MAX_STREAM_ID:  # pragma: no cover
             Stream._next_stream_id = 0
         self._stream_id = f"{id(self)}-{Stream._next_stream_id}"
         Stream._next_stream_id += 1
@@ -815,16 +840,17 @@ class Stream:
         required_methods = ['read', 'write', 'seek', 'tell', 'flush']
         missing_methods = [
             method for method in required_methods if not hasattr(
-                file, method)]
+                file_like_stream, method)]
         if missing_methods:
             raise TypeError(
-                "Object must be a stream-like object with methods: {}. Missing: {}".format(
+                "Object must be a stream-like object with methods: {}. "
+                "Missing: {}".format(
                     ", ".join(required_methods),
                     ", ".join(missing_methods),
                 )
             )
 
-        self._file = file
+        self._file_like_stream = file_like_stream
 
         def read_callback(ctx, data, length):
             """Callback function for reading data from the Python stream.
@@ -850,7 +876,7 @@ class Stream:
                 if not data or length <= 0:
                     return -1
 
-                buffer = self._file.read(length)
+                buffer = self._file_like_stream.read(length)
                 if not buffer:  # EOF
                     return 0
 
@@ -886,8 +912,8 @@ class Stream:
             if not self._initialized or self._closed:
                 return -1
             try:
-                self._file.seek(offset, whence)
-                return self._file.tell()
+                self._file_like_stream.seek(offset, whence)
+                return self._file_like_stream.tell()
             except Exception:
                 return -1
 
@@ -921,7 +947,7 @@ class Stream:
                     # Copy data to our temporary buffer
                     ctypes.memmove(temp_buffer, data, length)
                     # Write from our safe buffer
-                    self._file.write(bytes(temp_buffer))
+                    self._file_like_stream.write(bytes(temp_buffer))
                     return length
                 finally:
                     # Ensure temporary buffer is cleared
@@ -946,7 +972,7 @@ class Stream:
             if not self._initialized or self._closed:
                 return -1
             try:
-                self._file.flush()
+                self._file_like_stream.flush()
                 return 0
             except Exception:
                 return -1
@@ -1000,7 +1026,7 @@ class Stream:
 
         try:
             # Clean up stream first as it depends on callbacks
-            # Note: We don't close self._file as we don't own it,
+            # Note: We don't close self._file_like_stream as we don't own it,
             # the opener owns it.
             if self._stream:
                 try:
@@ -1052,6 +1078,9 @@ class Stream:
 class Reader:
     """High-level wrapper for C2PA Reader operations."""
 
+    # Supported mimetypes cache
+    _supported_mime_types_cache = None
+
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'unsupported': "Unsupported format",
@@ -1064,6 +1093,25 @@ class Reader:
         'reader_cleanup_error': "Error cleaning up reader: {}",
         'encoding_error': "Invalid UTF-8 characters in input: {}"
     }
+
+    @classmethod
+    def get_supported_mime_types(cls) -> list[str]:
+        if cls._supported_mime_types_cache is not None:
+            return cls._supported_mime_types_cache
+
+        count = ctypes.c_size_t()
+        arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
+
+        try:
+            # CDecode values to place them in Python managed memory
+            result = [arr[i].decode("utf-8") for i in range(count.value)]
+        finally:
+            # Release native memory, as per API contract
+            # c2pa_reader_supported_mime_types must call c2pa_free_string_array
+            _lib.c2pa_free_string_array(arr, count.value)
+
+        cls._supported_mime_types_cache = result
+        return cls._supported_mime_types_cache
 
     def __init__(self,
                  format_or_path: Union[str,
@@ -1093,6 +1141,14 @@ class Reader:
             mime_type = mimetypes.guess_type(
                 path)[0]
 
+            if not mime_type:
+                raise C2paError.NotSupported(
+                    f"Could not determine MIME type for file: {path}")
+
+            if mime_type not in Reader.get_supported_mime_types():
+                raise C2paError.NotSupported(
+                    f"Reader does not support {mime_type}")
+
             try:
                 self._mime_type_str = mime_type.encode('utf-8')
             except UnicodeError as e:
@@ -1120,23 +1176,29 @@ class Reader:
                     raise C2paError(
                         Reader._ERROR_MESSAGES['reader_error'].format(
                             "Unknown error"
-                            )
                         )
+                    )
 
                 # Store the file to close it later
-                self._file = file
+                self._file_like_stream = file
 
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_file'):
-                    self._file.close()
+                if hasattr(self, '_file_like_stream'):
+                    self._file_like_stream.close()
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         elif isinstance(stream, str):
             # We may have gotten format + a file path
             # If stream is a string, treat it as a path and try to open it
+
+            # format_or_path is a format
+            if format_or_path not in Reader.get_supported_mime_types():
+                raise C2paError.NotSupported(
+                    f"Reader does not support {format_or_path}")
+
             try:
                 file = open(stream, 'rb')
                 self._own_stream = Stream(file)
@@ -1176,16 +1238,21 @@ class Reader:
                         )
                     )
 
-                self._file = file
+                self._file_like_stream = file
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_file'):
-                    self._file.close()
+                if hasattr(self, '_file_like_stream'):
+                    self._file_like_stream.close()
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         else:
+            # format_or_path is a format
+            if format_or_path not in Reader.get_supported_mime_types():
+                raise C2paError.NotSupported(
+                    f"Reader does not support {format_or_path}")
+
             # Use the provided stream
             self._format_str = format_or_path.encode('utf-8')
 
@@ -1268,15 +1335,15 @@ class Reader:
                     self._own_stream = None
 
             # Clean up file
-            if hasattr(self, '_file'):
+            if hasattr(self, '_file_like_stream'):
                 try:
-                    self._file.close()
+                    self._file_like_stream.close()
                 except Exception as e:
                     print(
                         Reader._ERROR_MESSAGES['file_error'].format(
                             str(e)), file=sys.stderr)
                 finally:
-                    self._file = None
+                    self._file_like_stream = None
 
             # Clear any stored strings
             if hasattr(self, '_strings'):
@@ -1443,11 +1510,11 @@ class Signer:
                 ):
                     # Error: invalid input, invalid so return -1,
                     # native code will handle it!
-                    return -1 # pragma: no cover
+                    return -1  # pragma: no cover
 
                 # Validate buffer sizes before memory operations
                 if data_len > 1024 * 1024:  # 1MB limit
-                    return -1 # pragma: no cover
+                    return -1  # pragma: no cover
 
                 # Recover signed data (copy, to avoid lifetime issues)
                 temp_buffer = (ctypes.c_ubyte * data_len)()
@@ -1457,14 +1524,14 @@ class Signer:
                 if not data:
                     # Error: empty data, invalid so return -1,
                     # native code will also handle it!
-                    return -1 # pragma: no cover
+                    return -1  # pragma: no cover
 
                 # Call the user's callback
                 signature = callback(data)
                 if not signature:
                     # Error: empty signature, invalid so return -1,
                     # native code will handle that too!
-                    return -1 # pragma: no cover
+                    return -1  # pragma: no cover
 
                 # Copy the signature back to the C buffer
                 # (since callback is used in native code)
@@ -1475,7 +1542,7 @@ class Signer:
 
                 # Native code expects the signed len to be returned, we oblige
                 return actual_len
-            except Exception as e: # pragma: no cover
+            except Exception as e:  # pragma: no cover
                 print(
                     cls._ERROR_MESSAGES['callback_error'].format(
                         str(e)), file=sys.stderr)
@@ -1596,6 +1663,9 @@ class Signer:
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
 
+    # Supported mimetypes cache
+    _supported_mime_types_cache = None
+
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'builder_error': "Failed to create builder: {}",
@@ -1611,6 +1681,26 @@ class Builder:
         'encoding_error': "Invalid UTF-8 characters in manifest: {}",
         'json_error': "Failed to serialize manifest JSON: {}"
     }
+
+    @classmethod
+    def get_supported_mime_types(cls) -> list[str]:
+        if cls._supported_mime_types_cache is not None:
+            return cls._supported_mime_types_cache
+
+        count = ctypes.c_size_t()
+        arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
+
+        try:
+            # CDecode values to place them in Python managed memory
+            result = [arr[i].decode("utf-8") for i in range(count.value)]
+        finally:
+            # Release native memory, as per API contract
+            # c2pa_builder_supported_mime_types must call
+            # c2pa_free_string_array
+            _lib.c2pa_free_string_array(arr, count.value)
+
+        cls._supported_mime_types_cache = result
+        return cls._supported_mime_types_cache
 
     def __init__(self, manifest_json: Any):
         """Initialize a new Builder instance.
@@ -1938,9 +2028,9 @@ class Builder:
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                  Builder._ERROR_MESSAGES["archive_error"].format(
-                      "Unknown error"
-                  )
+                    Builder._ERROR_MESSAGES["archive_error"].format(
+                        "Unknown error"
+                    )
                 )
 
     def _sign_internal(
@@ -1956,7 +2046,7 @@ class Builder:
             signer: The signer to use
             format: The MIME type or extension of the content
             source_stream: The source stream
-            dest_stream: The destination stream
+            dest_stream: The destination stream, as Stream(BytesIO)
 
         Returns:
             A tuple of (size of C2PA data, manifest bytes)
@@ -1967,55 +2057,53 @@ class Builder:
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
 
-        try:
-            format_str = format.encode('utf-8')
-            manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
+        if format not in Builder.get_supported_mime_types():
+            raise C2paError.NotSupported(
+                f"Builder does not support {format}")
 
-            # c2pa_builder_sign uses streams
-            result = _lib.c2pa_builder_sign(
-                self._builder,
-                format_str,
-                source_stream._stream,
-                dest_stream._stream,
-                signer._signer,
-                ctypes.byref(manifest_bytes_ptr)
-            )
+        format_str = format.encode('utf-8')
+        manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
-            if result < 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
+        # c2pa_builder_sign uses streams
+        result = _lib.c2pa_builder_sign(
+            self._builder,
+            format_str,
+            source_stream._stream,
+            dest_stream._stream,
+            signer._signer,
+            ctypes.byref(manifest_bytes_ptr)
+        )
 
-            # Capture the manifest bytes if available
-            manifest_bytes = b""
-            if manifest_bytes_ptr and result > 0:
+        if result < 0:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+
+        # Capture the manifest bytes if available
+        manifest_bytes = b""
+        if manifest_bytes_ptr and result > 0:
+            try:
+                # Convert the C pointer to Python bytes
+                temp_buffer = (ctypes.c_ubyte * result)()
+                ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
+                manifest_bytes = bytes(temp_buffer)
+            except Exception:
+                # If there's any error accessing the memory, just return
+                # empty bytes
+                manifest_bytes = b""
+            finally:
+                # Always free the C-allocated memory,
+                # even if we failed to copy manifest bytes
                 try:
-                    # Convert the C pointer to Python bytes
-                    temp_buffer = (ctypes.c_ubyte * result)()
-                    ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
-                    manifest_bytes = bytes(temp_buffer)
+                    _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                 except Exception:
-                    # If there's any error accessing the memory, just return
-                    # empty bytes
-                    manifest_bytes = b""
-                finally:
-                    # Always free the C-allocated memory,
-                    # even if we failed to copy manifest bytes
-                    try:
-                        _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
-                    except Exception:
-                        # Ignore errors during cleanup
-                        pass
+                    # Ignore errors during cleanup
+                    pass
 
             return manifest_bytes
 
         # exception will propagate after finally block execution,
         # caller to handle them
-
-        finally:
-            # Ensure both streams are cleaned up
-            source_stream.close()
-            dest_stream.close()
 
     def sign(
             self,
@@ -2036,10 +2124,35 @@ class Builder:
         """
         # Convert Python streams to Stream objects
         source_stream = Stream(source)
-        dest_stream = Stream(dest)
+
+        # Use a BytesIO Stream to ensure proper
+        # APIs an interfaces are available for stream manipulation
+        mem_buffer = io.BytesIO()
+        dest_stream = Stream(mem_buffer)
 
         # Use the internal stream-base signing logic
-        return self._sign_internal(signer, format, source_stream, dest_stream)
+        manifest_bytes = self._sign_internal(
+            signer,
+            format,
+            source_stream,
+            dest_stream
+        )
+
+        # This is needed because not all streams have the same API,
+        # so we need to ensure we use the right ones at the right time
+        # and with the proper function calls.
+        mem_buffer.seek(0)
+        # Write memory buffer content to the opened destination
+        # (may be a file stream or an in-memory stream).
+        # This allows to use file streams and in-memory streams
+        # interchangeably...
+        if dest:
+            # Only if dest is truthy, write back
+            dest.write(mem_buffer.getvalue())
+            dest.flush()
+        dest_stream.close()
+
+        return manifest_bytes
 
     def sign_file(self,
                   source_path: Union[str,
@@ -2067,24 +2180,27 @@ class Builder:
                 f"Could not determine MIME type for file: {source_path}")
 
         try:
-          # Open source file and create BytesIO for destination
-          with open(source_path, 'rb') as source_file:
-              # Convert Python streams to Stream objects
-              source_stream = Stream(source_file)
-              dest_stream = Stream(io.BytesIO(bytearray()))
+            # Open source file and create BytesIO for destination
+            with open(source_path, 'rb') as source_file:
+                # Convert Python streams to Stream objects
+                source_stream = Stream(source_file)
+                # In-memory buffer stream that will be flushed to target
+                dest_stream = Stream(io.BytesIO(bytearray()))
 
-              # Use the internal stream-base signing logic
-              # Sign the content to the BytesIO stream
-              result = self._sign_internal(
-                  signer, mime_type, source_stream, dest_stream)
+                # Use the internal stream-base signing logic
+                # Sign the content to the BytesIO stream
+                result = self._sign_internal(
+                    signer, mime_type, source_stream, dest_stream)
 
-              # Write the signed content from BytesIO to the destination file
-              dest_stream._file.seek(0)  # Reset to beginning of stream
+                source_stream.close()
 
-              with open(dest_path, 'wb') as dest_file:
-                  dest_file.write(dest_stream._file.getvalue())
+                # Write the signed content from BytesIO to the destination file
+                dest_stream._file_like_stream.seek(0)  # Reset to beginning of stream
+                with open(dest_path, 'wb') as dest_file:
+                    dest_file.write(dest_stream._file_like_stream.getvalue())
+                dest_stream.close()
 
-              return result
+                return result
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}")
 

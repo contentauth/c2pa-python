@@ -109,19 +109,19 @@ def _load_single_library(lib_name: str,
     Returns:
         The loaded library or None if loading failed
     """
-    if DEBUG_LIBRARY_LOADING:
+    if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(
             f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
     current_arch = _get_architecture()
-    if DEBUG_LIBRARY_LOADING:
+    if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(f"Current architecture: {current_arch}")
 
     for path in search_paths:
         lib_path = path / lib_name
-        if DEBUG_LIBRARY_LOADING:
+        if DEBUG_LIBRARY_LOADING:  # pragma: no cover
             logger.info(f"Checking path: {lib_path}")
         if lib_path.exists():
-            if DEBUG_LIBRARY_LOADING:
+            if DEBUG_LIBRARY_LOADING:  # pragma: no cover
                 logger.info(f"Found library at: {lib_path}")
             try:
                 return ctypes.CDLL(str(lib_path))
@@ -150,7 +150,7 @@ def _get_possible_search_paths() -> list[Path]:
     platform_dir = _get_platform_dir()
     platform_id = get_platform_identifier()
 
-    if DEBUG_LIBRARY_LOADING:
+    if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(f"Using platform directory: {platform_dir}")
         logger.info(f"Using platform identifier: {platform_id}")
 
@@ -210,7 +210,7 @@ def dynamically_load_library(
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
-    if DEBUG_LIBRARY_LOADING:
+    if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(f"Current working directory: {Path.cwd()}")
         logger.info(f"Package directory: {Path(__file__).parent}")
         logger.info(f"System architecture: {_get_architecture()}")
@@ -218,7 +218,7 @@ def dynamically_load_library(
     # Check for C2PA_LIBRARY_NAME environment variable
     env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
     if env_lib_name:
-        if DEBUG_LIBRARY_LOADING:
+        if DEBUG_LIBRARY_LOADING:  # pragma: no cover
             logger.info(
                 f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
         try:

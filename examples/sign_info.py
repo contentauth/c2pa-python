@@ -61,12 +61,14 @@ signer = c2pa.Signer.from_info(signer_info)
 
 # Create a manifest definition as a dictionary
 # This examples signs using a V1 manifest
+# Note that this is a v1 spec manifest (legacy)
 manifest_definition = {
     "claim_generator": "python_example",
     "claim_generator_info": [{
         "name": "python_example",
         "version": "0.0.1",
     }],
+    "claim_version": 1,
     "format": "image/jpeg",
     "title": "Python Example Image",
     "ingredients": [],
