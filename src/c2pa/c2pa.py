@@ -77,10 +77,10 @@ def _validate_library_exports(lib):
     """
     missing_functions = []
     for func_name in _REQUIRED_FUNCTIONS:
-        if not hasattr(lib, func_name):
+        if not hasattr(lib, func_name): # pragma: no cover
             missing_functions.append(func_name)
 
-    if missing_functions:
+    if missing_functions: # pragma: no cover
         raise ImportError(
             f"Library is missing required function symbols: "
             f"{', '.join(missing_functions)}\n"
@@ -448,8 +448,8 @@ def _parse_operation_result_for_error(
         result: ctypes.c_void_p,
         check_error: bool = True) -> Optional[str]:
     """Helper function to handle string results from C2PA functions."""
-    if not result:
-        if check_error: # pragma: no cover
+    if not result: # pragma: no cover
+        if check_error:
             error = _lib.c2pa_error()
             if error:
                 error_str = ctypes.cast(
@@ -507,7 +507,8 @@ def sdk_version() -> str:
     for part in vstr.split():
         if part.startswith("c2pa-rs/"):
             return part.split("/", 1)[1]
-    return vstr  # fallback if not found
+    # Fallback to full string n case format would change, eg. local builds
+    return vstr  # pragma: no cover
 
 
 def version() -> str:
@@ -750,7 +751,7 @@ def sign_file(
                 pass  # Ignore cleanup errors
 
         # Re-raise the error
-        raise C2paError(f"Error signing file: {str(e)}")
+        raise C2paError(f"Error signing file: {str(e)}") from e
     finally:
         # Ensure resources are cleaned up
         if 'builder' in locals():
@@ -1085,17 +1086,13 @@ class Reader:
         self._reader = None
         self._own_stream = None
 
-        # Check for unsupported format
-        if format_or_path == "badFormat":
-            raise C2paError.NotSupported(Reader._ERROR_MESSAGES['unsupported'])
-
         if stream is None:
-            # Create a stream from the file path
+            # If we don't get a stream as param:
+            # Create a stream from the file path in format_or_path
             path = str(format_or_path)
             mime_type = mimetypes.guess_type(
                 path)[0]
 
-            # Keep mime_type string alive
             try:
                 self._mime_type_str = mime_type.encode('utf-8')
             except UnicodeError as e:
@@ -1138,6 +1135,7 @@ class Reader:
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         elif isinstance(stream, str):
+            # We may have gotten format + a file path
             # If stream is a string, treat it as a path and try to open it
             try:
                 file = open(stream, 'rb')
@@ -1189,7 +1187,6 @@ class Reader:
                         str(e)))
         else:
             # Use the provided stream
-            # Keep format string alive
             self._format_str = format_or_path.encode('utf-8')
 
             with Stream(stream) as stream_obj:
@@ -1343,7 +1340,6 @@ class Signer:
         'closed_error': "Signer is closed",
         'cleanup_error': "Error during cleanup: {}",
         'signer_cleanup': "Error cleaning up signer: {}",
-        'size_error': "Error getting reserve size: {}",
         'callback_error': "Error in signer callback: {}",
         'info_error': "Error creating signer from info: {}",
         'invalid_data': "Invalid data for signing: {}",
@@ -1577,20 +1573,15 @@ class Signer:
         if self._closed or not self._signer:
             raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
 
-        try:
-            result = _lib.c2pa_signer_reserve_size(self._signer)
+        result = _lib.c2pa_signer_reserve_size(self._signer)
 
-            if result < 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError("Failed to get reserve size")
+        if result < 0:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError("Failed to get reserve size")
 
-            return result
-        except Exception as e:
-            raise C2paError(
-                Signer._ERROR_MESSAGES['size_error'].format(
-                    str(e)))
+        return result
 
     @property
     def closed(self) -> bool:
@@ -1755,6 +1746,7 @@ class Builder:
         """
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+
         _lib.c2pa_builder_set_no_embed(self._builder)
 
     def set_remote_url(self, remote_url: str):
@@ -1919,10 +1911,10 @@ class Builder:
             with open(filepath_str, 'rb') as file_stream:
                 self.add_ingredient_from_stream(
                     ingredient_json, format, file_stream)
-        except FileNotFoundError:
-            raise FileNotFoundError(f"File not found: {filepath}")
+        except FileNotFoundError as e:
+            raise C2paError.FileNotFound(f"File not found: {filepath}") from e
         except Exception as e:
-            raise e
+            raise C2paError.Other(f"Could not add ingredient: {e}") from e
 
     def to_archive(self, stream: Any):
         """Write an archive of the builder to a stream.
@@ -2016,6 +2008,10 @@ class Builder:
                         pass
 
             return manifest_bytes
+
+        # exception will propagate after finally block execution,
+        # caller to handle them
+
         finally:
             # Ensure both streams are cleaned up
             source_stream.close()
@@ -2070,23 +2066,27 @@ class Builder:
             raise C2paError.NotSupported(
                 f"Could not determine MIME type for file: {source_path}")
 
-        # Open source file and create BytesIO for destination
-        with open(source_path, 'rb') as source_file:
-            # Convert Python streams to Stream objects
-            source_stream = Stream(source_file)
-            dest_stream = Stream(io.BytesIO(bytearray()))
+        try:
+          # Open source file and create BytesIO for destination
+          with open(source_path, 'rb') as source_file:
+              # Convert Python streams to Stream objects
+              source_stream = Stream(source_file)
+              dest_stream = Stream(io.BytesIO(bytearray()))
 
-            # Use the internal stream-base signing logic
-            # Sign the content to the BytesIO stream
-            result = self._sign_internal(
-                signer, mime_type, source_stream, dest_stream)
+              # Use the internal stream-base signing logic
+              # Sign the content to the BytesIO stream
+              result = self._sign_internal(
+                  signer, mime_type, source_stream, dest_stream)
 
-            # Write the signed content from BytesIO to the destination file
-            dest_stream._file.seek(0)  # Reset to beginning of stream
-            with open(dest_path, 'wb') as dest_file:
-                dest_file.write(dest_stream._file.getvalue())
+              # Write the signed content from BytesIO to the destination file
+              dest_stream._file.seek(0)  # Reset to beginning of stream
 
-            return result
+              with open(dest_path, 'wb') as dest_file:
+                  dest_file.write(dest_stream._file.getvalue())
+
+              return result
+        except Exception as e:
+            raise C2paError(f"Error signing file: {str(e)}")
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:

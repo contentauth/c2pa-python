@@ -62,20 +62,20 @@ class TestReader(unittest.TestCase):
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
     def test_stream_read_string_stream(self):
+        with Reader(self.testPath) as reader:
+            json_data = reader.json()
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
-    def test_stream_read_string_stream_and_parse(self):
+    def test_stream_read_filepath_as_stream_and_parse(self):
         with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
-
-    def test_reader_format_is_not_unicode(self):
-        with self.assertRaises(Error.NotSupported):
-            with open(self.testPath, "rb") as file:
-                reader = Reader("badFormat", file)
 
     def test_settings_trust(self):
         # load_settings_file("tests/fixtures/settings.toml")
@@ -401,6 +401,10 @@ class TestBuilderWithSigner(unittest.TestCase):
         signer.close()
         self.assertTrue(signer.closed)
         signer.close()
+
+    def test_builder_detects_malformed_json(self):
+        with self.assertRaises(Error):
+            Builder("{this is not json}")
 
     def test_builder_does_not_allow_sign_after_close(self):
         with open(self.testPath, "rb") as file:
@@ -1583,6 +1587,21 @@ class TestLegacyAPI(unittest.TestCase):
             builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath)
 
             builder.close()
+
+    def test_builder_add_ingredient_from_file_path(self):
+        """Test Builder class add_ingredient_from_file_path method."""
+
+        # Suppress the specific deprecation warning for this test, as this is a legacy method
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+
+            builder = Builder.from_json(self.manifestDefinition)
+
+            # Test adding ingredient from file path
+            ingredient_json = '{"test": "ingredient_from_file_path"}'
+
+            with self.assertRaises(Error.FileNotFound):
+                builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", "this-file-path-does-not-exist")
 
     def test_sign_file_using_callback_signer_overloads(self):
         """Test signing a file using the sign_file function with a Signer object."""
