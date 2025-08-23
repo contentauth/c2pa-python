@@ -25,6 +25,7 @@ class CPUArchitecture(Enum):
     """CPU architecture enum for platform-specific identifiers."""
     AARCH64 = "aarch64"
     X86_64 = "x86_64"
+    ARM64 = "arm64"
 
 
 def get_platform_identifier() -> str:
@@ -44,7 +45,7 @@ def get_platform_identifier() -> str:
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        if _get_architecture() in ['arm64', 'aarch64']:
+        if _get_architecture() in [CPUArchitecture.ARM64.value, CPUArchitecture.AARCH64.value]:
             return "aarch64-unknown-linux-gnu"
         return "x86_64-unknown-linux-gnu"
     else:
@@ -61,9 +62,9 @@ def _get_architecture() -> str:
     if sys.platform == "darwin":
         # On macOS, we need to check if we're running under Rosetta
         if platform.processor() == 'arm':
-            return 'arm64'
+            return CPUArchitecture.ARM64.value
         else:
-            return 'x86_64'
+            return CPUArchitecture.X86_64.value
     elif sys.platform == "linux":
         return platform.machine()
     elif sys.platform == "win32":
@@ -251,11 +252,7 @@ def dynamically_load_library(
     # Default path (no library name provided in the environment)
     c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
     if not c2pa_lib:
-        logger.error(
-            f"Could not find {c2pa_lib_name} in any of the search paths: {
-                [
-                    str(p) for p in possible_paths]}")
-        raise RuntimeError(
-            f"Could not find {c2pa_lib_name} in any of the search paths")
+        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+        raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib
