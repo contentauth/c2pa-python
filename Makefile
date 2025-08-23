@@ -92,6 +92,10 @@ publish: release
 	python3 -m pip install twine
 	python3 -m twine upload dist/*
 
+# Code analysis
+check-format:
+	flake8 src/c2pa/c2pa.py
+
 # Formats Python source code using autopep8 with aggressive settings
 format:
 	autopep8 --aggressive --aggressive --in-place src/c2pa/*.py

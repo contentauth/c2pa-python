@@ -459,12 +459,24 @@ class _StringContainer:
 
     def __init__(self):
         """Initialize an empty string container."""
-        pass
+        self._path_str = ""
+        self._data_dir_str = ""
+
+
+def _convert_to_py_string(value) -> str:
+    if value is None:
+        return ""
+
+    # Convert to Python string and free the Rust-allocated memory
+    py_string = ctypes.cast(value, ctypes.c_char_p).value.decode('utf-8')
+    _lib.c2pa_string_free(value)
+
+    return py_string
 
 
 def _parse_operation_result_for_error(
-        result: ctypes.c_void_p,
-        check_error: bool = True) -> Optional[str]:
+        result: ctypes.c_void_p | None,
+        check_error: bool = True) -> str | None:
     """Helper function to handle string results from C2PA functions."""
     if not result:  # pragma: no cover
         if check_error:
@@ -509,16 +521,13 @@ def _parse_operation_result_for_error(
                 return error_str
         return None
 
-    # Convert to Python string and free the Rust-allocated memory
-    py_string = ctypes.cast(result, ctypes.c_char_p).value.decode('utf-8')
-    _lib.c2pa_string_free(result)
-
-    return py_string
+    # In the case result would be a string already (error message)
+    return _convert_to_py_string(result)
 
 
 def sdk_version() -> str:
     """
-    Returns the underlying c2pa-rs version string, e.g., "0.49.5".
+    Returns the underlying c2pa-rs/c2pa-c-ffi version string
     """
     vstr = version()
     # Example: "c2pa-c/0.49.5 c2pa-rs/0.49.5"
@@ -532,9 +541,7 @@ def sdk_version() -> str:
 def version() -> str:
     """Get the C2PA library version."""
     result = _lib.c2pa_version()
-    py_string = ctypes.cast(result, ctypes.c_char_p).value.decode("utf-8")
-    _lib.c2pa_string_free(result)  # Free the Rust-allocated memory
-    return py_string
+    return _convert_to_py_string(result)
 
 
 def load_settings(settings: str, format: str = "json") -> None:
@@ -555,6 +562,8 @@ def load_settings(settings: str, format: str = "json") -> None:
         error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             raise C2paError(error)
+        raise C2paError("Error loading settings")
+
     return result
 
 
@@ -596,7 +605,16 @@ def read_ingredient_file(
 
     result = _lib.c2pa_read_ingredient_file(
         container._path_str, container._data_dir_str)
-    return _parse_operation_result_for_error(result)
+
+    if result is None:
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
+        if error:
+            raise C2paError(error)
+        raise C2paError(
+            "Error reading ingredient file {}".format(path)
+        )
+
+    return _convert_to_py_string(result)
 
 
 def read_file(path: Union[str, Path],
@@ -636,7 +654,15 @@ def read_file(path: Union[str, Path],
     container._data_dir_str = str(data_dir).encode('utf-8')
 
     result = _lib.c2pa_read_file(container._path_str, container._data_dir_str)
-    return _parse_operation_result_for_error(result)
+    if result is None:
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
+        if error is not None:
+            raise C2paError(error)
+        raise C2paError.Other(
+            "Error during read of manifest from file {}".format(path)
+        )
+
+    return _convert_to_py_string(result)
 
 
 @overload
@@ -726,41 +752,27 @@ def sign_file(
                 raise C2paError.NotSupported(
                     f"Could not determine MIME type for file: {source_path}")
 
+            # Convert Python streams to Stream objects for internal signing
+            source_stream = Stream(source_file)
+            # In-memory buffer stream that will be flushed to file
+            dest_stream = Stream(io.BytesIO(bytearray()))
+
+            # Use the builder's internal signing logic to get manifest
+            # bytes
+            manifest_bytes = builder._sign_internal(
+                signer, mime_type, source_stream, dest_stream)
+
+            source_stream.close()
+
+            # Write the in-memory signed content
+            # from BytesIO to the destination file
+            with open(dest_path, 'wb') as dest_file:
+                dest_stream.write_to_target(dest_file)
+            dest_stream.close()
+
             if return_manifest_as_bytes:
-                # Convert Python streams to Stream objects for internal signing
-                source_stream = Stream(source_file)
-                # In-memory buffer stream that will be flushed to file
-                dest_stream = Stream(io.BytesIO(bytearray()))
-
-                # Use the builder's internal signing logic to get manifest
-                # bytes
-                manifest_bytes = builder._sign_internal(
-                    signer, mime_type, source_stream, dest_stream)
-
-                source_stream.close()
-
-                # Write the signed content from BytesIO to the destination file
-                dest_stream._file_like_stream.seek(0)  # Reset to beginning of stream
-                with open(dest_path, 'wb') as dest_file:
-                    dest_file.write(dest_stream._file_like_stream.getvalue())
-                dest_stream.close()
-
                 return manifest_bytes
             else:
-                # Sign the file using the builder with BytesIO destination
-                dest_stream = io.BytesIO(bytearray())
-                builder.sign(
-                    signer=signer,
-                    format=mime_type,
-                    source=source_file,
-                    dest=dest_stream
-                )
-
-                # Write the signed content from BytesIO to the destination file
-                dest_stream.seek(0)  # Reset to beginning of stream
-                with open(dest_path, 'wb') as dest_file:
-                    dest_file.write(dest_stream.getvalue())
-
                 # Read the signed manifest from the destination file
                 with Reader(dest_path) as reader:
                     return reader.json()
@@ -1056,6 +1068,10 @@ class Stream:
             self._closed = True
             self._initialized = False
 
+    def write_to_target(self, dest_stream):
+        self._file_like_stream.seek(0)
+        dest_stream.write(self._file_like_stream.getvalue())
+
     @property
     def closed(self) -> bool:
         """Check if the stream is closed.
@@ -1202,7 +1218,9 @@ class Reader:
             try:
                 file = open(stream, 'rb')
                 self._own_stream = Stream(file)
-                self._format_str = format_or_path.encode('utf-8')
+
+                format_str = str(format_or_path)
+                self._format_str = format_str.encode('utf-8')
 
                 if manifest_data is None:
                     self._reader = _lib.c2pa_reader_from_stream(
@@ -1248,13 +1266,14 @@ class Reader:
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         else:
-            # format_or_path is a format
-            if format_or_path not in Reader.get_supported_mime_types():
+            # format_or_path is a format string
+            format_str = str(format_or_path)
+            if format_str not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
-                    f"Reader does not support {format_or_path}")
+                    f"Reader does not support {format_str}")
 
             # Use the provided stream
-            self._format_str = format_or_path.encode('utf-8')
+            self._format_str = format_str.encode('utf-8')
 
             with Stream(stream) as stream_obj:
                 if manifest_data is None:
@@ -1368,7 +1387,14 @@ class Reader:
         if not self._reader:
             raise C2paError("Reader is closed")
         result = _lib.c2pa_reader_json(self._reader)
-        return _parse_operation_result_for_error(result)
+
+        if result is None:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError("Error during manifest parsing in Reader")
+
+        return _convert_to_py_string(result)
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
@@ -1395,6 +1421,9 @@ class Reader:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
+                raise C2paError.Other(
+                    "Error during resource {} to stream conversion".format(uri)
+                )
 
             return result
 
@@ -1481,7 +1510,7 @@ class Signer:
                 )
             )
 
-        if tsa_url and not tsa_url.startswith(('http://', 'https://')):
+        if tsa_url and not tsa_url.startswith(("http://", "https://")):
             raise C2paError(
                 cls._ERROR_MESSAGES['invalid_tsa'].format(
                     "Invalid TSA URL format"
@@ -2006,7 +2035,7 @@ class Builder:
         except Exception as e:
             raise C2paError.Other(f"Could not add ingredient: {e}") from e
 
-    def to_archive(self, stream: Any):
+    def to_archive(self, stream: Any) -> None:
         """Write an archive of the builder to a stream.
 
         Args:
@@ -2078,6 +2107,7 @@ class Builder:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
+            raise C2paError("Error during signing")
 
         # Capture the manifest bytes if available
         manifest_bytes = b""
@@ -2100,17 +2130,14 @@ class Builder:
                     # Ignore errors during cleanup
                     pass
 
-            return manifest_bytes
-
-        # exception will propagate after finally block execution,
-        # caller to handle them
+        return manifest_bytes
 
     def sign(
             self,
             signer: Signer,
             format: str,
             source: Any,
-            dest: Any = None) -> None:
+            dest: Any = None) -> bytes:
         """Sign the builder's content and write to a destination stream.
 
         Args:
@@ -2125,10 +2152,14 @@ class Builder:
         # Convert Python streams to Stream objects
         source_stream = Stream(source)
 
-        # Use a BytesIO Stream to ensure proper
-        # APIs an interfaces are available for stream manipulation
-        mem_buffer = io.BytesIO()
-        dest_stream = Stream(mem_buffer)
+        if dest:
+            # dest is optional, only if we write back somewhere
+            dest_stream = Stream(dest)
+        else:
+            # no destination?
+            # we keep things in-memory for validation and processing
+            mem_buffer = io.BytesIO()
+            dest_stream = Stream(mem_buffer)
 
         # Use the internal stream-base signing logic
         manifest_bytes = self._sign_internal(
@@ -2138,19 +2169,9 @@ class Builder:
             dest_stream
         )
 
-        # This is needed because not all streams have the same API,
-        # so we need to ensure we use the right ones at the right time
-        # and with the proper function calls.
-        mem_buffer.seek(0)
-        # Write memory buffer content to the opened destination
-        # (may be a file stream or an in-memory stream).
-        # This allows to use file streams and in-memory streams
-        # interchangeably...
-        if dest:
-            # Only if dest is truthy, write back
-            dest.write(mem_buffer.getvalue())
-            dest.flush()
-        dest_stream.close()
+        if not dest:
+            # Close temporary in-memory stream since we own it
+            dest_stream.close()
 
         return manifest_bytes
 
@@ -2182,22 +2203,23 @@ class Builder:
         try:
             # Open source file and create BytesIO for destination
             with open(source_path, 'rb') as source_file:
-                # Convert Python streams to Stream objects
                 source_stream = Stream(source_file)
-                # In-memory buffer stream that will be flushed to target
+
+                # In-memory buffer stream that will be flushed to target,
+                # to ensure proper in-memory processing and validatin
                 dest_stream = Stream(io.BytesIO(bytearray()))
 
-                # Use the internal stream-base signing logic
-                # Sign the content to the BytesIO stream
+                # Use the internal stream-base signing logic to
+                # sign the content to the BytesIO stream
                 result = self._sign_internal(
                     signer, mime_type, source_stream, dest_stream)
 
                 source_stream.close()
 
-                # Write the signed content from BytesIO to the destination file
-                dest_stream._file_like_stream.seek(0)  # Reset to beginning of stream
+                # Write the signed content from in-memory stream
+                # to the destination file
                 with open(dest_path, 'wb') as dest_file:
-                    dest_file.write(dest_stream._file_like_stream.getvalue())
+                    dest_stream.write_to_target(dest_file)
                 dest_stream.close()
 
                 return result

@@ -21,7 +21,10 @@ def get_latest_release() -> dict:
 
 
 def download_artifact(url: str, platform_name: str) -> None:
-    """Download and extract an artifact to the appropriate platform directory."""
+    """
+    Download and extract an artifact
+    to the appropriate platform directory.
+    """
     print(f"Downloading artifact for {platform_name}...")
 
     # Create platform directory
