@@ -248,29 +248,29 @@ class TestReader(unittest.TestCase):
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
     # TODO: Unskip once fixed: unable to parse a signature of type "the certificate is not trusted
-    # def test_read_cawg_data_file(self):
-    #     """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
-    #     file_path = os.path.join(self.data_dir, "C_with_CAWG_data.jpg")
+    def test_read_cawg_data_file(self):
+        """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
+        file_path = os.path.join(self.data_dir, "C_with_CAWG_data.jpg")
 
-    #     with open(file_path, "rb") as file:
-    #         reader = Reader("image/jpeg", file)
-    #         json_data = reader.json()
-    #         self.assertIsInstance(json_data, str)
+        with open(file_path, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            json_data = reader.json()
+            self.assertIsInstance(json_data, str)
 
-    #         # Parse the JSON and verify specific fields
-    #         manifest_data = json.loads(json_data)
+            # Parse the JSON and verify specific fields
+            manifest_data = json.loads(json_data)
 
-    #         # Verify basic manifest structure
-    #         self.assertIn("manifests", manifest_data)
-    #         self.assertIn("active_manifest", manifest_data)
+            # Verify basic manifest structure
+            self.assertIn("manifests", manifest_data)
+            self.assertIn("active_manifest", manifest_data)
 
-    #         # Get the active manifest
-    #         active_manifest_id = manifest_data["active_manifest"]
-    #         active_manifest = manifest_data["manifests"][active_manifest_id]
+            # Get the active manifest
+            active_manifest_id = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_id]
 
-    #         # Verify manifest is not null or empty
-    #         assert active_manifest is not None, "Active manifest should not be null"
-    #         assert len(active_manifest) > 0, "Active manifest should not be empty"
+            # Verify manifest is not null or empty
+            assert active_manifest is not None, "Active manifest should not be null"
+            assert len(active_manifest) > 0, "Active manifest should not be empty"
 
 
 class TestBuilderWithSigner(unittest.TestCase):
