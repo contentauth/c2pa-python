@@ -71,7 +71,8 @@ manifest_definition = {
         "name": "python_example",
         "version": "0.0.1",
     }],
-    # claim version 2 is the default
+    # Claims version 2 is the default, so the version
+    # number can be omitted.
     # "claim_version": 2,
     "format": "image/jpeg",
     "title": "Python Example Image",

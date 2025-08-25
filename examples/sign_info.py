@@ -68,6 +68,8 @@ manifest_definition = {
         "name": "python_example",
         "version": "0.0.1",
     }],
+    # This manifest uses v1 claims,
+    # so the version 1 must be explicitly set.
     "claim_version": 1,
     "format": "image/jpeg",
     "title": "Python Example Image",
