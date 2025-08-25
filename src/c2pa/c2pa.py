@@ -2215,6 +2215,9 @@ class Builder:
               opened in w+b (write+read binary) mode.
             signer: The signer to use
 
+        Returns:
+            Manifest bytes
+
         Raises:
             C2paError: If there was an error during signing
         """
