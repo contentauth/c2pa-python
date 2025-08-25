@@ -495,8 +495,15 @@ class TestBuilderWithSigner(unittest.TestCase):
             output.seek(0)
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
+            print(json_data)
             self.assertIn("Python Test", json_data)
             self.assertNotIn("validation_status", json_data)
+
+            # Write buffer to file
+            # output.seek(0)
+            # with open('/target_path', 'wb') as f:
+            #     f.write(output.getbuffer())
+
             output.close()
 
     def test_streams_sign_with_es256_alg(self):
