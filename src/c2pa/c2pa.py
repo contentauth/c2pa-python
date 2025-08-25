@@ -2142,7 +2142,8 @@ class Builder:
             signer: The signer to use
             format: The MIME type or extension of the content
             source_stream: The source stream
-            dest_stream: The destination stream, as Stream(BytesIO)
+            dest_stream: The destination stream,
+            opened in w+b (write+read binary) mode.
 
         Returns:
             Manifest bytes
@@ -2210,7 +2211,8 @@ class Builder:
         Args:
             format: The MIME type or extension of the content
             source: The source stream (any Python stream-like object)
-            dest: The destination stream (any Python stream-like object)
+            dest: The destination stream (any Python stream-like object),
+              opened in w+b (write+read binary) mode.
             signer: The signer to use
 
         Raises:
