@@ -48,7 +48,6 @@ manifest_json = {
         "name": "python_test",
         "version": "0.1"
     }],
-    "claim_version": 2,
     "title": "Do Not Train Example",
     "thumbnail": {
         "format": "image/jpeg",

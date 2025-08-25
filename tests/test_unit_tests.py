@@ -328,7 +328,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 "name": "python_test",
                 "version": "0.0.1",
             }],
-            "claim_version": 2,
+            # claim version 2 is the default
+            # "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
             "ingredients": [],
