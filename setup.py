@@ -17,8 +17,7 @@ PACKAGE_NAME = "c2pa-python"  # Define package name as a constant
 PLATFORM_EXTENSIONS = {
     'win_amd64': 'dll',
     'win_arm64': 'dll',
-    'macosx_x86_64': 'dylib',
-    'apple-darwin': 'dylib', # we need to update the published keys
+    'apple-darwin': 'dylib', # universal
     'linux_x86_64': 'so',
     'linux_aarch64': 'so',
 }
@@ -26,11 +25,9 @@ PLATFORM_EXTENSIONS = {
 # Based on what c2pa-rs repo publishes
 PLATFORM_FOLDERS = {
     'universal-apple-darwin': 'dylib',
-    'aarch64-apple-darwin': 'dylib',
-    'x86_64-apple-darwin': 'dylib',
     'x86_64-pc-windows-msvc': 'dll',
     'x86_64-unknown-linux-gnu': 'so',
-    'aarch64-unknown-linux-gnu': 'so',  # Add ARM Linux support
+    'aarch64-unknown-linux-gnu': 'so',
 }
 
 # Directory structure
@@ -38,7 +35,7 @@ ARTIFACTS_DIR = Path('artifacts')  # Where downloaded libraries are stored
 PACKAGE_LIBS_DIR = Path('src/c2pa/libs')  # Where libraries will be copied for the wheel
 
 
-def get_platform_identifier(cpu_arch = None) -> str:
+def get_platform_identifier() -> str:
     """Get a platform identifier (arch-os) for the current system,
     matching downloaded identifiers used by the Github publisher.
 
@@ -47,9 +44,7 @@ def get_platform_identifier(cpu_arch = None) -> str:
             cpu_arch: Optional CPU architecture for macOS. If not provided, returns universal build.
 
     Returns one of:
-    - universal-apple-darwin (for Mac, when cpu_arch is None, fallback)
-    - aarch64-apple-darwin (for Mac ARM64)
-    - x86_64-apple-darwin (for Mac x86_64)
+    - universal-apple-darwin (for macOS)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM64)
@@ -57,14 +52,7 @@ def get_platform_identifier(cpu_arch = None) -> str:
     system = platform.system().lower()
 
     if system == "darwin":
-        if cpu_arch is None:
-            return "universal-apple-darwin"
-        elif cpu_arch == "arm64":
-            return "aarch64-apple-darwin"
-        elif cpu_arch == "x86_64":
-            return "x86_64-apple-darwin"
-        else:
-            raise ValueError(f"Unsupported CPU architecture for macOS: {cpu_arch}")
+        return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
