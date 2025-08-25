@@ -43,8 +43,8 @@ manifestDefinition = {
                 "actions": [
                     {
                         "action": "c2pa.created",
-                        "parameters": {
-                        }
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                        "softwareAgent": "Python C2PA SDK example"
                     }
                 ]
             }
