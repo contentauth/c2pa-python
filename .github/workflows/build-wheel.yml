@@ -67,7 +67,7 @@ jobs:
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
               \${PYBIN}/pip install --upgrade pip wheel &&
               \${PYBIN}/pip install toml==0.10.2 &&
-              \${PYBIN}/pip install setuptools==0.68.0 &&
+              \${PYBIN}/pip install setuptools==68.0.0 &&
               CFLAGS=\"-I/opt/python/cp310-cp310/include/python3.10\" LDFLAGS=\"-L/opt/python/cp310-cp310/lib\" \${PYBIN}/python setup.py bdist_wheel --plat-name $PLATFORM_TAG
             done &&
             rm -f /io/dist/*-linux_*.whl
