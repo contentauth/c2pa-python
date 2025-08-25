@@ -1606,11 +1606,11 @@ class Signer:
                 ):
                     # Error: invalid input, invalid so return -1,
                     # native code will handle it!
-                    return -1  # pragma: no cover
+                    return -1
 
                 # Validate buffer sizes before memory operations
                 if data_len > 1024 * 1024:  # 1MB limit
-                    return -1  # pragma: no cover
+                    return -1
 
                 # Recover signed data (copy, to avoid lifetime issues)
                 temp_buffer = (ctypes.c_ubyte * data_len)()
@@ -1620,14 +1620,14 @@ class Signer:
                 if not data:
                     # Error: empty data, invalid so return -1,
                     # native code will also handle it!
-                    return -1  # pragma: no cover
+                    return -1
 
                 # Call the user's callback
                 signature = callback(data)
                 if not signature:
                     # Error: empty signature, invalid so return -1,
                     # native code will handle that too!
-                    return -1  # pragma: no cover
+                    return -1
 
                 # Copy the signature back to the C buffer
                 # (since callback is used in native code)
@@ -1638,7 +1638,7 @@ class Signer:
 
                 # Native code expects the signed len to be returned, we oblige
                 return actual_len
-            except Exception as e:  # pragma: no cover
+            except Exception as e:
                 print(
                     cls._ERROR_MESSAGES['callback_error'].format(
                         str(e)), file=sys.stderr)
