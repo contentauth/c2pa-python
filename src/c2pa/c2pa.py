@@ -828,38 +828,18 @@ def sign_file(
         # Create a builder from the manifest
         builder = Builder(manifest)
 
-        # Open source file and create BytesIO for destination
-        with open(source_path, 'rb') as source_file:
-            # Get the MIME type from the file extension
-            mime_type = mimetypes.guess_type(str(source_path))[0]
-            if not mime_type:
-                raise C2paError.NotSupported(
-                    f"Could not determine MIME type for file: {source_path}")
+        manifest_bytes = builder.sign_file(
+            source_path,
+            dest_path,
+            signer
+        )
 
-            # Convert Python streams to Stream objects for internal signing
-            source_stream = Stream(source_file)
-            # In-memory buffer stream that will be flushed to file
-            dest_stream = Stream(io.BytesIO(bytearray()))
-
-            # Use the builder's internal signing logic to get manifest
-            # bytes
-            manifest_bytes = builder._sign_internal(
-                signer, mime_type, source_stream, dest_stream)
-
-            source_stream.close()
-
-            # Write the in-memory signed content
-            # from BytesIO to the destination file
-            with open(dest_path, 'wb') as dest_file:
-                dest_stream.write_to_target(dest_file)
-            dest_stream.close()
-
-            if return_manifest_as_bytes:
-                return manifest_bytes
-            else:
-                # Read the signed manifest from the destination file
-                with Reader(dest_path) as reader:
-                    return reader.json()
+        if return_manifest_as_bytes:
+            return manifest_bytes
+        else:
+            # Read the signed manifest from the destination file
+            with Reader(dest_path) as reader:
+                return reader.json()
 
     except Exception as e:
         # Clean up destination file if it exists and there was an error
@@ -2276,7 +2256,7 @@ class Builder:
             signer: The signer to use
 
         Returns:
-            A tuple of (size of C2PA data, manifest bytes)
+            Manifest bytes
 
         Raises:
             C2paError: If there was an error during signing
@@ -2288,28 +2268,9 @@ class Builder:
                 f"Could not determine MIME type for file: {source_path}")
 
         try:
-            # Open source file and create BytesIO for destination
-            with open(source_path, 'rb') as source_file:
-                source_stream = Stream(source_file)
-
-                # In-memory buffer stream that will be flushed to target,
-                # to ensure proper in-memory processing and validatin
-                dest_stream = Stream(io.BytesIO(bytearray()))
-
-                # Use the internal stream-base signing logic to
-                # sign the content to the BytesIO stream
-                result = self._sign_internal(
-                    signer, mime_type, source_stream, dest_stream)
-
-                source_stream.close()
-
-                # Write the signed content from in-memory stream
-                # to the destination file
-                with open(dest_path, 'wb') as dest_file:
-                    dest_stream.write_to_target(dest_file)
-                dest_stream.close()
-
-                return result
+            # Open source file and destination file, then use the sign method
+            with open(source_path, 'rb') as source_file, open(dest_path, 'w+b') as dest_file:
+                return self.sign(signer, mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}")
 

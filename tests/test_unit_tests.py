@@ -506,6 +506,35 @@ class TestBuilderWithSigner(unittest.TestCase):
 
             output.close()
 
+    def test_streams_sign_with_es256_alg_v1_manifest_to_file(self):
+        test_file_name = os.path.join(self.data_dir, "temp_data", "temp_signing.jpg")
+        # Ensure tmp directory exists
+        os.makedirs(os.path.dirname(test_file_name), exist_ok=True)
+
+        # Ensure the target file exists before opening it in rb+ mode
+        with open(test_file_name, "wb") as f:
+            pass  # Create empty file
+
+        try:
+            with open(self.testPath, "rb") as source, open(test_file_name, "w+b") as target:
+                builder = Builder(self.manifestDefinition)
+                builder.sign(self.signer, "image/jpeg", source, target)
+                reader = Reader("image/jpeg", target)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up...
+
+            if os.path.exists(test_file_name):
+                os.remove(test_file_name)
+
+            # Also clean up the temp directory if it's empty
+            temp_dir = os.path.dirname(test_file_name)
+            if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                os.rmdir(temp_dir)
+
     def test_streams_sign_with_es256_alg(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinitionV2)
@@ -1168,8 +1197,6 @@ class TestBuilderWithSigner(unittest.TestCase):
         try:
             # Create a temporary output file path
             output_path = os.path.join(temp_dir, "signed_output.jpg")
-            print(f"## output_path: {output_path}")
-            print(f"## self.testPath: {self.testPath}")
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
@@ -1846,8 +1873,7 @@ class TestLegacyAPI(unittest.TestCase):
         manifest_json = json.dumps(manifest)
 
         try:
-            # Sign the file
-            result_json = sign_file(
+            sign_file(
                 self.testPath,
                 output_path,
                 manifest_json,
