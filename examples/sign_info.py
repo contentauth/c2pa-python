@@ -94,7 +94,9 @@ builder = c2pa.Builder(manifest_definition)
 # Sign the image
 print("\nSigning the image...")
 with open(fixtures_dir + "C.jpg", "rb") as source:
-    with open(output_dir + "C_signed.jpg", "wb") as dest:
+    # File needs to be opened in write+read mode to be signed
+    # and verified properly.
+    with open(output_dir + "C_signed.jpg", "w+b") as dest:
         result = builder.sign(signer, "image/jpeg", source, dest)
 
 # Read the signed image to verify

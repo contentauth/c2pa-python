@@ -122,7 +122,7 @@ try:
 
     # Sign the file using the stream-based sign method
     with open(testFile, "rb") as source_file:
-        with open(testOutputFile, "wb") as dest_file:
+        with open(testOutputFile, "w+b") as dest_file:
             result = builder.sign(signer, "image/jpeg", source_file, dest_file)
 
     # As an alternative, you can also use file paths directly during signing:
