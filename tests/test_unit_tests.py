@@ -1163,11 +1163,13 @@ class TestBuilderWithSigner(unittest.TestCase):
           self.assertNotIn("validation_status", json_data)
           output.close()
 
-    def test_sign_file(self):
+    def test_sign_file_tmn_wip(self):
         temp_dir = tempfile.mkdtemp()
         try:
             # Create a temporary output file path
             output_path = os.path.join(temp_dir, "signed_output.jpg")
+            print(f"## output_path: {output_path}")
+            print(f"## self.testPath: {self.testPath}")
 
             # Use the sign_file method
             builder = Builder(self.manifestDefinition)
@@ -2284,7 +2286,7 @@ class TestLegacyAPI(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_sign_file_callback_signer_managed(self):
+    def test_sign_file_callback_signer_managed_single(self):
         """Test signing a file using the sign_file method with context managers."""
 
         temp_dir = tempfile.mkdtemp()
@@ -2312,20 +2314,21 @@ class TestLegacyAPI(unittest.TestCase):
             self.assertGreater(len(manifest_bytes), 0)
 
             # Verify signed data can be read
-            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
-                json_data = reader.json()
-                self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+            with open(output_path, "rb") as file:
+                with Reader("image/jpeg", file) as reader:
+                    json_data = reader.json()
+                    self.assertIn("Python Test", json_data)
+                    self.assertNotIn("validation_status", json_data)
 
-                # Parse the JSON and verify the signature algorithm
-                manifest_data = json.loads(json_data)
-                active_manifest_id = manifest_data["active_manifest"]
-                active_manifest = manifest_data["manifests"][active_manifest_id]
+                    # Parse the JSON and verify the signature algorithm
+                    manifest_data = json.loads(json_data)
+                    active_manifest_id = manifest_data["active_manifest"]
+                    active_manifest = manifest_data["manifests"][active_manifest_id]
 
-                # Verify the signature_info contains the correct algorithm
-                self.assertIn("signature_info", active_manifest)
-                signature_info = active_manifest["signature_info"]
-                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
+                    # Verify the signature_info contains the correct algorithm
+                    self.assertIn("signature_info", active_manifest)
+                    signature_info = active_manifest["signature_info"]
+                    self.assertEqual(signature_info["alg"], self.callback_signer_alg)
 
         finally:
             shutil.rmtree(temp_dir)
