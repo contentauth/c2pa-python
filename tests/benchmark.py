@@ -37,18 +37,17 @@ manifestDefinition = {
     "title": "Python Test Image",
     "ingredients": [],
     "assertions": [
-        {'label': 'stds.schema-org.CreativeWork',
-            'data': {
-                '@context': 'http://schema.org/',
-                '@type': 'CreativeWork',
-                'author': [
-                    {'@type': 'Person',
-                        'name': 'Gavin Peacock'
-                     }
+        {
+            "label": "c2pa.actions",
+            "data": {
+                "actions": [
+                    {
+                        "action": "c2pa.created",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                    }
                 ]
-            },
-            'kind': 'Json'
-         }
+            }
+        }
     ]
 }
 
@@ -77,6 +76,7 @@ def test_files_read():
     with open(test_path, "rb") as f:
         reader = Reader("image/jpeg", f)
         result = reader.json()
+        reader.close()
         assert result is not None
         # Parse the JSON string into a dictionary
         result_dict = json.loads(result)
@@ -93,6 +93,7 @@ def test_streams_read():
         source = file.read()
     reader = Reader("image/jpeg", io.BytesIO(source))
     result = reader.json()
+    reader.close()
     assert result is not None
     # Parse the JSON string into a dictionary
     result_dict = json.loads(result)

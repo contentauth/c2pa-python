@@ -114,3 +114,5 @@ target/
 *.dll
 *.so
 src/c2pa/libs/
+!tests/fixtures/*.pem
+!tests/fixtures/*.key

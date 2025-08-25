@@ -35,7 +35,7 @@ version = c2pa.sdk_version()
 print(version)
 
 
-# Load certificates and private key (here from the test fixtures)
+# Load certificates and private key (here from the test fixtures).
 # This is OK for development, but in production you should use a
 # secure way to load the certificates and private key.
 certs = open(fixtures_dir + "es256_certs.pem", "rb").read()
@@ -63,15 +63,17 @@ signer = c2pa.Signer.from_callback(
     tsa_url="http://timestamp.digicert.com"
 )
 
-# Create a manifest definition as a dictionary
-# This manifest follows the V2 manifest format
+# Create a manifest definition as a dictionary.
+# This manifest follows the V2 manifest format.
 manifest_definition = {
     "claim_generator": "python_example",
     "claim_generator_info": [{
         "name": "python_example",
         "version": "0.0.1",
     }],
-    "claim_version": 2,
+    # Claims version 2 is the default, so the version
+    # number can be omitted.
+    # "claim_version": 2,
     "format": "image/jpeg",
     "title": "Python Example Image",
     "ingredients": [],
@@ -82,10 +84,7 @@ manifest_definition = {
                 "actions": [
                     {
                         "action": "c2pa.created",
-                        "parameters": {
-                            # could hold additional information about this step
-                            # eg. model used, etc.
-                        }
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                     }
                 ]
             }
@@ -99,6 +98,7 @@ builder = c2pa.Builder(manifest_definition)
 # Sign the image with the signer created above,
 # which will use the callback signer
 print("\nSigning the image file...")
+
 builder.sign_file(
     source_path=fixtures_dir + "A.jpg",
     dest_path=output_dir + "A_signed.jpg",

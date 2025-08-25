@@ -61,12 +61,16 @@ signer = c2pa.Signer.from_info(signer_info)
 
 # Create a manifest definition as a dictionary
 # This examples signs using a V1 manifest
+# Note that this is a v1 spec manifest (legacy)
 manifest_definition = {
     "claim_generator": "python_example",
     "claim_generator_info": [{
         "name": "python_example",
         "version": "0.0.1",
     }],
+    # This manifest uses v1 claims,
+    # so the version 1 must be explicitly set.
+    "claim_version": 1,
     "format": "image/jpeg",
     "title": "Python Example Image",
     "ingredients": [],
@@ -77,9 +81,7 @@ manifest_definition = {
                 "actions": [
                     {
                         "action": "c2pa.created",
-                        "parameters": {
-                            # could hold additional information about this step
-                        }
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                     }
                 ]
             }
@@ -93,7 +95,9 @@ builder = c2pa.Builder(manifest_definition)
 # Sign the image
 print("\nSigning the image...")
 with open(fixtures_dir + "C.jpg", "rb") as source:
-    with open(output_dir + "C_signed.jpg", "wb") as dest:
+    # File needs to be opened in write+read mode to be signed
+    # and verified properly.
+    with open(output_dir + "C_signed.jpg", "w+b") as dest:
         result = builder.sign(signer, "image/jpeg", source, dest)
 
 # Read the signed image to verify
