@@ -506,7 +506,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
             output.close()
 
-    def test_streams_sign_with_es256_alg_v1_manifest_to_file(self):
+    def test_streams_sign_with_es256_alg_v1_manifest_to_existing_empty_file(self):
         test_file_name = os.path.join(self.data_dir, "temp_data", "temp_signing.jpg")
         # Ensure tmp directory exists
         os.makedirs(os.path.dirname(test_file_name), exist_ok=True)
