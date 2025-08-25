@@ -535,6 +535,32 @@ class TestBuilderWithSigner(unittest.TestCase):
             if os.path.exists(temp_dir) and not os.listdir(temp_dir):
                 os.rmdir(temp_dir)
 
+    def test_streams_sign_with_es256_alg_v1_manifest_to_new_dest_file(self):
+        test_file_name = os.path.join(self.data_dir, "temp_data", "temp_signing.jpg")
+        # Ensure tmp directory exists
+        os.makedirs(os.path.dirname(test_file_name), exist_ok=True)
+
+        # A new target/destination file should be created during the test run
+        try:
+            with open(self.testPath, "rb") as source, open(test_file_name, "w+b") as target:
+                builder = Builder(self.manifestDefinition)
+                builder.sign(self.signer, "image/jpeg", source, target)
+                reader = Reader("image/jpeg", target)
+                json_data = reader.json()
+                self.assertIn("Python Test", json_data)
+                self.assertNotIn("validation_status", json_data)
+
+        finally:
+            # Clean up...
+
+            if os.path.exists(test_file_name):
+                os.remove(test_file_name)
+
+            # Also clean up the temp directory if it's empty
+            temp_dir = os.path.dirname(test_file_name)
+            if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                os.rmdir(temp_dir)
+
     def test_streams_sign_with_es256_alg(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinitionV2)
