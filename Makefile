@@ -37,8 +37,8 @@ run-examples:
 
 # Runs the examples, then the unit tests
 test:
-	PYTHONWARNINGS=ignore::DeprecationWarning python3 ./tests/test_unit_tests.py
-	PYTHONWARNINGS=ignore::DeprecationWarning python3 ./tests/test_unit_tests_threaded.py
+	python3 ./tests/test_unit_tests.py
+	python3 ./tests/test_unit_tests_threaded.py
 
 # Runs benchmarks in the venv
 benchmark:
