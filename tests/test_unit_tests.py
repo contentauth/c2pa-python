@@ -340,8 +340,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                         "actions": [
                             {
                                 "action": "c2pa.created",
-                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
-                                "softwareAgent": "Python C2PA SDK unit tests"
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                             }
                         ]
                     }

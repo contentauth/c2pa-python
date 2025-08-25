@@ -60,8 +60,7 @@ manifest_json = {
                 "actions": [
                     {
                         "action": "c2pa.created",
-                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
-                        "softwareAgent": "Python C2PA SDK example"
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                     }
                 ]
             }
