@@ -18,7 +18,7 @@ DEBUG_LIBRARY_LOADING = False
 
 # Create a module-specific logger with NullHandler to avoid interfering
 # with global configuration
-logger = logging.getLogger("c2pa")
+logger = logging.getLogger("c2pa.loader")
 logger.addHandler(logging.NullHandler())
 
 

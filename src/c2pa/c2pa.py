@@ -4,11 +4,16 @@ import json
 import sys
 import os
 import warnings
+import logging
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
-from .lib import dynamically_load_library, logger
+from .lib import dynamically_load_library
 import mimetypes
+
+# Create a module-specific logger
+logger = logging.getLogger("c2pa")
+logger.addHandler(logging.NullHandler())
 
 # Define required function names
 _REQUIRED_FUNCTIONS = [
