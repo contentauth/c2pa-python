@@ -242,6 +242,12 @@ class C2paSignerInfo(ctypes.Structure):
             private_key: The private key as a string
             ta_url: The timestamp authority URL as bytes
         """
+
+        if sign_cert is None:
+            raise ValueError("sign_cert must be set")
+        if private_key is None:
+            raise ValueError("private_key must be set")
+
         # Handle alg parameter: can be C2paSigningAlg enum
         # or string (or bytes), convert as needed
         if isinstance(alg, C2paSigningAlg):
