@@ -2170,13 +2170,6 @@ class Builder:
         if not signer or not hasattr(signer, '_signer') or not signer._signer:
             raise C2paError("Invalid or closed signer")
 
-        # Validate stream pointers before use
-        if not source_stream or not hasattr(source_stream, '_stream') or not source_stream._stream:
-            raise C2paError("Invalid source stream")
-
-        if not dest_stream or not hasattr(dest_stream, '_stream') or not dest_stream._stream:
-            raise C2paError("Invalid destination stream")
-
         if format not in Builder.get_supported_mime_types():
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
@@ -2208,17 +2201,12 @@ class Builder:
         manifest_bytes = b""
         if manifest_bytes_ptr and result > 0:
             try:
-                # Convert the C pointer to Python bytes
                 temp_buffer = (ctypes.c_ubyte * result)()
                 ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
                 manifest_bytes = bytes(temp_buffer)
             except Exception:
-                # If there's any error accessing the memory, just return
-                # empty bytes
                 manifest_bytes = b""
             finally:
-                # Always free the C-allocated memory,
-                # even if we failed to copy manifest bytes
                 try:
                     _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                 except Exception:
