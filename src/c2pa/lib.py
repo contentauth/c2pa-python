@@ -16,7 +16,8 @@ from enum import Enum
 # Debug flag for library loading
 DEBUG_LIBRARY_LOADING = False
 
-# Create a module-specific logger with NullHandler to avoid interfering with global configuration
+# Create a module-specific logger with NullHandler to avoid interfering
+# with global configuration
 logger = logging.getLogger("c2pa")
 logger.addHandler(logging.NullHandler())
 
@@ -45,7 +46,9 @@ def get_platform_identifier() -> str:
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        if _get_architecture() in [CPUArchitecture.ARM64.value, CPUArchitecture.AARCH64.value]:
+        if _get_architecture() in [
+                CPUArchitecture.ARM64.value,
+                CPUArchitecture.AARCH64.value]:
             return "aarch64-unknown-linux-gnu"
         return "x86_64-unknown-linux-gnu"
     else:
@@ -107,8 +110,8 @@ def _load_single_library(lib_name: str,
         The loaded library or None if loading failed
     """
     if DEBUG_LIBRARY_LOADING:  # pragma: no cover
-        logger.info(
-            f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
+        logger.info(f"Searching for library '{lib_name}' in paths: {
+            [str(p) for p in search_paths]}")
     current_arch = _get_architecture()
     if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(f"Current architecture: {current_arch}")
@@ -125,8 +128,8 @@ def _load_single_library(lib_name: str,
             except Exception as e:
                 error_msg = str(e)
                 if "incompatible architecture" in error_msg:
-                    logger.error(
-                        f"Architecture mismatch: Library at {lib_path} is not compatible with current architecture {current_arch}")
+                    logger.error(f"Architecture mismatch: Library at {
+                        lib_path} is not compatible with current architecture {current_arch}")
                     logger.error(f"Error details: {error_msg}")
                 else:
                     logger.error(
@@ -224,8 +227,8 @@ def dynamically_load_library(
             if lib:
                 return lib
             else:
-                logger.error(
-                    f"Could not find library {env_lib_name} in any of the search paths")
+                logger.error(f"Could not find library {
+                    env_lib_name} in any of the search paths")
                 # Continue with normal loading if environment variable library
                 # name fails
         except Exception as e:
@@ -241,18 +244,20 @@ def dynamically_load_library(
         if not lib:
             platform_id = get_platform_identifier()
             current_arch = _get_architecture()
-            logger.error(
-                f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+            logger.error(f"Could not find {lib_name} in any of the search paths: {
+                [str(p) for p in possible_paths]}")
             logger.error(
                 f"Platform: {platform_id}, Architecture: {current_arch}")
-            raise RuntimeError(
-                f"Could not find {lib_name} in any of the search paths (Platform: {platform_id}, Architecture: {current_arch})")
+            raise RuntimeError(f"Could not find {lib_name} in any of the search paths (Platform: {
+                platform_id}, Architecture: {current_arch})")
         return lib
 
     # Default path (no library name provided in the environment)
     c2pa_lib = _load_single_library(c2pa_lib_name, possible_paths)
     if not c2pa_lib:
-        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
-        raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
+        logger.error(f"Could not find {c2pa_lib_name} in any of the search paths: {
+                     [str(p) for p in possible_paths]}")
+        raise RuntimeError(
+            f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib

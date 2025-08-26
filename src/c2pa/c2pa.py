@@ -2296,7 +2296,7 @@ class Builder:
         try:
             # Open source file and destination file, then use the sign method
             with open(source_path, 'rb') as source_file, \
-                 open(dest_path, 'w+b') as dest_file:
+                    open(dest_path, 'w+b') as dest_file:
                 return self.sign(signer, mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
