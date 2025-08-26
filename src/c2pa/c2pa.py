@@ -1293,8 +1293,13 @@ class Reader:
               contain invalid UTF-8 characters
         """
 
+        self._closed = False
         self._reader = None
         self._own_stream = None
+
+        # This is used to keep track of a file
+        # we may have opened ourselves, and that we need to close later
+        self._backing_file = None
 
         if stream is None:
             # If we don't get a stream as param:
@@ -1342,13 +1347,13 @@ class Reader:
                     )
 
                 # Store the file to close it later
-                self._file_like_stream = file
+                self._backing_file = file
 
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_file_like_stream'):
-                    self._file_like_stream.close()
+                if self._backing_file:
+                    self._backing_file.close()
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -1402,12 +1407,13 @@ class Reader:
                         )
                     )
 
-                self._file_like_stream = file
+                # File stream we opened and own
+                self._backing_file = file
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_file_like_stream'):
-                    self._file_like_stream.close()
+                if self._backing_file:
+                    self._backing_file.close()
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -1460,60 +1466,83 @@ class Reader:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+    def __del__(self):
+        """Ensure resources are cleaned up if close() wasn't called.
+
+        This destructor handles cleanup without causing double frees.
+        It only cleans up if the object hasn't been explicitly closed.
+        """
+        self._cleanup_resources()
+
+    def _ensure_valid_state(self):
+        """Ensure the reader is in a valid state for operations.
+
+        Raises:
+            C2paError: If the reader is closed or invalid
+        """
+        if self._closed or not self._reader:
+            raise C2paError("Reader is closed")
+
+    def _cleanup_resources(self):
+        """Internal cleanup method that releases native resources.
+
+        This method handles the actual cleanup logic and can be called
+        from both close() and __del__ without causing double frees.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid reader
+            if hasattr(self, '_closed') and not self._closed:
+                # Clean up reader
+                if hasattr(self, '_reader') and self._reader:
+                    try:
+                        _lib.c2pa_reader_free(self._reader)
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        pass
+                    finally:
+                        self._reader = None
+
+                # Clean up stream
+                if hasattr(self, '_own_stream') and self._own_stream:
+                    try:
+                        self._own_stream.close()
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        pass
+                    finally:
+                        self._own_stream = None
+
+                # Clean up backing file
+                if self._backing_file:
+                    try:
+                        self._backing_file.close()
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        pass
+                    finally:
+                        self._backing_file = None
+
+                self._closed = True
+        except Exception:
+            # Ensure we don't raise exceptions during cleanup
+            pass
+
     def close(self):
-        """Release the reader resources.
+        """Release the reader resources safely.
 
         This method ensures all resources are properly cleaned up,
         even if errors occur during cleanup.
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-
-        # Track if we've already cleaned up
-        if not hasattr(self, '_closed'):
-            self._closed = False
-
         if self._closed:
-            return
+            return  # Already closed, safe to return
 
         try:
-            # Clean up reader
-            if hasattr(self, '_reader') and self._reader:
-                try:
-                    _lib.c2pa_reader_free(self._reader)
-                except Exception as e:
-                    print(
-                        Reader._ERROR_MESSAGES['reader_cleanup_error'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._reader = None
-
-            # Clean up stream
-            if hasattr(self, '_own_stream') and self._own_stream:
-                try:
-                    self._own_stream.close()
-                except Exception as e:
-                    print(
-                        Reader._ERROR_MESSAGES['stream_error'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._own_stream = None
-
-            # Clean up file
-            if hasattr(self, '_file_like_stream'):
-                try:
-                    self._file_like_stream.close()
-                except Exception as e:
-                    print(
-                        Reader._ERROR_MESSAGES['file_error'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._file_like_stream = None
-
-            # Clear any stored strings
-            if hasattr(self, '_strings'):
-                self._strings.clear()
+            # Use the internal cleanup method
+            self._cleanup_resources()
         except Exception as e:
+            # Log any unexpected errors during close
             print(
                 Reader._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
@@ -1529,9 +1558,7 @@ class Reader:
         Raises:
             C2paError: If there was an error getting the JSON
         """
-
-        if not self._reader:
-            raise C2paError("Reader is closed")
+        self._ensure_valid_state()
         result = _lib.c2pa_reader_json(self._reader)
 
         if result is None:
@@ -1555,13 +1582,12 @@ class Reader:
         Raises:
             C2paError: If there was an error writing the resource to stream
         """
-        if not self._reader:
-            raise C2paError("Reader is closed")
+        self._ensure_valid_state()
 
-        self._uri_str = uri.encode('utf-8')
+        uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
-                self._reader, self._uri_str, stream_obj._stream)
+                self._reader, uri_str, stream_obj._stream)
 
             if result < 0:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
