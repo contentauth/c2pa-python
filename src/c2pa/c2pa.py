@@ -557,7 +557,7 @@ def _convert_to_py_string(value) -> str:
                 try:
                     _lib.c2pa_string_free(value)
                 except Exception:
-                    # Log error but don't crash
+                    # Ignore clean up issues
                     pass
     except (ctypes.ArgumentError, TypeError, ValueError):
         # Invalid pointer type or value
