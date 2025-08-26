@@ -1194,21 +1194,67 @@ class Reader:
 
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
+        """Get the list of supported MIME types for the Reader.
+
+        This method retrieves supported MIME types from the native library
+        with proper pointer validation and error handling.
+
+        Returns:
+            List of supported MIME type strings
+
+        Raises:
+            C2paError: If there was an error retrieving the MIME types
+        """
         if cls._supported_mime_types_cache is not None:
             return cls._supported_mime_types_cache
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
 
-        try:
-            # CDecode values to place them in Python managed memory
-            result = [arr[i].decode("utf-8") for i in range(count.value)]
-        finally:
-            # Release native memory, as per API contract
-            # c2pa_reader_supported_mime_types must call c2pa_free_string_array
-            _lib.c2pa_free_string_array(arr, count.value)
+        # Validate the returned array pointer
+        if not arr:
+            # If no array returned, check for errors
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(f"Failed to get supported MIME types: {error}")
+            # Return empty list if no error but no array
+            return []
 
-        cls._supported_mime_types_cache = result
+        # Validate count value
+        if count.value <= 0:
+            # Free the array even if count is invalid
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                pass
+            return []
+
+        try:
+            result = []
+            for i in range(count.value):
+                try:
+                    # Validate each array element before accessing
+                    if arr[i] is None:
+                        continue
+
+                    mime_type = arr[i].decode("utf-8", errors='replace')
+                    if mime_type:
+                        result.append(mime_type)
+                except Exception:
+                    # Ignore cleanup errors
+                    continue
+        finally:
+            # Always free the native memory, even if string extraction fails
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                # Ignore cleanup errors
+                pass
+
+        # Cache the result
+        if result:
+            cls._supported_mime_types_cache = result
+
         return cls._supported_mime_types_cache
 
     def __init__(self,
@@ -1798,22 +1844,67 @@ class Builder:
 
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
+        """Get the list of supported MIME types for the Builder.
+
+        This method retrieves supported MIME types from the native library
+        with proper pointer validation and error handling.
+
+        Returns:
+            List of supported MIME type strings
+
+        Raises:
+            C2paError: If there was an error retrieving the MIME types
+        """
         if cls._supported_mime_types_cache is not None:
             return cls._supported_mime_types_cache
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
 
-        try:
-            # CDecode values to place them in Python managed memory
-            result = [arr[i].decode("utf-8") for i in range(count.value)]
-        finally:
-            # Release native memory, as per API contract
-            # c2pa_builder_supported_mime_types must call
-            # c2pa_free_string_array
-            _lib.c2pa_free_string_array(arr, count.value)
+        # Validate the returned array pointer
+        if not arr:
+            # If no array returned, check for errors
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(f"Failed to get supported MIME types: {error}")
+            # Return empty list if no error but no array
+            return []
 
-        cls._supported_mime_types_cache = result
+        # Validate count value
+        if count.value <= 0:
+            # Free the array even if count is invalid
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                pass
+            return []
+
+        try:
+            result = []
+            for i in range(count.value):
+                try:
+                    # Validate each array element before accessing
+                    if arr[i] is None:
+                        continue
+
+                    mime_type = arr[i].decode("utf-8", errors='replace')
+                    if mime_type:
+                        result.append(mime_type)
+                except Exception:
+                    # Ignore decoding failures
+                    continue
+        finally:
+            # Always free the native memory, even if string extraction fails
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                # Ignore cleanup errors
+                pass
+
+        # Cache the result
+        if result:
+            cls._supported_mime_types_cache = result
+
         return cls._supported_mime_types_cache
 
     def __init__(self, manifest_json: Any):
