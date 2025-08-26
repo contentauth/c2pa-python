@@ -1,6 +1,7 @@
 # C2PA Python library
 
 The [c2pa-python](https://github.com/contentauth/c2pa-python) repository provides a Python library that can:
+
 - Read and validate C2PA manifest data from media files in supported formats.
 - Create and sign manifest data, and attach it to media files in supported formats.
 

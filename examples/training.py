@@ -15,7 +15,6 @@
 
 import json
 import os
-import sys
 
 # Example of using python crypto to sign data using openssl with Ps256
 from cryptography.hazmat.primitives import hashes, serialization
@@ -54,19 +53,32 @@ manifest_json = {
         "format": "image/jpeg",
         "identifier": "thumbnail"
     },
-    "assertions": [{
-        "label": "cawg.training-mining",
-        "data": {
-            "entries": {
-                "cawg.ai_inference": {
-                    "use": "notAllowed"
-                },
-                "cawg.ai_generative_training": {
-                    "use": "notAllowed"
+    "assertions": [
+        {
+            "label": "c2pa.actions",
+            "data": {
+                "actions": [
+                    {
+                        "action": "c2pa.created",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                    }
+                ]
+            }
+        },
+        {
+            "label": "cawg.training-mining",
+            "data": {
+                "entries": {
+                    "cawg.ai_inference": {
+                        "use": "notAllowed"
+                    },
+                    "cawg.ai_generative_training": {
+                        "use": "notAllowed"
+                    }
                 }
             }
         }
-    }]
+    ]
 }
 
 ingredient_json = {
@@ -109,37 +121,48 @@ try:
 
     # Sign the file using the stream-based sign method
     with open(testFile, "rb") as source_file:
-        with open(testOutputFile, "wb") as dest_file:
+        with open(testOutputFile, "w+b") as dest_file:
             result = builder.sign(signer, "image/jpeg", source_file, dest_file)
 
+    # As an alternative, you can also use file paths directly during signing:
+    # builder.sign_file(testFile, testOutputFile, signer)
+
+    # Clean up native resources (using a with statement works too!)
+    signer.close()
+    builder.close()
+
 except Exception as err:
-    sys.exit(err)
+    print("Exception during signing: ", err)
 
-print("V2: successfully added do not train manifest to file " + testOutputFile)
-
+print("\nSuccessfully added do not train manifest to file " + testOutputFile)
 
 # now verify the asset and check the manifest for a do not train assertion...
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
-    # Create reader using the current API
+    # Create reader using the Reader API
     reader = c2pa.Reader(testOutputFile)
+
+    # Retrieve the manifest store
     manifest_store = json.loads(reader.json())
 
+    # Look at data in the active manifest
     manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-
     for assertion in manifest["assertions"]:
         if assertion["label"] == "cawg.training-mining":
             if getitem(assertion, ("data","entries","cawg.ai_generative_training","use")) == "notAllowed":
                 allowed = False
 
-    # get the ingredient thumbnail and save it to a file using resource_to_stream
+    # Get the ingredient thumbnail and save it to a file using resource_to_stream
     uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
     with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
         reader.resource_to_stream(uri, thumbnail_output)
 
+    # Clean up native resources (using a with statement works too!)
+    reader.close()
+
 except Exception as err:
-    sys.exit(err)
+    print("Exception during assertions reading: ", err)
 
 if allowed:
     print("Training is allowed")

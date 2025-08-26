@@ -13,6 +13,7 @@ requests>=2.0.0
 
 # Code formatting
 autopep8==2.0.4  # For automatic code formatting
+flake8==7.3.0
 
 # Test dependencies (for callback signers)
 cryptography==45.0.4

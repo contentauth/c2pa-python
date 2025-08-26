@@ -20,11 +20,10 @@ clean-c2pa-env: clean
 install-deps:
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
-	pip install -e .
 
 # Installs the package in development mode
 build-python:
-	pip install -e .
+	python3 -m pip install -e .
 
 # Performs a complete rebuild of the development environment
 rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
@@ -32,6 +31,7 @@ rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
 
 run-examples:
 	python3 ./examples/sign.py
+	python3 ./examples/sign_info.py
 	python3 ./examples/training.py
 	rm -rf output/
 
@@ -42,7 +42,7 @@ test:
 
 # Runs benchmarks in the venv
 benchmark:
-	python -m pytest tests/benchmark.py -v
+	python3 -m pytest tests/benchmark.py -v
 
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
@@ -50,15 +50,15 @@ test-local-wheel-build:
 	# Clean any existing builds
 	rm -rf build/ dist/
 	# Download artifacts and place them where they should go
-	python scripts/download_artifacts.py $(C2PA_VERSION)
+	python3 scripts/download_artifacts.py $(C2PA_VERSION)
 	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
-	python -m build --wheel
+	python3 -m build --wheel
 	# Install local build in venv
 	pip install $$(ls dist/*.whl)
 	# Verify installation in local venv
-	python -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
+	python3 -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
 	# Verify wheel structure
 	twine check dist/*
 
@@ -68,23 +68,23 @@ test-local-sdist-build:
 	# Clean any existing builds
 	rm -rf build/ dist/
 	# Download artifacts and place them where they should go
-	python scripts/download_artifacts.py $(C2PA_VERSION)
+	python3 scripts/download_artifacts.py $(C2PA_VERSION)
 	# Install Python
 	python3 -m pip install -r requirements.txt
 	python3 -m pip install -r requirements-dev.txt
 	# Build sdist package
-	python setup.py sdist
+	python3 setup.py sdist
 	# Install local build in venv
 	pip install $$(ls dist/*.tar.gz)
 	# Verify installation in local venv
-	python -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
+	python3 -c "import c2pa; print('C2PA package installed at:', c2pa.__file__)"
 	# Verify sdist structure
 	twine check dist/*
 
 # Verifies the wheel build process and checks the built package and its metadata
 verify-wheel-build:
 	rm -rf build/ dist/ src/*.egg-info/
-	python -m build
+	python3 -m build
 	twine check dist/*
 
 # Manually publishes the package to PyPI after creating a release
@@ -92,9 +92,13 @@ publish: release
 	python3 -m pip install twine
 	python3 -m twine upload dist/*
 
+# Code analysis
+check-format:
+	flake8 src/c2pa/c2pa.py
+
 # Formats Python source code using autopep8 with aggressive settings
 format:
-	autopep8 --aggressive --aggressive --in-place src/c2pa/**/*.py
+	autopep8 --aggressive --aggressive --in-place src/c2pa/*.py
 
 # Downloads the required native artifacts for the specified version
 download-native-artifacts:
