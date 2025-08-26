@@ -1317,7 +1317,7 @@ class Reader:
                     f"Reader does not support {mime_type}")
 
             try:
-                self._mime_type_str = mime_type.encode('utf-8')
+                mime_type_str = mime_type.encode('utf-8')
             except UnicodeError as e:
                 raise C2paError.Encoding(
                     Reader._ERROR_MESSAGES['encoding_error'].format(
@@ -1329,7 +1329,7 @@ class Reader:
                 self._own_stream = Stream(file)
 
                 self._reader = _lib.c2pa_reader_from_stream(
-                    self._mime_type_str,
+                    mime_type_str,
                     self._own_stream._stream
                 )
 
@@ -1371,11 +1371,11 @@ class Reader:
                 self._own_stream = Stream(file)
 
                 format_str = str(format_or_path)
-                self._format_str = format_str.encode('utf-8')
+                format_bytes = format_str.encode('utf-8')
 
                 if manifest_data is None:
                     self._reader = _lib.c2pa_reader_from_stream(
-                        self._format_str, self._own_stream._stream)
+                        format_bytes, self._own_stream._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
                         raise TypeError(
@@ -1387,7 +1387,7 @@ class Reader:
                         manifest_data)
                     self._reader = (
                         _lib.c2pa_reader_from_manifest_data_and_stream(
-                            self._format_str,
+                            format_bytes,
                             self._own_stream._stream,
                             manifest_array,
                             len(manifest_data),
@@ -1425,12 +1425,12 @@ class Reader:
                     f"Reader does not support {format_str}")
 
             # Use the provided stream
-            self._format_str = format_str.encode('utf-8')
+            format_bytes = format_str.encode('utf-8')
 
             with Stream(stream) as stream_obj:
                 if manifest_data is None:
                     self._reader = _lib.c2pa_reader_from_stream(
-                        self._format_str, stream_obj._stream)
+                        format_bytes, stream_obj._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
                         raise TypeError(
@@ -1442,7 +1442,7 @@ class Reader:
                         manifest_data)
                     self._reader = (
                         _lib.c2pa_reader_from_manifest_data_and_stream(
-                            self._format_str,
+                            format_bytes,
                             stream_obj._stream,
                             manifest_array,
                             len(manifest_data)
