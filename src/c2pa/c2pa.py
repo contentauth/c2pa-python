@@ -622,7 +622,7 @@ def sdk_version() -> str:
     Returns the underlying c2pa-rs/c2pa-c-ffi version string
     """
     vstr = version()
-    # Example: "c2pa-c/0.49.5 c2pa-rs/0.49.5"
+    # Example: "c2pa-c-ffi/0.59.1 c2pa-rs/0.59.1"
     for part in vstr.split():
         if part.startswith("c2pa-rs/"):
             return part.split("/", 1)[1]
