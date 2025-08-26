@@ -2166,6 +2166,17 @@ class Builder:
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
 
+        # Validate signer pointer before use
+        if not signer or not hasattr(signer, '_signer') or not signer._signer:
+            raise C2paError("Invalid or closed signer")
+
+        # Validate stream pointers before use
+        if not source_stream or not hasattr(source_stream, '_stream') or not source_stream._stream:
+            raise C2paError("Invalid source stream")
+
+        if not dest_stream or not hasattr(dest_stream, '_stream') or not dest_stream._stream:
+            raise C2paError("Invalid destination stream")
+
         if format not in Builder.get_supported_mime_types():
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
@@ -2174,14 +2185,18 @@ class Builder:
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         # c2pa_builder_sign uses streams
-        result = _lib.c2pa_builder_sign(
-            self._builder,
-            format_str,
-            source_stream._stream,
-            dest_stream._stream,
-            signer._signer,
-            ctypes.byref(manifest_bytes_ptr)
-        )
+        try:
+            result = _lib.c2pa_builder_sign(
+                self._builder,
+                format_str,
+                source_stream._stream,
+                dest_stream._stream,
+                signer._signer,
+                ctypes.byref(manifest_bytes_ptr)
+            )
+        except Exception as e:
+            # Handle errors during the C function call
+            raise C2paError(f"Error calling c2pa_builder_sign: {str(e)}")
 
         if result < 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
