@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
-from .lib import dynamically_load_library
+from .lib import dynamically_load_library, logger
 import mimetypes
 
 # Define required function names
@@ -1147,9 +1147,9 @@ class Stream:
                 try:
                     _lib.c2pa_release_stream(self._stream)
                 except Exception as e:
-                    print(
+                    logger.error(
                         Stream._ERROR_MESSAGES['stream_error'].format(
-                            str(e)), file=sys.stderr)
+                            str(e)))
                 finally:
                     self._stream = None
 
@@ -1159,14 +1159,14 @@ class Stream:
                     try:
                         setattr(self, attr, None)
                     except Exception as e:
-                        print(
+                        logger.error(
                             Stream._ERROR_MESSAGES['callback_error'].format(
-                                attr, str(e)), file=sys.stderr)
+                                attr, str(e)))
 
         except Exception as e:
-            print(
+            logger.error(
                 Stream._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
             self._initialized = False
@@ -1544,9 +1544,9 @@ class Reader:
             self._cleanup_resources()
         except Exception as e:
             # Log any unexpected errors during close
-            print(
+            logger.error(
                 Reader._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
 
@@ -1748,9 +1748,9 @@ class Signer:
                 # Native code expects the signed len to be returned, we oblige
                 return actual_len
             except Exception as e:
-                print(
+                logger.error(
                     cls._ERROR_MESSAGES['callback_error'].format(
-                        str(e)), file=sys.stderr)
+                        str(e)))
                 # Error: exception raised, invalid so return -1,
                 # native code will handle the error when seeing -1
                 return -1
@@ -1856,9 +1856,9 @@ class Signer:
             self._cleanup_resources()
         except Exception as e:
             # Log any unexpected errors during close
-            print(
+            logger.error(
                 Signer._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
 
@@ -2088,9 +2088,9 @@ class Builder:
             self._cleanup_resources()
         except Exception as e:
             # Log any unexpected errors during close
-            print(
+            logger.error(
                 Builder._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
 
