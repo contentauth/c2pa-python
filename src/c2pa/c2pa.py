@@ -1102,9 +1102,27 @@ class Stream:
         self.close()
 
     def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        if hasattr(self, '_closed'):
-            self.close()
+        """Ensure resources are cleaned up if close() wasn't called.
+
+        This destructor only cleans up if the object hasn't been explicitly closed.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid stream
+            if hasattr(self, '_closed') and not self._closed:
+                if hasattr(self, '_stream') and self._stream:
+                    # Use internal cleanup to avoid calling close() which could cause issues
+                    try:
+                        _lib.c2pa_release_stream(self._stream)
+                    except Exception:
+                        # Destructors shouldn't raise exceptions, just log silently
+                        pass
+                    finally:
+                        self._stream = None
+                        self._closed = True
+                        self._initialized = False
+        except Exception:
+            # Destructors must not raise exceptions
+            pass
 
     def close(self):
         """Release the stream resources.
@@ -1918,6 +1936,8 @@ class Builder:
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
+        # Initialize state immediately to prevent race conditions
+        self._closed = False
         self._builder = None
 
         if not isinstance(manifest_json, str):
@@ -1981,6 +2001,8 @@ class Builder:
         builder._builder = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
         if not builder._builder:
+            # Clean up the stream object if builder creation fails
+            stream_obj.close()
             error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
@@ -1989,9 +2011,12 @@ class Builder:
         return builder
 
     def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        if hasattr(self, '_closed'):
-            self.close()
+        """Ensure resources are cleaned up if close() wasn't called.
+
+        This destructor safely handles cleanup without causing double frees.
+        It only cleans up if the object hasn't been explicitly closed.
+        """
+        self._cleanup_resources()
 
     def close(self):
         """Release the builder resources.
@@ -2001,25 +2026,14 @@ class Builder:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        # Track if we've already cleaned up
-        if not hasattr(self, '_closed'):
-            self._closed = False
-
         if self._closed:
             return
 
         try:
-            # Clean up builder
-            if hasattr(self, '_builder') and self._builder:
-                try:
-                    _lib.c2pa_builder_free(self._builder)
-                except Exception as e:
-                    print(
-                        Builder._ERROR_MESSAGES['builder_cleanup'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._builder = None
+            # Use the internal cleanup method
+            self._cleanup_resources()
         except Exception as e:
+            # Log any unexpected errors during close
             print(
                 Builder._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
@@ -2039,9 +2053,7 @@ class Builder:
         into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-
+        self._ensure_valid_state()
         _lib.c2pa_builder_set_no_embed(self._builder)
 
     def set_remote_url(self, remote_url: str):
@@ -2056,8 +2068,7 @@ class Builder:
         Raises:
             C2paError: If there was an error setting the remote URL
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         url_str = remote_url.encode('utf-8')
         result = _lib.c2pa_builder_set_remote_url(self._builder, url_str)
@@ -2080,8 +2091,7 @@ class Builder:
         Raises:
             C2paError: If there was an error adding the resource
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
@@ -2391,6 +2401,40 @@ class Builder:
                 return self.sign(signer, mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
+
+    def _ensure_valid_state(self):
+        """Ensure the builder is in a valid state for operations.
+
+        Raises:
+            C2paError: If the builder is closed or invalid
+        """
+        if self._closed:
+            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        if not self._builder:
+            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+
+    def _cleanup_resources(self):
+        """Internal cleanup method that safely releases native resources.
+
+        This method handles the actual cleanup logic and can be called
+        from both close() and __del__ without causing double frees.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid builder
+            if hasattr(self, '_closed') and not self._closed:
+                if hasattr(self, '_builder') and self._builder and self._builder != 0:
+                    try:
+                        _lib.c2pa_builder_free(self._builder)
+                    except Exception:
+                        # Log cleanup errors but don't raise exceptions
+                        pass
+                    finally:
+                        # Always clear the pointer and mark as closed
+                        self._builder = None
+                        self._closed = True
+        except Exception:
+            # Ensure we don't raise exceptions during cleanup
+            pass
 
 
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
