@@ -1102,8 +1102,7 @@ class Stream:
         self.close()
 
     def __del__(self):
-        """Ensure resources are cleaned up if close()
-        wasn't called.
+        """Ensure resources are cleaned up if close()wasn't called.
 
         This destructor only cleans up if the object
         hasn't been explicitly closed.
@@ -1217,9 +1216,7 @@ class Reader:
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
         """Get the list of supported MIME types for the Reader.
-
-        This method retrieves supported MIME types from the native library
-        with proper pointer validation and error handling.
+        This method retrieves supported MIME types from the native library.
 
         Returns:
             List of supported MIME type strings
@@ -1808,6 +1805,41 @@ class Signer:
         """Context manager exit."""
         self.close()
 
+    def _cleanup_resources(self):
+        """Internal cleanup method that safely releases native resources.
+
+        This method handles the actual cleanup logic and can be called
+        from both close() and __del__ without causing double frees.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid signer
+            if hasattr(self, '_closed') and not self._closed:
+                if hasattr(self, '_signer') and self._signer:
+                    try:
+                        _lib.c2pa_signer_free(self._signer)
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        pass
+                    finally:
+                        self._signer = None
+
+                # Clear callback reference to prevent cycles
+                if hasattr(self, '_callback_cb'):
+                    self._callback_cb = None
+
+                self._closed = True
+        except Exception:
+            # Ensure we don't raise exceptions during cleanup
+            pass
+
+    def __del__(self):
+        """Ensure resources are cleaned up if close() wasn't called.
+
+        This destructor safely handles cleanup without causing double frees.
+        It only cleans up if the object hasn't been explicitly closed.
+        """
+        self._cleanup_resources()
+
     def close(self):
         """Release the signer resources.
 
@@ -1820,16 +1852,10 @@ class Signer:
             return
 
         try:
-            if self._signer:
-                try:
-                    _lib.c2pa_signer_free(self._signer)
-                except Exception as e:
-                    print(
-                        Signer._ERROR_MESSAGES['signer_cleanup'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._signer = None
+            # Use the internal cleanup method
+            self._cleanup_resources()
         except Exception as e:
+            # Log any unexpected errors during close
             print(
                 Signer._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)), file=sys.stderr)
@@ -1893,9 +1919,7 @@ class Builder:
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
         """Get the list of supported MIME types for the Builder.
-
-        This method retrieves supported MIME types from the native library
-        with proper pointer validation and error handling.
+        This method retrieves supported MIME types from the native library.
 
         Returns:
             List of supported MIME type strings
