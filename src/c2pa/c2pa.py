@@ -1102,19 +1102,23 @@ class Stream:
         self.close()
 
     def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called.
+        """Ensure resources are cleaned up if close()
+        wasn't called.
 
-        This destructor only cleans up if the object hasn't been explicitly closed.
+        This destructor only cleans up if the object
+        hasn't been explicitly closed.
         """
         try:
             # Only cleanup if not already closed and we have a valid stream
             if hasattr(self, '_closed') and not self._closed:
                 if hasattr(self, '_stream') and self._stream:
-                    # Use internal cleanup to avoid calling close() which could cause issues
+                    # Use internal cleanup to avoid calling close() which could
+                    # cause issues
                     try:
                         _lib.c2pa_release_stream(self._stream)
                     except Exception:
-                        # Destructors shouldn't raise exceptions, just log silently
+                        # Destructors shouldn't raise exceptions, just log
+                        # silently
                         pass
                     finally:
                         self._stream = None
@@ -2448,7 +2452,9 @@ class Builder:
         try:
             # Only cleanup if not already closed and we have a valid builder
             if hasattr(self, '_closed') and not self._closed:
-                if hasattr(self, '_builder') and self._builder and self._builder != 0:
+                if hasattr(
+                        self,
+                        '_builder') and self._builder and self._builder != 0:
                     try:
                         _lib.c2pa_builder_free(self._builder)
                     except Exception:
