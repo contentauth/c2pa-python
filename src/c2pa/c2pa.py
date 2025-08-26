@@ -532,19 +532,31 @@ def _convert_to_py_string(value) -> str:
         return ""
 
     py_string = ""
-    ptr = ctypes.cast(value, ctypes.c_char_p)
 
-    # Only if we got a valid pointer
-    if ptr and ptr.value is not None:
-        try:
-            py_string = ptr.value.decode('utf-8', errors='replace')
-        except Exception:
-            py_string = ""
+    # Validate pointer before casting and freeing
+    if not isinstance(value, (int, ctypes.c_void_p)) or value == 0:
+        return ""
 
-        # Free the Rust-allocated memory
-        _lib.c2pa_string_free(value)
+    try:
+        ptr = ctypes.cast(value, ctypes.c_char_p)
 
-    # In case of invalid pointer, no free (avoids double-free)
+        # Only if we got a valid pointer with valid content
+        if ptr and ptr.value is not None:
+            try:
+                py_string = ptr.value.decode('utf-8', errors='replace')
+            except Exception:
+                py_string = ""
+            finally:
+                # Only free if we have a valid pointer
+                try:
+                    _lib.c2pa_string_free(value)
+                except Exception:
+                    # Log error but don't crash
+                    pass
+    except (ctypes.ArgumentError, TypeError, ValueError):
+        # Invalid pointer type or value
+        return ""
+
     return py_string
 
 
