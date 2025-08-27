@@ -40,7 +40,7 @@ ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.59.1", sdk_version())
+        self.assertIn("0.60.1", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -956,6 +956,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Verify the first ingredient's title matches what we set
             first_ingredient = active_manifest["ingredients"][0]
             self.assertEqual(first_ingredient["title"], "Test Ingredient")
+            self.assertNotIn("thumbnail", first_ingredient)
 
         builder.close()
 
@@ -1791,7 +1792,10 @@ class TestLegacyAPI(unittest.TestCase):
         ingredient_data = json.loads(ingredient_json_with_dir)
         self.assertEqual(ingredient_data["title"], INGREDIENT_TEST_FILE_NAME)
         self.assertEqual(ingredient_data["format"], "image/jpeg")
-        self.assertIn("thumbnail", ingredient_data)
+        self.assertNotIn("thumbnail", ingredient_data)
+
+        # Reset setting
+        load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
     def test_compare_read_ingredient_file_with_builder_added_ingredient(self):
         """Test reading a C2PA ingredient from a file."""
