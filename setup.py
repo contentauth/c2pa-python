@@ -41,10 +41,11 @@ def get_platform_identifier(target_arch=None) -> str:
     """Get a platform identifier (arch-os) for the current system or target architecture.
 
     Args:
-        target_arch: Optional target architecture. If provided, overrides auto-detection.
-                    For macOS: 'universal2', 'arm64', or 'x86_64'
-                    For Linux: 'aarch64' or 'x86_64'
-                    For Windows: 'x64' or 'arm64'
+        target_arch: Optional target architecture.
+          If provided, overrides auto-detection.
+          For macOS: 'universal2', 'arm64', or 'x86_64'
+          For Linux: 'aarch64' or 'x86_64'
+          For Windows: 'arm64' or 'x64'
 
     Returns one of:
     - universal-apple-darwin (for macOS universal)
@@ -159,6 +160,7 @@ if 'develop' in sys.argv or 'install' in sys.argv:
 # For wheel building (both bdist_wheel and build)
 if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
     # Check if we're building for a specific architecture
+    # This is mostly to support macOS wheel builds
     target_arch = None
     for i, arg in enumerate(sys.argv):
         if arg == '--plat-name':

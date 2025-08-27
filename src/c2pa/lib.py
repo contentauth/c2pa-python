@@ -185,7 +185,7 @@ def _get_possible_search_paths() -> list[Path]:
         # Add platform identifier subfolder
         possible_paths.append(base_path / platform_id)
 
-    # Add universal fallback for macOS if we're not already looking for universal
+    # Add universal fallback for macOS if not already looking for universal
     if sys.platform == "darwin" and platform_id != "universal-apple-darwin":
         for base_path in base_paths:
             possible_paths.append(base_path / "universal-apple-darwin")
