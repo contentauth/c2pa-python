@@ -44,8 +44,11 @@ def get_platform_identifier(target_arch=None):
     """Get the full platform identifier (arch-os) for the current system or target.
 
     Args:
-        target_arch: Optional target architecture. If provided, overrides auto-detection.
-                    For macOS: 'universal2', 'arm64', or 'x86_64'
+        target_arch: Optional target architecture.
+          If provided, overrides auto-detection.
+          For macOS: 'universal2', 'arm64', or 'x86_64'
+          For Linux: 'aarch64' or 'x86_64'
+          For Windows: 'arm64' or 'x64'
 
     Returns one of:
     - universal-apple-darwin (for macOS universal)
