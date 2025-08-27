@@ -135,8 +135,17 @@ jobs:
           pip install wheel
           pip install twine
 
-          # Download native artifacts
-          python scripts/download_artifacts.py $C2PA_VERSION
+          # Download native artifacts for the target architecture
+          if [ "${{ inputs.architecture }}" = "universal2" ]; then
+            python scripts/download_artifacts.py $C2PA_VERSION universal2
+          elif [ "${{ inputs.architecture }}" = "arm64" ]; then
+            python scripts/download_artifacts.py $C2PA_VERSION arm64
+          elif [ "${{ inputs.architecture }}" = "x86_64" ]; then
+            python scripts/download_artifacts.py $C2PA_VERSION x86_64
+          else
+            echo "Unknown architecture: ${{ inputs.architecture }}"
+            exit 1
+          fi
 
           # Determine platform name based on target architecture
           if [ "${{ inputs.architecture }}" = "universal2" ]; then

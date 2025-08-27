@@ -44,6 +44,7 @@ def get_platform_identifier() -> str:
 
     if system == "darwin":
         # Prefer specific architecture over universal for better performance
+        # Universal libraries will be attempted as fallback if specific ones aren't found
         current_arch = _get_architecture()
         if current_arch == CPUArchitecture.ARM64.value:
             return "aarch64-apple-darwin"
@@ -183,6 +184,11 @@ def _get_possible_search_paths() -> list[Path]:
         possible_paths.append(base_path / platform_dir)
         # Add platform identifier subfolder
         possible_paths.append(base_path / platform_id)
+
+    # Add universal fallback for macOS if we're not already looking for universal
+    if sys.platform == "darwin" and platform_id != "universal-apple-darwin":
+        for base_path in base_paths:
+            possible_paths.append(base_path / "universal-apple-darwin")
 
     # Add system library paths
     possible_paths.extend([Path(p) for p in os.environ.get(
