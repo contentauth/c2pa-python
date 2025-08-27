@@ -342,6 +342,10 @@ jobs:
         include:
           - target: universal2
             runs-on: macos-latest
+          - target: aarch64
+            runs-on: macos-latest
+          - target: x86_64
+            runs-on: macos-13
 
     if: |
       github.event_name != 'pull_request' ||
@@ -359,7 +363,9 @@ jobs:
         include:
           - target: universal2
             runs-on: macos-latest
-          - target: universal2
+          - target: aarch64
+            runs-on: macos-latest
+          - target: x86_64
             runs-on: macos-13
 
     if: |
