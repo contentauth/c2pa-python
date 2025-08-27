@@ -25,6 +25,8 @@ PLATFORM_EXTENSIONS = {
 # Based on what c2pa-rs repo publishes
 PLATFORM_FOLDERS = {
     'universal-apple-darwin': 'dylib',
+    'aarch64-apple-darwin': 'dylib',
+    'x86_64-apple-darwin': 'dylib',
     'x86_64-pc-windows-msvc': 'dll',
     'x86_64-unknown-linux-gnu': 'so',
     'aarch64-unknown-linux-gnu': 'so',
@@ -35,16 +37,19 @@ ARTIFACTS_DIR = Path('artifacts')  # Where downloaded libraries are stored
 PACKAGE_LIBS_DIR = Path('src/c2pa/libs')  # Where libraries will be copied for the wheel
 
 
-def get_platform_identifier() -> str:
-    """Get a platform identifier (arch-os) for the current system,
-    matching downloaded identifiers used by the Github publisher.
+def get_platform_identifier(target_arch=None) -> str:
+    """Get a platform identifier (arch-os) for the current system or target architecture.
 
     Args:
-        Only used on macOS systems.:
-            cpu_arch: Optional CPU architecture for macOS. If not provided, returns universal build.
+        target_arch: Optional target architecture. If provided, overrides auto-detection.
+                    For macOS: 'universal2', 'arm64', or 'x86_64'
+                    For Linux: 'aarch64' or 'x86_64'
+                    For Windows: 'x64' or 'arm64'
 
     Returns one of:
-    - universal-apple-darwin (for macOS)
+    - universal-apple-darwin (for macOS universal)
+    - aarch64-apple-darwin (for macOS ARM64)
+    - x86_64-apple-darwin (for macOS x86_64)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM64)
@@ -52,13 +57,22 @@ def get_platform_identifier() -> str:
     system = platform.system().lower()
 
     if system == "darwin":
-        return "universal-apple-darwin"
+        if target_arch == "arm64":
+            return "aarch64-apple-darwin"
+        elif target_arch == "x86_64":
+            return "x86_64-apple-darwin"
+        else:
+            return "universal-apple-darwin"
     elif system == "windows":
-        return "x86_64-pc-windows-msvc"
+        if target_arch == "arm64":
+            return "aarch64-pc-windows-msvc"
+        else:
+            return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        if platform.machine() == "aarch64":
+        if target_arch == "aarch64" or platform.machine() == "aarch64":
             return "aarch64-unknown-linux-gnu"
-        return "x86_64-unknown-linux-gnu"
+        else:
+            return "x86_64-unknown-linux-gnu"
     else:
         raise ValueError(f"Unsupported operating system: {system}")
 
@@ -144,9 +158,37 @@ if 'develop' in sys.argv or 'install' in sys.argv:
 
 # For wheel building (both bdist_wheel and build)
 if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
-    available_platforms = find_available_platforms()
-    if not available_platforms:
-        print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
+    # Check if we're building for a specific architecture
+    target_arch = None
+    for i, arg in enumerate(sys.argv):
+        if arg == '--plat-name':
+            if i + 1 < len(sys.argv):
+                plat_name = sys.argv[i + 1]
+                if 'arm64' in plat_name:
+                    target_arch = 'arm64'
+                elif 'x86_64' in plat_name:
+                    target_arch = 'x86_64'
+                elif 'universal2' in plat_name:
+                    target_arch = 'universal2'
+                break
+
+    # Get the platform identifier for the target architecture
+    target_platform = get_platform_identifier(target_arch)
+    print(f"Building wheel for target platform: {target_platform}")
+
+    # Check if we have libraries for this platform
+    platform_dir = ARTIFACTS_DIR / target_platform
+    if not platform_dir.exists() or not any(platform_dir.iterdir()):
+        print(f"Warning: No libraries found for platform {target_platform}")
+        print("Available platforms:")
+        for platform_name in find_available_platforms():
+            print(f"  - {platform_name}")
+
+    # Copy libraries for the target platform
+    try:
+        copy_platform_libraries(target_platform, clean_first=True)
+
+        # Build the wheel
         setup(
             name=PACKAGE_NAME,
             version=VERSION,
@@ -154,50 +196,21 @@ if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
             packages=find_namespace_packages(where="src"),
             include_package_data=True,
             package_data={
-                "c2pa": ["libs/*"],  # Include all files in libs directory
+                "c2pa": ["libs/*"],
             },
             classifiers=[
                 "Programming Language :: Python :: 3",
-                get_platform_classifier(get_current_platform()),
+                get_platform_classifier(target_platform),
             ],
             python_requires=">=3.10",
             long_description=open("README.md").read(),
             long_description_content_type="text/markdown",
             license="MIT OR Apache-2.0",
         )
-        sys.exit(0)
-
-    print(f"Found libraries for platforms: {', '.join(available_platforms)}")
-
-    for platform_name in available_platforms:
-        print(f"\nBuilding wheel for {platform_name}...")
-        try:
-            # Copy libraries for this platform (cleaning first)
-            copy_platform_libraries(platform_name, clean_first=True)
-
-            # Build the wheel
-            setup(
-                name=PACKAGE_NAME,
-                version=VERSION,
-                package_dir={"": "src"},
-                packages=find_namespace_packages(where="src"),
-                include_package_data=True,
-                package_data={
-                    "c2pa": ["libs/*"],  # Include all files in libs directory
-                },
-                classifiers=[
-                    "Programming Language :: Python :: 3",
-                    get_platform_classifier(platform_name),
-                ],
-                python_requires=">=3.10",
-                long_description=open("README.md").read(),
-                long_description_content_type="text/markdown",
-                license="MIT OR Apache-2.0",
-            )
-        finally:
-            # Clean up by removing the package libs directory
-            if PACKAGE_LIBS_DIR.exists():
-                shutil.rmtree(PACKAGE_LIBS_DIR)
+    finally:
+        # Clean up
+        if PACKAGE_LIBS_DIR.exists():
+            shutil.rmtree(PACKAGE_LIBS_DIR)
     sys.exit(0)
 
 # For sdist and development installation

@@ -40,11 +40,17 @@ def detect_arch():
     else:
         raise ValueError(f"Unsupported CPU architecture: {machine}")
 
-def get_platform_identifier():
-    """Get the full platform identifier (arch-os) for the current system,
-    matching the identifiers used by the Github publisher.
+def get_platform_identifier(target_arch=None):
+    """Get the full platform identifier (arch-os) for the current system or target.
+
+    Args:
+        target_arch: Optional target architecture. If provided, overrides auto-detection.
+                    For macOS: 'universal2', 'arm64', or 'x86_64'
+
     Returns one of:
-    - universal-apple-darwin (for Mac)
+    - universal-apple-darwin (for macOS universal)
+    - aarch64-apple-darwin (for macOS ARM64)
+    - x86_64-apple-darwin (for macOS x86_64)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux x86_64)
     - aarch64-unknown-linux-gnu (for Linux ARM64)
@@ -53,11 +59,27 @@ def get_platform_identifier():
     machine = platform.machine().lower()
 
     if system == "darwin":
-        return "universal-apple-darwin"
+        if target_arch == "arm64":
+            return "aarch64-apple-darwin"
+        elif target_arch == "x86_64":
+            return "x86_64-apple-darwin"
+        elif target_arch == "universal2":
+            return "universal-apple-darwin"
+        else:
+            # Auto-detect: prefer specific architecture over universal
+            if machine == "arm64":
+                return "aarch64-apple-darwin"
+            elif machine == "x86_64":
+                return "x86_64-apple-darwin"
+            else:
+                return "universal-apple-darwin"
     elif system == "windows":
-        return "x86_64-pc-windows-msvc"
+        if target_arch == "arm64":
+            return "aarch64-pc-windows-msvc"
+        else:
+            return "x86_64-pc-windows-msvc"
     elif system == "linux":
-        if machine in ["arm64", "aarch64"]:
+        if target_arch == "aarch64" or machine in ["arm64", "aarch64"]:
             return "aarch64-unknown-linux-gnu"
         else:
             return "x86_64-unknown-linux-gnu"
@@ -87,19 +109,20 @@ def download_and_extract_libs(url, platform_name):
     response = requests.get(url, headers=headers)
     response.raise_for_status()
 
+    print(f"Downloaded zip file, extracting lib files...")
     with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:
         # Extract only files inside the libs/ directory
+        extracted_count = 0
         for member in zip_ref.namelist():
-            print(f"  Processing zip member: {member}")
             if member.startswith("lib/") and not member.endswith("/"):
-                print(f"    Processing lib file from downloadedzip: {member}")
                 target_path = platform_dir / os.path.relpath(member, "lib")
-                print(f"      Moving file to target path: {target_path}")
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 with zip_ref.open(member) as source, open(target_path, "wb") as target:
                     target.write(source.read())
+                extracted_count += 1
+                print(f"  Extracted: {member} -> {target_path}")
 
-    print(f"Done downloading and extracting libraries for {platform_name}")
+    print(f"Done downloading and extracting {extracted_count} library files for {platform_name}")
 
 def copy_artifacts_to_root():
     """Copy the artifacts folder from scripts/artifacts to the root of the repository."""
@@ -108,37 +131,53 @@ def copy_artifacts_to_root():
         return
 
     print("Copying artifacts from scripts/artifacts to root...")
+    print("Contents of scripts/artifacts before copying:")
+    for item in sorted(SCRIPTS_ARTIFACTS_DIR.iterdir()):
+        print(f"  {item.name}")
+    
     if ROOT_ARTIFACTS_DIR.exists():
         shutil.rmtree(ROOT_ARTIFACTS_DIR)
     print(f"Copying from {SCRIPTS_ARTIFACTS_DIR} to {ROOT_ARTIFACTS_DIR}")
     shutil.copytree(SCRIPTS_ARTIFACTS_DIR, ROOT_ARTIFACTS_DIR)
     print("Done copying artifacts")
-    print("\nFolder content of artifacts directory:")
+    print("\nFolder content of root artifacts directory:")
     for item in sorted(ROOT_ARTIFACTS_DIR.iterdir()):
         print(f"  {item.name}")
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python download_artifacts.py <release_tag>")
+        print("Usage: python download_artifacts.py <release_tag> [target_architecture]")
         print("Example: python download_artifacts.py c2pa-v0.49.5")
+        print("Example: python download_artifacts.py c2pa-v0.49.5 arm64")
         sys.exit(1)
 
     release_tag = sys.argv[1]
+    target_arch = sys.argv[2] if len(sys.argv) > 2 else None
+
     try:
+        # Clean up any existing artifacts before starting
+        print("Cleaning up existing artifacts...")
+        if SCRIPTS_ARTIFACTS_DIR.exists():
+            shutil.rmtree(SCRIPTS_ARTIFACTS_DIR)
         SCRIPTS_ARTIFACTS_DIR.mkdir(exist_ok=True)
         print(f"Fetching release information for tag {release_tag}...")
         release = get_release_by_tag(release_tag)
         print(f"Found release: {release['tag_name']} \n")
 
-        # Get the platform identifier for the current system
+        # Get the platform identifier for the target architecture
         env_platform = os.environ.get("C2PA_LIBS_PLATFORM")
         if env_platform:
             print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
-        platform_id = env_platform or get_platform_identifier()
+            platform_id = env_platform
+        else:
+            platform_id = get_platform_identifier(target_arch)
+            print(f"Using target architecture: {target_arch or 'auto-detected'}")
+            print(f"Detected machine architecture: {platform.machine()}")
+            print(f"Detected system: {platform.system()}")
+
         print("Looking up releases for platform id: ", platform_id)
-        print("Environment variable set for lookup: ", env_platform)
-        platform_source = "environment variable" if env_platform else "auto-detection"
-        print(f"Target platform: {platform_id} (set through{platform_source})")
+        platform_source = "environment variable" if env_platform else "target architecture" if target_arch else "auto-detection"
+        print(f"Target platform: {platform_id} (set through {platform_source})")
 
         # Construct the expected asset name
         expected_asset_name = f"{release_tag}-{platform_id}.zip"
@@ -146,18 +185,23 @@ def main():
 
         # Find the matching asset in the release
         matching_asset = None
+        print(f"Looking for asset: {expected_asset_name}")
+        print("Available assets in release:")
         for asset in release['assets']:
+            print(f"  - {asset['name']}")
             if asset['name'] == expected_asset_name:
                 matching_asset = asset
-                break
+                print(f"Matching asset: {matching_asset['name']}")
 
         if matching_asset:
-            print(f"Found matching asset: {matching_asset['name']}")
+            print(f"\nDownloading asset: {matching_asset['name']}")
             download_and_extract_libs(matching_asset['browser_download_url'], platform_id)
             print("\nArtifacts have been downloaded and extracted successfully!")
             copy_artifacts_to_root()
         else:
-            print(f"\nNo matching asset found: {expected_asset_name}")
+            print(f"\nNo matching asset found for platform: {platform_id}")
+            print(f"Expected asset name: {expected_asset_name}")
+            print("Please check if the asset exists in the release or if the platform identifier is correct.")
 
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
