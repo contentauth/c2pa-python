@@ -326,7 +326,7 @@ jobs:
           .\venv\Scripts\pytest .\tests\test_unit_tests.py -v
 
   build-macos-wheel:
-    name: Build macOS wheel (Universal)
+    name: Build macOS wheel
     uses: ./.github/workflows/build-wheel.yml
     needs: [tests-unix, read-version]
     with:
@@ -340,12 +340,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: universal2
-            runs-on: macos-latest
-          - target: aarch64
-            runs-on: macos-latest
           - target: x86_64
             runs-on: macos-13
+          - target: aarch64
+            runs-on: macos-latest
 
     if: |
       github.event_name != 'pull_request' ||
@@ -361,8 +359,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: universal2
-            runs-on: macos-latest
           - target: aarch64
             runs-on: macos-latest
           - target: x86_64
