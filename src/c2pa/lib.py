@@ -33,7 +33,9 @@ def get_platform_identifier() -> str:
     matching the downloaded identifiers used by the Github publisher.
 
     Returns one of:
-    - universal-apple-darwin (for Mac, ARM or Intel)
+    - universal-apple-darwin (for Mac, when CPU arch is None)
+    - aarch64-apple-darwin (for Mac ARM64)
+    - x86_64-apple-darwin (for Mac Intel)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM)
@@ -41,7 +43,15 @@ def get_platform_identifier() -> str:
     system = platform.system().lower()
 
     if system == "darwin":
-        return "universal-apple-darwin"
+        # Identify the CPU architecture for macOS
+        current_arch = _get_architecture()
+        if current_arch == CPUArchitecture.ARM64.value:
+            return "aarch64-apple-darwin"
+        elif current_arch == CPUArchitecture.X86_64.value:
+            return "x86_64-apple-darwin"
+        else:
+            # Fallback to universal if architecture detection fails
+            return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":

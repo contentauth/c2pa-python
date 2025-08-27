@@ -44,7 +44,9 @@ def get_platform_identifier():
     """Get the full platform identifier (arch-os) for the current system,
     matching the identifiers used by the Github publisher.
     Returns one of:
-    - universal-apple-darwin (for Mac)
+    - universal-apple-darwin (for Mac, when CPU arch is None)
+    - aarch64-apple-darwin (for Mac ARM64)
+    - x86_64-apple-darwin (for Mac Intel)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux x86_64)
     - aarch64-unknown-linux-gnu (for Linux ARM64)
@@ -53,7 +55,15 @@ def get_platform_identifier():
     machine = platform.machine().lower()
 
     if system == "darwin":
-        return "universal-apple-darwin"
+        # Identify the CPU architecture for macOS
+        current_arch = detect_arch()
+        if current_arch == "aarch64":
+            return "aarch64-apple-darwin"
+        elif current_arch == "x86_64":
+            return "x86_64-apple-darwin"
+        else:
+            # Fallback to universal if architecture detection fails
+            return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
@@ -92,7 +102,7 @@ def download_and_extract_libs(url, platform_name):
         for member in zip_ref.namelist():
             print(f"  Processing zip member: {member}")
             if member.startswith("lib/") and not member.endswith("/"):
-                print(f"    Processing lib file from downloadedzip: {member}")
+                print(f"    Processing lib file from downloaded zip: {member}")
                 target_path = platform_dir / os.path.relpath(member, "lib")
                 print(f"      Moving file to target path: {target_path}")
                 target_path.parent.mkdir(parents=True, exist_ok=True)

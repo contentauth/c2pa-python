@@ -35,6 +35,19 @@ ARTIFACTS_DIR = Path('artifacts')  # Where downloaded libraries are stored
 PACKAGE_LIBS_DIR = Path('src/c2pa/libs')  # Where libraries will be copied for the wheel
 
 
+def detect_arch():
+    """Detect the CPU architecture and return the corresponding identifier."""
+    machine = platform.machine().lower()
+
+    # Handle common architecture names
+    if machine in ["x86_64", "amd64"]:
+        return "x86_64"
+    elif machine in ["arm64", "aarch64"]:
+        return "aarch64"
+    else:
+        raise ValueError(f"Unsupported CPU architecture: {machine}")
+
+
 def get_platform_identifier() -> str:
     """Get a platform identifier (arch-os) for the current system,
     matching downloaded identifiers used by the Github publisher.
@@ -44,7 +57,9 @@ def get_platform_identifier() -> str:
             cpu_arch: Optional CPU architecture for macOS. If not provided, returns universal build.
 
     Returns one of:
-    - universal-apple-darwin (for macOS)
+    - universal-apple-darwin (for Mac, when CPU arch is None)
+    - aarch64-apple-darwin (for Mac ARM64)
+    - x86_64-apple-darwin (for Mac Intel)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM64)
@@ -52,7 +67,15 @@ def get_platform_identifier() -> str:
     system = platform.system().lower()
 
     if system == "darwin":
-        return "universal-apple-darwin"
+        # Identify the CPU architecture for macOS
+        current_arch = detect_arch()
+        if current_arch == "aarch64":
+            return "aarch64-apple-darwin"
+        elif current_arch == "x86_64":
+            return "x86_64-apple-darwin"
+        else:
+            # Fallback to universal if architecture detection fails
+            return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
