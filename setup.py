@@ -177,6 +177,68 @@ if 'develop' in sys.argv or 'install' in sys.argv:
 
 # For wheel building (both bdist_wheel and build)
 if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
+    # Check if we're building a specific platform wheel (e.g., with --plat-name)
+    # If so, we need to determine which platform to build for
+    target_platform = None
+
+    # Look for --plat-name argument to determine target platform
+    for i, arg in enumerate(sys.argv):
+        if arg == '--plat-name' and i + 1 < len(sys.argv):
+            plat_name = sys.argv[i + 1]
+            if 'arm64' in plat_name or 'aarch64' in plat_name:
+                target_platform = 'aarch64-apple-darwin'
+            elif 'x86_64' in plat_name:
+                target_platform = 'x86_64-apple-darwin'
+            elif 'universal2' in plat_name:
+                target_platform = 'universal-apple-darwin'
+            elif 'linux' in plat_name:
+                if 'aarch64' in plat_name:
+                    target_platform = 'aarch64-unknown-linux-gnu'
+                else:
+                    target_platform = 'x86_64-unknown-linux-gnu'
+            elif 'win' in plat_name:
+                target_platform = 'x86_64-pc-windows-msvc'
+            break
+
+    if target_platform:
+        # Building for a specific platform
+        print(f"Building wheel for specific platform: {target_platform}")
+
+        # Verify the target platform artifacts exist
+        platform_dir = ARTIFACTS_DIR / target_platform
+        if not platform_dir.exists():
+            print(f"Error: Target platform artifacts not found: {platform_dir}")
+            print("Available artifacts:")
+            for p in ARTIFACTS_DIR.iterdir():
+                if p.is_dir():
+                    print(f"  - {p.name}")
+            sys.exit(1)
+
+        # Copy libraries for this platform
+        copy_platform_libraries(target_platform, clean_first=True)
+
+        # Build the wheel
+        setup(
+            name=PACKAGE_NAME,
+            version=VERSION,
+            package_dir={"": "src"},
+            packages=find_namespace_packages(where="src"),
+            include_package_data=True,
+            package_data={
+                "c2pa": ["libs/*"],  # Include all files in libs directory
+            },
+            classifiers=[
+                "Programming Language :: Python :: 3",
+                get_platform_classifier(get_current_platform()),
+            ],
+            python_requires=">=3.10",
+            long_description=open("README.md").read(),
+            long_description_content_type="text/markdown",
+            license="MIT OR Apache-2.0",
+        )
+        sys.exit(0)
+
+    # Fallback to building for all available platforms (original behavior)
     available_platforms = find_available_platforms()
     if not available_platforms:
         print("No platform-specific libraries found. Building wheel without platform-specific libraries.")
