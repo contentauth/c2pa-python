@@ -191,7 +191,7 @@ def main():
             print(f"  - {asset['name']}")
             if asset['name'] == expected_asset_name:
                 matching_asset = asset
-                print(f"Matching asset: {matching_asset['name']}")
+                print(f"Using native library: {matching_asset['name']}")
 
         if matching_asset:
             print(f"\nDownloading asset: {matching_asset['name']}")
