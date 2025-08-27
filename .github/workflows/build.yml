@@ -331,15 +331,17 @@ jobs:
     needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
-      runs-on: macos-latest
       artifact-name: wheels-macos-${{ matrix.target }}
       architecture: ${{ matrix.target }}
+      runs-on: ${{ matrix.runs-on }}
       c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
         include:
+          - target: universal2
+            runs-on: macos-latest
           - target: x86_64
             runs-on: macos-13
           - target: aarch64
