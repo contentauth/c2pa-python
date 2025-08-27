@@ -30,15 +30,25 @@ def detect_os():
 
 def detect_arch():
     """Detect the CPU architecture and return the corresponding identifier."""
-    machine = platform.machine().lower()
 
-    # Handle common architecture names
-    if machine in ["x86_64", "amd64"]:
-        return "x86_64"
-    elif machine in ["arm64", "aarch64"]:
-        return "aarch64"
+    if sys.platform == "darwin":
+        # On macOS, we need to check if we're running under Rosetta
+        # platform.processor() gives us the actual CPU, not the emulated one
+        if platform.processor() == 'arm':
+            return "aarch64"
+        else:
+            return "x86_64"
     else:
-        raise ValueError(f"Unsupported CPU architecture: {machine}")
+        # For other platforms, use platform.machine()
+        machine = platform.machine().lower()
+
+        # Handle common architecture names
+        if machine in ["x86_64", "amd64"]:
+            return "x86_64"
+        elif machine in ["arm64", "aarch64"]:
+            return "aarch64"
+        else:
+            raise ValueError(f"Unsupported CPU architecture: {machine}")
 
 def get_platform_identifier():
     """Get the full platform identifier (arch-os) for the current system,

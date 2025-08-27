@@ -138,27 +138,39 @@ jobs:
           # Download native artifacts
           python scripts/download_artifacts.py $C2PA_VERSION
 
-          # Set platform name based on architecture
+          # Detect actual CPU architecture at runtime
+          echo "Detecting CPU architecture..."
           if [ "${{ inputs.architecture }}" = "universal2" ]; then
             PLATFORM_NAME="macosx_10_9_universal2"
-          elif [ "${{ inputs.architecture }}" = "aarch64" ]; then
-            PLATFORM_NAME="macosx_11_0_arm64"
-          elif [ "${{ inputs.architecture }}" = "x86_64" ]; then
-            PLATFORM_NAME="macosx_10_9_x86_64"
           else
-            echo "Unknown architecture: ${{ inputs.architecture }}"
-            exit 1
+            # Detect the actual CPU architecture of the runner
+            ACTUAL_ARCH=$(uname -m)
+            echo "Detected CPU architecture: $ACTUAL_ARCH"
+
+            if [ "$ACTUAL_ARCH" = "arm64" ] || [ "$ACTUAL_ARCH" = "aarch64" ]; then
+              PLATFORM_NAME="macosx_11_0_arm64"
+              EXPECTED_ARTIFACT_DIR="aarch64-apple-darwin"
+            elif [ "$ACTUAL_ARCH" = "x86_64" ]; then
+              PLATFORM_NAME="macosx_10_9_x86_64"
+              EXPECTED_ARTIFACT_DIR="x86_64-apple-darwin"
+            else
+              echo "Unknown CPU architecture: $ACTUAL_ARCH"
+              exit 1
+            fi
+
+            # Verify we have the correct artifacts for this architecture
+            if [ ! -d "artifacts/$EXPECTED_ARTIFACT_DIR" ]; then
+              echo "Error: $EXPECTED_ARTIFACT_DIR artifacts not found for $ACTUAL_ARCH"
+              echo "Available artifacts:"
+              ls -la artifacts/
+              exit 1
+            fi
           fi
 
-          # Build wheel
-          python setup.py bdist_wheel --plat-name $PLATFORM_NAME
+          echo "Building wheel with platform name: $PLATFORM_NAME"
 
-          # Rename wheel to ensure unique filename
-          cd dist
-          for wheel in *.whl; do
-            mv "$wheel" "${wheel/$PLATFORM_NAME/$PLATFORM_NAME}"
-          done
-          cd ..
+          # Build wheel with specific platform
+          python setup.py bdist_wheel --plat-name $PLATFORM_NAME
 
           # Verify wheel structure
           echo "Verifying wheels using twine check"
