@@ -353,7 +353,7 @@ jobs:
   test-built-macos-wheel:
     name: Test macOS built wheel (Universal)
     needs: build-macos-wheel
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runs-on }}
     strategy:
       matrix:
         include:
