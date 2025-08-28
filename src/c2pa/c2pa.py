@@ -1214,7 +1214,9 @@ class Reader:
         """Create a new Reader.
 
         Args:
-            format_or_path: The format or path to read from
+            format_or_path: The format or path to read from. For paths, we
+              will attempt to guess the mimetype of the source file
+              based on the extension.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
@@ -2283,7 +2285,9 @@ class Builder:
         """Sign a file and write the signed data to an output file.
 
         Args:
-            source_path: Path to the source file
+            source_path: Path to the source file. We will attempt
+              to guess the mimetype of the source file based on
+              the extension.
             dest_path: Path to write the signed file to
             signer: The signer to use
 
