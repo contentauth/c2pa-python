@@ -110,7 +110,7 @@ def test_files_build():
     if os.path.exists(output_path):
         os.remove(output_path)
     with open(test_path, "rb") as source_file:
-        with open(output_path, "wb") as dest_file:
+        with open(output_path, "w+b") as dest_file:
             builder.sign(signer, "image/jpeg", source_file, dest_file)
 
 
