@@ -654,6 +654,33 @@ def load_settings(settings: str, format: str = "json") -> None:
     return result
 
 
+def _get_mime_type_from_path(path: Union[str, Path]) -> str:
+    """Attempt to guess the MIME type from a file path (with extension).
+
+    Args:
+        path: File path as string or Path object
+
+    Returns:
+        MIME type string
+
+    Raises:
+        C2paError.NotSupported: If MIME type cannot be determined
+    """
+    path_obj = Path(path)
+    file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
+
+    if file_extension == ".dng":
+        # mimetypes guesses the wrong type for dng,
+        # so we bypass it and set the correct type
+        return "image/dng"
+    else:
+        mime_type = mimetypes.guess_type(str(path))[0]
+        if not mime_type:
+            raise C2paError.NotSupported(
+                f"Could not determine MIME type for file: {path}")
+        return mime_type
+
+
 def read_ingredient_file(
         path: Union[str, Path], data_dir: Union[str, Path]) -> str:
     """Read a file as C2PA ingredient.
@@ -1236,25 +1263,7 @@ class Reader:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
 
-            # Extract file extension:
-            # path_obj.suffix returns the extension including
-            # the dot (e.g., ".jpg", ".png").
-            # If no extension exists, suffix returns empty string,
-            # so file_extension will be ""
-            path_obj = Path(path)
-            file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
-
-            if file_extension == ".dng":
-                # mimetypes guesses the wrong type for dng,
-                # so we bypass it and set the correct type
-                mime_type = "image/dng"
-            else:
-                mime_type = mimetypes.guess_type(
-                    path)[0]
-
-            if not mime_type:
-                raise C2paError.NotSupported(
-                    f"Could not determine MIME type for file: {path}")
+            mime_type = _get_mime_type_from_path(path)
 
             if mime_type not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
@@ -2299,25 +2308,8 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        # Extract file extension:
-        # path_obj.suffix returns the extension
-        # including the dot (e.g., ".jpg", ".png")
-        # If no extension exists, suffix returns empty string,
-        # so file_extension will be ""
-        file_extension = ""
-        path_obj = Path(source_path)
-        file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
 
-        if file_extension == ".dng":
-            # mimetypes guesses the wrong type for dng,
-            # so we bypass it and set the correct type
-            mime_type = "image/dng"
-        else:
-            mime_type = mimetypes.guess_type(str(source_path))[0]
-
-        if not mime_type:
-            raise C2paError.NotSupported(
-                f"Could not determine MIME type for file: {source_path}")
+        mime_type = _get_mime_type_from_path(source_path)
 
         try:
             # Open source file and destination file, then use the sign method
