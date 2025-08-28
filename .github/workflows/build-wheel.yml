@@ -121,11 +121,7 @@ jobs:
           # Verify wheel structure
           twine check dist/*
 
-<<<<<<< HEAD
       - name: Build macOS wheel
-=======
-      - name: Build macOS wheel (Universal)
->>>>>>> main
         if: runner.os == 'macOS'
         run: |
           # Create necessary directories
@@ -151,7 +147,6 @@ jobs:
             exit 1
           fi
 
-<<<<<<< HEAD
           # Determine platform name based on target architecture
           if [ "${{ inputs.architecture }}" = "universal2" ]; then
             PLATFORM_NAME="macosx_10_9_universal2"
@@ -169,19 +164,11 @@ jobs:
 
           # Build wheel with appropriate platform name
           python setup.py bdist_wheel --plat-name $PLATFORM_NAME
-=======
-          # Build wheel
-          python setup.py bdist_wheel --plat-name macosx_10_9_universal2
->>>>>>> main
 
           # Rename wheel to ensure unique filename
           cd dist
           for wheel in *.whl; do
-<<<<<<< HEAD
             mv "$wheel" "${wheel/$PLATFORM_NAME/$PLATFORM_NAME}"
-=======
-            mv "$wheel" "${wheel/macosx_10_9_universal2/macosx_10_9_universal2}"
->>>>>>> main
           done
           cd ..
 
