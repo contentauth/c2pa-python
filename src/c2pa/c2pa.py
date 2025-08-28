@@ -1231,8 +1231,22 @@ class Reader:
             # If we don't get a stream as param:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
-            mime_type = mimetypes.guess_type(
-                path)[0]
+
+            # Extract file extension:
+            # path_obj.suffix returns the extension including
+            # the dot (e.g., ".jpg", ".png").
+            # If no extension exists, suffix returns empty string,
+            # so file_extension will be ""
+            path_obj = Path(path)
+            file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
+
+            if file_extension == ".dng":
+                # mimetypes guesses the wrong type for dng,
+                # so we bypass it and set the correct type
+                mime_type = "image/dng"
+            else:
+                mime_type = mimetypes.guess_type(
+                    path)[0]
 
             if not mime_type:
                 raise C2paError.NotSupported(
@@ -2279,8 +2293,22 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        # Get the MIME type from the file extension
-        mime_type = mimetypes.guess_type(str(source_path))[0]
+        # Extract file extension:
+        # path_obj.suffix returns the extension
+        # including the dot (e.g., ".jpg", ".png")
+        # If no extension exists, suffix returns empty string,
+        # so file_extension will be ""
+        file_extension = ""
+        path_obj = Path(source_path)
+        file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
+
+        if file_extension == ".dng":
+            # mimetypes guesses the wrong type for dng,
+            # so we bypass it and set the correct type
+            mime_type = "image/dng"
+        else:
+            mime_type = mimetypes.guess_type(str(source_path))[0]
+
         if not mime_type:
             raise C2paError.NotSupported(
                 f"Could not determine MIME type for file: {source_path}")
