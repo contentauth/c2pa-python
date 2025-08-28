@@ -73,6 +73,9 @@ jobs:
             rm -f /io/dist/*-linux_*.whl
           "
 
+          # Install twine to verify wheels
+          pip install twine
+
           # Verify the wheel was built
           echo "Contents of dist directory:"
           ls -la dist/
@@ -80,6 +83,10 @@ jobs:
           find dist -name "*.whl" | wc -l
           echo "Wheel filenames:"
           find dist -name "*.whl" -exec basename {} \;
+
+          # Verify wheel structure
+          echo "Verifying wheels using twine check"
+          twine check dist/*
 
       - name: Build Windows wheel (x64)
         if: runner.os == 'Windows'
@@ -95,6 +102,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
           pip install wheel
+          pip install twine
 
           # Download native artifacts
           Write-Host "Starting artifact download process..."
@@ -110,8 +118,11 @@ jobs:
           # Build wheel
           python setup.py bdist_wheel --plat-name win_amd64
 
-      - name: Build macOS wheel (Apple Silicon)
-        if: runner.os == 'macOS' && runner.arch == 'arm64'
+          # Verify wheel structure
+          twine check dist/*
+
+      - name: Build macOS wheel (Universal)
+        if: runner.os == 'macOS'
         run: |
           # Create necessary directories
           mkdir -p artifacts
@@ -122,19 +133,24 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
           pip install wheel
+          pip install twine
 
           # Download native artifacts
           python scripts/download_artifacts.py $C2PA_VERSION
 
           # Build wheel
-          python setup.py bdist_wheel --plat-name macosx_11_0_arm64
+          python setup.py bdist_wheel --plat-name macosx_10_9_universal2
 
           # Rename wheel to ensure unique filename
           cd dist
           for wheel in *.whl; do
-            mv "$wheel" "${wheel/macosx_11_0_arm64/macosx_11_0_arm64}"
+            mv "$wheel" "${wheel/macosx_10_9_universal2/macosx_10_9_universal2}"
           done
           cd ..
+
+          # Verify wheel structure
+          echo "Verifying wheels using twine check"
+          twine check dist/*
 
       - name: Log wheel filename
         if: runner.os == 'Linux' || runner.os == 'macOS'
