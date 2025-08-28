@@ -326,19 +326,23 @@ jobs:
           .\venv\Scripts\pytest .\tests\test_unit_tests.py -v
 
   build-macos-wheel:
-    name: Build macOS wheel
+    name: Build macOS wheel (Universal)
     uses: ./.github/workflows/build-wheel.yml
     needs: [tests-unix, read-version]
     with:
       python-version: "3.10"
-      artifact-name: wheels-macos-${{ matrix.target }}
       runs-on: macos-latest
+      artifact-name: wheels-macos-${{ matrix.target }}
+      architecture: ${{ matrix.target }}
       c2pa-version: ${{ needs.read-version.outputs.c2pa-native-version }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       matrix:
-        target: [aarch64]
+        include:
+          - target: universal2
+            runs-on: macos-latest
+
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -347,12 +351,17 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
   test-built-macos-wheel:
-    name: Test macOS built wheel
+    name: Test macOS built wheel (Universal)
     needs: build-macos-wheel
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runs-on }}
     strategy:
       matrix:
-        target: [aarch64]
+        include:
+          - target: universal2
+            runs-on: macos-latest
+          - target: universal2
+            runs-on: macos-13
+
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
