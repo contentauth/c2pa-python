@@ -1214,9 +1214,11 @@ class Reader:
         """Create a new Reader.
 
         Args:
-            format_or_path: The format or path to read from. For paths, we
-              will attempt to guess the mimetype of the source file
-              based on the extension.
+            format_or_path: The format or path to read from.
+              The stream API (params format and an open stream) is
+              the recommended way to use the Reader. For paths, we
+              will attempt to guess the mimetype of the source
+              file based on the extension.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
