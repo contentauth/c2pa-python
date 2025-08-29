@@ -1012,17 +1012,13 @@ class Stream:
             Returns:
                 Number of bytes read, or -1 on error
             """
-            initialized = self._initialized
-            closed = self._closed
-            file_stream = self._file_like_stream
-
-            if not initialized or closed:
+            if not self._initialized or self._closed:
                 return -1
             try:
                 if not data or length <= 0:
                     return -1
 
-                buffer = file_stream.read(length)
+                buffer = self._file_like_stream.read(length)
                 if not buffer:  # EOF
                     return 0
 
@@ -1052,11 +1048,8 @@ class Stream:
             Returns:
                 New position in the stream, or -1 on error
             """
-            initialized = self._initialized
-            closed = self._closed
             file_stream = self._file_like_stream
-
-            if not initialized or closed:
+            if not self._initialized or self._closed:
                 return -1
             try:
                 file_stream.seek(offset, whence)
@@ -1082,11 +1075,7 @@ class Stream:
             Returns:
                 Number of bytes written, or -1 on error
             """
-            initialized = self._initialized
-            closed = self._closed
-            file_stream = self._file_like_stream
-
-            if not initialized or closed:
+            if not self._initialized or self._closed:
                 return -1
             try:
                 if not data or length <= 0:
@@ -1098,7 +1087,7 @@ class Stream:
                     # Copy data to our temporary buffer
                     ctypes.memmove(temp_buffer, data, length)
                     # Write from our safe buffer
-                    file_stream.write(bytes(temp_buffer))
+                    self._file_like_stream.write(bytes(temp_buffer))
                     return length
                 finally:
                     # Ensure temporary buffer is cleared
@@ -1120,14 +1109,10 @@ class Stream:
             Returns:
                 0 on success, -1 on error
             """
-            initialized = self._initialized
-            closed = self._closed
-            file_stream = self._file_like_stream
-
-            if not initialized or closed:
+            if not self._initialized or self._closed:
                 return -1
             try:
-                file_stream.flush()
+                self._file_like_stream.flush()
                 return 0
             except Exception:
                 return -1
@@ -1197,8 +1182,7 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        closed = self._closed
-        if closed:
+        if self._closed:
             return
 
         try:
