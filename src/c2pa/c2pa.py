@@ -1997,15 +1997,6 @@ class Signer:
 
         return result
 
-    @property
-    def closed(self) -> bool:
-        """Check if the signer is closed.
-
-        Returns:
-            bool: True if the signer is closed, False otherwise
-        """
-        return self._closed
-
 
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
