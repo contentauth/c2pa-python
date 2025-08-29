@@ -1165,7 +1165,7 @@ class Stream:
                         _lib.c2pa_release_stream(self._stream)
                     except Exception:
                         # Destructors shouldn't raise exceptions
-                        logger.warning("Failed to release Stream")
+                        logger.error("Failed to release Stream")
                         pass
                     finally:
                         self._stream = None
@@ -1549,7 +1549,7 @@ class Reader:
                         _lib.c2pa_reader_free(self._reader)
                     except Exception:
                         # Cleanup failure doesn't raise exceptions
-                        logger.warning(
+                        logger.error(
                             "Failed to free native Reader resources"
                         )
                         pass
@@ -1562,7 +1562,7 @@ class Reader:
                         self._own_stream.close()
                     except Exception:
                         # Cleanup failure doesn't raise exceptions
-                        logger.warning("Failed to close Reader stream")
+                        logger.error("Failed to close Reader stream")
                         pass
                     finally:
                         self._own_stream = None
@@ -1888,7 +1888,7 @@ class Signer:
                     _lib.c2pa_signer_free(self._signer)
                 except Exception:
                     # Log cleanup errors but don't raise exceptions
-                    logger.warning("Failed to free native Signer resources")
+                    logger.error("Failed to free native Signer resources")
                 finally:
                     self._signer = None
 
@@ -2177,7 +2177,7 @@ class Builder:
                         _lib.c2pa_builder_free(self._builder)
                     except Exception:
                         # Log cleanup errors but don't raise exceptions
-                        logger.warning(
+                        logger.error(
                             "Failed to release native Builder resources"
                         )
                         pass
@@ -2491,7 +2491,7 @@ class Builder:
                 try:
                     _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                 except Exception:
-                    logger.warning(
+                    logger.error(
                         "Failed to release native manifest bytes memory"
                     )
                     pass
