@@ -1170,7 +1170,6 @@ class Stream:
         """
         try:
             # Only cleanup if not already closed and we have a valid stream
-            # Cache state in local variables to reduce attribute lookup overhead
             if hasattr(self, '_closed') and not self._closed:
                 stream = self._stream
                 if hasattr(self, '_stream') and stream:
@@ -1198,7 +1197,6 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        # Cache state in local variables to reduce attribute lookup overhead
         closed = self._closed
         if closed:
             return
