@@ -1,3 +1,16 @@
+# Copyright 2025 Adobe. All rights reserved.
+# This file is licensed to you under the Apache License,
+# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+# or the MIT license (http://opensource.org/licenses/MIT),
+# at your option.
+
+# Unless required by applicable law or agreed to in writing,
+# this software is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+# specific language governing permissions and limitations under
+# each license.
+
 import ctypes
 import enum
 import json
@@ -664,6 +677,33 @@ def load_settings(settings: str, format: str = "json") -> None:
     return result
 
 
+def _get_mime_type_from_path(path: Union[str, Path]) -> str:
+    """Attempt to guess the MIME type from a file path (with extension).
+
+    Args:
+        path: File path as string or Path object
+
+    Returns:
+        MIME type string
+
+    Raises:
+        C2paError.NotSupported: If MIME type cannot be determined
+    """
+    path_obj = Path(path)
+    file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
+
+    if file_extension == ".dng":
+        # mimetypes guesses the wrong type for dng,
+        # so we bypass it and set the correct type
+        return "image/dng"
+    else:
+        mime_type = mimetypes.guess_type(str(path))[0]
+        if not mime_type:
+            raise C2paError.NotSupported(
+                f"Could not determine MIME type for file: {path}")
+        return mime_type
+
+
 def read_ingredient_file(
         path: Union[str, Path], data_dir: Union[str, Path]) -> str:
     """Read a file as C2PA ingredient.
@@ -1290,7 +1330,11 @@ class Reader:
         """Create a new Reader.
 
         Args:
-            format_or_path: The format or path to read from
+            format_or_path: The format or path to read from.
+              The stream API (params format and an open stream) is
+              the recommended way to use the Reader. For paths, we
+              will attempt to guess the mimetype of the source
+              file based on the extension.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
@@ -1312,12 +1356,8 @@ class Reader:
             # If we don't get a stream as param:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
-            mime_type = mimetypes.guess_type(
-                path)[0]
 
-            if not mime_type:
-                raise C2paError.NotSupported(
-                    f"Could not determine MIME type for file: {path}")
+            mime_type = _get_mime_type_from_path(path)
 
             if mime_type not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
@@ -2449,7 +2489,9 @@ class Builder:
         """Sign a file and write the signed data to an output file.
 
         Args:
-            source_path: Path to the source file
+            source_path: Path to the source file. We will attempt
+              to guess the mimetype of the source file based on
+              the extension.
             dest_path: Path to write the signed file to
             signer: The signer to use
 
@@ -2459,11 +2501,8 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        # Get the MIME type from the file extension
-        mime_type = mimetypes.guess_type(str(source_path))[0]
-        if not mime_type:
-            raise C2paError.NotSupported(
-                f"Could not determine MIME type for file: {source_path}")
+
+        mime_type = _get_mime_type_from_path(source_path)
 
         try:
             # Open source file and destination file, then use the sign method
