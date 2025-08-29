@@ -1399,8 +1399,7 @@ class Reader:
 
                 # Store the file to close it later
                 self._backing_file = file
-                
-                # Mark as initialized after successful creation
+
                 self._initialized = True
 
             except Exception as e:
@@ -1462,8 +1461,7 @@ class Reader:
                     )
 
                 self._backing_file = file
-                
-                # Mark as initialized after successful creation
+
                 self._initialized = True
             except Exception as e:
                 if self._own_stream:
@@ -2165,7 +2163,6 @@ class Builder:
                 raise C2paError(error)
             raise C2paError("Failed to create builder from archive")
 
-        # Mark as initialized after successful creation from archive
         builder._initialized = True
         return builder
 
