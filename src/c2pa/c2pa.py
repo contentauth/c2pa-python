@@ -1012,13 +1012,18 @@ class Stream:
             Returns:
                 Number of bytes read, or -1 on error
             """
-            if not self._initialized or self._closed:
+            # Cache state in local variables to reduce attribute lookup overhead
+            initialized = self._initialized
+            closed = self._closed
+            file_stream = self._file_like_stream
+
+            if not initialized or closed:
                 return -1
             try:
                 if not data or length <= 0:
                     return -1
 
-                buffer = self._file_like_stream.read(length)
+                buffer = file_stream.read(length)
                 if not buffer:  # EOF
                     return 0
 
@@ -1051,11 +1056,16 @@ class Stream:
             Returns:
                 New position in the stream, or -1 on error
             """
-            if not self._initialized or self._closed:
+            # Cache state in local variables to reduce attribute lookup overhead
+            initialized = self._initialized
+            closed = self._closed
+            file_stream = self._file_like_stream
+
+            if not initialized or closed:
                 return -1
             try:
-                self._file_like_stream.seek(offset, whence)
-                return self._file_like_stream.tell()
+                file_stream.seek(offset, whence)
+                return file_stream.tell()
             except Exception:
                 return -1
 
@@ -1077,7 +1087,12 @@ class Stream:
             Returns:
                 Number of bytes written, or -1 on error
             """
-            if not self._initialized or self._closed:
+            # Cache state in local variables to reduce attribute lookup overhead
+            initialized = self._initialized
+            closed = self._closed
+            file_stream = self._file_like_stream
+
+            if not initialized or closed:
                 return -1
             try:
                 if not data or length <= 0:
@@ -1089,7 +1104,7 @@ class Stream:
                     # Copy data to our temporary buffer
                     ctypes.memmove(temp_buffer, data, length)
                     # Write from our safe buffer
-                    self._file_like_stream.write(bytes(temp_buffer))
+                    file_stream.write(bytes(temp_buffer))
                     return length
                 finally:
                     # Ensure temporary buffer is cleared
@@ -1111,10 +1126,15 @@ class Stream:
             Returns:
                 0 on success, -1 on error
             """
-            if not self._initialized or self._closed:
+            # Cache state in local variables to reduce attribute lookup overhead
+            initialized = self._initialized
+            closed = self._closed
+            file_stream = self._file_like_stream
+
+            if not initialized or closed:
                 return -1
             try:
-                self._file_like_stream.flush()
+                file_stream.flush()
                 return 0
             except Exception:
                 return -1
@@ -1157,12 +1177,14 @@ class Stream:
         """
         try:
             # Only cleanup if not already closed and we have a valid stream
+            # Cache state in local variables to reduce attribute lookup overhead
             if hasattr(self, '_closed') and not self._closed:
-                if hasattr(self, '_stream') and self._stream:
+                stream = self._stream
+                if hasattr(self, '_stream') and stream:
                     # Use internal cleanup to avoid calling close() which could
                     # cause issues
                     try:
-                        _lib.c2pa_release_stream(self._stream)
+                        _lib.c2pa_release_stream(stream)
                     except Exception:
                         # Destructors shouldn't raise exceptions
                         logger.error("Failed to release Stream")
@@ -1183,17 +1205,19 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-
-        if self._closed:
+        # Cache state in local variables to reduce attribute lookup overhead
+        closed = self._closed
+        if closed:
             return
 
         try:
             # Clean up stream first as it depends on callbacks
             # Note: We don't close self._file_like_stream as we don't own it,
             # the opener owns it.
-            if self._stream:
+            stream = self._stream
+            if stream:
                 try:
-                    _lib.c2pa_release_stream(self._stream)
+                    _lib.c2pa_release_stream(stream)
                 except Exception as e:
                     logger.error(
                         Stream._ERROR_MESSAGES['stream_error'].format(
