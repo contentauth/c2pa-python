@@ -1012,7 +1012,6 @@ class Stream:
             Returns:
                 Number of bytes read, or -1 on error
             """
-            # Cache state in local variables to reduce attribute lookup overhead
             initialized = self._initialized
             closed = self._closed
             file_stream = self._file_like_stream
@@ -1053,7 +1052,6 @@ class Stream:
             Returns:
                 New position in the stream, or -1 on error
             """
-            # Cache state in local variables to reduce attribute lookup overhead
             initialized = self._initialized
             closed = self._closed
             file_stream = self._file_like_stream
@@ -1084,7 +1082,6 @@ class Stream:
             Returns:
                 Number of bytes written, or -1 on error
             """
-            # Cache state in local variables to reduce attribute lookup overhead
             initialized = self._initialized
             closed = self._closed
             file_stream = self._file_like_stream
@@ -1123,7 +1120,6 @@ class Stream:
             Returns:
                 0 on success, -1 on error
             """
-            # Cache state in local variables to reduce attribute lookup overhead
             initialized = self._initialized
             closed = self._closed
             file_stream = self._file_like_stream
