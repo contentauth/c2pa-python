@@ -1510,6 +1510,11 @@ class Reader:
                     )
 
     def __enter__(self):
+        self._ensure_valid_state()
+
+        if not self._reader:
+            raise C2paError("Invalid Reader when entering context")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -1543,6 +1548,8 @@ class Reader:
         try:
             # Only cleanup if not already closed and we have a valid reader
             if hasattr(self, '_closed') and not self._closed:
+                self._closed = True
+
                 # Clean up reader
                 if hasattr(self, '_reader') and self._reader:
                     try:
@@ -1578,13 +1585,12 @@ class Reader:
                     finally:
                         self._backing_file = None
 
-                self._closed = True
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
 
     def close(self):
-        """Release the reader resources safely.
+        """Release the reader resources.
 
         This method ensures all resources are properly cleaned up,
         even if errors occur during cleanup.
@@ -1866,7 +1872,6 @@ class Signer:
         """Context manager entry."""
         self._ensure_valid_state()
 
-        # Additional pointer validation before entering context
         if not self._signer:
             raise C2paError("Invalid signer pointer: pointer is null")
 
@@ -1877,13 +1882,15 @@ class Signer:
         self.close()
 
     def _cleanup_resources(self):
-        """Internal cleanup method that safely releases native resources.
+        """Internal cleanup method that releases native resources.
 
         This method handles the actual cleanup logic and can be called
         from both close() and __del__ without causing double frees.
         """
         try:
             if not self._closed and self._signer:
+                self._closed = True
+
                 try:
                     _lib.c2pa_signer_free(self._signer)
                 except Exception:
@@ -1896,7 +1903,6 @@ class Signer:
                 if self._callback_cb:
                     self._callback_cb = None
 
-                self._closed = True
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
@@ -1913,7 +1919,7 @@ class Signer:
             raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
 
     def close(self):
-        """Release the signer resources safely.
+        """Release the signer resources.
 
         This method ensures all resources are properly cleaned up,
         even if errors occur during cleanup.
@@ -2146,10 +2152,6 @@ class Builder:
 
         return builder
 
-    def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        self._cleanup_resources()
-
     def _ensure_valid_state(self):
         """Ensure the builder is in a valid state for operations.
 
@@ -2162,7 +2164,7 @@ class Builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
 
     def _cleanup_resources(self):
-        """Internal cleanup method that safely releases native resources.
+        """Internal cleanup method that releases native resources.
 
         This method handles the actual cleanup logic and can be called
         from both close() and __del__ without causing double frees.
@@ -2170,6 +2172,8 @@ class Builder:
         try:
             # Only cleanup if not already closed and we have a valid builder
             if hasattr(self, '_closed') and not self._closed:
+                self._closed = True
+
                 if hasattr(
                         self,
                         '_builder') and self._builder and self._builder != 0:
@@ -2182,12 +2186,14 @@ class Builder:
                         )
                         pass
                     finally:
-                        # Always clear the pointer and mark as closed
                         self._builder = None
-                        self._closed = True
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
+
+    def __del__(self):
+        """Ensure resources are cleaned up if close() wasn't called."""
+        self._cleanup_resources()
 
     def close(self):
         """Release the builder resources.
@@ -2212,6 +2218,11 @@ class Builder:
             self._closed = True
 
     def __enter__(self):
+        self._ensure_valid_state()
+
+        if not self._builder:
+            raise C2paError("Invalid Builder when entering context")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
