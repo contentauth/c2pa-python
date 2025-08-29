@@ -126,9 +126,6 @@ class TestReader(unittest.TestCase):
     def test_reader_close_cleanup(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
-            # Store references to internal objects
-            reader_ref = reader._reader
-            stream_ref = reader._own_stream
             # Close the reader
             reader.close()
             # Verify all resources are cleaned up
@@ -143,6 +140,23 @@ class TestReader(unittest.TestCase):
         reader.close()
         with self.assertRaises(Error):
             reader.resource_to_stream("", io.BytesIO(bytearray()))
+
+    def test_read_dng_from_stream(self):
+        test_path = os.path.join(self.data_dir, "C.dng")
+        with open(test_path, "rb") as file:
+            file_content = file.read()
+
+        with Reader("dng", io.BytesIO(file_content)) as reader:
+            # Just run and verify there is no crash
+            json.loads(reader.json())
+
+    def test_read_dng_file_from_path(self):
+        test_path = os.path.join(self.data_dir, "C.dng")
+
+        # Create reader with the file content
+        with Reader(test_path) as reader:
+            # Just run and verify there is no crash
+            json.loads(reader.json())
 
     def test_read_all_files(self):
         """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
