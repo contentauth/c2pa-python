@@ -150,6 +150,15 @@ class TestReader(unittest.TestCase):
             # Just run and verify there is no crash
             json.loads(reader.json())
 
+    def test_read_dng_upper_case_from_stream(self):
+        test_path = os.path.join(self.data_dir, "C.dng")
+        with open(test_path, "rb") as file:
+            file_content = file.read()
+
+        with Reader("DNG", io.BytesIO(file_content)) as reader:
+            # Just run and verify there is no crash
+            json.loads(reader.json())
+
     def test_read_dng_file_from_path(self):
         test_path = os.path.join(self.data_dir, "C.dng")
 
