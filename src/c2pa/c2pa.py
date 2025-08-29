@@ -1432,7 +1432,8 @@ class Reader:
             # If stream is a string, treat it as a path and try to open it
 
             # format_or_path is a format
-            if format_or_path.lower() not in Reader.get_supported_mime_types():
+            format_lower = format_or_path.lower()
+            if format_lower not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_or_path}")
 
@@ -2477,7 +2478,8 @@ class Builder:
         if not signer or not hasattr(signer, '_signer') or not signer._signer:
             raise C2paError("Invalid or closed signer")
 
-        if format.lower() not in Builder.get_supported_mime_types():
+        format_lower = format.lower()
+        if format_lower not in Builder.get_supported_mime_types():
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
 
