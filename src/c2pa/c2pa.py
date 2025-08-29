@@ -1705,28 +1705,6 @@ class Signer:
         'encoding_error': "Invalid UTF-8 characters in input: {}"
     }
 
-    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
-        """Initialize a new Signer instance.
-
-        Note: This constructor is not meant to be called directly.
-        Use from_info() or from_callback() instead.
-
-        Args:
-            signer_ptr: Pointer to the native C2PA signer
-
-        Raises:
-            C2paError: If the signer pointer is invalid
-        """
-        # Validate pointer before assignment
-        if not signer_ptr:
-            raise C2paError("Invalid signer pointer: pointer is null")
-
-        self._signer = signer_ptr
-        self._closed = False
-
-        # Set only for signers which are callback signers
-        self._callback_cb = None
-
     @classmethod
     def from_info(cls, signer_info: C2paSignerInfo) -> 'Signer':
         """Create a new Signer from signer information.
@@ -1892,6 +1870,28 @@ class Signer:
         signer_instance._callback_cb = callback_cb
 
         return signer_instance
+
+    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
+        """Initialize a new Signer instance.
+
+        Note: This constructor is not meant to be called directly.
+        Use from_info() or from_callback() instead.
+
+        Args:
+            signer_ptr: Pointer to the native C2PA signer
+
+        Raises:
+            C2paError: If the signer pointer is invalid
+        """
+        # Validate pointer before assignment
+        if not signer_ptr:
+            raise C2paError("Invalid signer pointer: pointer is null")
+
+        self._signer = signer_ptr
+        self._closed = False
+
+        # Set only for signers which are callback signers
+        self._callback_cb = None
 
     def __enter__(self):
         """Context manager entry."""
@@ -2092,50 +2092,6 @@ class Builder:
 
         return cls._supported_mime_types_cache
 
-    def __init__(self, manifest_json: Any):
-        """Initialize a new Builder instance.
-
-        Args:
-            manifest_json: The manifest JSON definition (string or dict)
-
-        Raises:
-            C2paError: If there was an error creating the builder
-            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
-            C2paError.Json: If the manifest JSON cannot be serialized
-        """
-        self._closed = False
-        self._initialized = False
-        self._builder = None
-
-        if not isinstance(manifest_json, str):
-            try:
-                manifest_json = json.dumps(manifest_json)
-            except (TypeError, ValueError) as e:
-                raise C2paError.Json(
-                    Builder._ERROR_MESSAGES['json_error'].format(
-                        str(e)))
-
-        try:
-            json_str = manifest_json.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
-
-        self._builder = _lib.c2pa_builder_from_json(json_str)
-
-        if not self._builder:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['builder_error'].format(
-                    "Unknown error"
-                )
-            )
-
-        self._initialized = True
-
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
         """Create a new Builder from a JSON manifest.
@@ -2181,6 +2137,61 @@ class Builder:
         builder._initialized = True
         return builder
 
+    def __init__(self, manifest_json: Any):
+        """Initialize a new Builder instance.
+
+        Args:
+            manifest_json: The manifest JSON definition (string or dict)
+
+        Raises:
+            C2paError: If there was an error creating the builder
+            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
+            C2paError.Json: If the manifest JSON cannot be serialized
+        """
+        self._closed = False
+        self._initialized = False
+        self._builder = None
+
+        if not isinstance(manifest_json, str):
+            try:
+                manifest_json = json.dumps(manifest_json)
+            except (TypeError, ValueError) as e:
+                raise C2paError.Json(
+                    Builder._ERROR_MESSAGES['json_error'].format(
+                        str(e)))
+
+        try:
+            json_str = manifest_json.encode('utf-8')
+        except UnicodeError as e:
+            raise C2paError.Encoding(
+                Builder._ERROR_MESSAGES['encoding_error'].format(
+                    str(e)))
+
+        self._builder = _lib.c2pa_builder_from_json(json_str)
+
+        if not self._builder:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError(
+                Builder._ERROR_MESSAGES['builder_error'].format(
+                    "Unknown error"
+                )
+            )
+
+        self._initialized = True
+
+    def __del__(self):
+        """Ensure resources are cleaned up if close() wasn't called."""
+        self._cleanup_resources()
+
+    def __enter__(self):
+        self._ensure_valid_state()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def _ensure_valid_state(self):
         """Ensure the builder is in a valid state for operations.
 
@@ -2225,10 +2236,6 @@ class Builder:
             # Ensure we don't raise exceptions during cleanup
             pass
 
-    def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        self._cleanup_resources()
-
     def close(self):
         """Release the builder resources.
 
@@ -2250,13 +2257,6 @@ class Builder:
                     str(e)))
         finally:
             self._closed = True
-
-    def __enter__(self):
-        self._ensure_valid_state()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     def set_no_embed(self):
         """Set the no-embed flag.
