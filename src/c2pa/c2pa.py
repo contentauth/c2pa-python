@@ -1,19 +1,7 @@
-# Copyright 2025 Adobe. All rights reserved.
-# This file is licensed to you under the Apache License,
-# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
-# or the MIT license (http://opensource.org/licenses/MIT),
-# at your option.
-
-# Unless required by applicable law or agreed to in writing,
-# this software is distributed on an "AS IS" BASIS, WITHOUT
-# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
-# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
-# specific language governing permissions and limitations under
-# each license.
-
 import ctypes
 import enum
 import json
+import logging
 import sys
 import os
 import warnings
@@ -22,6 +10,10 @@ from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library
 import mimetypes
+
+# Create a module-specific logger
+logger = logging.getLogger("c2pa")
+logger.addHandler(logging.NullHandler())
 
 # Define required function names
 _REQUIRED_FUNCTIONS = [
@@ -255,6 +247,12 @@ class C2paSignerInfo(ctypes.Structure):
             private_key: The private key as a string
             ta_url: The timestamp authority URL as bytes
         """
+
+        if sign_cert is None:
+            raise ValueError("sign_cert must be set")
+        if private_key is None:
+            raise ValueError("private_key must be set")
+
         # Handle alg parameter: can be C2paSigningAlg enum
         # or string (or bytes), convert as needed
         if isinstance(alg, C2paSigningAlg):
@@ -545,19 +543,31 @@ def _convert_to_py_string(value) -> str:
         return ""
 
     py_string = ""
-    ptr = ctypes.cast(value, ctypes.c_char_p)
 
-    # Only if we got a valid pointer
-    if ptr and ptr.value is not None:
-        try:
-            py_string = ptr.value.decode('utf-8', errors='replace')
-        except Exception:
-            py_string = ""
+    # Validate pointer before casting and freeing
+    if not isinstance(value, (int, ctypes.c_void_p)) or value == 0:
+        return ""
 
-        # Free the Rust-allocated memory
-        _lib.c2pa_string_free(value)
+    try:
+        ptr = ctypes.cast(value, ctypes.c_char_p)
 
-    # In case of invalid pointer, no free (avoids double-free)
+        # Only if we got a valid pointer with valid content
+        if ptr and ptr.value is not None:
+            try:
+                py_string = ptr.value.decode('utf-8', errors='replace')
+            except Exception:
+                py_string = ""
+            finally:
+                # Only free if we have a valid pointer
+                try:
+                    _lib.c2pa_string_free(value)
+                except Exception:
+                    # Ignore clean up issues
+                    pass
+    except (ctypes.ArgumentError, TypeError, ValueError):
+        # Invalid pointer type or value
+        return ""
+
     return py_string
 
 
@@ -617,7 +627,7 @@ def sdk_version() -> str:
     Returns the underlying c2pa-rs/c2pa-c-ffi version string
     """
     vstr = version()
-    # Example: "c2pa-c/0.49.5 c2pa-rs/0.49.5"
+    # Example: "c2pa-c/0.60.1 c2pa-rs/0.60.1"
     for part in vstr.split():
         if part.startswith("c2pa-rs/"):
             return part.split("/", 1)[1]
@@ -830,7 +840,9 @@ def sign_file(
         Use :meth:`Builder.sign` instead.
 
     Args:
-        source_path: Path to the source file
+        source_path: Path to the source file. We will attempt
+              to guess the mimetype of the source file based on
+              the extension.
         dest_path: Path to write the signed file to
         manifest: The manifest JSON string
         signer_or_info: Either a signer configuration or a signer object
@@ -887,6 +899,7 @@ def sign_file(
             try:
                 os.remove(dest_path)
             except OSError:
+                logger.warning("Failed to remove destination file")
                 pass  # Ignore cleanup errors
 
         # Re-raise the error
@@ -1124,9 +1137,30 @@ class Stream:
         self.close()
 
     def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        if hasattr(self, '_closed'):
-            self.close()
+        """Ensure resources are cleaned up if close()wasn't called.
+
+        This destructor only cleans up if the object
+        hasn't been explicitly closed.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid stream
+            if hasattr(self, '_closed') and not self._closed:
+                if hasattr(self, '_stream') and self._stream:
+                    # Use internal cleanup to avoid calling close() which could
+                    # cause issues
+                    try:
+                        _lib.c2pa_release_stream(self._stream)
+                    except Exception:
+                        # Destructors shouldn't raise exceptions
+                        logger.warning("Failed to release Stream")
+                        pass
+                    finally:
+                        self._stream = None
+                        self._closed = True
+                        self._initialized = False
+        except Exception:
+            # Destructors must not raise exceptions
+            pass
 
     def close(self):
         """Release the stream resources.
@@ -1148,9 +1182,9 @@ class Stream:
                 try:
                     _lib.c2pa_release_stream(self._stream)
                 except Exception as e:
-                    print(
+                    logger.error(
                         Stream._ERROR_MESSAGES['stream_error'].format(
-                            str(e)), file=sys.stderr)
+                            str(e)))
                 finally:
                     self._stream = None
 
@@ -1160,14 +1194,14 @@ class Stream:
                     try:
                         setattr(self, attr, None)
                     except Exception as e:
-                        print(
+                        logger.error(
                             Stream._ERROR_MESSAGES['callback_error'].format(
-                                attr, str(e)), file=sys.stderr)
+                                attr, str(e)))
 
         except Exception as e:
-            print(
+            logger.error(
                 Stream._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
             self._initialized = False
@@ -1216,21 +1250,65 @@ class Reader:
 
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
+        """Get the list of supported MIME types for the Reader.
+        This method retrieves supported MIME types from the native library.
+
+        Returns:
+            List of supported MIME type strings
+
+        Raises:
+            C2paError: If there was an error retrieving the MIME types
+        """
         if cls._supported_mime_types_cache is not None:
             return cls._supported_mime_types_cache
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
 
-        try:
-            # CDecode values to place them in Python managed memory
-            result = [arr[i].decode("utf-8") for i in range(count.value)]
-        finally:
-            # Release native memory, as per API contract
-            # c2pa_reader_supported_mime_types must call c2pa_free_string_array
-            _lib.c2pa_free_string_array(arr, count.value)
+        # Validate the returned array pointer
+        if not arr:
+            # If no array returned, check for errors
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(f"Failed to get supported MIME types: {error}")
+            # Return empty list if no error but no array
+            return []
 
-        cls._supported_mime_types_cache = result
+        # Validate count value
+        if count.value <= 0:
+            # Free the array even if count is invalid
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                pass
+            return []
+
+        try:
+            result = []
+            for i in range(count.value):
+                try:
+                    # Validate each array element before accessing
+                    if arr[i] is None:
+                        continue
+
+                    mime_type = arr[i].decode("utf-8", errors='replace')
+                    if mime_type:
+                        result.append(mime_type)
+                except Exception:
+                    # Ignore cleanup errors
+                    continue
+        finally:
+            # Always free the native memory, even if string extraction fails
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                # Ignore cleanup errors
+                pass
+
+        # Cache the result
+        if result:
+            cls._supported_mime_types_cache = result
+
         return cls._supported_mime_types_cache
 
     def __init__(self,
@@ -1241,11 +1319,7 @@ class Reader:
         """Create a new Reader.
 
         Args:
-            format_or_path: The format or path to read from.
-              The stream API (params format and an open stream) is
-              the recommended way to use the Reader. For paths, we
-              will attempt to guess the mimetype of the source
-              file based on the extension.
+            format_or_path: The format or path to read from
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
 
@@ -1255,22 +1329,31 @@ class Reader:
               contain invalid UTF-8 characters
         """
 
+        self._closed = False
+
         self._reader = None
         self._own_stream = None
+
+        # This is used to keep track of a file
+        # we may have opened ourselves, and that we need to close later
+        self._backing_file = None
 
         if stream is None:
             # If we don't get a stream as param:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
-
             mime_type = _get_mime_type_from_path(path)
+
+            if not mime_type:
+                raise C2paError.NotSupported(
+                    f"Could not determine MIME type for file: {path}")
 
             if mime_type not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {mime_type}")
 
             try:
-                self._mime_type_str = mime_type.encode('utf-8')
+                mime_type_str = mime_type.encode('utf-8')
             except UnicodeError as e:
                 raise C2paError.Encoding(
                     Reader._ERROR_MESSAGES['encoding_error'].format(
@@ -1282,7 +1365,7 @@ class Reader:
                 self._own_stream = Stream(file)
 
                 self._reader = _lib.c2pa_reader_from_stream(
-                    self._mime_type_str,
+                    mime_type_str,
                     self._own_stream._stream
                 )
 
@@ -1300,13 +1383,13 @@ class Reader:
                     )
 
                 # Store the file to close it later
-                self._file_like_stream = file
+                self._backing_file = file
 
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_file_like_stream'):
-                    self._file_like_stream.close()
+                if hasattr(self, '_backing_file') and self._backing_file:
+                    self._backing_file.close()
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -1324,11 +1407,11 @@ class Reader:
                 self._own_stream = Stream(file)
 
                 format_str = str(format_or_path)
-                self._format_str = format_str.encode('utf-8')
+                format_bytes = format_str.encode('utf-8')
 
                 if manifest_data is None:
                     self._reader = _lib.c2pa_reader_from_stream(
-                        self._format_str, self._own_stream._stream)
+                        format_bytes, self._own_stream._stream)
                 else:
                     if not isinstance(manifest_data, bytes):
                         raise TypeError(
@@ -1340,7 +1423,7 @@ class Reader:
                         manifest_data)
                     self._reader = (
                         _lib.c2pa_reader_from_manifest_data_and_stream(
-                            self._format_str,
+                            format_bytes,
                             self._own_stream._stream,
                             manifest_array,
                             len(manifest_data),
@@ -1360,12 +1443,12 @@ class Reader:
                         )
                     )
 
-                self._file_like_stream = file
+                self._backing_file = file
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_file_like_stream'):
-                    self._file_like_stream.close()
+                if hasattr(self, '_backing_file') and self._backing_file:
+                    self._backing_file.close()
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -1418,63 +1501,91 @@ class Reader:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+    def __del__(self):
+        """Ensure resources are cleaned up if close() wasn't called.
+
+        This destructor handles cleanup without causing double frees.
+        It only cleans up if the object hasn't been explicitly closed.
+        """
+        self._cleanup_resources()
+
+    def _ensure_valid_state(self):
+        """Ensure the reader is in a valid state for operations.
+
+        Raises:
+            C2paError: If the reader is closed or invalid
+        """
+        if self._closed or not self._reader:
+            raise C2paError("Reader is closed")
+
+    def _cleanup_resources(self):
+        """Internal cleanup method that releases native resources.
+
+        This method handles the actual cleanup logic and can be called
+        from both close() and __del__ without causing double frees.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid reader
+            if hasattr(self, '_closed') and not self._closed:
+                # Clean up reader
+                if hasattr(self, '_reader') and self._reader:
+                    try:
+                        _lib.c2pa_reader_free(self._reader)
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        logger.warning(
+                            "Failed to free native Reader resources"
+                        )
+                        pass
+                    finally:
+                        self._reader = None
+
+                # Clean up stream
+                if hasattr(self, '_own_stream') and self._own_stream:
+                    try:
+                        self._own_stream.close()
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        logger.warning("Failed to close Reader stream")
+                        pass
+                    finally:
+                        self._own_stream = None
+
+                # Clean up backing file (if needed)
+                if self._backing_file:
+                    try:
+                        self._backing_file.close()
+                    except Exception:
+                        # Cleanup failure doesn't raise exceptions
+                        logger.warning("Failed to close Reader backing file")
+                        pass
+                    finally:
+                        self._backing_file = None
+
+                self._closed = True
+        except Exception:
+            # Ensure we don't raise exceptions during cleanup
+            pass
+
     def close(self):
-        """Release the reader resources.
+        """Release the reader resources safely.
 
         This method ensures all resources are properly cleaned up,
         even if errors occur during cleanup.
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-
-        # Track if we've already cleaned up
-        if not hasattr(self, '_closed'):
-            self._closed = False
-
         if self._closed:
-            return
+            return  # Already closed, safe to return
 
         try:
-            # Clean up reader
-            if hasattr(self, '_reader') and self._reader:
-                try:
-                    _lib.c2pa_reader_free(self._reader)
-                except Exception as e:
-                    print(
-                        Reader._ERROR_MESSAGES['reader_cleanup_error'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._reader = None
-
-            # Clean up stream
-            if hasattr(self, '_own_stream') and self._own_stream:
-                try:
-                    self._own_stream.close()
-                except Exception as e:
-                    print(
-                        Reader._ERROR_MESSAGES['stream_error'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._own_stream = None
-
-            # Clean up file
-            if hasattr(self, '_file_like_stream'):
-                try:
-                    self._file_like_stream.close()
-                except Exception as e:
-                    print(
-                        Reader._ERROR_MESSAGES['file_error'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._file_like_stream = None
-
-            # Clear any stored strings
-            if hasattr(self, '_strings'):
-                self._strings.clear()
+            # Use the internal cleanup method
+            self._cleanup_resources()
         except Exception as e:
-            print(
+            # Log any unexpected errors during close
+            logger.error(
                 Reader._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
 
@@ -1488,8 +1599,8 @@ class Reader:
             C2paError: If there was an error getting the JSON
         """
 
-        if not self._reader:
-            raise C2paError("Reader is closed")
+        self._ensure_valid_state()
+
         result = _lib.c2pa_reader_json(self._reader)
 
         if result is None:
@@ -1513,13 +1624,12 @@ class Reader:
         Raises:
             C2paError: If there was an error writing the resource to stream
         """
-        if not self._reader:
-            raise C2paError("Reader is closed")
+        self._ensure_valid_state()
 
-        self._uri_str = uri.encode('utf-8')
+        uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
-                self._reader, self._uri_str, stream_obj._stream)
+                self._reader, uri_str, stream_obj._stream)
 
             if result < 0:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -1679,9 +1789,9 @@ class Signer:
                 # Native code expects the signed len to be returned, we oblige
                 return actual_len
             except Exception as e:
-                print(
+                logger.error(
                     cls._ERROR_MESSAGES['callback_error'].format(
-                        str(e)), file=sys.stderr)
+                        str(e)))
                 # Error: exception raised, invalid so return -1,
                 # native code will handle the error when seeing -1
                 return -1
@@ -1752,15 +1862,15 @@ class Signer:
                 try:
                     _lib.c2pa_signer_free(self._signer)
                 except Exception as e:
-                    print(
+                    logger.error(
                         Signer._ERROR_MESSAGES['signer_cleanup'].format(
-                            str(e)), file=sys.stderr)
+                            str(e)))
                 finally:
                     self._signer = None
         except Exception as e:
-            print(
+            logger.error(
                 Signer._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
 
@@ -1820,22 +1930,65 @@ class Builder:
 
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
+        """Get the list of supported MIME types for the Builder.
+        This method retrieves supported MIME types from the native library.
+
+        Returns:
+            List of supported MIME type strings
+
+        Raises:
+            C2paError: If there was an error retrieving the MIME types
+        """
         if cls._supported_mime_types_cache is not None:
             return cls._supported_mime_types_cache
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
 
-        try:
-            # CDecode values to place them in Python managed memory
-            result = [arr[i].decode("utf-8") for i in range(count.value)]
-        finally:
-            # Release native memory, as per API contract
-            # c2pa_builder_supported_mime_types must call
-            # c2pa_free_string_array
-            _lib.c2pa_free_string_array(arr, count.value)
+        # Validate the returned array pointer
+        if not arr:
+            # If no array returned, check for errors
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(f"Failed to get supported MIME types: {error}")
+            # Return empty list if no error but no array
+            return []
 
-        cls._supported_mime_types_cache = result
+        # Validate count value
+        if count.value <= 0:
+            # Free the array even if count is invalid
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                pass
+            return []
+
+        try:
+            result = []
+            for i in range(count.value):
+                try:
+                    # Validate each array element before accessing
+                    if arr[i] is None:
+                        continue
+
+                    mime_type = arr[i].decode("utf-8", errors='replace')
+                    if mime_type:
+                        result.append(mime_type)
+                except Exception:
+                    # Ignore decoding failures
+                    continue
+        finally:
+            # Always free the native memory, even if string extraction fails
+            try:
+                _lib.c2pa_free_string_array(arr, count.value)
+            except Exception:
+                # Ignore cleanup errors
+                pass
+
+        # Cache the result
+        if result:
+            cls._supported_mime_types_cache = result
+
         return cls._supported_mime_types_cache
 
     def __init__(self, manifest_json: Any):
@@ -1849,6 +2002,7 @@ class Builder:
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
+        self._closed = False
         self._builder = None
 
         if not isinstance(manifest_json, str):
@@ -1912,6 +2066,9 @@ class Builder:
         builder._builder = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
         if not builder._builder:
+            # Clean up the stream object if builder creation fails
+            stream_obj.close()
+
             error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
@@ -1921,8 +2078,46 @@ class Builder:
 
     def __del__(self):
         """Ensure resources are cleaned up if close() wasn't called."""
-        if hasattr(self, '_closed'):
-            self.close()
+        self._cleanup_resources()
+
+    def _ensure_valid_state(self):
+        """Ensure the builder is in a valid state for operations.
+
+        Raises:
+            C2paError: If the builder is closed or invalid
+        """
+        if self._closed:
+            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        if not self._builder:
+            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+
+    def _cleanup_resources(self):
+        """Internal cleanup method that safely releases native resources.
+
+        This method handles the actual cleanup logic and can be called
+        from both close() and __del__ without causing double frees.
+        """
+        try:
+            # Only cleanup if not already closed and we have a valid builder
+            if hasattr(self, '_closed') and not self._closed:
+                if hasattr(
+                        self,
+                        '_builder') and self._builder and self._builder != 0:
+                    try:
+                        _lib.c2pa_builder_free(self._builder)
+                    except Exception:
+                        # Log cleanup errors but don't raise exceptions
+                        logger.warning(
+                            "Failed to release native Builder resources"
+                        )
+                        pass
+                    finally:
+                        # Always clear the pointer and mark as closed
+                        self._builder = None
+                        self._closed = True
+        except Exception:
+            # Ensure we don't raise exceptions during cleanup
+            pass
 
     def close(self):
         """Release the builder resources.
@@ -1932,28 +2127,17 @@ class Builder:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        # Track if we've already cleaned up
-        if not hasattr(self, '_closed'):
-            self._closed = False
-
         if self._closed:
             return
 
         try:
-            # Clean up builder
-            if hasattr(self, '_builder') and self._builder:
-                try:
-                    _lib.c2pa_builder_free(self._builder)
-                except Exception as e:
-                    print(
-                        Builder._ERROR_MESSAGES['builder_cleanup'].format(
-                            str(e)), file=sys.stderr)
-                finally:
-                    self._builder = None
+            # Use the internal cleanup method
+            self._cleanup_resources()
         except Exception as e:
-            print(
+            # Log any unexpected errors during close
+            logger.error(
                 Builder._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)), file=sys.stderr)
+                    str(e)))
         finally:
             self._closed = True
 
@@ -1970,9 +2154,7 @@ class Builder:
         into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-
+        self._ensure_valid_state()
         _lib.c2pa_builder_set_no_embed(self._builder)
 
     def set_remote_url(self, remote_url: str):
@@ -1987,8 +2169,7 @@ class Builder:
         Raises:
             C2paError: If there was an error setting the remote URL
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         url_str = remote_url.encode('utf-8')
         result = _lib.c2pa_builder_set_remote_url(self._builder, url_str)
@@ -2011,8 +2192,7 @@ class Builder:
         Raises:
             C2paError: If there was an error adding the resource
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
@@ -2194,6 +2374,10 @@ class Builder:
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
 
+        # Validate signer pointer before use
+        if not signer or not hasattr(signer, '_signer') or not signer._signer:
+            raise C2paError("Invalid or closed signer")
+
         if format not in Builder.get_supported_mime_types():
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
@@ -2202,14 +2386,18 @@ class Builder:
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         # c2pa_builder_sign uses streams
-        result = _lib.c2pa_builder_sign(
-            self._builder,
-            format_str,
-            source_stream._stream,
-            dest_stream._stream,
-            signer._signer,
-            ctypes.byref(manifest_bytes_ptr)
-        )
+        try:
+            result = _lib.c2pa_builder_sign(
+                self._builder,
+                format_str,
+                source_stream._stream,
+                dest_stream._stream,
+                signer._signer,
+                ctypes.byref(manifest_bytes_ptr)
+            )
+        except Exception as e:
+            # Handle errors during the C function call
+            raise C2paError(f"Error calling c2pa_builder_sign: {str(e)}")
 
         if result < 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -2226,8 +2414,6 @@ class Builder:
                 ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
                 manifest_bytes = bytes(temp_buffer)
             except Exception:
-                # If there's any error accessing the memory, just return
-                # empty bytes
                 manifest_bytes = b""
             finally:
                 # Always free the C-allocated memory,
@@ -2235,7 +2421,9 @@ class Builder:
                 try:
                     _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                 except Exception:
-                    # Ignore errors during cleanup
+                    logger.warning(
+                        "Failed to release native manifest bytes memory"
+                    )
                     pass
 
         return manifest_bytes
@@ -2308,7 +2496,7 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-
+        # Get the MIME type from the file extension
         mime_type = _get_mime_type_from_path(source_path)
 
         try:
