@@ -1679,7 +1679,17 @@ class Signer:
 
         Note: This constructor is not meant to be called directly.
         Use from_info() or from_callback() instead.
+
+        Args:
+            signer_ptr: Pointer to the native C2PA signer
+
+        Raises:
+            C2paError: If the signer pointer is invalid
         """
+        # Validate pointer before assignment
+        if not signer_ptr:
+            raise C2paError("Invalid signer pointer: pointer is null")
+
         self._signer = signer_ptr
         self._closed = False
 
@@ -1854,40 +1864,85 @@ class Signer:
 
     def __enter__(self):
         """Context manager entry."""
-        if self._closed:
-            raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
+
+        # Additional pointer validation before entering context
+        if not self._signer:
+            raise C2paError("Invalid signer pointer: pointer is null")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.close()
 
+    def _cleanup_resources(self):
+        """Internal cleanup method that safely releases native resources.
+
+        This method handles the actual cleanup logic and can be called
+        from both close() and __del__ without causing double frees.
+        """
+        try:
+            if not self._closed and self._signer:
+                try:
+                    _lib.c2pa_signer_free(self._signer)
+                except Exception:
+                    # Log cleanup errors but don't raise exceptions
+                    logger.warning("Failed to free native Signer resources")
+                finally:
+                    self._signer = None
+
+                # Clean up callback reference
+                if self._callback_cb:
+                    self._callback_cb = None
+
+                self._closed = True
+        except Exception:
+            # Ensure we don't raise exceptions during cleanup
+            pass
+
+    def _ensure_valid_state(self):
+        """Ensure the signer is in a valid state for operations.
+
+        Raises:
+            C2paError: If the signer is closed or invalid
+        """
+        if self._closed:
+            raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
+        if not self._signer:
+            raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
+
     def close(self):
-        """Release the signer resources.
+        """Release the signer resources safely.
 
         This method ensures all resources are properly cleaned up,
         even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup.
-        Multiple calls to close() are handled gracefully.
+
+        Note:
+            Multiple calls to close() are handled gracefully.
+            Errors during cleanup are logged but not raised
+            to ensure cleanup.
         """
         if self._closed:
             return
 
         try:
-            if self._signer:
-                try:
-                    _lib.c2pa_signer_free(self._signer)
-                except Exception as e:
-                    logger.error(
-                        Signer._ERROR_MESSAGES['signer_cleanup'].format(
-                            str(e)))
-                finally:
-                    self._signer = None
+            # Validate pointer before cleanup if it exists
+            if self._signer and self._signer != 0:
+                # Use the internal cleanup method
+                self._cleanup_resources()
+            else:
+                # Make sure to release the callback
+                if self._callback_cb:
+                    self._callback_cb = None
+
         except Exception as e:
+            # Log any unexpected errors during close
             logger.error(
                 Signer._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)))
         finally:
+            # Always mark as closed, regardless of cleanup success
             self._closed = True
 
     def reserve_size(self) -> int:
@@ -1899,8 +1954,7 @@ class Signer:
         Raises:
             C2paError: If there was an error getting the size
         """
-        if self._closed or not self._signer:
-            raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         result = _lib.c2pa_signer_reserve_size(self._signer)
 
