@@ -1514,7 +1514,6 @@ class Reader:
                         )
                     )
 
-                # Mark as initialized after successful creation
                 self._initialized = True
 
     def __enter__(self):
@@ -2118,7 +2117,6 @@ class Builder:
                 )
             )
 
-        # Mark as initialized only after successful creation
         self._initialized = True
 
     @classmethod
