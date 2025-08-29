@@ -1598,7 +1598,7 @@ class Reader:
         Multiple calls to close() are handled gracefully.
         """
         if self._closed:
-            return  # Already closed, safe to return
+            return
 
         try:
             # Use the internal cleanup method
