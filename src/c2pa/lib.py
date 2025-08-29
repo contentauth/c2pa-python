@@ -16,8 +16,9 @@ from enum import Enum
 # Debug flag for library loading
 DEBUG_LIBRARY_LOADING = False
 
-# Create a module-specific logger with NullHandler to avoid interfering with global configuration
-logger = logging.getLogger("c2pa")
+# Create a module-specific logger with NullHandler
+# to avoid interfering with global configuration
+logger = logging.getLogger("c2pa.loader")
 logger.addHandler(logging.NullHandler())
 
 
@@ -107,8 +108,7 @@ def _load_single_library(lib_name: str,
         The loaded library or None if loading failed
     """
     if DEBUG_LIBRARY_LOADING:  # pragma: no cover
-        logger.info(
-            f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
+        logger.info(f"Searching for library '{lib_name}' in paths: {[str(p) for p in search_paths]}")
     current_arch = _get_architecture()
     if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(f"Current architecture: {current_arch}")
@@ -125,12 +125,10 @@ def _load_single_library(lib_name: str,
             except Exception as e:
                 error_msg = str(e)
                 if "incompatible architecture" in error_msg:
-                    logger.error(
-                        f"Architecture mismatch: Library at {lib_path} is not compatible with current architecture {current_arch}")
+                    logger.error(f"Architecture mismatch: Library at {lib_path} is not compatible with current architecture {current_arch}")
                     logger.error(f"Error details: {error_msg}")
                 else:
-                    logger.error(
-                        f"Failed to load library from {lib_path}: {e}")
+                    logger.error(f"Failed to load library from {lib_path}: {e}")
         else:
             logger.debug(f"Library not found at: {lib_path}")
     return None
@@ -216,16 +214,14 @@ def dynamically_load_library(
     env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
     if env_lib_name:
         if DEBUG_LIBRARY_LOADING:  # pragma: no cover
-            logger.info(
-                f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
+            logger.info(f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
         try:
             possible_paths = _get_possible_search_paths()
             lib = _load_single_library(env_lib_name, possible_paths)
             if lib:
                 return lib
             else:
-                logger.error(
-                    f"Could not find library {env_lib_name} in any of the search paths")
+                logger.error(f"Could not find library {env_lib_name} in any of the search paths")
                 # Continue with normal loading if environment variable library
                 # name fails
         except Exception as e:
@@ -241,12 +237,9 @@ def dynamically_load_library(
         if not lib:
             platform_id = get_platform_identifier()
             current_arch = _get_architecture()
-            logger.error(
-                f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
-            logger.error(
-                f"Platform: {platform_id}, Architecture: {current_arch}")
-            raise RuntimeError(
-                f"Could not find {lib_name} in any of the search paths (Platform: {platform_id}, Architecture: {current_arch})")
+            logger.error(f"Could not find {lib_name} in any of the search paths: {[str(p) for p in possible_paths]}")
+            logger.error(f"Platform: {platform_id}, Architecture: {current_arch}")
+            raise RuntimeError(f"Could not find {lib_name} in any of the search paths (Platform: {platform_id}, Architecture: {current_arch})")
         return lib
 
     # Default path (no library name provided in the environment)
