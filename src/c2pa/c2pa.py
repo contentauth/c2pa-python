@@ -1258,7 +1258,8 @@ class Reader:
         'stream_error': "Error cleaning up stream: {}",
         'file_error': "Error cleaning up file: {}",
         'reader_cleanup_error': "Error cleaning up reader: {}",
-        'encoding_error': "Invalid UTF-8 characters in input: {}"
+        'encoding_error': "Invalid UTF-8 characters in input: {}",
+        'closed_error': "Reader is closed"
     }
 
     @classmethod
@@ -1411,7 +1412,7 @@ class Reader:
             # If stream is a string, treat it as a path and try to open it
 
             # format_or_path is a format
-            if format_or_path not in Reader.get_supported_mime_types():
+            if format_or_path.lower() not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_or_path}")
 
@@ -1468,7 +1469,7 @@ class Reader:
         else:
             # format_or_path is a format string
             format_str = str(format_or_path)
-            if format_str not in Reader.get_supported_mime_types():
+            if format_str.lower() not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_str}")
 
@@ -1528,8 +1529,10 @@ class Reader:
         Raises:
             C2paError: If the reader is closed or invalid
         """
-        if self._closed or not self._reader:
-            raise C2paError("Reader is closed")
+        if self._closed:
+            raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
+        if not self._reader:
+            raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
 
     def _cleanup_resources(self):
         """Internal cleanup method that releases native resources.
@@ -2391,7 +2394,7 @@ class Builder:
         if not signer or not hasattr(signer, '_signer') or not signer._signer:
             raise C2paError("Invalid or closed signer")
 
-        if format not in Builder.get_supported_mime_types():
+        if format.lower() not in Builder.get_supported_mime_types():
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
 
