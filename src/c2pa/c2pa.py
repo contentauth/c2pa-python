@@ -1344,6 +1344,7 @@ class Reader:
         """
 
         self._closed = False
+        self._initialized = False
 
         self._reader = None
         self._own_stream = None
@@ -1398,6 +1399,9 @@ class Reader:
 
                 # Store the file to close it later
                 self._backing_file = file
+                
+                # Mark as initialized after successful creation
+                self._initialized = True
 
             except Exception as e:
                 if self._own_stream:
@@ -1458,6 +1462,9 @@ class Reader:
                     )
 
                 self._backing_file = file
+                
+                # Mark as initialized after successful creation
+                self._initialized = True
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
@@ -1509,12 +1516,11 @@ class Reader:
                         )
                     )
 
+                # Mark as initialized after successful creation
+                self._initialized = True
+
     def __enter__(self):
         self._ensure_valid_state()
-
-        if not self._reader:
-            raise C2paError("Invalid Reader when entering context")
-
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -1532,10 +1538,12 @@ class Reader:
         """Ensure the reader is in a valid state for operations.
 
         Raises:
-            C2paError: If the reader is closed or invalid
+            C2paError: If the reader is closed, not initialized, or invalid
         """
         if self._closed:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
+        if not self._initialized:
+            raise C2paError("Reader is not properly initialized")
         if not self._reader:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
 
@@ -1584,6 +1592,9 @@ class Reader:
                         pass
                     finally:
                         self._backing_file = None
+
+                # Reset initialized state after cleanup
+                self._initialized = False
 
         except Exception:
             # Ensure we don't raise exceptions during cleanup
