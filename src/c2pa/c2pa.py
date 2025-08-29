@@ -1029,12 +1029,9 @@ class Stream:
 
                 # Ensure we don't write beyond the allocated memory
                 actual_length = min(len(buffer), length)
-                # Create a view of the buffer to avoid copying
-                buffer_view = (
-                    ctypes.c_ubyte *
-                    actual_length).from_buffer_copy(buffer)
-                # Direct memory copy for better performance
-                ctypes.memmove(data, buffer_view, actual_length)
+                # Direct memory copy
+                ctypes.memmove(data, buffer, actual_length)
+
                 return actual_length
             except Exception:
                 return -1
