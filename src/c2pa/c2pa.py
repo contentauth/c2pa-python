@@ -1024,12 +1024,9 @@ class Stream:
 
                 # Ensure we don't write beyond the allocated memory
                 actual_length = min(len(buffer), length)
-                # Create a view of the buffer to avoid copying
-                buffer_view = (
-                    ctypes.c_ubyte *
-                    actual_length).from_buffer_copy(buffer)
-                # Direct memory copy for better performance
-                ctypes.memmove(data, buffer_view, actual_length)
+                # Direct memory copy
+                ctypes.memmove(data, buffer, actual_length)
+
                 return actual_length
             except Exception:
                 return -1
@@ -1051,11 +1048,12 @@ class Stream:
             Returns:
                 New position in the stream, or -1 on error
             """
+            file_stream = self._file_like_stream
             if not self._initialized or self._closed:
                 return -1
             try:
-                self._file_like_stream.seek(offset, whence)
-                return self._file_like_stream.tell()
+                file_stream.seek(offset, whence)
+                return file_stream.tell()
             except Exception:
                 return -1
 
@@ -1158,11 +1156,12 @@ class Stream:
         try:
             # Only cleanup if not already closed and we have a valid stream
             if hasattr(self, '_closed') and not self._closed:
-                if hasattr(self, '_stream') and self._stream:
+                stream = self._stream
+                if hasattr(self, '_stream') and stream:
                     # Use internal cleanup to avoid calling close() which could
                     # cause issues
                     try:
-                        _lib.c2pa_release_stream(self._stream)
+                        _lib.c2pa_release_stream(stream)
                     except Exception:
                         # Destructors shouldn't raise exceptions
                         logger.error("Failed to release Stream")
@@ -1183,7 +1182,6 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-
         if self._closed:
             return
 
@@ -1191,9 +1189,10 @@ class Stream:
             # Clean up stream first as it depends on callbacks
             # Note: We don't close self._file_like_stream as we don't own it,
             # the opener owns it.
-            if self._stream:
+            stream = self._stream
+            if stream:
                 try:
-                    _lib.c2pa_release_stream(self._stream)
+                    _lib.c2pa_release_stream(stream)
                 except Exception as e:
                     logger.error(
                         Stream._ERROR_MESSAGES['stream_error'].format(
@@ -1415,7 +1414,8 @@ class Reader:
             # If stream is a string, treat it as a path and try to open it
 
             # format_or_path is a format
-            if format_or_path.lower() not in Reader.get_supported_mime_types():
+            format_lower = format_or_path.lower()
+            if format_lower not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_or_path}")
 
@@ -1688,28 +1688,6 @@ class Signer:
         'encoding_error': "Invalid UTF-8 characters in input: {}"
     }
 
-    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
-        """Initialize a new Signer instance.
-
-        Note: This constructor is not meant to be called directly.
-        Use from_info() or from_callback() instead.
-
-        Args:
-            signer_ptr: Pointer to the native C2PA signer
-
-        Raises:
-            C2paError: If the signer pointer is invalid
-        """
-        # Validate pointer before assignment
-        if not signer_ptr:
-            raise C2paError("Invalid signer pointer: pointer is null")
-
-        self._signer = signer_ptr
-        self._closed = False
-
-        # Set only for signers which are callback signers
-        self._callback_cb = None
-
     @classmethod
     def from_info(cls, signer_info: C2paSignerInfo) -> 'Signer':
         """Create a new Signer from signer information.
@@ -1876,6 +1854,28 @@ class Signer:
 
         return signer_instance
 
+    def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
+        """Initialize a new Signer instance.
+
+        Note: This constructor is not meant to be called directly.
+        Use from_info() or from_callback() instead.
+
+        Args:
+            signer_ptr: Pointer to the native C2PA signer
+
+        Raises:
+            C2paError: If the signer pointer is invalid
+        """
+        # Validate pointer before assignment
+        if not signer_ptr:
+            raise C2paError("Invalid signer pointer: pointer is null")
+
+        self._signer = signer_ptr
+        self._closed = False
+
+        # Set only for signers which are callback signers
+        self._callback_cb = None
+
     def __enter__(self):
         """Context manager entry."""
         self._ensure_valid_state()
@@ -1980,15 +1980,6 @@ class Signer:
 
         return result
 
-    @property
-    def closed(self) -> bool:
-        """Check if the signer is closed.
-
-        Returns:
-            bool: True if the signer is closed, False otherwise
-        """
-        return self._closed
-
 
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
@@ -2075,50 +2066,6 @@ class Builder:
 
         return cls._supported_mime_types_cache
 
-    def __init__(self, manifest_json: Any):
-        """Initialize a new Builder instance.
-
-        Args:
-            manifest_json: The manifest JSON definition (string or dict)
-
-        Raises:
-            C2paError: If there was an error creating the builder
-            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
-            C2paError.Json: If the manifest JSON cannot be serialized
-        """
-        self._closed = False
-        self._initialized = False
-        self._builder = None
-
-        if not isinstance(manifest_json, str):
-            try:
-                manifest_json = json.dumps(manifest_json)
-            except (TypeError, ValueError) as e:
-                raise C2paError.Json(
-                    Builder._ERROR_MESSAGES['json_error'].format(
-                        str(e)))
-
-        try:
-            json_str = manifest_json.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
-
-        self._builder = _lib.c2pa_builder_from_json(json_str)
-
-        if not self._builder:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['builder_error'].format(
-                    "Unknown error"
-                )
-            )
-
-        self._initialized = True
-
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
         """Create a new Builder from a JSON manifest.
@@ -2164,6 +2111,61 @@ class Builder:
         builder._initialized = True
         return builder
 
+    def __init__(self, manifest_json: Any):
+        """Initialize a new Builder instance.
+
+        Args:
+            manifest_json: The manifest JSON definition (string or dict)
+
+        Raises:
+            C2paError: If there was an error creating the builder
+            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
+            C2paError.Json: If the manifest JSON cannot be serialized
+        """
+        self._closed = False
+        self._initialized = False
+        self._builder = None
+
+        if not isinstance(manifest_json, str):
+            try:
+                manifest_json = json.dumps(manifest_json)
+            except (TypeError, ValueError) as e:
+                raise C2paError.Json(
+                    Builder._ERROR_MESSAGES['json_error'].format(
+                        str(e)))
+
+        try:
+            json_str = manifest_json.encode('utf-8')
+        except UnicodeError as e:
+            raise C2paError.Encoding(
+                Builder._ERROR_MESSAGES['encoding_error'].format(
+                    str(e)))
+
+        self._builder = _lib.c2pa_builder_from_json(json_str)
+
+        if not self._builder:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError(
+                Builder._ERROR_MESSAGES['builder_error'].format(
+                    "Unknown error"
+                )
+            )
+
+        self._initialized = True
+
+    def __del__(self):
+        """Ensure resources are cleaned up if close() wasn't called."""
+        self._cleanup_resources()
+
+    def __enter__(self):
+        self._ensure_valid_state()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def _ensure_valid_state(self):
         """Ensure the builder is in a valid state for operations.
 
@@ -2208,10 +2210,6 @@ class Builder:
             # Ensure we don't raise exceptions during cleanup
             pass
 
-    def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        self._cleanup_resources()
-
     def close(self):
         """Release the builder resources.
 
@@ -2233,13 +2231,6 @@ class Builder:
                     str(e)))
         finally:
             self._closed = True
-
-    def __enter__(self):
-        self._ensure_valid_state()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -2469,7 +2460,8 @@ class Builder:
         if not signer or not hasattr(signer, '_signer') or not signer._signer:
             raise C2paError("Invalid or closed signer")
 
-        if format.lower() not in Builder.get_supported_mime_types():
+        format_lower = format.lower()
+        if format_lower not in Builder.get_supported_mime_types():
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
 
