@@ -1344,6 +1344,7 @@ class Reader:
         """
 
         self._closed = False
+        self._initialized = False
 
         self._reader = None
         self._own_stream = None
@@ -1398,6 +1399,8 @@ class Reader:
 
                 # Store the file to close it later
                 self._backing_file = file
+
+                self._initialized = True
 
             except Exception as e:
                 if self._own_stream:
@@ -1458,6 +1461,8 @@ class Reader:
                     )
 
                 self._backing_file = file
+
+                self._initialized = True
             except Exception as e:
                 if self._own_stream:
                     self._own_stream.close()
@@ -1509,12 +1514,10 @@ class Reader:
                         )
                     )
 
+                self._initialized = True
+
     def __enter__(self):
         self._ensure_valid_state()
-
-        if not self._reader:
-            raise C2paError("Invalid Reader when entering context")
-
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -1532,10 +1535,12 @@ class Reader:
         """Ensure the reader is in a valid state for operations.
 
         Raises:
-            C2paError: If the reader is closed or invalid
+            C2paError: If the reader is closed, not initialized, or invalid
         """
         if self._closed:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
+        if not self._initialized:
+            raise C2paError("Reader is not properly initialized")
         if not self._reader:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
 
@@ -1584,6 +1589,9 @@ class Reader:
                         pass
                     finally:
                         self._backing_file = None
+
+                # Reset initialized state after cleanup
+                self._initialized = False
 
         except Exception:
             # Ensure we don't raise exceptions during cleanup
@@ -2079,6 +2087,7 @@ class Builder:
             C2paError.Json: If the manifest JSON cannot be serialized
         """
         self._closed = False
+        self._initialized = False
         self._builder = None
 
         if not isinstance(manifest_json, str):
@@ -2107,6 +2116,8 @@ class Builder:
                     "Unknown error"
                 )
             )
+
+        self._initialized = True
 
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
@@ -2150,16 +2161,19 @@ class Builder:
                 raise C2paError(error)
             raise C2paError("Failed to create builder from archive")
 
+        builder._initialized = True
         return builder
 
     def _ensure_valid_state(self):
         """Ensure the builder is in a valid state for operations.
 
         Raises:
-            C2paError: If the builder is closed or invalid
+            C2paError: If the builder is closed, not initialized, or invalid
         """
         if self._closed:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        if not self._initialized:
+            raise C2paError("Builder is not properly initialized")
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
 
@@ -2187,6 +2201,9 @@ class Builder:
                         pass
                     finally:
                         self._builder = None
+
+                # Reset initialized state after cleanup
+                self._initialized = False
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
@@ -2219,10 +2236,6 @@ class Builder:
 
     def __enter__(self):
         self._ensure_valid_state()
-
-        if not self._builder:
-            raise C2paError("Invalid Builder when entering context")
-
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -2327,8 +2340,7 @@ class Builder:
             C2paError.Encoding: If the ingredient JSON or format
               contains invalid UTF-8 characters
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         try:
             ingredient_str = ingredient_json.encode('utf-8')
@@ -2413,8 +2425,7 @@ class Builder:
         Raises:
             C2paError: If there was an error writing the archive
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_to_archive(
@@ -2452,8 +2463,7 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
+        self._ensure_valid_state()
 
         # Validate signer pointer before use
         if not signer or not hasattr(signer, '_signer') or not signer._signer:
