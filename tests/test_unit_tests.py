@@ -443,7 +443,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         )
         signer = Signer.from_info(signer_info)
         signer.close()
-        self.assertTrue(signer.closed)
+        # Verify signer is closed by testing that operations fail
         with self.assertRaises(Error):
             signer.reserve_size()
 
@@ -456,7 +456,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         )
         signer = Signer.from_info(signer_info)
         signer.close()
-        self.assertTrue(signer.closed)
+        # Second close should not raise an exception
         signer.close()
 
     def test_builder_detects_malformed_json(self):

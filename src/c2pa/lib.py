@@ -34,7 +34,9 @@ def get_platform_identifier() -> str:
     matching the downloaded identifiers used by the Github publisher.
 
     Returns one of:
-    - universal-apple-darwin (for Mac, ARM or Intel)
+    - universal-apple-darwin (for Mac universal)
+    - aarch64-apple-darwin (for Mac ARM64)
+    - x86_64-apple-darwin (for Mac x86_64)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM)
@@ -42,7 +44,15 @@ def get_platform_identifier() -> str:
     system = platform.system().lower()
 
     if system == "darwin":
-        return "universal-apple-darwin"
+        # Prefer specific architecture over universal for better performance
+        # Universal libraries will be attempted as fallback if specific ones aren't found
+        current_arch = _get_architecture()
+        if current_arch == CPUArchitecture.ARM64.value:
+            return "aarch64-apple-darwin"
+        elif current_arch == CPUArchitecture.X86_64.value:
+            return "x86_64-apple-darwin"
+        else:
+            return "universal-apple-darwin"
     elif system == "windows":
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
@@ -173,6 +183,11 @@ def _get_possible_search_paths() -> list[Path]:
         # Add platform identifier subfolder
         possible_paths.append(base_path / platform_id)
 
+    # Add universal fallback for macOS if not already looking for universal
+    if sys.platform == "darwin" and platform_id != "universal-apple-darwin":
+        for base_path in base_paths:
+            possible_paths.append(base_path / "universal-apple-darwin")
+
     # Add system library paths
     possible_paths.extend([Path(p) for p in os.environ.get(
         "LD_LIBRARY_PATH", "").split(os.pathsep) if p])
@@ -209,6 +224,8 @@ def dynamically_load_library(
         logger.info(f"Current working directory: {Path.cwd()}")
         logger.info(f"Package directory: {Path(__file__).parent}")
         logger.info(f"System architecture: {_get_architecture()}")
+        logger.info(f"Platform identifier: {get_platform_identifier()}")
+        logger.info(f"Platform directory: {_get_platform_dir()}")
 
     # Check for C2PA_LIBRARY_NAME environment variable
     env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")
