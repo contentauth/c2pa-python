@@ -1,2 +1,2 @@
 # only used in the training example
-cryptography>=45.0.3
+cryptography>=45.0.6

@@ -9,7 +9,7 @@
 # WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
 # implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 # specific language governing permissions and limitations under
-# each license.import unittest
+# each license.
 
 import os
 import io
@@ -110,7 +110,7 @@ def test_files_build():
     if os.path.exists(output_path):
         os.remove(output_path)
     with open(test_path, "rb") as source_file:
-        with open(output_path, "wb") as dest_file:
+        with open(output_path, "w+b") as dest_file:
             builder.sign(signer, "image/jpeg", source_file, dest_file)
 
 
