@@ -2066,50 +2066,6 @@ class Builder:
 
         return cls._supported_mime_types_cache
 
-    def __init__(self, manifest_json: Any):
-        """Initialize a new Builder instance.
-
-        Args:
-            manifest_json: The manifest JSON definition (string or dict)
-
-        Raises:
-            C2paError: If there was an error creating the builder
-            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
-            C2paError.Json: If the manifest JSON cannot be serialized
-        """
-        self._closed = False
-        self._initialized = False
-        self._builder = None
-
-        if not isinstance(manifest_json, str):
-            try:
-                manifest_json = json.dumps(manifest_json)
-            except (TypeError, ValueError) as e:
-                raise C2paError.Json(
-                    Builder._ERROR_MESSAGES['json_error'].format(
-                        str(e)))
-
-        try:
-            json_str = manifest_json.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
-
-        self._builder = _lib.c2pa_builder_from_json(json_str)
-
-        if not self._builder:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['builder_error'].format(
-                    "Unknown error"
-                )
-            )
-
-        self._initialized = True
-
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
         """Create a new Builder from a JSON manifest.
@@ -2275,13 +2231,6 @@ class Builder:
                     str(e)))
         finally:
             self._closed = True
-
-    def __enter__(self):
-        self._ensure_valid_state()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     def set_no_embed(self):
         """Set the no-embed flag.
