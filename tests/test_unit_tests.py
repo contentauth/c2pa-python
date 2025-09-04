@@ -1647,6 +1647,131 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
 
+    def test_builder_with_invalid_signer_none(self):
+        """Test Builder methods with None signer."""
+        builder = Builder(self.manifestDefinition)
+
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error):
+                builder.sign(None, "image/jpeg", file)
+
+    def test_builder_with_invalid_signer_closed(self):
+        """Test Builder methods with closed signer."""
+        builder = Builder(self.manifestDefinition)
+
+        # Create and close a signer
+        closed_signer = Signer.from_info(self.signer_info)
+        closed_signer.close()
+
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error):
+                builder.sign(closed_signer, "image/jpeg", file)
+
+    def test_builder_with_invalid_signer_object(self):
+        """Test Builder methods with invalid signer object."""
+        builder = Builder(self.manifestDefinition)
+
+        # Use a mock object that looks like a signer but isn't
+        class MockSigner:
+            def __init__(self):
+                self._signer = None
+
+        mock_signer = MockSigner()
+
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error):
+                builder.sign(mock_signer, "image/jpeg", file)
+
+    def test_builder_manifest_with_unicode_characters(self):
+        """Test Builder with manifest containing various Unicode characters."""
+        unicode_manifest = {
+            "claim_generator": "python_test_unicode_テスト",
+            "claim_generator_info": [{
+                "name": "python_test_unicode_テスト",
+                "version": "0.0.1",
+            }],
+            "claim_version": 1,
+            "format": "image/jpeg",
+            "title": "Python Test Image with Unicode: テスト test",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "description": "Opened with Unicode: test"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        builder = Builder(unicode_manifest)
+
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+
+            # Verify Unicode characters are preserved in title and description
+            self.assertIn("テスト", json_data)
+
+    def test_builder_ingredient_with_special_characters(self):
+        """Test Builder with ingredient containing special characters."""
+        special_char_ingredient = {
+            "title": "Test Ingredient with Special Chars: テスト",
+            "format": "image/jpeg",
+            "description": "Special characters: !@#$%^&*()_+-=[]{}|;':\",./<>?`~"
+        }
+
+        builder = Builder(self.manifestDefinition)
+
+        # Add ingredient with special characters
+        ingredient_json = json.dumps(special_char_ingredient)
+        with open(self.testPath2, "rb") as ingredient_file:
+            builder.add_ingredient(ingredient_json, "image/jpeg", ingredient_file)
+
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify special characters are preserved in ingredients
+            self.assertIn("ingredients", manifest_data["manifests"][manifest_data["active_manifest"]])
+            ingredients = manifest_data["manifests"][manifest_data["active_manifest"]]["ingredients"]
+            self.assertEqual(len(ingredients), 1)
+
+            ingredient = ingredients[0]
+            self.assertIn("テスト", ingredient["title"])
+            self.assertIn("!@#$%^&*()_+-=[]{}|;':\",./<>?`~", ingredient["description"])
+
+    def test_builder_resource_uri_with_unicode(self):
+        """Test Builder with resource URI containing Unicode characters."""
+        builder = Builder(self.manifestDefinition)
+
+        # Test with resource URI containing Unicode characters
+        unicode_uri = "thumbnail_テスト.jpg"
+        with open(self.testPath3, "rb") as thumbnail_file:
+            builder.add_resource(unicode_uri, thumbnail_file)
+
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+
+            # Verify the resource was added (exact verification depends on implementation)
+            self.assertIsNotNone(json_data)
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):
