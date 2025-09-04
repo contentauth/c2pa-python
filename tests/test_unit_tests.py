@@ -1772,6 +1772,155 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Verify the resource was added (exact verification depends on implementation)
             self.assertIsNotNone(json_data)
 
+    def test_builder_initialization_failure_states(self):
+        """Test Builder state after initialization failures."""
+        # Test with invalid JSON
+        with self.assertRaises(Error):
+            builder = Builder("{invalid json}")
+
+        # Test with None manifest
+        with self.assertRaises(Error):
+            builder = Builder(None)
+
+    def test_builder_state_transitions(self):
+        """Test Builder state transitions during lifecycle."""
+        builder = Builder(self.manifestDefinition)
+
+        # Initial state
+        self.assertFalse(builder._closed)
+        self.assertTrue(builder._initialized)
+        self.assertIsNotNone(builder._builder)
+
+        # After close
+        builder.close()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_context_manager_states(self):
+        """Test Builder state management in context manager."""
+        with Builder(self.manifestDefinition) as builder:
+            # Inside context - should be valid
+            self.assertFalse(builder._closed)
+            self.assertTrue(builder._initialized)
+            self.assertIsNotNone(builder._builder)
+
+            # Placeholder operation
+            builder.set_no_embed()
+
+        # After context exit - should be closed
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_context_manager_with_exception(self):
+        """Test Builder state after exception in context manager."""
+        try:
+            with Builder(self.manifestDefinition) as builder:
+                # Inside context - should be valid
+                self.assertFalse(builder._closed)
+                self.assertTrue(builder._initialized)
+                self.assertIsNotNone(builder._builder)
+                raise ValueError("Test exception")
+        except ValueError:
+            pass
+
+        # After exception - should still be closed
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_partial_initialization_states(self):
+        """Test Builder behavior with partial initialization failures."""
+        # Test with _builder = None but _initialized = True
+        builder = Builder.__new__(Builder)
+        builder._closed = False
+        builder._initialized = True
+        builder._builder = None
+
+        with self.assertRaises(Error):
+            builder._ensure_valid_state()
+
+    def test_builder_cleanup_state_transitions(self):
+        """Test Builder state during cleanup operations."""
+        builder = Builder(self.manifestDefinition)
+
+        # Test _cleanup_resources method
+        builder._cleanup_resources()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_cleanup_idempotency(self):
+        """Test that cleanup operations are idempotent."""
+        builder = Builder(self.manifestDefinition)
+
+        # First cleanup
+        builder._cleanup_resources()
+        self.assertTrue(builder._closed)
+
+        # Second cleanup should not change state
+        builder._cleanup_resources()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_state_after_sign_operations(self):
+        """Test Builder state after signing operations."""
+        builder = Builder(self.manifestDefinition)
+
+        with open(self.testPath, "rb") as file:
+            manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
+
+        # State should still be valid after signing
+        self.assertFalse(builder._closed)
+        self.assertTrue(builder._initialized)
+        self.assertIsNotNone(builder._builder)
+
+        # Should be able to sign again
+        with open(self.testPath, "rb") as file:
+            manifest_bytes2 = builder.sign(self.signer, "image/jpeg", file)
+
+    def test_builder_state_after_archive_operations(self):
+        """Test Builder state after archive operations."""
+        builder = Builder(self.manifestDefinition)
+
+        # Test to_archive
+        with io.BytesIO() as archive_stream:
+            builder.to_archive(archive_stream)
+
+        # State should still be valid
+        self.assertFalse(builder._closed)
+        self.assertTrue(builder._initialized)
+        self.assertIsNotNone(builder._builder)
+
+    def test_builder_state_after_double_close(self):
+        """Test Builder state after double close operations."""
+        builder = Builder(self.manifestDefinition)
+
+        # First close
+        builder.close()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+        # Second close should not change state
+        builder.close()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_state_with_invalid_native_pointer(self):
+        """Test Builder state handling with invalid native pointer."""
+        builder = Builder(self.manifestDefinition)
+
+        # Simulate invalid native pointer
+        builder._builder = 0
+
+        # Operations should fail gracefully
+        with self.assertRaises(Error):
+            builder.set_no_embed()
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):
