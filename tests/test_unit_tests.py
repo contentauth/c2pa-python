@@ -487,12 +487,17 @@ class TestBuilderWithSigner(unittest.TestCase):
               builder.set_remote_url("a-remote-url-that-is-not-important-in-this-tests")
 
     def test_builder_does_not_allow_adding_resource_after_close(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            placeholder_stream = io.BytesIO(bytearray())
-            builder.close()
-            with self.assertRaises(Error):
-              builder.add_resource("a-remote-url-that-is-not-important-in-this-tests", placeholder_stream)
+        builder = Builder(self.manifestDefinition)
+        placeholder_stream = io.BytesIO(bytearray())
+        builder.close()
+        with self.assertRaises(Error):
+            builder.add_resource("a-remote-url-that-is-not-important-in-this-tests", placeholder_stream)
+
+    def test_builder_add_thumbnail_resource(self):
+        builder = Builder(self.manifestDefinition)
+        with open(self.testPath2, "rb") as thumbnail_file:
+            builder.add_resource("thumbnail", thumbnail_file)
+        builder.close()
 
     def test_builder_double_close(self):
         builder = Builder(self.manifestDefinition)
@@ -509,6 +514,22 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
             self.assertIsNotNone(manifest_bytes)
+
+    def test_streams_sign_with_thumbnail_resource(self):
+        with open(self.testPath2, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+
+            with open(self.testPath2, "rb") as thumbnail_file:
+                builder.add_resource("thumbnail", thumbnail_file)
+
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
 
     def test_streams_sign_with_es256_alg_v1_manifest(self):
         with open(self.testPath, "rb") as file:
@@ -585,7 +606,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_streams_sign_with_es256_alg(self):
         with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2)
+            builder = Builder(self.manifestDefinition)
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
