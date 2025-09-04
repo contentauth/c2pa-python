@@ -270,6 +270,78 @@ class TestReader(unittest.TestCase):
             except Exception as e:
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
+    def test_reader_context_manager_with_exception(self):
+        """Test Reader state after exception in context manager."""
+        try:
+            with Reader(self.testPath) as reader:
+                # Inside context - should be valid
+                self.assertFalse(reader._closed)
+                self.assertTrue(reader._initialized)
+                self.assertIsNotNone(reader._reader)
+                self.assertIsNotNone(reader._own_stream)
+                self.assertIsNotNone(reader._backing_file)
+                raise ValueError("Test exception")
+        except ValueError:
+            pass
+
+        # After exception - should still be closed
+        self.assertTrue(reader._closed)
+        self.assertFalse(reader._initialized)
+        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._own_stream)
+        self.assertIsNone(reader._backing_file)
+
+    def test_reader_partial_initialization_states(self):
+        """Test Reader behavior with partial initialization failures."""
+        # Test with _reader = None but _initialized = True
+        reader = Reader.__new__(Reader)
+        reader._closed = False
+        reader._initialized = True
+        reader._reader = None
+        reader._own_stream = None
+        reader._backing_file = None
+
+        with self.assertRaises(Error):
+            reader._ensure_valid_state()
+
+    def test_reader_cleanup_state_transitions(self):
+        """Test Reader state during cleanup operations."""
+        reader = Reader(self.testPath)
+
+        reader._cleanup_resources()
+        self.assertTrue(reader._closed)
+        self.assertFalse(reader._initialized)
+        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._own_stream)
+        self.assertIsNone(reader._backing_file)
+
+    def test_reader_cleanup_idempotency(self):
+        """Test that cleanup operations are idempotent."""
+        reader = Reader(self.testPath)
+
+        # First cleanup
+        reader._cleanup_resources()
+        self.assertTrue(reader._closed)
+
+        # Second cleanup should not change state
+        reader._cleanup_resources()
+        self.assertTrue(reader._closed)
+        self.assertFalse(reader._initialized)
+        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._own_stream)
+        self.assertIsNone(reader._backing_file)
+
+    def test_reader_state_with_invalid_native_pointer(self):
+        """Test Reader state handling with invalid native pointer."""
+        reader = Reader(self.testPath)
+
+        # Simulate invalid native pointer
+        reader._reader = 0
+
+        # Operations should fail gracefully
+        with self.assertRaises(Error):
+            reader.json()
+
     # TODO: Unskip once fixed configuration to read data is clarified
     # def test_read_cawg_data_file(self):
     #     """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
