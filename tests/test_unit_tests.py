@@ -880,16 +880,64 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.set_no_embed()
         builder.set_remote_url("http://test.url")
 
-        # Test adding resource
-        with open(self.testPath, 'rb') as f:
-            builder.add_resource("test_uri", f)
-
         # Test adding ingredient
         ingredient_json = '{"test": "ingredient"}'
         with open(self.testPath, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         # Test adding another ingredient
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients_and_resources(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test builder operations
+        builder.set_no_embed()
+        builder.set_remote_url("http://test.url")
+
+        # Test adding resource
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_1", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_2", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_3", f)
+
+        # Test adding ingredients
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_1", f)
+
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_2", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_3", f)
+
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/png", f)
