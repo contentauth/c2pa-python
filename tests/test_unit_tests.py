@@ -1782,6 +1782,12 @@ class TestBuilderWithSigner(unittest.TestCase):
         with self.assertRaises(Error):
             builder = Builder(None)
 
+        # Test with circular reference in JSON
+        circular_obj = {}
+        circular_obj['self'] = circular_obj
+        with self.assertRaises(Exception) as context:
+            builder = Builder(circular_obj)
+
     def test_builder_state_transitions(self):
         """Test Builder state transitions during lifecycle."""
         builder = Builder(self.manifestDefinition)
