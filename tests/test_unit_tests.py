@@ -270,6 +270,78 @@ class TestReader(unittest.TestCase):
             except Exception as e:
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
+    def test_reader_context_manager_with_exception(self):
+        """Test Reader state after exception in context manager."""
+        try:
+            with Reader(self.testPath) as reader:
+                # Inside context - should be valid
+                self.assertFalse(reader._closed)
+                self.assertTrue(reader._initialized)
+                self.assertIsNotNone(reader._reader)
+                self.assertIsNotNone(reader._own_stream)
+                self.assertIsNotNone(reader._backing_file)
+                raise ValueError("Test exception")
+        except ValueError:
+            pass
+
+        # After exception - should still be closed
+        self.assertTrue(reader._closed)
+        self.assertFalse(reader._initialized)
+        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._own_stream)
+        self.assertIsNone(reader._backing_file)
+
+    def test_reader_partial_initialization_states(self):
+        """Test Reader behavior with partial initialization failures."""
+        # Test with _reader = None but _initialized = True
+        reader = Reader.__new__(Reader)
+        reader._closed = False
+        reader._initialized = True
+        reader._reader = None
+        reader._own_stream = None
+        reader._backing_file = None
+
+        with self.assertRaises(Error):
+            reader._ensure_valid_state()
+
+    def test_reader_cleanup_state_transitions(self):
+        """Test Reader state during cleanup operations."""
+        reader = Reader(self.testPath)
+
+        reader._cleanup_resources()
+        self.assertTrue(reader._closed)
+        self.assertFalse(reader._initialized)
+        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._own_stream)
+        self.assertIsNone(reader._backing_file)
+
+    def test_reader_cleanup_idempotency(self):
+        """Test that cleanup operations are idempotent."""
+        reader = Reader(self.testPath)
+
+        # First cleanup
+        reader._cleanup_resources()
+        self.assertTrue(reader._closed)
+
+        # Second cleanup should not change state
+        reader._cleanup_resources()
+        self.assertTrue(reader._closed)
+        self.assertFalse(reader._initialized)
+        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._own_stream)
+        self.assertIsNone(reader._backing_file)
+
+    def test_reader_state_with_invalid_native_pointer(self):
+        """Test Reader state handling with invalid native pointer."""
+        reader = Reader(self.testPath)
+
+        # Simulate invalid native pointer
+        reader._reader = 0
+
+        # Operations should fail gracefully
+        with self.assertRaises(Error):
+            reader.json()
+
     # TODO: Unskip once fixed configuration to read data is clarified
     # def test_read_cawg_data_file(self):
     #     """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""
@@ -487,12 +559,17 @@ class TestBuilderWithSigner(unittest.TestCase):
               builder.set_remote_url("a-remote-url-that-is-not-important-in-this-tests")
 
     def test_builder_does_not_allow_adding_resource_after_close(self):
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition)
-            placeholder_stream = io.BytesIO(bytearray())
-            builder.close()
-            with self.assertRaises(Error):
-              builder.add_resource("a-remote-url-that-is-not-important-in-this-tests", placeholder_stream)
+        builder = Builder(self.manifestDefinition)
+        placeholder_stream = io.BytesIO(bytearray())
+        builder.close()
+        with self.assertRaises(Error):
+            builder.add_resource("a-remote-url-that-is-not-important-in-this-tests", placeholder_stream)
+
+    def test_builder_add_thumbnail_resource(self):
+        builder = Builder(self.manifestDefinition)
+        with open(self.testPath2, "rb") as thumbnail_file:
+            builder.add_resource("thumbnail", thumbnail_file)
+        builder.close()
 
     def test_builder_double_close(self):
         builder = Builder(self.manifestDefinition)
@@ -509,6 +586,22 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
             self.assertIsNotNone(manifest_bytes)
+
+    def test_streams_sign_with_thumbnail_resource(self):
+        with open(self.testPath2, "rb") as file:
+            builder = Builder(self.manifestDefinitionV2)
+            output = io.BytesIO(bytearray())
+
+            with open(self.testPath2, "rb") as thumbnail_file:
+                builder.add_resource("thumbnail", thumbnail_file)
+
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            self.assertIn("Python Test", json_data)
+            self.assertNotIn("validation_status", json_data)
+            output.close()
 
     def test_streams_sign_with_es256_alg_v1_manifest(self):
         with open(self.testPath, "rb") as file:
@@ -585,7 +678,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_streams_sign_with_es256_alg(self):
         with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2)
+            builder = Builder(self.manifestDefinition)
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -880,16 +973,64 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.set_no_embed()
         builder.set_remote_url("http://test.url")
 
-        # Test adding resource
-        with open(self.testPath, 'rb') as f:
-            builder.add_resource("test_uri", f)
-
         # Test adding ingredient
         ingredient_json = '{"test": "ingredient"}'
         with open(self.testPath, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         # Test adding another ingredient
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients_and_resources(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test builder operations
+        builder.set_no_embed()
+        builder.set_remote_url("http://test.url")
+
+        # Test adding resource
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_1", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_2", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_3", f)
+
+        # Test adding ingredients
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_1", f)
+
+        ingredient_json = '{"test": "ingredient"}'
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_2", f)
+
+        with open(self.testPath, 'rb') as f:
+            builder.add_resource("test_uri_3", f)
+
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/png", f)
@@ -1577,6 +1718,286 @@ class TestBuilderWithSigner(unittest.TestCase):
         finally:
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
+
+    def test_builder_with_invalid_signer_none(self):
+        """Test Builder methods with None signer."""
+        builder = Builder(self.manifestDefinition)
+
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error):
+                builder.sign(None, "image/jpeg", file)
+
+    def test_builder_with_invalid_signer_closed(self):
+        """Test Builder methods with closed signer."""
+        builder = Builder(self.manifestDefinition)
+
+        # Create and close a signer
+        closed_signer = Signer.from_info(self.signer_info)
+        closed_signer.close()
+
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error):
+                builder.sign(closed_signer, "image/jpeg", file)
+
+    def test_builder_with_invalid_signer_object(self):
+        """Test Builder methods with invalid signer object."""
+        builder = Builder(self.manifestDefinition)
+
+        # Use a mock object that looks like a signer but isn't
+        class MockSigner:
+            def __init__(self):
+                self._signer = None
+
+        mock_signer = MockSigner()
+
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(Error):
+                builder.sign(mock_signer, "image/jpeg", file)
+
+    def test_builder_manifest_with_unicode_characters(self):
+        """Test Builder with manifest containing various Unicode characters."""
+        unicode_manifest = {
+            "claim_generator": "python_test_unicode_テスト",
+            "claim_generator_info": [{
+                "name": "python_test_unicode_テスト",
+                "version": "0.0.1",
+            }],
+            "claim_version": 1,
+            "format": "image/jpeg",
+            "title": "Python Test Image with Unicode: テスト test",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "description": "Opened with Unicode: test"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        builder = Builder(unicode_manifest)
+
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+
+            # Verify Unicode characters are preserved in title and description
+            self.assertIn("テスト", json_data)
+
+    def test_builder_ingredient_with_special_characters(self):
+        """Test Builder with ingredient containing special characters."""
+        special_char_ingredient = {
+            "title": "Test Ingredient with Special Chars: テスト",
+            "format": "image/jpeg",
+            "description": "Special characters: !@#$%^&*()_+-=[]{}|;':\",./<>?`~"
+        }
+
+        builder = Builder(self.manifestDefinition)
+
+        # Add ingredient with special characters
+        ingredient_json = json.dumps(special_char_ingredient)
+        with open(self.testPath2, "rb") as ingredient_file:
+            builder.add_ingredient(ingredient_json, "image/jpeg", ingredient_file)
+
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify special characters are preserved in ingredients
+            self.assertIn("ingredients", manifest_data["manifests"][manifest_data["active_manifest"]])
+            ingredients = manifest_data["manifests"][manifest_data["active_manifest"]]["ingredients"]
+            self.assertEqual(len(ingredients), 1)
+
+            ingredient = ingredients[0]
+            self.assertIn("テスト", ingredient["title"])
+            self.assertIn("!@#$%^&*()_+-=[]{}|;':\",./<>?`~", ingredient["description"])
+
+    def test_builder_resource_uri_with_unicode(self):
+        """Test Builder with resource URI containing Unicode characters."""
+        builder = Builder(self.manifestDefinition)
+
+        # Test with resource URI containing Unicode characters
+        unicode_uri = "thumbnail_テスト.jpg"
+        with open(self.testPath3, "rb") as thumbnail_file:
+            builder.add_resource(unicode_uri, thumbnail_file)
+
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+
+            # Verify the resource was added (exact verification depends on implementation)
+            self.assertIsNotNone(json_data)
+
+    def test_builder_initialization_failure_states(self):
+        """Test Builder state after initialization failures."""
+        # Test with invalid JSON
+        with self.assertRaises(Error):
+            builder = Builder("{invalid json}")
+
+        # Test with None manifest
+        with self.assertRaises(Error):
+            builder = Builder(None)
+
+        # Test with circular reference in JSON
+        circular_obj = {}
+        circular_obj['self'] = circular_obj
+        with self.assertRaises(Exception) as context:
+            builder = Builder(circular_obj)
+
+    def test_builder_state_transitions(self):
+        """Test Builder state transitions during lifecycle."""
+        builder = Builder(self.manifestDefinition)
+
+        # Initial state
+        self.assertFalse(builder._closed)
+        self.assertTrue(builder._initialized)
+        self.assertIsNotNone(builder._builder)
+
+        # After close
+        builder.close()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_context_manager_states(self):
+        """Test Builder state management in context manager."""
+        with Builder(self.manifestDefinition) as builder:
+            # Inside context - should be valid
+            self.assertFalse(builder._closed)
+            self.assertTrue(builder._initialized)
+            self.assertIsNotNone(builder._builder)
+
+            # Placeholder operation
+            builder.set_no_embed()
+
+        # After context exit - should be closed
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_context_manager_with_exception(self):
+        """Test Builder state after exception in context manager."""
+        try:
+            with Builder(self.manifestDefinition) as builder:
+                # Inside context - should be valid
+                self.assertFalse(builder._closed)
+                self.assertTrue(builder._initialized)
+                self.assertIsNotNone(builder._builder)
+                raise ValueError("Test exception")
+        except ValueError:
+            pass
+
+        # After exception - should still be closed
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_partial_initialization_states(self):
+        """Test Builder behavior with partial initialization failures."""
+        # Test with _builder = None but _initialized = True
+        builder = Builder.__new__(Builder)
+        builder._closed = False
+        builder._initialized = True
+        builder._builder = None
+
+        with self.assertRaises(Error):
+            builder._ensure_valid_state()
+
+    def test_builder_cleanup_state_transitions(self):
+        """Test Builder state during cleanup operations."""
+        builder = Builder(self.manifestDefinition)
+
+        # Test _cleanup_resources method
+        builder._cleanup_resources()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_cleanup_idempotency(self):
+        """Test that cleanup operations are idempotent."""
+        builder = Builder(self.manifestDefinition)
+
+        # First cleanup
+        builder._cleanup_resources()
+        self.assertTrue(builder._closed)
+
+        # Second cleanup should not change state
+        builder._cleanup_resources()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_state_after_sign_operations(self):
+        """Test Builder state after signing operations."""
+        builder = Builder(self.manifestDefinition)
+
+        with open(self.testPath, "rb") as file:
+            manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
+
+        # State should still be valid after signing
+        self.assertFalse(builder._closed)
+        self.assertTrue(builder._initialized)
+        self.assertIsNotNone(builder._builder)
+
+        # Should be able to sign again
+        with open(self.testPath, "rb") as file:
+            manifest_bytes2 = builder.sign(self.signer, "image/jpeg", file)
+
+    def test_builder_state_after_archive_operations(self):
+        """Test Builder state after archive operations."""
+        builder = Builder(self.manifestDefinition)
+
+        # Test to_archive
+        with io.BytesIO() as archive_stream:
+            builder.to_archive(archive_stream)
+
+        # State should still be valid
+        self.assertFalse(builder._closed)
+        self.assertTrue(builder._initialized)
+        self.assertIsNotNone(builder._builder)
+
+    def test_builder_state_after_double_close(self):
+        """Test Builder state after double close operations."""
+        builder = Builder(self.manifestDefinition)
+
+        # First close
+        builder.close()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+        # Second close should not change state
+        builder.close()
+        self.assertTrue(builder._closed)
+        self.assertFalse(builder._initialized)
+        self.assertIsNone(builder._builder)
+
+    def test_builder_state_with_invalid_native_pointer(self):
+        """Test Builder state handling with invalid native pointer."""
+        builder = Builder(self.manifestDefinition)
+
+        # Simulate invalid native pointer
+        builder._builder = 0
+
+        # Operations should fail gracefully
+        with self.assertRaises(Error):
+            builder.set_no_embed()
 
 
 class TestStream(unittest.TestCase):
