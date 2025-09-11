@@ -24,4 +24,6 @@ c2pa_go_dep = custom_target(
     'cd "@2@" && @0@ && cp "@3@/release/libc2pa.a" "@1@/libc2pa.a"'.format(cargo_cmd, meson.current_build_dir(), meson.current_source_dir(), archive_dir),
   ],
   build_by_default: true,
+  install: true,
+  install_dir : get_option('libdir'),
 )
