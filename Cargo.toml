@@ -7,7 +7,7 @@ authors = ["Eli Mallon <eli@stream.place>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "c2pa"
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 c2pa = { git = "https://git.stream.place/aquareum-tv/c2pa-rs.git", rev = "5ca8c085a05daa36a91fb9edfdee6098cffac69b", features = [
