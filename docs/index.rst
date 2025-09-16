@@ -7,9 +7,6 @@ Welcome to c2pa-python's documentation!
    :maxdepth: 2
    :caption: Contents:
 
-   usage
-   project-contributions
-   release-notes
    api/index
 
 
