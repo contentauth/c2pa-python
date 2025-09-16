@@ -42,7 +42,8 @@ wheels/
 *.egg
 
 # Sphinx docs
-docs/html
+docs/_build
+docs/_static
 
 # PyInstaller
 # Usually these files are written by a Python script from a template
