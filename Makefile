@@ -103,3 +103,7 @@ format:
 # Downloads the required native artifacts for the specified version
 download-native-artifacts:
 	python3 scripts/download_artifacts.py $(C2PA_VERSION)
+
+# Build API documentation with Sphinx
+docs:
+	python3 scripts/generate_api_docs.py

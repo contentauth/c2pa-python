@@ -713,17 +713,17 @@ def read_ingredient_file(
         This function is deprecated and will be removed in a future version.
         Please use the Reader class for reading C2PA metadata instead.
         Example:
-            ```python
-            with Reader(path) as reader:
-                manifest_json = reader.json()
-            ```
+            .. code-block:: python
+
+                with Reader(path) as reader:
+                    manifest_json = reader.json()
 
         To add ingredients to a manifest, please use the Builder class.
         Example:
-            ```
-            with open(ingredient_file_path, 'rb') as f:
-                builder.add_ingredient(ingredient_json, "image/jpeg", f)
-            ```
+            .. code-block:: python
+
+                with open(ingredient_file_path, 'rb') as f:
+                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
     Args:
         path: Path to the file to read
@@ -772,10 +772,10 @@ def read_file(path: Union[str, Path],
         This function is deprecated and will be removed in a future version.
         Please use the Reader class for reading C2PA metadata instead.
         Example:
-            ```python
-            with Reader(path) as reader:
-                manifest_json = reader.json()
-            ```
+            .. code-block:: python
+
+                with Reader(path) as reader:
+                    manifest_json = reader.json()
 
     Args:
         path: Path to the file to read
@@ -2641,9 +2641,9 @@ def create_signer(
         This function is deprecated and will be removed in a future version.
         Please use the Signer class method instead.
         Example:
-            ```python
-            signer = Signer.from_callback(callback, alg, certs, tsa_url)
-            ```
+            .. code-block:: python
+
+                signer = Signer.from_callback(callback, alg, certs, tsa_url)
 
     Args:
         callback: Function that signs data and returns the signature
@@ -2676,9 +2676,9 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
         This function is deprecated and will be removed in a future version.
         Please use the Signer class method instead.
         Example:
-            ```python
-            signer = Signer.from_info(signer_info)
-            ```
+            .. code-block:: python
+
+                signer = Signer.from_info(signer_info)
 
     Args:
         signer_info: The signer configuration

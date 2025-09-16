@@ -36,6 +36,35 @@ See the [`examples` directory](https://github.com/contentauth/c2pa-python/tree/m
 - `examples/sign.py` shows how to sign and verify an asset with a C2PA manifest.
 - `examples/training.py` demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
 
+## API reference documentation
+
+You can generate API docs with one command. How to use:
+
+Install dev deps:
+```
+cd c2pa-python
+python3 -m pip install -r requirements-dev.txt
+```
+
+Build docs:
+
+```
+make -C docs
+```
+
+Output:
+
+```
+Open docs/build/html/index.html
+```
+
+This uses `sphinx-autoapi` to parse `src/c2pa` directly, avoiding imports of native libs.
+- Entry script: `scripts/generate_api_docs.py`
+- Config: `docs/conf.py`; index: `docs/index.rst`
+
+Sphinx config is in `docs/conf.py`, an `index.rst`, added `scripts/generate_api_docs.py`, updated `requirements-dev.txt` with `Sphinx/AutoAPI/Myst/Furo`, and added a docs Makefile target.
+
+
 ## Contributing
 
 Contributions are welcome!  For more information, see [Contributing to the project](https://github.com/contentauth/c2pa-python/blob/main/docs/project-contributions.md).

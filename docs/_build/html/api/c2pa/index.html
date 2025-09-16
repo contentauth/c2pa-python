@@ -1,0 +1,1193 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html" /><link rel="search" title="Search" href="../../search.html" /><link rel="next" title="c2pa.build" href="build/index.html" /><link rel="prev" title="API Reference" href="../index.html" />
+
+    <!-- Generated with Sphinx 8.1.3 and Furo 2025.07.19 -->
+        <title>c2pa - c2pa-python documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/furo.css?v=25af2a20" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=4ae1632d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #2b2b2b;
+  --color-code-foreground: #f8f8f2;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #2b2b2b;
+  --color-code-foreground: #f8f8f2;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">c2pa-python  documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  
+  <span class="sidebar-brand-text">c2pa-python  documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Using the Python library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../project-contributions.html">Contributing to the project</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../release-notes.html">Release notes</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../index.html">API Reference</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of API Reference</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul class="current">
+<li class="toctree-l2 current has-children current-page"><a class="current reference internal" href="#">c2pa</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of c2pa</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="build/index.html">c2pa.build</a></li>
+<li class="toctree-l3"><a class="reference internal" href="c2pa/index.html">c2pa.c2pa</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lib/index.html">c2pa.lib</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../../_sources/api/c2pa/index.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="module-c2pa">
+<span id="c2pa"></span><h1>c2pa<a class="headerlink" href="#module-c2pa" title="Link to this heading">¶</a></h1>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">¶</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="build/index.html">c2pa.build</a></li>
+<li class="toctree-l1"><a class="reference internal" href="c2pa/index.html">c2pa.c2pa</a></li>
+<li class="toctree-l1"><a class="reference internal" href="lib/index.html">c2pa.lib</a></li>
+</ul>
+</div>
+</section>
+<section id="exceptions">
+<h2>Exceptions<a class="headerlink" href="#exceptions" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper autosummary longtable docutils container">
+<table class="autosummary longtable docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><code class="xref py py-obj docutils literal notranslate"><span class="pre">C2paError</span></code></a></p></td>
+<td><p>Exception raised for C2PA errors.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="classes">
+<h2>Classes<a class="headerlink" href="#classes" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper autosummary longtable docutils container">
+<table class="autosummary longtable docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#c2pa.Builder" title="c2pa.Builder"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Builder</span></code></a></p></td>
+<td><p>High-level wrapper for C2PA Builder operations.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#c2pa.Reader" title="c2pa.Reader"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Reader</span></code></a></p></td>
+<td><p>High-level wrapper for C2PA Reader operations.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#c2pa.C2paSigningAlg" title="c2pa.C2paSigningAlg"><code class="xref py py-obj docutils literal notranslate"><span class="pre">C2paSigningAlg</span></code></a></p></td>
+<td><p>Supported signing algorithms.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#c2pa.C2paSignerInfo" title="c2pa.C2paSignerInfo"><code class="xref py py-obj docutils literal notranslate"><span class="pre">C2paSignerInfo</span></code></a></p></td>
+<td><p>Configuration for a Signer.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#c2pa.Signer" title="c2pa.Signer"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Signer</span></code></a></p></td>
+<td><p>High-level wrapper for C2PA Signer operations.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#c2pa.Stream" title="c2pa.Stream"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Stream</span></code></a></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="functions">
+<h2>Functions<a class="headerlink" href="#functions" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper autosummary longtable docutils container">
+<table class="autosummary longtable docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#c2pa.sdk_version" title="c2pa.sdk_version"><code class="xref py py-obj docutils literal notranslate"><span class="pre">sdk_version</span></code></a>()</p></td>
+<td><p>Returns the underlying c2pa-rs/c2pa-c-ffi version string</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#c2pa.read_ingredient_file" title="c2pa.read_ingredient_file"><code class="xref py py-obj docutils literal notranslate"><span class="pre">read_ingredient_file</span></code></a>(path, data_dir)</p></td>
+<td><p>Read a file as C2PA ingredient.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="package-contents">
+<h2>Package Contents<a class="headerlink" href="#package-contents" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="c2pa.Builder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">Builder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">manifest_json</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder" title="Link to this definition">¶</a></dt>
+<dd><p>High-level wrapper for C2PA Builder operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>manifest_json</strong> (<em>Any</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.get_supported_mime_types">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_supported_mime_types</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.get_supported_mime_types" title="Link to this definition">¶</a></dt>
+<dd><p>Get the list of supported MIME types for the Builder.
+This method retrieves supported MIME types from the native library.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List of supported MIME type strings</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error retrieving the MIME types</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.from_json">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_json</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">manifest_json</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.from_json" title="Link to this definition">¶</a></dt>
+<dd><p>Create a new Builder from a JSON manifest.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>manifest_json</strong> (<em>Any</em>) – The JSON manifest definition</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A new Builder instance</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error creating the builder</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.Builder" title="c2pa.Builder">Builder</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.from_archive">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_archive</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">stream</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.from_archive" title="Link to this definition">¶</a></dt>
+<dd><p>Create a new Builder from an archive stream.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>stream</strong> (<em>Any</em>) – The stream containing the archive
+(any Python stream-like object)</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A new Builder instance</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error creating the builder from archive</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.Builder" title="c2pa.Builder">Builder</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.close" title="Link to this definition">¶</a></dt>
+<dd><p>Release the builder resources.</p>
+<p>This method ensures all resources are properly cleaned up,
+even if errors occur during cleanup.
+Errors during cleanup are logged but not raised to ensure cleanup.
+Multiple calls to close() are handled gracefully.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.set_no_embed">
+<span class="sig-name descname"><span class="pre">set_no_embed</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.set_no_embed" title="Link to this definition">¶</a></dt>
+<dd><p>Set the no-embed flag.</p>
+<p>When set, the builder will not embed a C2PA manifest store
+into the asset when signing.
+This is useful when creating cloud or sidecar manifests.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.set_remote_url">
+<span class="sig-name descname"><span class="pre">set_remote_url</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">remote_url</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.set_remote_url" title="Link to this definition">¶</a></dt>
+<dd><p>Set the remote URL.</p>
+<p>When set, the builder embeds a remote URL into the asset when signing.
+This is useful when creating cloud based Manifests.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>remote_url</strong> (<em>str</em>) – The remote URL to set</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error setting the remote URL</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.add_resource">
+<span class="sig-name descname"><span class="pre">add_resource</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.add_resource" title="Link to this definition">¶</a></dt>
+<dd><p>Add a resource to the builder.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>uri</strong> (<em>str</em>) – The URI to identify the resource</p></li>
+<li><p><strong>stream</strong> (<em>Any</em>) – The stream containing the resource data
+(any Python stream-like object)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error adding the resource</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.add_ingredient">
+<span class="sig-name descname"><span class="pre">add_ingredient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ingredient_json</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">format</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.add_ingredient" title="Link to this definition">¶</a></dt>
+<dd><p>Add an ingredient to the builder (facade method).
+The added ingredient’s source should be a stream-like object
+(for instance, a file opened as stream).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ingredient_json</strong> (<em>str</em>) – The JSON ingredient definition</p></li>
+<li><p><strong>format</strong> (<em>str</em>) – The MIME type or extension of the ingredient</p></li>
+<li><p><strong>source</strong> (<em>Any</em>) – The stream containing the ingredient data
+(any Python stream-like object)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error adding the ingredient</p></li>
+<li><p><a class="reference internal" href="#c2pa.C2paError.Encoding" title="c2pa.C2paError.Encoding"><strong>C2paError.Encoding</strong></a> – If the ingredient JSON contains
+invalid UTF-8 characters</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.add_ingredient_from_stream">
+<span class="sig-name descname"><span class="pre">add_ingredient_from_stream</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ingredient_json</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">format</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.add_ingredient_from_stream" title="Link to this definition">¶</a></dt>
+<dd><p>Add an ingredient from a stream to the builder.
+Explicitly named API requiring a stream as input parameter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ingredient_json</strong> (<em>str</em>) – The JSON ingredient definition</p></li>
+<li><p><strong>format</strong> (<em>str</em>) – The MIME type or extension of the ingredient</p></li>
+<li><p><strong>source</strong> (<em>Any</em>) – The stream containing the ingredient data
+(any Python stream-like object)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error adding the ingredient</p></li>
+<li><p><a class="reference internal" href="#c2pa.C2paError.Encoding" title="c2pa.C2paError.Encoding"><strong>C2paError.Encoding</strong></a> – If the ingredient JSON or format
+contains invalid UTF-8 characters</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.add_ingredient_from_file_path">
+<span class="sig-name descname"><span class="pre">add_ingredient_from_file_path</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ingredient_json</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">format</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.add_ingredient_from_file_path" title="Link to this definition">¶</a></dt>
+<dd><p>Add an ingredient from a file path to the builder.
+This is a legacy method.</p>
+<div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version 0.13.0: </span>This method is deprecated and will be removed in a future version.
+Use <a class="reference internal" href="#c2pa.Builder.add_ingredient" title="c2pa.Builder.add_ingredient"><code class="xref py py-meth docutils literal notranslate"><span class="pre">add_ingredient()</span></code></a> with a file stream instead.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ingredient_json</strong> (<em>str</em>) – The JSON ingredient definition</p></li>
+<li><p><strong>format</strong> (<em>str</em>) – The MIME type or extension of the ingredient</p></li>
+<li><p><strong>filepath</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>pathlib.Path</em><em>]</em>) – The path to the file containing the ingredient data
+(can be a string or Path object)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error adding the ingredient</p></li>
+<li><p><a class="reference internal" href="#c2pa.C2paError.Encoding" title="c2pa.C2paError.Encoding"><strong>C2paError.Encoding</strong></a> – If the ingredient JSON or format
+contains invalid UTF-8 characters</p></li>
+<li><p><strong>FileNotFoundError</strong> – If the file at the specified path does not exist</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.to_archive">
+<span class="sig-name descname"><span class="pre">to_archive</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">stream</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.to_archive" title="Link to this definition">¶</a></dt>
+<dd><p>Write an archive of the builder to a stream.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>stream</strong> (<em>Any</em>) – The stream to write the archive to
+(any Python stream-like object)</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error writing the archive</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.sign">
+<span class="sig-name descname"><span class="pre">sign</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">signer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">format</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dest</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.sign" title="Link to this definition">¶</a></dt>
+<dd><p>Sign the builder’s content and write to a destination stream.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>format</strong> (<em>str</em>) – The MIME type or extension of the content</p></li>
+<li><p><strong>source</strong> (<em>Any</em>) – The source stream (any Python stream-like object)</p></li>
+<li><p><strong>dest</strong> (<em>Any</em>) – The destination stream (any Python stream-like object),
+opened in w+b (write+read binary) mode.</p></li>
+<li><p><strong>signer</strong> (<a class="reference internal" href="#c2pa.Signer" title="c2pa.Signer"><em>Signer</em></a>) – The signer to use</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Manifest bytes</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error during signing</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>bytes</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Builder.sign_file">
+<span class="sig-name descname"><span class="pre">sign_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">source_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dest_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">signer</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Builder.sign_file" title="Link to this definition">¶</a></dt>
+<dd><p>Sign a file and write the signed data to an output file.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>source_path</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>pathlib.Path</em><em>]</em>) – Path to the source file. We will attempt
+to guess the mimetype of the source file based on
+the extension.</p></li>
+<li><p><strong>dest_path</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>pathlib.Path</em><em>]</em>) – Path to write the signed file to</p></li>
+<li><p><strong>signer</strong> (<a class="reference internal" href="#c2pa.Signer" title="c2pa.Signer"><em>Signer</em></a>) – The signer to use</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Manifest bytes</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error during signing</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>bytes</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">C2paError</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">message</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.C2paError" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for C2PA errors.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>message</strong> (<em>str</em>)</p>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paError.message">
+<span class="sig-name descname"><span class="pre">message</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">''</span></em><a class="headerlink" href="#c2pa.C2paError.message" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Assertion">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Assertion</span></span><a class="headerlink" href="#c2pa.C2paError.Assertion" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for assertion errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.AssertionNotFound">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AssertionNotFound</span></span><a class="headerlink" href="#c2pa.C2paError.AssertionNotFound" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised when an assertion is not found.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Decoding">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Decoding</span></span><a class="headerlink" href="#c2pa.C2paError.Decoding" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for decoding errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Encoding">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Encoding</span></span><a class="headerlink" href="#c2pa.C2paError.Encoding" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for encoding errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.FileNotFound">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">FileNotFound</span></span><a class="headerlink" href="#c2pa.C2paError.FileNotFound" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised when a file is not found.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Io">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Io</span></span><a class="headerlink" href="#c2pa.C2paError.Io" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for IO errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Json">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Json</span></span><a class="headerlink" href="#c2pa.C2paError.Json" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for JSON errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Manifest">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Manifest</span></span><a class="headerlink" href="#c2pa.C2paError.Manifest" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for manifest errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.ManifestNotFound">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ManifestNotFound</span></span><a class="headerlink" href="#c2pa.C2paError.ManifestNotFound" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised when a manifest is not found.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.NotSupported">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">NotSupported</span></span><a class="headerlink" href="#c2pa.C2paError.NotSupported" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for unsupported operations.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Other">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Other</span></span><a class="headerlink" href="#c2pa.C2paError.Other" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for other errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.RemoteManifest">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">RemoteManifest</span></span><a class="headerlink" href="#c2pa.C2paError.RemoteManifest" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for remote manifest errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.ResourceNotFound">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ResourceNotFound</span></span><a class="headerlink" href="#c2pa.C2paError.ResourceNotFound" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised when a resource is not found.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Signature">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Signature</span></span><a class="headerlink" href="#c2pa.C2paError.Signature" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for signature errors.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="c2pa.C2paError.Verify">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Verify</span></span><a class="headerlink" href="#c2pa.C2paError.Verify" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Exception raised for verification errors.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="c2pa.Reader">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">Reader</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">format_or_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">manifest_data</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Reader" title="Link to this definition">¶</a></dt>
+<dd><p>High-level wrapper for C2PA Reader operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>format_or_path</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>pathlib.Path</em><em>]</em>)</p></li>
+<li><p><strong>stream</strong> (<em>Optional</em><em>[</em><em>Any</em><em>]</em>)</p></li>
+<li><p><strong>manifest_data</strong> (<em>Optional</em><em>[</em><em>Any</em><em>]</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Reader.get_supported_mime_types">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_supported_mime_types</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Reader.get_supported_mime_types" title="Link to this definition">¶</a></dt>
+<dd><p>Get the list of supported MIME types for the Reader.
+This method retrieves supported MIME types from the native library.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List of supported MIME type strings</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error retrieving the MIME types</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Reader.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Reader.close" title="Link to this definition">¶</a></dt>
+<dd><p>Release the reader resources.</p>
+<p>This method ensures all resources are properly cleaned up,
+even if errors occur during cleanup.
+Errors during cleanup are logged but not raised to ensure cleanup.
+Multiple calls to close() are handled gracefully.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Reader.json">
+<span class="sig-name descname"><span class="pre">json</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Reader.json" title="Link to this definition">¶</a></dt>
+<dd><p>Get the manifest store as a JSON string.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The manifest store as a JSON string</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error getting the JSON</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Reader.resource_to_stream">
+<span class="sig-name descname"><span class="pre">resource_to_stream</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Reader.resource_to_stream" title="Link to this definition">¶</a></dt>
+<dd><p>Write a resource to a stream.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>uri</strong> (<em>str</em>) – The URI of the resource to write</p></li>
+<li><p><strong>stream</strong> (<em>Any</em>) – The stream to write to (any Python stream-like object)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of bytes written</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error writing the resource to stream</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">C2paSigningAlg</span></span><a class="headerlink" href="#c2pa.C2paSigningAlg" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">enum.IntEnum</span></code></p>
+<p>Supported signing algorithms.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.ES256">
+<span class="sig-name descname"><span class="pre">ES256</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.ES256" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.ES384">
+<span class="sig-name descname"><span class="pre">ES384</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.ES384" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.ES512">
+<span class="sig-name descname"><span class="pre">ES512</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">2</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.ES512" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.PS256">
+<span class="sig-name descname"><span class="pre">PS256</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">3</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.PS256" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.PS384">
+<span class="sig-name descname"><span class="pre">PS384</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">4</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.PS384" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.PS512">
+<span class="sig-name descname"><span class="pre">PS512</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.PS512" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="c2pa.C2paSigningAlg.ED25519">
+<span class="sig-name descname"><span class="pre">ED25519</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">6</span></em><a class="headerlink" href="#c2pa.C2paSigningAlg.ED25519" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="c2pa.C2paSignerInfo">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">C2paSignerInfo</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sign_cert</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">private_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ta_url</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.C2paSignerInfo" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-obj docutils literal notranslate"><span class="pre">ctypes.Structure</span></code></p>
+<p>Configuration for a Signer.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="c2pa.Signer">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">Signer</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">signer_ptr</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Signer" title="Link to this definition">¶</a></dt>
+<dd><p>High-level wrapper for C2PA Signer operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>signer_ptr</strong> (<em>ctypes.POINTER</em><em>(</em><em>C2paSigner</em><em>)</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Signer.from_info">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_info</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">signer_info</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Signer.from_info" title="Link to this definition">¶</a></dt>
+<dd><p>Create a new Signer from signer information.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>signer_info</strong> (<a class="reference internal" href="#c2pa.C2paSignerInfo" title="c2pa.C2paSignerInfo"><em>C2paSignerInfo</em></a>) – The signer configuration</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A new Signer instance</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error creating the signer</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.Signer" title="c2pa.Signer">Signer</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Signer.from_callback">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_callback</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">callback</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">certs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tsa_url</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Signer.from_callback" title="Link to this definition">¶</a></dt>
+<dd><p>Create a signer from a callback function.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>callback</strong> (<em>Callable</em><em>[</em><em>[</em><em>bytes</em><em>]</em><em>, </em><em>bytes</em><em>]</em>) – Function that signs data and returns the signature</p></li>
+<li><p><strong>alg</strong> (<a class="reference internal" href="#c2pa.C2paSigningAlg" title="c2pa.C2paSigningAlg"><em>C2paSigningAlg</em></a>) – The signing algorithm to use</p></li>
+<li><p><strong>certs</strong> (<em>str</em>) – Certificate chain in PEM format</p></li>
+<li><p><strong>tsa_url</strong> (<em>Optional</em><em>[</em><em>str</em><em>]</em>) – Optional RFC 3161 timestamp authority URL</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A new Signer instance</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error creating the signer</p></li>
+<li><p><a class="reference internal" href="#c2pa.C2paError.Encoding" title="c2pa.C2paError.Encoding"><strong>C2paError.Encoding</strong></a> – If the certificate data or TSA URL
+contains invalid UTF-8 characters</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.Signer" title="c2pa.Signer">Signer</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Signer.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Signer.close" title="Link to this definition">¶</a></dt>
+<dd><p>Release the signer resources.</p>
+<p>This method ensures all resources are properly cleaned up,
+even if errors occur during cleanup.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Multiple calls to close() are handled gracefully.
+Errors during cleanup are logged but not raised
+to ensure cleanup.</p>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Signer.reserve_size">
+<span class="sig-name descname"><span class="pre">reserve_size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Signer.reserve_size" title="Link to this definition">¶</a></dt>
+<dd><p>Get the size to reserve for signatures from this signer.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The size to reserve in bytes</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error getting the size</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="c2pa.Stream">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">Stream</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file_like_stream</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Stream" title="Link to this definition">¶</a></dt>
+<dd><dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Stream.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Stream.close" title="Link to this definition">¶</a></dt>
+<dd><p>Release the stream resources.</p>
+<p>This method ensures all resources are properly cleaned up,
+even if errors occur during cleanup.
+Errors during cleanup are logged but not raised to ensure cleanup.
+Multiple calls to close() are handled gracefully.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="c2pa.Stream.write_to_target">
+<span class="sig-name descname"><span class="pre">write_to_target</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dest_stream</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.Stream.write_to_target" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="c2pa.Stream.closed">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">closed</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><a class="headerlink" href="#c2pa.Stream.closed" title="Link to this definition">¶</a></dt>
+<dd><p>Check if the stream is closed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>True if the stream is closed, False otherwise</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="c2pa.Stream.initialized">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">initialized</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><a class="headerlink" href="#c2pa.Stream.initialized" title="Link to this definition">¶</a></dt>
+<dd><p>Check if the stream is properly initialized.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>True if the stream is initialized, False otherwise</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="c2pa.sdk_version">
+<span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">sdk_version</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.sdk_version" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the underlying c2pa-rs/c2pa-c-ffi version string</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="c2pa.read_ingredient_file">
+<span class="sig-prename descclassname"><span class="pre">c2pa.</span></span><span class="sig-name descname"><span class="pre">read_ingredient_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data_dir</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#c2pa.read_ingredient_file" title="Link to this definition">¶</a></dt>
+<dd><p>Read a file as C2PA ingredient.
+This creates the JSON string that would be used as the ingredient JSON.</p>
+<div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version 0.11.0: </span>This function is deprecated and will be removed in a future version.
+Please use the Reader class for reading C2PA metadata instead.
+Example:
+    .. code-block:: python</p>
+<blockquote>
+<div><dl class="simple">
+<dt>with Reader(path) as reader:</dt><dd><p>manifest_json = reader.json()</p>
+</dd>
+</dl>
+</div></blockquote>
+<p>To add ingredients to a manifest, please use the Builder class.
+Example:</p>
+<blockquote>
+<div><div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ingredient_file_path</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">builder</span><span class="o">.</span><span class="n">add_ingredient</span><span class="p">(</span><span class="n">ingredient_json</span><span class="p">,</span> <span class="s2">&quot;image/jpeg&quot;</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>path</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>pathlib.Path</em><em>]</em>) – Path to the file to read</p></li>
+<li><p><strong>data_dir</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>pathlib.Path</em><em>]</em>) – Directory to write binary resources to</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The ingredient as a JSON string</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#c2pa.C2paError" title="c2pa.C2paError"><strong>C2paError</strong></a> – If there was an error reading the file</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="build/index.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">c2pa.build</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../index.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">API Reference</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">c2pa</a><ul>
+<li><a class="reference internal" href="#submodules">Submodules</a></li>
+<li><a class="reference internal" href="#exceptions">Exceptions</a></li>
+<li><a class="reference internal" href="#classes">Classes</a></li>
+<li><a class="reference internal" href="#functions">Functions</a></li>
+<li><a class="reference internal" href="#package-contents">Package Contents</a><ul>
+<li><a class="reference internal" href="#c2pa.Builder"><code class="docutils literal notranslate"><span class="pre">Builder</span></code></a><ul>
+<li><a class="reference internal" href="#c2pa.Builder.get_supported_mime_types"><code class="docutils literal notranslate"><span class="pre">Builder.get_supported_mime_types()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.from_json"><code class="docutils literal notranslate"><span class="pre">Builder.from_json()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.from_archive"><code class="docutils literal notranslate"><span class="pre">Builder.from_archive()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.close"><code class="docutils literal notranslate"><span class="pre">Builder.close()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.set_no_embed"><code class="docutils literal notranslate"><span class="pre">Builder.set_no_embed()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.set_remote_url"><code class="docutils literal notranslate"><span class="pre">Builder.set_remote_url()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.add_resource"><code class="docutils literal notranslate"><span class="pre">Builder.add_resource()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.add_ingredient"><code class="docutils literal notranslate"><span class="pre">Builder.add_ingredient()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.add_ingredient_from_stream"><code class="docutils literal notranslate"><span class="pre">Builder.add_ingredient_from_stream()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.add_ingredient_from_file_path"><code class="docutils literal notranslate"><span class="pre">Builder.add_ingredient_from_file_path()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.to_archive"><code class="docutils literal notranslate"><span class="pre">Builder.to_archive()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.sign"><code class="docutils literal notranslate"><span class="pre">Builder.sign()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Builder.sign_file"><code class="docutils literal notranslate"><span class="pre">Builder.sign_file()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#c2pa.C2paError"><code class="docutils literal notranslate"><span class="pre">C2paError</span></code></a><ul>
+<li><a class="reference internal" href="#c2pa.C2paError.message"><code class="docutils literal notranslate"><span class="pre">C2paError.message</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Assertion"><code class="docutils literal notranslate"><span class="pre">C2paError.Assertion</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.AssertionNotFound"><code class="docutils literal notranslate"><span class="pre">C2paError.AssertionNotFound</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Decoding"><code class="docutils literal notranslate"><span class="pre">C2paError.Decoding</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Encoding"><code class="docutils literal notranslate"><span class="pre">C2paError.Encoding</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.FileNotFound"><code class="docutils literal notranslate"><span class="pre">C2paError.FileNotFound</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Io"><code class="docutils literal notranslate"><span class="pre">C2paError.Io</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Json"><code class="docutils literal notranslate"><span class="pre">C2paError.Json</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Manifest"><code class="docutils literal notranslate"><span class="pre">C2paError.Manifest</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.ManifestNotFound"><code class="docutils literal notranslate"><span class="pre">C2paError.ManifestNotFound</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.NotSupported"><code class="docutils literal notranslate"><span class="pre">C2paError.NotSupported</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Other"><code class="docutils literal notranslate"><span class="pre">C2paError.Other</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.RemoteManifest"><code class="docutils literal notranslate"><span class="pre">C2paError.RemoteManifest</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.ResourceNotFound"><code class="docutils literal notranslate"><span class="pre">C2paError.ResourceNotFound</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Signature"><code class="docutils literal notranslate"><span class="pre">C2paError.Signature</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paError.Verify"><code class="docutils literal notranslate"><span class="pre">C2paError.Verify</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#c2pa.Reader"><code class="docutils literal notranslate"><span class="pre">Reader</span></code></a><ul>
+<li><a class="reference internal" href="#c2pa.Reader.get_supported_mime_types"><code class="docutils literal notranslate"><span class="pre">Reader.get_supported_mime_types()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Reader.close"><code class="docutils literal notranslate"><span class="pre">Reader.close()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Reader.json"><code class="docutils literal notranslate"><span class="pre">Reader.json()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Reader.resource_to_stream"><code class="docutils literal notranslate"><span class="pre">Reader.resource_to_stream()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg</span></code></a><ul>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.ES256"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.ES256</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.ES384"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.ES384</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.ES512"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.ES512</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.PS256"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.PS256</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.PS384"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.PS384</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.PS512"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.PS512</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.C2paSigningAlg.ED25519"><code class="docutils literal notranslate"><span class="pre">C2paSigningAlg.ED25519</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#c2pa.C2paSignerInfo"><code class="docutils literal notranslate"><span class="pre">C2paSignerInfo</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Signer"><code class="docutils literal notranslate"><span class="pre">Signer</span></code></a><ul>
+<li><a class="reference internal" href="#c2pa.Signer.from_info"><code class="docutils literal notranslate"><span class="pre">Signer.from_info()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Signer.from_callback"><code class="docutils literal notranslate"><span class="pre">Signer.from_callback()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Signer.close"><code class="docutils literal notranslate"><span class="pre">Signer.close()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Signer.reserve_size"><code class="docutils literal notranslate"><span class="pre">Signer.reserve_size()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#c2pa.Stream"><code class="docutils literal notranslate"><span class="pre">Stream</span></code></a><ul>
+<li><a class="reference internal" href="#c2pa.Stream.close"><code class="docutils literal notranslate"><span class="pre">Stream.close()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Stream.write_to_target"><code class="docutils literal notranslate"><span class="pre">Stream.write_to_target()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Stream.closed"><code class="docutils literal notranslate"><span class="pre">Stream.closed</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.Stream.initialized"><code class="docutils literal notranslate"><span class="pre">Stream.initialized</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#c2pa.sdk_version"><code class="docutils literal notranslate"><span class="pre">sdk_version()</span></code></a></li>
+<li><a class="reference internal" href="#c2pa.read_ingredient_file"><code class="docutils literal notranslate"><span class="pre">read_ingredient_file()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>
+    </body>
+</html>
