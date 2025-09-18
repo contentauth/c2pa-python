@@ -1228,11 +1228,12 @@ class Stream:
 class Reader:
     """High-level wrapper for C2PA Reader operations.
     
-    Example:
+    Example: 
         ```
-        with Reader(path) as reader:
+        with Reader("image/jpeg", output) as reader:
             manifest_json = reader.json()
         ```
+        Where `output` is either an in-memory stream or an opened file.
     """
 
     # Supported mimetypes cache
@@ -2303,8 +2304,8 @@ class Builder:
         
         Example:
             ```
-            with open(ingredient_file_path, 'rb') as f:
-                builder.add_ingredient(ingredient_json, "image/jpeg", f)
+            with open(ingredient_file_path, 'rb') as a_file:
+                builder.add_ingredient(ingredient_json, "image/jpeg", a_file)
             ```
         """
         return self.add_ingredient_from_stream(ingredient_json, format, source)
