@@ -22,7 +22,7 @@ import asyncio
 import random
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream
+from c2pa.c2pa import Stream, load_settings
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -1836,6 +1836,193 @@ class TestBuilderWithThreads(unittest.TestCase):
                         current_manifest["active_manifest"],
                         other_manifest["active_manifest"],
                         f"Thread {thread_id} and {other_thread_id} share the same active manifest ID")
+
+    def test_builder_sign_with_setting_no_thumbnail_and_ingredient(self):
+        """Test Builder class operations with thumbnail disabled and ingredient added using multiple threads."""
+        # Thread synchronization
+        thread_results = {}
+        completed_threads = 0
+        thread_lock = threading.Lock()
+        settings_lock = threading.Lock()  # Lock for settings changes
+
+        def thread_work(thread_id):
+            nonlocal completed_threads
+            try:
+                # Create a new builder for this thread
+                builder = Builder.from_json(self.manifestDefinition)
+                assert builder._builder is not None
+
+                # Thread-safe settings change (settings are thread-local)
+                with settings_lock:
+                    # The following removes the manifest's thumbnail
+                    load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+
+                # Test adding ingredient
+                ingredient_json = f'{{ "title": "Test Ingredient Thread {thread_id}" }}'
+                with open(self.testPath3, 'rb') as f:
+                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+                with open(self.testPath2, "rb") as file:
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+                    manifest_data = json.loads(json_data)
+
+                    # Store results for verification
+                    with thread_lock:
+                        thread_results[thread_id] = {
+                            'manifest': manifest_data,
+                            'thread_id': thread_id
+                        }
+
+                builder.close()
+
+            except Exception as e:
+                with thread_lock:
+                    thread_results[thread_id] = {
+                        'error': str(e),
+                        'thread_id': thread_id
+                    }
+            finally:
+                with thread_lock:
+                    completed_threads += 1
+
+        # Create and start multiple threads
+        threads = []
+        num_threads = 3
+        for i in range(1, num_threads + 1):
+            thread = threading.Thread(target=thread_work, args=(i,))
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+
+        # Verify all threads completed
+        self.assertEqual(completed_threads, num_threads, f"All {num_threads} threads should have completed")
+        self.assertEqual(len(thread_results), num_threads, f"Should have results from all {num_threads} threads")
+
+        # Verify results for each thread
+        for thread_id in range(1, num_threads + 1):
+            result = thread_results[thread_id]
+
+            # Check if thread encountered an error
+            if 'error' in result:
+                self.fail(f"Thread {thread_id} failed with error: {result['error']}")
+
+            manifest_data = result['manifest']
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # There should be no thumbnail anymore here
+            self.assertNotIn("thumbnail", active_manifest)
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set for this thread
+            first_ingredient = active_manifest["ingredients"][0]
+            expected_title = f"Test Ingredient Thread {thread_id}"
+            self.assertEqual(first_ingredient["title"], expected_title)
+            self.assertNotIn("thumbnail", first_ingredient)
+
+        # Settings are thread-local, so we reset to the default "true" here
+        with settings_lock:
+            load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
+
+    def test_builder_sign_with_setting_no_thumbnail_and_ingredient_async(self):
+        """Test Builder class operations with thumbnail disabled and ingredient added using async tasks."""
+        async def async_thread_work(task_id):
+            try:
+                # Create a new builder for this task
+                builder = Builder.from_json(self.manifestDefinition)
+                assert builder._builder is not None
+
+                # The following removes the manifest's thumbnail
+                load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+
+                # Test adding ingredient
+                ingredient_json = f'{{ "title": "Test Ingredient Async Task {task_id}" }}'
+                with open(self.testPath3, 'rb') as f:
+                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+                with open(self.testPath2, "rb") as file:
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+                    manifest_data = json.loads(json_data)
+
+                    # Verify active manifest exists
+                    self.assertIn("active_manifest", manifest_data)
+                    active_manifest_id = manifest_data["active_manifest"]
+
+                    # Verify active manifest object exists
+                    self.assertIn("manifests", manifest_data)
+                    self.assertIn(active_manifest_id, manifest_data["manifests"])
+                    active_manifest = manifest_data["manifests"][active_manifest_id]
+
+                    # There should be no thumbnail anymore here
+                    self.assertNotIn("thumbnail", active_manifest)
+
+                    # Verify ingredients array exists in active manifest
+                    self.assertIn("ingredients", active_manifest)
+                    self.assertIsInstance(active_manifest["ingredients"], list)
+                    self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+                    # Verify the first ingredient's title matches what we set for this task
+                    first_ingredient = active_manifest["ingredients"][0]
+                    expected_title = f"Test Ingredient Async Task {task_id}"
+                    self.assertEqual(first_ingredient["title"], expected_title)
+                    self.assertNotIn("thumbnail", first_ingredient)
+
+                builder.close()
+                return None  # Success case
+
+            except Exception as e:
+                return f"Async task {task_id} error: {str(e)}"
+
+        async def run_async_tests():
+            # Create multiple async tasks
+            tasks = []
+            num_tasks = 3
+            for i in range(1, num_tasks + 1):
+                task = asyncio.create_task(async_thread_work(i))
+                tasks.append(task)
+
+            # Wait for all tasks to complete and collect results
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            errors = []
+            for i, result in enumerate(results, 1):
+                if isinstance(result, Exception):
+                    errors.append(f"Async task {i} failed with exception: {str(result)}")
+                elif result:  # Non-None result indicates an error
+                    errors.append(result)
+
+            # If any errors occurred, fail the test with all error messages
+            if errors:
+                self.fail("\n".join(errors))
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
+
+        # Settings are thread-local, so we reset to the default "true" here
+        load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
 if __name__ == '__main__':
     unittest.main()
