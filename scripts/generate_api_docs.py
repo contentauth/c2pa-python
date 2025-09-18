@@ -8,6 +8,7 @@ to parse source files directly.
 """
 
 import shutil
+import os
 import sys
 from pathlib import Path
 import importlib
@@ -31,9 +32,55 @@ def ensure_tools_available() -> None:
 
 def build_docs() -> None:
     root = Path(__file__).resolve().parents[1]
-    docs_dir = root / "docs"
+    docs_dir = root / "api-docs"
     build_dir = docs_dir / "_build" / "html"
     api_dir = docs_dir / "api"
+
+    # Preprocess sources: convert Markdown code fences in docstrings to reST
+    src_pkg_dir = root / "src" / "c2pa"
+    pre_dir = docs_dir / "_preprocessed"
+    pre_pkg_dir = pre_dir / "c2pa"
+    if pre_dir.exists():
+        shutil.rmtree(pre_dir)
+    pre_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    def convert_fences_to_rst(text: str) -> str:
+        lines = text.splitlines()
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.lstrip()
+            indent = line[: len(line) - len(stripped)]
+            if stripped.startswith("```"):
+                fence = stripped
+                lang = fence[3:].strip() or "text"
+                # Start directive
+                out.append(f"{indent}.. code-block:: {lang}")
+                out.append("")
+                i += 1
+                # Emit indented code until closing fence
+                while i < len(lines):
+                    l2 = lines[i]
+                    if l2.lstrip().startswith("```"):
+                        i += 1
+                        break
+                    out.append(f"{indent}    {l2}")
+                    i += 1
+                continue
+            out.append(line)
+            i += 1
+        return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+    for src_path in src_pkg_dir.rglob("*.py"):
+        rel = src_path.relative_to(src_pkg_dir)
+        dest = pre_pkg_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        content = src_path.read_text(encoding="utf-8")
+        dest.write_text(convert_fences_to_rst(content), encoding="utf-8")
+
+    # Point AutoAPI to preprocessed sources
+    os.environ["C2PA_DOCS_SRC"] = str(pre_pkg_dir)
 
     # Clean AutoAPI output to avoid stale pages
     if api_dir.exists():

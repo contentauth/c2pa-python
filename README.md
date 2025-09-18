@@ -38,32 +38,7 @@ See the [`examples` directory](https://github.com/contentauth/c2pa-python/tree/m
 
 ## API reference documentation
 
-You can generate API docs with one command. How to use:
-
-Install dev deps:
-```
-cd c2pa-python
-python3 -m pip install -r requirements-dev.txt
-```
-
-Build docs:
-
-```
-make -C docs
-```
-
-Output:
-
-```
-Open docs/build/html/index.html
-```
-
-This uses `sphinx-autoapi` to parse `src/c2pa` directly, avoiding imports of native libs.
-- Entry script: `scripts/generate_api_docs.py`
-- Config: `docs/conf.py`; index: `docs/index.rst`
-
-Sphinx config is in `docs/conf.py`, an `index.rst`, added `scripts/generate_api_docs.py`, updated `requirements-dev.txt` with `Sphinx/AutoAPI/Myst/Furo`, and added a docs Makefile target.
-
+See [the section in Contributing to the project](https://github.com/contentauth/c2pa-python/blob/main/docs/project-contributions.md#api-reference-documentation).
 
 ## Contributing
 
