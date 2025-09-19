@@ -9,7 +9,6 @@ on:
         - labeled
   
   push:
-    branches: ['main']
     tags: '*'
 
   workflow_dispatch:
@@ -20,7 +19,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
+  group: 'github-pages'
   cancel-in-progress: false
 
 jobs:
