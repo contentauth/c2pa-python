@@ -1,6 +1,13 @@
 name: Build and publish docs
 
 on:
+  pull_request:
+      types:
+        - opened
+        - reopened
+        - synchronize
+        - labeled
+  
   push:
     branches: ['main']
     tags: '*'
@@ -31,13 +38,16 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - uses: ./.github/actions/install-dependencies
-        name: Install dependencies
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
 
       - run: pnpm exec nx run-many -t build --projects=tag:lib
 
       - name: Build docs
-        run: pnpm ci:docs
+        run: python3 scripts/generate_api_docs.py
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
