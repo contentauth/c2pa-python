@@ -44,7 +44,8 @@ jobs:
           python-version: "3.10"
           cache: "pip"
 
-      - run: pnpm exec nx run-many -t build --projects=tag:lib
+      - name: Install dev deps
+        run: python3 -m pip install -r requirements-dev.txt
 
       - name: Build docs
         run: python3 scripts/generate_api_docs.py
