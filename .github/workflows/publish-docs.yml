@@ -1,9 +1,8 @@
 name: Build and publish docs
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
   workflow_dispatch:
 
