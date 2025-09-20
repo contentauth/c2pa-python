@@ -336,6 +336,19 @@ _setup_function(
     None
 )
 
+# Add dummy context functions
+_setup_function(
+    _lib.c2pa_create_dummy_context,
+    [],
+    ctypes.POINTER(StreamContext)
+)
+
+_setup_function(
+    _lib.c2pa_free_dummy_context,
+    [ctypes.POINTER(StreamContext)],
+    None
+)
+
 # Set up function prototypes not attached to an API object
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
@@ -1123,9 +1136,12 @@ class Stream:
         self._write_cb = WriteCallback(write_callback)
         self._flush_cb = FlushCallback(flush_callback)
 
+        # Create a dummy context since Python callbacks don't use it
+        self._dummy_context = _lib.c2pa_create_dummy_context()
+        
         # Create the stream
         self._stream = _lib.c2pa_create_stream(
-            None,  # context
+            self._dummy_context,  # context
             self._read_cb,
             self._seek_cb,
             self._write_cb,
@@ -1170,6 +1186,15 @@ class Stream:
                         self._stream = None
                         self._closed = True
                         self._initialized = False
+                        
+                        # Clean up dummy context
+                        if hasattr(self, '_dummy_context') and self._dummy_context:
+                            try:
+                                _lib.c2pa_free_dummy_context(self._dummy_context)
+                            except Exception:
+                                pass
+                            finally:
+                                self._dummy_context = None
         except Exception:
             # Destructors must not raise exceptions
             pass
@@ -1199,6 +1224,17 @@ class Stream:
                             str(e)))
                 finally:
                     self._stream = None
+
+            # Clean up dummy context
+            if hasattr(self, '_dummy_context') and self._dummy_context:
+                try:
+                    _lib.c2pa_free_dummy_context(self._dummy_context)
+                except Exception as e:
+                    logger.error(
+                        Stream._ERROR_MESSAGES['callback_error'].format(
+                            'dummy_context', str(e)))
+                finally:
+                    self._dummy_context = None
 
             # Clean up callbacks
             for attr in ['_read_cb', '_seek_cb', '_write_cb', '_flush_cb']:
