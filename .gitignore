@@ -41,6 +41,12 @@ wheels/
 .installed.cfg
 *.egg
 
+# Sphinx docs
+api-docs/api
+api-docs/_build
+api-docs/_static
+api-docs/_preprocessed
+
 # PyInstaller
 # Usually these files are written by a Python script from a template
 # before PyInstaller builds the exe, so as to inject date/other infos into it.

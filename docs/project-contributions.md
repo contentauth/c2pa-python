@@ -127,3 +127,28 @@ To rebuild and test, enter these commands:
 make build-python
 make test
 ```
+
+## API reference documentation
+
+We use Sphinx autodoc to generate API docs.
+
+Install development dependencies:
+
+```
+cd c2pa-python
+python3 -m pip install -r requirements-dev.txt
+```
+
+Build docs by entering `make -C docs` or:
+
+```
+python3 scripts/generate_api_docs.py
+```
+
+View the output by loading `api-docs/build/html/index.html` in a web browser.
+
+This uses `sphinx-autoapi` to parse `src/c2pa` directly, avoiding imports of native libs.
+- Entry script: `scripts/generate_api_docs.py`
+- Config: `api-docs/conf.py`; index: `api-docs/index.rst`
+
+Sphinx config is in `api-docs/conf.py`, which uses `index.rst`.
