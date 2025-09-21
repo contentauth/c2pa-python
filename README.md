@@ -33,6 +33,7 @@ import c2pa
 ## Examples
 
 See the [`examples` directory](https://github.com/contentauth/c2pa-python/tree/main/examples) for some helpful examples:
+
 - `examples/sign.py` shows how to sign and verify an asset with a C2PA manifest.
 - `examples/training.py` demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
 
