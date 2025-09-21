@@ -402,6 +402,11 @@ class TestReader(unittest.TestCase):
                 with Reader("image/jpeg", read_buffer, manifest_data) as reader:
                     self.assertFalse(reader.is_embedded(), "Remote manifest should return False")
 
+        # Test with cloud.jpg fixture which has a remote manifest (not embedded)
+        cloud_fixture_path = os.path.join(self.data_dir, "cloud.jpg")
+        with Reader("image/jpeg", cloud_fixture_path) as reader:
+            self.assertFalse(reader.is_embedded(), "cloud.jpg should have a remote manifest (not embedded)")
+
     def test_reader_get_remote_url(self):
         """Test the get_remote_url method returns correct values for embedded and remote manifests."""
 
