@@ -367,6 +367,82 @@ class TestReader(unittest.TestCase):
     #         assert active_manifest is not None, "Active manifest should not be null"
     #         assert len(active_manifest) > 0, "Active manifest should not be empty"
 
+    def test_reader_is_embedded(self):
+        """Test the is_embedded method returns correct values for embedded and remote manifests."""
+
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            self.assertTrue(reader.is_embedded(),)
+            reader.close()
+
+        # Test remote manifest
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            key = key_file.read()
+
+        # Create signer info and signer
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+
+        # Define a simple manifest
+        manifest_definition = {
+            "claim_generator": "python_test",
+            "claim_generator_info": [{
+                "name": "python_test",
+                "version": "0.0.1",
+            }],
+            "claim_version": 1,
+            "format": "image/jpeg",
+            "title": "Python Test Image",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # Test remote manifest
+        with open(self.testPath, "rb") as file:
+            builder = Builder(manifest_definition)
+            builder.set_no_embed()
+            with io.BytesIO() as output_buffer:
+                manifest_data = builder.sign(
+                    signer, "image/jpeg", file, output_buffer)
+                output_buffer.seek(0)
+                read_buffer = io.BytesIO(output_buffer.getvalue())
+
+                with Reader("image/jpeg", read_buffer, manifest_data) as reader:
+                    self.assertFalse(reader.is_embedded(), "Remote manifest should return False")
+
+    def test_reader_get_remote_url(self):
+        """Test the get_remote_url method returns correct values for embedded and remote manifests."""
+
+        # Test embedded manifest (should return None)
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            self.assertIsNone(reader.get_remote_url(), "Embedded manifest should return None for remote URL")
+            reader.close()
+
+        # Test remote manifest using cloud.jpg fixture which has a remote URL
+        cloud_fixture_path = os.path.join(self.data_dir, "files-for-reading-tests", "cloud.jpg")
+        with Reader("image/jpeg", cloud_fixture_path) as reader:
+            remote_url = reader.get_remote_url()
+            self.assertFalse(reader.is_embedded(), "This should be a remote manifest")
+
 
 class TestBuilderWithSigner(unittest.TestCase):
     def setUp(self):
