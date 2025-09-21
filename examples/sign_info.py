@@ -26,8 +26,7 @@ fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
 # Note: Builder, Reader, and Signer support being used as context managers
-# (with 'with' statements), but this example shows manual usage which requires
-# explicitly calling the close() function to clean up resources.
+# (with 'with' statements) for proper resource management.
 
 # Ensure the output directory exists
 if not os.path.exists(output_dir):
@@ -40,13 +39,14 @@ print(version)
 # Read existing C2PA metadata from the file
 print("\nReading existing C2PA metadata:")
 with open(fixtures_dir + "C.jpg", "rb") as file:
-    reader = c2pa.Reader("image/jpeg", file)
-    print(reader.json())
-    reader.close()
+    with c2pa.Reader("image/jpeg", file) as reader:
+        print(reader.json())
 
 # Create a signer from certificate and key files
-certs = open(fixtures_dir + "es256_certs.pem", "rb").read()
-key = open(fixtures_dir + "es256_private.key", "rb").read()
+with open(fixtures_dir + "es256_certs.pem", "rb") as cert_file:
+    certs = cert_file.read()
+with open(fixtures_dir + "es256_private.key", "rb") as key_file:
+    key = key_file.read()
 
 # Define Signer information
 signer_info = c2pa.C2paSignerInfo(
@@ -55,9 +55,6 @@ signer_info = c2pa.C2paSignerInfo(
     private_key=key,
     ta_url=b"http://timestamp.digicert.com"  # Use bytes and add timestamp URL
 )
-
-# Create the Signer from the information
-signer = c2pa.Signer.from_info(signer_info)
 
 # Create a manifest definition as a dictionary
 # This examples signs using a V1 manifest
@@ -89,27 +86,21 @@ manifest_definition = {
     ]
 }
 
-# Create the builder with the manifest definition
-builder = c2pa.Builder(manifest_definition)
-
 # Sign the image
 print("\nSigning the image...")
-with open(fixtures_dir + "C.jpg", "rb") as source:
-    # File needs to be opened in write+read mode to be signed
-    # and verified properly.
-    with open(output_dir + "C_signed.jpg", "w+b") as dest:
-        result = builder.sign(signer, "image/jpeg", source, dest)
+with c2pa.Signer.from_info(signer_info) as signer:
+    with c2pa.Builder(manifest_definition) as builder:
+        with open(fixtures_dir + "C.jpg", "rb") as source:
+            # File needs to be opened in write+read mode to be signed
+            # and verified properly.
+            with open(output_dir + "C_signed.jpg", "w+b") as dest:
+                result = builder.sign(signer, "image/jpeg", source, dest)
 
 # Read the signed image to verify
 print("\nReading signed image metadata:")
 with open(output_dir + "C_signed.jpg", "rb") as file:
-    reader = c2pa.Reader("image/jpeg", file)
-    print(reader.json())
-    reader.close()
-
-# Clean up resources manually, since we are not using with statements
-signer.close()
-builder.close()
+    with c2pa.Reader("image/jpeg", file) as reader:
+        print(reader.json())
 
 print("\nExample completed successfully!")
 

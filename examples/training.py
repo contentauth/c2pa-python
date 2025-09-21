@@ -93,8 +93,10 @@ ingredient_json = {
 # V2 signing API example
 try:
     # Read the private key and certificate files
-    key = open(keyFile,"rb").read()
-    certs = open(pemFile,"rb").read()
+    with open(keyFile, "rb") as key_file:
+        key = key_file.read()
+    with open(pemFile, "rb") as cert_file:
+        certs = cert_file.read()
 
     # Create a signer using the new API
     signer_info = c2pa.C2paSignerInfo(
@@ -103,66 +105,56 @@ try:
         private_key=key,
         ta_url=b"http://timestamp.digicert.com"
     )
-    signer = c2pa.Signer.from_info(signer_info)
 
-    # Create the builder
-    builder = c2pa.Builder(manifest_json)
+    with c2pa.Signer.from_info(signer_info) as signer:
+        with c2pa.Builder(manifest_json) as builder:
+            # Add the thumbnail resource using a stream
+            with open(fixtures_dir + "A_thumbnail.jpg", "rb") as thumbnail_file:
+                builder.add_resource("thumbnail", thumbnail_file)
 
-    # Add the thumbnail resource using a stream
-    with open(fixtures_dir + "A_thumbnail.jpg", "rb") as thumbnail_file:
-        builder.add_resource("thumbnail", thumbnail_file)
+            # Add the ingredient using the correct method
+            with open(fixtures_dir + "A_thumbnail.jpg", "rb") as ingredient_file:
+                builder.add_ingredient(json.dumps(ingredient_json), "image/jpeg", ingredient_file)
 
-    # Add the ingredient using the correct method
-    with open(fixtures_dir + "A_thumbnail.jpg", "rb") as ingredient_file:
-        builder.add_ingredient(json.dumps(ingredient_json), "image/jpeg", ingredient_file)
+            if os.path.exists(testOutputFile):
+                os.remove(testOutputFile)
 
-    if os.path.exists(testOutputFile):
-        os.remove(testOutputFile)
+            # Sign the file using the stream-based sign method
+            with open(testFile, "rb") as source_file:
+                with open(testOutputFile, "w+b") as dest_file:
+                    result = builder.sign(signer, "image/jpeg", source_file, dest_file)
 
-    # Sign the file using the stream-based sign method
-    with open(testFile, "rb") as source_file:
-        with open(testOutputFile, "w+b") as dest_file:
-            result = builder.sign(signer, "image/jpeg", source_file, dest_file)
-
-    # As an alternative, you can also use file paths directly during signing:
-    # builder.sign_file(testFile, testOutputFile, signer)
-
-    # Clean up native resources (using a with statement works too!)
-    signer.close()
-    builder.close()
+            # As an alternative, you can also use file paths directly during signing:
+            # builder.sign_file(testFile, testOutputFile, signer)
 
 except Exception as err:
-    print("Exception during signing: ", err)
+    print(f"Exception during signing: {err}")
 
-print("\nSuccessfully added do not train manifest to file " + testOutputFile)
+print(f"\nSuccessfully added do not train manifest to file {testOutputFile}")
 
 # now verify the asset and check the manifest for a do not train assertion...
 
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
     # Create reader using the Reader API
-    reader = c2pa.Reader(testOutputFile)
+    with c2pa.Reader(testOutputFile) as reader:
+        # Retrieve the manifest store
+        manifest_store = json.loads(reader.json())
 
-    # Retrieve the manifest store
-    manifest_store = json.loads(reader.json())
+        # Look at data in the active manifest
+        manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+        for assertion in manifest["assertions"]:
+            if assertion["label"] == "cawg.training-mining":
+                if getitem(assertion, ("data","entries","cawg.ai_generative_training","use")) == "notAllowed":
+                    allowed = False
 
-    # Look at data in the active manifest
-    manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-    for assertion in manifest["assertions"]:
-        if assertion["label"] == "cawg.training-mining":
-            if getitem(assertion, ("data","entries","cawg.ai_generative_training","use")) == "notAllowed":
-                allowed = False
-
-    # Get the ingredient thumbnail and save it to a file using resource_to_stream
-    uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
-    with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
-        reader.resource_to_stream(uri, thumbnail_output)
-
-    # Clean up native resources (using a with statement works too!)
-    reader.close()
+        # Get the ingredient thumbnail and save it to a file using resource_to_stream
+        uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
+        with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
+            reader.resource_to_stream(uri, thumbnail_output)
 
 except Exception as err:
-    print("Exception during assertions reading: ", err)
+    print(f"Exception during assertions reading: {err}")
 
 if allowed:
     print("Training is allowed")
