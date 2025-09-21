@@ -567,8 +567,8 @@ def _convert_to_py_string(value) -> str:
         # Only if we got a valid pointer with valid content
         if ptr and ptr.value is not None:
             try:
-                py_string = ptr.value.decode('utf-8', errors='replace')
-            except Exception:
+                py_string = ptr.value.decode('utf-8', errors='strict')
+            except UnicodeDecodeError:
                 py_string = ""
             finally:
                 # Only free if we have a valid pointer
