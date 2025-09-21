@@ -23,6 +23,7 @@ from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library
 import mimetypes
+from itertools import count
 
 # Create a module-specific logger
 logger = logging.getLogger("c2pa")
@@ -926,16 +927,11 @@ def sign_file(
 
 
 class Stream:
-    # Class-level counter for generating unique stream IDs
+    # Class-level atomic counter for generating unique stream IDs
     # (useful for tracing streams usage in debug)
-    _next_stream_id = 0
+    _stream_id_counter = count(start=0, step=1)
+
     # Maximum value for a 32-bit signed integer (2^31 - 1)
-    # This prevents integer overflow which could cause:
-    # 1. Unexpected behavior in stream ID generation
-    # 2. Potential security issues if IDs wrap around
-    # 3. Memory issues if the number grows too large
-    # When this limit is reached, we reset to 0 since the timestamp component
-    # of the stream ID ensures uniqueness even after counter reset
     _MAX_STREAM_ID = 2**31 - 1
 
     # Class-level error messages to avoid multiple creation
@@ -972,11 +968,17 @@ class Stream:
         self._initialized = False
         self._stream = None
 
-        # Generate unique stream ID using object ID and counter
-        if Stream._next_stream_id >= Stream._MAX_STREAM_ID:  # pragma: no cover
-            Stream._next_stream_id = 0
-        self._stream_id = f"{id(self)}-{Stream._next_stream_id}"
-        Stream._next_stream_id += 1
+        # Generate unique stream ID using object ID and atomic counter
+        # Get next atomic counter value
+        stream_counter = next(Stream._stream_id_counter)
+
+        # Handle counter overflow by resetting the counter
+        if stream_counter >= Stream._MAX_STREAM_ID:  # pragma: no cover
+            # Reset the counter to 0 and get the next value
+            Stream._stream_id_counter = count(start=0, step=1)
+            stream_counter = next(Stream._stream_id_counter)
+
+        self._stream_id = f"{id(self)}-{stream_counter}"
 
         # Rest of the existing initialization code...
         required_methods = ['read', 'write', 'seek', 'tell', 'flush']
