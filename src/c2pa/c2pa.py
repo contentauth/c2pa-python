@@ -2720,28 +2720,51 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         C2paError: If there was an error signing the data
         C2paError.Encoding: If the private key contains invalid UTF-8 chars
     """
-    data_array = (ctypes.c_ubyte * len(data))(*data)
-    try:
-        key_str = private_key.encode('utf-8')
-    except UnicodeError as e:
-        raise C2paError.Encoding(
-            f"Invalid UTF-8 characters in private key: {str(e)}")
+    # Validate input data
+    if not data:
+        raise C2paError("Data to sign cannot be empty")
 
-    signature_ptr = _lib.c2pa_ed25519_sign(data_array, len(data), key_str)
+    # Validate private key format
+    if not private_key or not isinstance(private_key, str):
+        raise C2paError("Private key must be a non-empty string")
 
-    if not signature_ptr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(error)
-        raise C2paError("Failed to sign data with Ed25519")
+    # Create secure memory buffer for data
+    data_array = None
+    key_bytes = None
 
     try:
-        # Ed25519 signatures are always 64 bytes
-        signature = bytes(signature_ptr[:64])
+        # Create data array with size validation
+        data_size = len(data)
+        data_array = (ctypes.c_ubyte * data_size)(*data)
+
+        # Encode private key to bytes
+        try:
+            key_bytes = private_key.encode('utf-8')
+        except UnicodeError as e:
+            raise C2paError.Encoding(
+                f"Invalid UTF-8 characters in private key: {str(e)}")
+
+        # Perform the signing operation
+        signature_ptr = _lib.c2pa_ed25519_sign(data_array, data_size, key_bytes)
+
+        if not signature_ptr:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError("Failed to sign data with Ed25519")
+
+        try:
+            # Ed25519 signatures are always 64 bytes
+            signature = bytes(signature_ptr[:64])
+        finally:
+            _lib.c2pa_signature_free(signature_ptr)
+
+        return signature
+
     finally:
-        _lib.c2pa_signature_free(signature_ptr)
-
-    return signature
+        if key_bytes:
+            ctypes.memset(key_bytes, 0, len(key_bytes))
+            del key_bytes
 
 
 __all__ = [
