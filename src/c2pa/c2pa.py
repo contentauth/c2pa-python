@@ -69,7 +69,6 @@ _REQUIRED_FUNCTIONS = [
 ]
 
 
-
 def _validate_library_exports(lib):
     """Validate that all required functions are present in the loaded library.
 
