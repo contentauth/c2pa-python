@@ -1381,34 +1381,33 @@ class Reader:
                         str(e)))
 
             try:
-                # Open the file and create a stream
-                file = open(path, 'rb')
-                self._own_stream = Stream(file)
+                # Use context manager for automatic file cleanup
+                with open(path, 'rb') as file:
+                    self._own_stream = Stream(file)
 
-                self._reader = _lib.c2pa_reader_from_stream(
-                    mime_type_str,
-                    self._own_stream._stream
-                )
-
-                if not self._reader:
-                    self._own_stream.close()
-                    file.close()
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
-                        )
+                    self._reader = _lib.c2pa_reader_from_stream(
+                        mime_type_str,
+                        self._own_stream._stream
                     )
 
-                # Store the file to close it later
-                self._backing_file = file
+                    if not self._reader:
+                        self._own_stream.close()
+                        error = _parse_operation_result_for_error(
+                            _lib.c2pa_error())
+                        if error:
+                            raise C2paError(error)
+                        raise C2paError(
+                            Reader._ERROR_MESSAGES['reader_error'].format(
+                                "Unknown error"
+                            )
+                        )
 
-                self._initialized = True
+                    # Store the file to close it later
+                    self._backing_file = file
+                    self._initialized = True
 
             except Exception as e:
+                # File automatically closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
                 if hasattr(self, '_backing_file') and self._backing_file:
@@ -1427,50 +1426,50 @@ class Reader:
                     f"Reader does not support {format_or_path}")
 
             try:
-                file = open(stream, 'rb')
-                self._own_stream = Stream(file)
+                # Use context manager for automatic file cleanup
+                with open(stream, 'rb') as file:
+                    self._own_stream = Stream(file)
 
-                format_str = str(format_or_path)
-                format_bytes = format_str.encode('utf-8')
+                    format_str = str(format_or_path)
+                    format_bytes = format_str.encode('utf-8')
 
-                if manifest_data is None:
-                    self._reader = _lib.c2pa_reader_from_stream(
-                        format_bytes, self._own_stream._stream)
-                else:
-                    if not isinstance(manifest_data, bytes):
-                        raise TypeError(
-                            Reader._ERROR_MESSAGES['manifest_error'])
-                    manifest_array = (
-                        ctypes.c_ubyte *
-                        len(manifest_data))(
-                        *
-                        manifest_data)
-                    self._reader = (
-                        _lib.c2pa_reader_from_manifest_data_and_stream(
-                            format_bytes,
-                            self._own_stream._stream,
-                            manifest_array,
-                            len(manifest_data),
+                    if manifest_data is None:
+                        self._reader = _lib.c2pa_reader_from_stream(
+                            format_bytes, self._own_stream._stream)
+                    else:
+                        if not isinstance(manifest_data, bytes):
+                            raise TypeError(
+                                Reader._ERROR_MESSAGES['manifest_error'])
+                        manifest_array = (
+                            ctypes.c_ubyte *
+                            len(manifest_data))(
+                            *
+                            manifest_data)
+                        self._reader = (
+                            _lib.c2pa_reader_from_manifest_data_and_stream(
+                                format_bytes,
+                                self._own_stream._stream,
+                                manifest_array,
+                                len(manifest_data),
+                            )
                         )
-                    )
 
-                if not self._reader:
-                    self._own_stream.close()
-                    file.close()
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
+                    if not self._reader:
+                        self._own_stream.close()
+                        error = _parse_operation_result_for_error(
+                            _lib.c2pa_error())
+                        if error:
+                            raise C2paError(error)
+                        raise C2paError(
+                            Reader._ERROR_MESSAGES['reader_error'].format(
+                                "Unknown error"
+                            )
                         )
-                    )
 
-                self._backing_file = file
-
-                self._initialized = True
+                    self._backing_file = file
+                    self._initialized = True
             except Exception as e:
+                # File automatically closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
                 if hasattr(self, '_backing_file') and self._backing_file:
@@ -2745,7 +2744,11 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
                 f"Invalid UTF-8 characters in private key: {str(e)}")
 
         # Perform the signing operation
-        signature_ptr = _lib.c2pa_ed25519_sign(data_array, data_size, key_bytes)
+        signature_ptr = _lib.c2pa_ed25519_sign(
+            data_array,
+            data_size,
+            key_bytes
+        )
 
         if not signature_ptr:
             error = _parse_operation_result_for_error(_lib.c2pa_error())

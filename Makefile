@@ -94,6 +94,7 @@ publish: release
 
 # Code analysis
 check-format:
+	python3 -m py_compile src/c2pa/c2pa.py
 	flake8 src/c2pa/c2pa.py
 
 # Formats Python source code using autopep8 with aggressive settings
