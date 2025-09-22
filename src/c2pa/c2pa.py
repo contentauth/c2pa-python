@@ -569,7 +569,7 @@ def _convert_to_py_string(value) -> str:
         if ptr and ptr.value is not None:
             try:
                 py_string = ptr.value.decode('utf-8', errors='strict')
-            except UnicodeDecodeError:
+            except Exception:
                 py_string = ""
             finally:
                 # Only free if we have a valid pointer
@@ -927,8 +927,8 @@ def sign_file(
 
 
 class Stream:
-    # Class-level atomic counter for generating unique stream IDs
-    # (useful for tracing streams usage in debug)
+    # Class-level somewhat atomic counter for generating
+    #  unique stream IDs (useful for tracing streams usage in debug)
     _stream_id_counter = count(start=0, step=1)
 
     # Maximum value for a 32-bit signed integer (2^31 - 1)
@@ -968,8 +968,7 @@ class Stream:
         self._initialized = False
         self._stream = None
 
-        # Generate unique stream ID using object ID and atomic counter
-        # Get next atomic counter value
+        # Generate unique stream ID using object ID and counter
         stream_counter = next(Stream._stream_id_counter)
 
         # Handle counter overflow by resetting the counter
@@ -1381,7 +1380,6 @@ class Reader:
                         str(e)))
 
             try:
-                # Use context manager for automatic file cleanup
                 with open(path, 'rb') as file:
                     self._own_stream = Stream(file)
 
@@ -1426,7 +1424,6 @@ class Reader:
                     f"Reader does not support {format_or_path}")
 
             try:
-                # Use context manager for automatic file cleanup
                 with open(stream, 'rb') as file:
                     self._own_stream = Stream(file)
 
@@ -1469,7 +1466,7 @@ class Reader:
                     self._backing_file = file
                     self._initialized = True
             except Exception as e:
-                # File automatically closed by context manager
+                # File closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
                 if hasattr(self, '_backing_file') and self._backing_file:
@@ -2719,11 +2716,9 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         C2paError: If there was an error signing the data
         C2paError.Encoding: If the private key contains invalid UTF-8 chars
     """
-    # Validate input data
     if not data:
         raise C2paError("Data to sign cannot be empty")
 
-    # Validate private key format
     if not private_key or not isinstance(private_key, str):
         raise C2paError("Private key must be a non-empty string")
 
