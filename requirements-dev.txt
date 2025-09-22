@@ -17,3 +17,9 @@ flake8==7.3.0
 
 # Test dependencies (for callback signers)
 cryptography==45.0.6
+ 
+# Documentation
+Sphinx>=7.3.0
+sphinx-autoapi>=3.0.0
+myst-parser>=2.0.0
+furo>=2024.0.0

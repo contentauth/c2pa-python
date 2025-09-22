@@ -13,7 +13,7 @@
 
 import os
 import sys
-import requests
+import requests  # type: ignore
 from pathlib import Path
 import zipfile
 import io
@@ -53,8 +53,7 @@ def download_artifact(url: str, platform_name: str) -> None:
         # Extract all files to the platform directory
         zip_ref.extractall(platform_dir)
 
-    print(f"Successfully downloaded and extracted artifacts for {
-          platform_name}")
+    print(f"Successfully downloaded and extracted artifacts for {platform_name}")
 
 
 def download_artifacts() -> None:
@@ -95,7 +94,7 @@ def download_artifacts() -> None:
 def inject_version():
     """Inject the version from pyproject.toml
     into src/c2pa/__init__.py as __version__."""
-    import toml
+    import toml  # type: ignore
     pyproject_path = os.path.abspath(
         os.path.join(
             os.path.dirname(__file__),
