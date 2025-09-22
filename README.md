@@ -36,6 +36,10 @@ See the [`examples` directory](https://github.com/contentauth/c2pa-python/tree/m
 - `examples/sign.py` shows how to sign and verify an asset with a C2PA manifest.
 - `examples/training.py` demonstrates how to add a "Do Not Train" assertion to an asset and verify it.
 
+## API reference documentation
+
+See [the section in Contributing to the project](https://github.com/contentauth/c2pa-python/blob/main/docs/project-contributions.md#api-reference-documentation).
+
 ## Contributing
 
 Contributions are welcome!  For more information, see [Contributing to the project](https://github.com/contentauth/c2pa-python/blob/main/docs/project-contributions.md).

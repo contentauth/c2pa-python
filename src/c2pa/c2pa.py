@@ -706,24 +706,14 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
 
 def read_ingredient_file(
         path: Union[str, Path], data_dir: Union[str, Path]) -> str:
-    """Read a file as C2PA ingredient.
+    """Read a file as C2PA ingredient (deprecated).
     This creates the JSON string that would be used as the ingredient JSON.
 
     .. deprecated:: 0.11.0
         This function is deprecated and will be removed in a future version.
-        Please use the Reader class for reading C2PA metadata instead.
-        Example:
-            ```python
-            with Reader(path) as reader:
-                manifest_json = reader.json()
-            ```
-
-        To add ingredients to a manifest, please use the Builder class.
-        Example:
-            ```
-            with open(ingredient_file_path, 'rb') as f:
-                builder.add_ingredient(ingredient_json, "image/jpeg", f)
-            ```
+        To read C2PA metadata, use the :class:`c2pa.c2pa.Reader` class.
+        To add ingredients to a manifest,
+        use :meth:`c2pa.c2pa.Builder.add_ingredient` instead.
 
     Args:
         path: Path to the file to read
@@ -766,16 +756,11 @@ def read_ingredient_file(
 
 def read_file(path: Union[str, Path],
               data_dir: Union[str, Path]) -> str:
-    """Read a C2PA manifest from a file.
+    """Read a C2PA manifest from a file (deprecated).
 
     .. deprecated:: 0.10.0
         This function is deprecated and will be removed in a future version.
-        Please use the Reader class for reading C2PA metadata instead.
-        Example:
-            ```python
-            with Reader(path) as reader:
-                manifest_json = reader.json()
-            ```
+        To read C2PA metadata, use the :class:`c2pa.c2pa.Reader` class.
 
     Args:
         path: Path to the file to read
@@ -845,7 +830,7 @@ def sign_file(
     signer_or_info: Union[C2paSignerInfo, 'Signer'],
     return_manifest_as_bytes: bool = False
 ) -> Union[str, bytes]:
-    """Sign a file with a C2PA manifest.
+    """Sign a file with a C2PA manifest (deprecated).
     For now, this function is left here to provide a backwards-compatible API.
 
     .. deprecated:: 0.13.0
@@ -1123,9 +1108,14 @@ class Stream:
         self._write_cb = WriteCallback(write_callback)
         self._flush_cb = FlushCallback(flush_callback)
 
+        # Create a placeholder context as we don't actually use the context,
+        # but we need having a valid context pointer. Therefore, we create
+        # a small buffer and cast it to a StreamContext pointer
+        self._context = ctypes.create_string_buffer(1)
+
         # Create the stream
         self._stream = _lib.c2pa_create_stream(
-            None,  # context
+            ctypes.cast(self._context, ctypes.POINTER(StreamContext)),
             self._read_cb,
             self._seek_cb,
             self._write_cb,
@@ -1242,7 +1232,15 @@ class Stream:
 
 
 class Reader:
-    """High-level wrapper for C2PA Reader operations."""
+    """High-level wrapper for C2PA Reader operations.
+
+    Example:
+        ```
+        with Reader("image/jpeg", output) as reader:
+            manifest_json = reader.json()
+        ```
+        Where `output` is either an in-memory stream or an opened file.
+    """
 
     # Supported mimetypes cache
     _supported_mime_types_cache = None
@@ -2309,6 +2307,12 @@ class Builder:
             C2paError: If there was an error adding the ingredient
             C2paError.Encoding: If the ingredient JSON contains
               invalid UTF-8 characters
+
+        Example:
+            ```
+            with open(ingredient_file_path, 'rb') as a_file:
+                builder.add_ingredient(ingredient_json, "image/jpeg", a_file)
+            ```
         """
         return self.add_ingredient_from_stream(ingredient_json, format, source)
 
@@ -2366,7 +2370,7 @@ class Builder:
             ingredient_json: str,
             format: str,
             filepath: Union[str, Path]):
-        """Add an ingredient from a file path to the builder.
+        """Add an ingredient from a file path to the builder (deprecated).
         This is a legacy method.
 
         .. deprecated:: 0.13.0
@@ -2635,7 +2639,7 @@ def create_signer(
     certs: str,
     tsa_url: Optional[str] = None
 ) -> Signer:
-    """Create a signer from a callback function.
+    """Create a signer from a callback function (deprecated).
 
     .. deprecated:: 0.11.0
         This function is deprecated and will be removed in a future version.
@@ -2670,7 +2674,7 @@ def create_signer(
 
 
 def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
-    """Create a signer from signer information.
+    """Create a signer from signer information (deprecated).
 
     .. deprecated:: 0.11.0
         This function is deprecated and will be removed in a future version.
