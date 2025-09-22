@@ -23,6 +23,7 @@ from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library
 import mimetypes
+from itertools import count
 
 # Create a module-specific logger
 logger = logging.getLogger("c2pa")
@@ -567,7 +568,7 @@ def _convert_to_py_string(value) -> str:
         # Only if we got a valid pointer with valid content
         if ptr and ptr.value is not None:
             try:
-                py_string = ptr.value.decode('utf-8', errors='replace')
+                py_string = ptr.value.decode('utf-8', errors='strict')
             except Exception:
                 py_string = ""
             finally:
@@ -911,16 +912,11 @@ def sign_file(
 
 
 class Stream:
-    # Class-level counter for generating unique stream IDs
-    # (useful for tracing streams usage in debug)
-    _next_stream_id = 0
+    # Class-level somewhat atomic counter for generating
+    #  unique stream IDs (useful for tracing streams usage in debug)
+    _stream_id_counter = count(start=0, step=1)
+
     # Maximum value for a 32-bit signed integer (2^31 - 1)
-    # This prevents integer overflow which could cause:
-    # 1. Unexpected behavior in stream ID generation
-    # 2. Potential security issues if IDs wrap around
-    # 3. Memory issues if the number grows too large
-    # When this limit is reached, we reset to 0 since the timestamp component
-    # of the stream ID ensures uniqueness even after counter reset
     _MAX_STREAM_ID = 2**31 - 1
 
     # Class-level error messages to avoid multiple creation
@@ -958,10 +954,15 @@ class Stream:
         self._stream = None
 
         # Generate unique stream ID using object ID and counter
-        if Stream._next_stream_id >= Stream._MAX_STREAM_ID:  # pragma: no cover
-            Stream._next_stream_id = 0
-        self._stream_id = f"{id(self)}-{Stream._next_stream_id}"
-        Stream._next_stream_id += 1
+        stream_counter = next(Stream._stream_id_counter)
+
+        # Handle counter overflow by resetting the counter
+        if stream_counter >= Stream._MAX_STREAM_ID:  # pragma: no cover
+            # Reset the counter to 0 and get the next value
+            Stream._stream_id_counter = count(start=0, step=1)
+            stream_counter = next(Stream._stream_id_counter)
+
+        self._stream_id = f"{id(self)}-{stream_counter}"
 
         # Rest of the existing initialization code...
         required_methods = ['read', 'write', 'seek', 'tell', 'flush']
@@ -1372,34 +1373,32 @@ class Reader:
                         str(e)))
 
             try:
-                # Open the file and create a stream
-                file = open(path, 'rb')
-                self._own_stream = Stream(file)
+                with open(path, 'rb') as file:
+                    self._own_stream = Stream(file)
 
-                self._reader = _lib.c2pa_reader_from_stream(
-                    mime_type_str,
-                    self._own_stream._stream
-                )
-
-                if not self._reader:
-                    self._own_stream.close()
-                    file.close()
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
-                        )
+                    self._reader = _lib.c2pa_reader_from_stream(
+                        mime_type_str,
+                        self._own_stream._stream
                     )
 
-                # Store the file to close it later
-                self._backing_file = file
+                    if not self._reader:
+                        self._own_stream.close()
+                        error = _parse_operation_result_for_error(
+                            _lib.c2pa_error())
+                        if error:
+                            raise C2paError(error)
+                        raise C2paError(
+                            Reader._ERROR_MESSAGES['reader_error'].format(
+                                "Unknown error"
+                            )
+                        )
 
-                self._initialized = True
+                    # Store the file to close it later
+                    self._backing_file = file
+                    self._initialized = True
 
             except Exception as e:
+                # File automatically closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
                 if hasattr(self, '_backing_file') and self._backing_file:
@@ -1418,50 +1417,49 @@ class Reader:
                     f"Reader does not support {format_or_path}")
 
             try:
-                file = open(stream, 'rb')
-                self._own_stream = Stream(file)
+                with open(stream, 'rb') as file:
+                    self._own_stream = Stream(file)
 
-                format_str = str(format_or_path)
-                format_bytes = format_str.encode('utf-8')
+                    format_str = str(format_or_path)
+                    format_bytes = format_str.encode('utf-8')
 
-                if manifest_data is None:
-                    self._reader = _lib.c2pa_reader_from_stream(
-                        format_bytes, self._own_stream._stream)
-                else:
-                    if not isinstance(manifest_data, bytes):
-                        raise TypeError(
-                            Reader._ERROR_MESSAGES['manifest_error'])
-                    manifest_array = (
-                        ctypes.c_ubyte *
-                        len(manifest_data))(
-                        *
-                        manifest_data)
-                    self._reader = (
-                        _lib.c2pa_reader_from_manifest_data_and_stream(
-                            format_bytes,
-                            self._own_stream._stream,
-                            manifest_array,
-                            len(manifest_data),
+                    if manifest_data is None:
+                        self._reader = _lib.c2pa_reader_from_stream(
+                            format_bytes, self._own_stream._stream)
+                    else:
+                        if not isinstance(manifest_data, bytes):
+                            raise TypeError(
+                                Reader._ERROR_MESSAGES['manifest_error'])
+                        manifest_array = (
+                            ctypes.c_ubyte *
+                            len(manifest_data))(
+                            *
+                            manifest_data)
+                        self._reader = (
+                            _lib.c2pa_reader_from_manifest_data_and_stream(
+                                format_bytes,
+                                self._own_stream._stream,
+                                manifest_array,
+                                len(manifest_data),
+                            )
                         )
-                    )
 
-                if not self._reader:
-                    self._own_stream.close()
-                    file.close()
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
+                    if not self._reader:
+                        self._own_stream.close()
+                        error = _parse_operation_result_for_error(
+                            _lib.c2pa_error())
+                        if error:
+                            raise C2paError(error)
+                        raise C2paError(
+                            Reader._ERROR_MESSAGES['reader_error'].format(
+                                "Unknown error"
+                            )
                         )
-                    )
 
-                self._backing_file = file
-
-                self._initialized = True
+                    self._backing_file = file
+                    self._initialized = True
             except Exception as e:
+                # File closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
                 if hasattr(self, '_backing_file') and self._backing_file:
@@ -2717,28 +2715,53 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         C2paError: If there was an error signing the data
         C2paError.Encoding: If the private key contains invalid UTF-8 chars
     """
-    data_array = (ctypes.c_ubyte * len(data))(*data)
-    try:
-        key_str = private_key.encode('utf-8')
-    except UnicodeError as e:
-        raise C2paError.Encoding(
-            f"Invalid UTF-8 characters in private key: {str(e)}")
+    if not data:
+        raise C2paError("Data to sign cannot be empty")
 
-    signature_ptr = _lib.c2pa_ed25519_sign(data_array, len(data), key_str)
+    if not private_key or not isinstance(private_key, str):
+        raise C2paError("Private key must be a non-empty string")
 
-    if not signature_ptr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(error)
-        raise C2paError("Failed to sign data with Ed25519")
+    # Create secure memory buffer for data
+    data_array = None
+    key_bytes = None
 
     try:
-        # Ed25519 signatures are always 64 bytes
-        signature = bytes(signature_ptr[:64])
+        # Create data array with size validation
+        data_size = len(data)
+        data_array = (ctypes.c_ubyte * data_size)(*data)
+
+        # Encode private key to bytes
+        try:
+            key_bytes = private_key.encode('utf-8')
+        except UnicodeError as e:
+            raise C2paError.Encoding(
+                f"Invalid UTF-8 characters in private key: {str(e)}")
+
+        # Perform the signing operation
+        signature_ptr = _lib.c2pa_ed25519_sign(
+            data_array,
+            data_size,
+            key_bytes
+        )
+
+        if not signature_ptr:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError("Failed to sign data with Ed25519")
+
+        try:
+            # Ed25519 signatures are always 64 bytes
+            signature = bytes(signature_ptr[:64])
+        finally:
+            _lib.c2pa_signature_free(signature_ptr)
+
+        return signature
+
     finally:
-        _lib.c2pa_signature_free(signature_ptr)
-
-    return signature
+        if key_bytes:
+            ctypes.memset(key_bytes, 0, len(key_bytes))
+            del key_bytes
 
 
 __all__ = [
