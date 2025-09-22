@@ -712,7 +712,8 @@ def read_ingredient_file(
     .. deprecated:: 0.11.0
         This function is deprecated and will be removed in a future version.
         To read C2PA metadata, use the :class:`c2pa.c2pa.Reader` class.
-        To add ingredients to a manifest, use :meth:`c2pa.c2pa.Builder.add_ingredient`.
+        To add ingredients to a manifest,
+        use :meth:`c2pa.c2pa.Builder.add_ingredient` instead.
 
     Args:
         path: Path to the file to read
@@ -1227,8 +1228,8 @@ class Stream:
 
 class Reader:
     """High-level wrapper for C2PA Reader operations.
-    
-    Example: 
+
+    Example:
         ```
         with Reader("image/jpeg", output) as reader:
             manifest_json = reader.json()
@@ -2301,7 +2302,7 @@ class Builder:
             C2paError: If there was an error adding the ingredient
             C2paError.Encoding: If the ingredient JSON contains
               invalid UTF-8 characters
-        
+
         Example:
             ```
             with open(ingredient_file_path, 'rb') as a_file:

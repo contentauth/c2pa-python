@@ -1124,7 +1124,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Settings are global, so we reset to the default "true" here
+        # Settings are thread-local, so we reset to the default "true" here
         load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
     def test_builder_sign_with_duplicate_ingredient(self):
