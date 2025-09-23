@@ -1109,14 +1109,9 @@ class Stream:
         self._write_cb = WriteCallback(write_callback)
         self._flush_cb = FlushCallback(flush_callback)
 
-        # Create a placeholder context as we don't actually use the context,
-        # but we need having a valid context pointer. Therefore, we create
-        # a small buffer and cast it to a StreamContext pointer
-        self._context = ctypes.create_string_buffer(1)
-
         # Create the stream
         self._stream = _lib.c2pa_create_stream(
-            ctypes.cast(self._context, ctypes.POINTER(StreamContext)),
+            None,
             self._read_cb,
             self._seek_cb,
             self._write_cb,
