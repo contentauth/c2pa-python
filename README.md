@@ -14,7 +14,7 @@ Features:
 
 ## Prerequisites
 
-This library requires Python version 3.10+.
+This library requires Python version 3.9+.
 
 ## Package installation
 
