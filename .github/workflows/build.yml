@@ -60,7 +60,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.9"
           cache: "pip"
 
       - name: Install project dependencies
@@ -114,7 +114,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.9"
           cache: "pip"
 
       - name: Install project dependencies
@@ -212,7 +212,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.9"
           cache: "pip"
 
       - name: Download wheel artifacts
@@ -289,7 +289,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.9"
           cache: "pip"
 
       - name: Download wheel artifacts
@@ -380,7 +380,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.9"
           cache: "pip"
 
       - name: Download wheel artifacts
