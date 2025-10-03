@@ -1714,6 +1714,7 @@ class Reader:
         url_str = _convert_to_py_string(result)
         return url_str
 
+
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
 
