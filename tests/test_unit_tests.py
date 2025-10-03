@@ -96,6 +96,7 @@ class TestReader(unittest.TestCase):
             self.assertEqual(non_active_manifest["label"], non_active_label)
 
             # Verify it's not the active manifest
+            # (that test case has only one other manifest that is not the active manifest)
             active_manifest = reader.get_active_manifest()
             self.assertNotEqual(non_active_manifest, active_manifest)
             self.assertNotEqual(non_active_manifest["label"], active_manifest["label"])
@@ -105,7 +106,7 @@ class TestReader(unittest.TestCase):
         with open(video_path, "rb") as file:
             reader = Reader("video/mp4", file)
 
-            # Try to get a manifest with a label that clearly doesn't exist
+            # Try to get a manifest with a label that clearly doesn't exist...
             non_existing_label = "urn:uuid:clearly-not-existing"
             with self.assertRaises(KeyError):
                 reader.get_manifest_by_label(non_existing_label)
@@ -125,7 +126,6 @@ class TestReader(unittest.TestCase):
             self.assertIsNotNone(validation_results)
             self.assertIsInstance(validation_results, dict)
 
-            # Verify some active manifest validation results
             self.assertIn("activeManifest", validation_results)
             active_manifest_results = validation_results["activeManifest"]
             self.assertIsInstance(active_manifest_results, dict)
