@@ -1661,16 +1661,6 @@ class Reader:
             C2paError: If there was an error getting the manifest JSON
             KeyError: If the active_manifest key is missing from the JSON
             ValueError: If the active manifest ID is not found in the manifests
-
-        Example:
-            ```python
-            with Reader("image/jpeg", file) as reader:
-                active_manifest = reader.get_active_manifest()
-                print(f"Title: {active_manifest['title']}")
-                print(f"Format: {active_manifest['format']}")
-                for assertion in active_manifest['assertions']:
-                    print(f"Assertion: {assertion['label']}")
-            ```
         """
         # Get the full manifest JSON
         manifest_json_str = self.json()
