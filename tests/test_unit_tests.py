@@ -342,6 +342,94 @@ class TestReader(unittest.TestCase):
         with self.assertRaises(Error):
             reader.json()
 
+    def test_reader_is_embedded(self):
+        """Test the is_embedded method returns correct values for embedded and remote manifests."""
+
+        # Test with a fixture which has an embedded manifest
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            self.assertTrue(reader.is_embedded())
+            reader.close()
+
+        # Test with cloud.jpg fixture which has a remote manifest (not embedded)
+        cloud_fixture_path = os.path.join(self.data_dir, "cloud.jpg")
+        with Reader("image/jpeg", cloud_fixture_path) as reader:
+            self.assertFalse(reader.is_embedded())
+
+    def test_sign_and_read_is_not_embedded(self):
+        """Test the is_embedded method returns correct values for embedded and remote manifests."""
+
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            key = key_file.read()
+
+        # Create signer info and signer
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com"
+        )
+        signer = Signer.from_info(signer_info)
+
+        # Define a simple manifest
+        manifest_definition = {
+            "claim_generator": "python_test",
+            "claim_generator_info": [{
+                "name": "python_test",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Image",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # Create a temporary directory for the signed file
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_file_path = os.path.join(temp_dir, "signed_test_file_no_embed.jpg")
+
+            with open(self.testPath, "rb") as file:
+                builder = Builder(manifest_definition)
+                # Direct the Builder not to embed the manifest into the asset
+                builder.set_no_embed()
+
+
+                with open(temp_file_path, "wb") as temp_file:
+                    manifest_data = builder.sign(
+                        signer, "image/jpeg", file, temp_file)
+
+                with Reader("image/jpeg", temp_file_path, manifest_data) as reader:
+                    self.assertFalse(reader.is_embedded())
+
+    def test_reader_get_remote_url(self):
+        """Test the get_remote_url method returns correct values for embedded and remote manifests."""
+
+        # Test get_remote_url for file with embedded manifest (should return None)
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            self.assertIsNone(reader.get_remote_url())
+            reader.close()
+
+        # Test remote manifest using cloud.jpg fixture which has a remote URL
+        cloud_fixture_path = os.path.join(self.data_dir, "cloud.jpg")
+        with Reader("image/jpeg", cloud_fixture_path) as reader:
+            remote_url = reader.get_remote_url()
+            self.assertEqual(remote_url, "https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391")
+            self.assertFalse(reader.is_embedded())
+
     # TODO: Unskip once fixed configuration to read data is clarified
     # def test_read_cawg_data_file(self):
     #     """Test reading C2PA metadata from C_with_CAWG_data.jpg file."""

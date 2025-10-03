@@ -64,6 +64,8 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_free_string_array',
     'c2pa_reader_supported_mime_types',
     'c2pa_builder_supported_mime_types',
+    'c2pa_reader_is_embedded',
+    'c2pa_reader_remote_url',
 ]
 
 # TODO Bindings:
@@ -368,6 +370,16 @@ _setup_function(
     _lib.c2pa_reader_supported_mime_types,
     [ctypes.POINTER(ctypes.c_size_t)],
     ctypes.POINTER(ctypes.c_char_p)
+)
+_setup_function(
+    _lib.c2pa_reader_is_embedded,
+    [ctypes.POINTER(C2paReader)],
+    ctypes.c_bool
+)
+_setup_function(
+    _lib.c2pa_reader_remote_url,
+    [ctypes.POINTER(C2paReader)],
+    ctypes.c_void_p
 )
 
 # Set up Builder function prototypes
@@ -1662,6 +1674,45 @@ class Reader:
 
             return result
 
+    def is_embedded(self) -> bool:
+        """Check if the reader was created from an embedded manifest.
+        This method determines whether the C2PA manifest is embedded directly
+        in the asset file or stored remotely.
+        Returns:
+            True if the reader was created from an embedded manifest,
+            False if it was created from a remote manifest
+        Raises:
+            C2paError: If there was an error checking the embedded status
+        """
+        self._ensure_valid_state()
+
+        result = _lib.c2pa_reader_is_embedded(self._reader)
+
+        # c_bool should return a Python bool directly
+        return bool(result)
+
+    def get_remote_url(self) -> Optional[str]:
+        """Get the remote URL of the manifest if it was obtained remotely.
+        This method returns the URL from which the C2PA manifest was fetched
+        if the reader was created from a remote manifest. If the manifest
+        is embedded in the asset, this will return None.
+        Returns:
+            The remote URL as a string if the manifest was obtained remotely,
+            None if the manifest is embedded or no remote URL is available
+        Raises:
+            C2paError: If there was an error getting the remote URL
+        """
+        self._ensure_valid_state()
+
+        result = _lib.c2pa_reader_remote_url(self._reader)
+
+        if result is None:
+            # No remote URL set (manifest is embedded)
+            return None
+
+        # Convert the C string to Python string
+        url_str = _convert_to_py_string(result)
+        return url_str
 
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
