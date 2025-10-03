@@ -64,6 +64,15 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_stream_read_get_active_manifest(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            active_manifest = reader.get_active_manifest()
+
+            # Check the returned manifest label/key
+            expected_label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
+            self.assertEqual(active_manifest["label"], expected_label)
+
     def test_reader_detects_unsupported_mimetype_on_stream(self):
         with open(self.testPath, "rb") as file:
             with self.assertRaises(Error.NotSupported):

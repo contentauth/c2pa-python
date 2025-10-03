@@ -1246,6 +1246,7 @@ class Reader:
         ```
         with Reader("image/jpeg", output) as reader:
             manifest_json = reader.json()
+            active_manifest = reader.get_active_manifest()
         ```
         Where `output` is either an in-memory stream or an opened file.
     """
@@ -1643,6 +1644,58 @@ class Reader:
             raise C2paError("Error during manifest parsing in Reader")
 
         return _convert_to_py_string(result)
+
+    def get_active_manifest(self) -> dict:
+        """Get the active manifest from the manifest store.
+
+        This method retrieves the full manifest JSON and extracts the active
+        manifest based on the active_manifest key.
+
+        Returns:
+            A dictionary containing the active manifest data, including claims,
+            assertions, ingredients, and signature information.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+            KeyError: If the active_manifest key is missing from the JSON
+            ValueError: If the active manifest ID is not found in the manifests
+
+        Example:
+            ```python
+            with Reader("image/jpeg", file) as reader:
+                active_manifest = reader.get_active_manifest()
+                print(f"Title: {active_manifest['title']}")
+                print(f"Format: {active_manifest['format']}")
+                for assertion in active_manifest['assertions']:
+                    print(f"Assertion: {assertion['label']}")
+            ```
+        """
+        # Get the full manifest JSON
+        manifest_json_str = self.json()
+
+        try:
+            # Parse the JSON
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        # Extract the active manifest ID
+        if "active_manifest" not in manifest_data:
+            raise KeyError("No 'active_manifest' key found in manifest data")
+
+        active_manifest_id = manifest_data["active_manifest"]
+
+        # Get the manifests object to retrieve the active manifest from there
+        if "manifests" not in manifest_data:
+            raise KeyError("No 'manifests' key found in manifest data")
+
+        manifests = manifest_data["manifests"]
+
+        # Look up the active manifest
+        if active_manifest_id not in manifests:
+            raise ValueError(f"Active manifest ID '{active_manifest_id}' not found in manifests")
+
+        return manifests[active_manifest_id]
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
