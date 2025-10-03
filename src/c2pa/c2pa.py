@@ -1246,9 +1246,6 @@ class Reader:
         ```
         with Reader("image/jpeg", output) as reader:
             manifest_json = reader.json()
-            active_manifest = reader.get_active_manifest()
-            validation_state = reader.get_validation_state()
-            validation_results = reader.validation_results()
         ```
         Where `output` is either an in-memory stream or an opened file.
     """
