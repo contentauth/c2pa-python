@@ -1660,7 +1660,6 @@ class Reader:
         Raises:
             C2paError: If there was an error getting the manifest JSON
             KeyError: If the active_manifest key is missing from the JSON
-            ValueError: If the active manifest ID is not found in the manifests
         """
         # Self-read to get the JSON
         manifest_json_str = self.json()
@@ -1681,9 +1680,41 @@ class Reader:
 
         manifests = manifest_data["manifests"]
         if active_manifest_id not in manifests:
-            raise ValueError("Active manifest idnot found in manifests")
+            raise KeyError("Active manifest id not found in manifest store")
 
         return manifests[active_manifest_id]
+
+    def get_manifest_by_label(self, label: str) -> dict:
+        """Get a specific manifest from the manifest store by its label.
+
+        This method retrieves the manifest JSON and extracts the manifest
+        that corresponds to the provided manifest label/ID.
+
+        Args:
+            label: The manifest label/ID to look up in the manifest store
+
+        Returns:
+            A dictionary containing the manifest data for the specified label.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+            KeyError: If the manifests key is missing from the JSON
+        """
+        # Self-read to get the JSON
+        manifest_json_str = self.json()
+        try:
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        if "manifests" not in manifest_data:
+            raise KeyError("No 'manifests' key found in manifest data")
+
+        manifests = manifest_data["manifests"]
+        if label not in manifests:
+            raise KeyError("Manifest not found in manifest store")
+
+        return manifests[label]
 
     def get_validation_state(self) -> Optional[str]:
         """Get the validation state of the manifest store.
