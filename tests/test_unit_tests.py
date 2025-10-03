@@ -357,7 +357,7 @@ class TestReader(unittest.TestCase):
             self.assertFalse(reader.is_embedded())
 
     def test_sign_and_read_is_not_embedded(self):
-        """Test the is_embedded method returns correct values for embedded and remote manifests."""
+        """Test the is_embedded method returns correct values for remote manifests."""
 
         with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
             certs = cert_file.read()
