@@ -80,11 +80,9 @@ class TestReader(unittest.TestCase):
             # Test getting manifest by the specific label
             label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
             manifest = reader.get_manifest_by_label(label)
-
-            # Check that we got the correct manifest
             self.assertEqual(manifest["label"], label)
 
-            # Verify it's the same as the active manifest (since there's only one)
+            # It should be the active manifest too, so cross-check
             active_manifest = reader.get_active_manifest()
             self.assertEqual(manifest, active_manifest)
 
@@ -95,8 +93,6 @@ class TestReader(unittest.TestCase):
 
             non_active_label = "urn:uuid:54281c07-ad34-430e-bea5-112a18facf0b"
             non_active_manifest = reader.get_manifest_by_label(non_active_label)
-
-            # Check that we got the correct manifest
             self.assertEqual(non_active_manifest["label"], non_active_label)
 
             # Verify it's not the active manifest
