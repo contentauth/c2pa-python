@@ -73,6 +73,26 @@ class TestReader(unittest.TestCase):
             expected_label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
             self.assertEqual(active_manifest["label"], expected_label)
 
+    def test_stream_read_get_validation_state(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            validation_state = reader.get_validation_state()
+            self.assertIsNotNone(validation_state)
+            self.assertEqual(validation_state, "Valid")
+
+    def test_stream_read_get_validation_results(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            validation_results = reader.get_validation_results()
+
+            self.assertIsNotNone(validation_results)
+            self.assertIsInstance(validation_results, dict)
+
+            # Verify some active manifest validation results
+            self.assertIn("activeManifest", validation_results)
+            active_manifest_results = validation_results["activeManifest"]
+            self.assertIsInstance(active_manifest_results, dict)
+
     def test_reader_detects_unsupported_mimetype_on_stream(self):
         with open(self.testPath, "rb") as file:
             with self.assertRaises(Error.NotSupported):

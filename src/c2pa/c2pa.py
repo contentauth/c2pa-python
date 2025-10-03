@@ -1247,6 +1247,8 @@ class Reader:
         with Reader("image/jpeg", output) as reader:
             manifest_json = reader.json()
             active_manifest = reader.get_active_manifest()
+            validation_state = reader.get_validation_state()
+            validation_results = reader.validation_results()
         ```
         Where `output` is either an in-memory stream or an opened file.
     """
@@ -1693,9 +1695,58 @@ class Reader:
 
         # Look up the active manifest
         if active_manifest_id not in manifests:
-            raise ValueError(f"Active manifest ID '{active_manifest_id}' not found in manifests")
+            raise ValueError("Active manifest idnot found in manifests")
 
         return manifests[active_manifest_id]
+
+    def get_validation_state(self) -> Optional[str]:
+        """Get the validation state of the manifest store.
+
+        This method retrieves the full manifest JSON and extracts the
+        validation_state field, which indicates the overall validation
+        status of the C2PA manifest.
+
+        Returns:
+            The validation state as a string,
+            or None if the validation_state field is not present.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+        """
+        manifest_json_str = self.json()
+        try:
+            # Parse the JSON
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        # Extract the validation_state field
+        return manifest_data.get("validation_state")
+
+    def get_validation_results(self) -> Optional[dict]:
+        """Get the validation results of the manifest store.
+
+        This method retrieves the full manifest JSON and extracts
+        the validation_results object, which contains detailed
+        validation information.
+
+        Returns:
+            The validation results as a dictionary containing
+            validation details, or None if the validation_results
+            field is not present.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+        """
+        manifest_json_str = self.json()
+        try:
+            # Parse the JSON
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        # Extract the validation_results field
+        return manifest_data.get("validation_results")
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
@@ -1766,6 +1817,7 @@ class Reader:
         # Convert the C string to Python string
         url_str = _convert_to_py_string(result)
         return url_str
+
 
 class Signer:
     """High-level wrapper for C2PA Signer operations."""
