@@ -64,6 +64,72 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_get_active_manifest(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            active_manifest = reader.get_active_manifest()
+
+            # Check the returned manifest label/key
+            expected_label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
+            self.assertEqual(active_manifest["label"], expected_label)
+
+    def test_get_manifest_by_label(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+
+            # Test getting manifest by the specific label
+            label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
+            manifest = reader.get_manifest_by_label(label)
+            self.assertEqual(manifest["label"], label)
+
+            # It should be the active manifest too, so cross-check
+            active_manifest = reader.get_active_manifest()
+            self.assertEqual(manifest, active_manifest)
+
+    def test_stream_get_non_active_manifest_by_label(self):
+        video_path = os.path.join(FIXTURES_DIR, "video1.mp4")
+        with open(video_path, "rb") as file:
+            reader = Reader("video/mp4", file)
+
+            non_active_label = "urn:uuid:54281c07-ad34-430e-bea5-112a18facf0b"
+            non_active_manifest = reader.get_manifest_by_label(non_active_label)
+            self.assertEqual(non_active_manifest["label"], non_active_label)
+
+            # Verify it's not the active manifest
+            # (that test case has only one other manifest that is not the active manifest)
+            active_manifest = reader.get_active_manifest()
+            self.assertNotEqual(non_active_manifest, active_manifest)
+            self.assertNotEqual(non_active_manifest["label"], active_manifest["label"])
+
+    def test_stream_get_non_active_manifest_by_label_not_found(self):
+        video_path = os.path.join(FIXTURES_DIR, "video1.mp4")
+        with open(video_path, "rb") as file:
+            reader = Reader("video/mp4", file)
+
+            # Try to get a manifest with a label that clearly doesn't exist...
+            non_existing_label = "urn:uuid:clearly-not-existing"
+            with self.assertRaises(KeyError):
+                reader.get_manifest_by_label(non_existing_label)
+
+    def test_stream_read_get_validation_state(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            validation_state = reader.get_validation_state()
+            self.assertIsNotNone(validation_state)
+            self.assertEqual(validation_state, "Valid")
+
+    def test_stream_read_get_validation_results(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            validation_results = reader.get_validation_results()
+
+            self.assertIsNotNone(validation_results)
+            self.assertIsInstance(validation_results, dict)
+
+            self.assertIn("activeManifest", validation_results)
+            active_manifest_results = validation_results["activeManifest"]
+            self.assertIsInstance(active_manifest_results, dict)
+
     def test_reader_detects_unsupported_mimetype_on_stream(self):
         with open(self.testPath, "rb") as file:
             with self.assertRaises(Error.NotSupported):

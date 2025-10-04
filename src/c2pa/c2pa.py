@@ -1644,6 +1644,122 @@ class Reader:
 
         return _convert_to_py_string(result)
 
+    def get_active_manifest(self) -> dict:
+        """Get the active manifest from the manifest store.
+
+        This method retrieves the full manifest JSON and extracts the active
+        manifest based on the active_manifest key.
+
+        Returns:
+            A dictionary containing the active manifest data, including claims,
+            assertions, ingredients, and signature information.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+            KeyError: If the active_manifest key is missing from the JSON
+        """
+        # Self-read to get the JSON
+        manifest_json_str = self.json()
+        try:
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        # Get the active manfiest id/label
+        if "active_manifest" not in manifest_data:
+            raise KeyError("No 'active_manifest' key found in manifest data")
+
+        active_manifest_id = manifest_data["active_manifest"]
+
+        # Retrieve the active manifest data using manifest id/label
+        if "manifests" not in manifest_data:
+            raise KeyError("No 'manifests' key found in manifest data")
+
+        manifests = manifest_data["manifests"]
+        if active_manifest_id not in manifests:
+            raise KeyError("Active manifest id not found in manifest store")
+
+        return manifests[active_manifest_id]
+
+    def get_manifest_by_label(self, label: str) -> dict:
+        """Get a specific manifest from the manifest store by its label.
+
+        This method retrieves the manifest JSON and extracts the manifest
+        that corresponds to the provided manifest label/ID.
+
+        Args:
+            label: The manifest label/ID to look up in the manifest store
+
+        Returns:
+            A dictionary containing the manifest data for the specified label.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+            KeyError: If the manifests key is missing from the JSON
+        """
+        # Self-read to get the JSON
+        manifest_json_str = self.json()
+        try:
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        if "manifests" not in manifest_data:
+            raise KeyError("No 'manifests' key found in manifest data")
+
+        manifests = manifest_data["manifests"]
+        if label not in manifests:
+            raise KeyError("Manifest not found in manifest store")
+
+        return manifests[label]
+
+    def get_validation_state(self) -> Optional[str]:
+        """Get the validation state of the manifest store.
+
+        This method retrieves the full manifest JSON and extracts the
+        validation_state field, which indicates the overall validation
+        status of the C2PA manifest.
+
+        Returns:
+            The validation state as a string,
+            or None if the validation_state field is not present.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+        """
+        manifest_json_str = self.json()
+        try:
+            # Self-read to get the JSON
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        return manifest_data.get("validation_state")
+
+    def get_validation_results(self) -> Optional[dict]:
+        """Get the validation results of the manifest store.
+
+        This method retrieves the full manifest JSON and extracts
+        the validation_results object, which contains detailed
+        validation information.
+
+        Returns:
+            The validation results as a dictionary containing
+            validation details, or None if the validation_results
+            field is not present.
+
+        Raises:
+            C2paError: If there was an error getting the manifest JSON
+        """
+        manifest_json_str = self.json()
+        try:
+            # Self-read to get the JSON
+            manifest_data = json.loads(manifest_json_str)
+        except json.JSONDecodeError as e:
+            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        return manifest_data.get("validation_results")
+
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
 
