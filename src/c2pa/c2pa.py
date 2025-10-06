@@ -1623,6 +1623,9 @@ class Reader:
                     self._manifest_json_str_cache
                 )
             except json.JSONDecodeError:
+                # Reset cache to reattempt read, possibly
+                self._manifest_data_cache = None
+                self._manifest_json_str_cache = None
                 # Failed to parse manifest JSON
                 return None
 
