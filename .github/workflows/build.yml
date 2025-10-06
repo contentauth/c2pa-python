@@ -37,7 +37,7 @@ jobs:
         run: echo "version=$(cat c2pa-native-version.txt | tr -d '\r\n')" >> $GITHUB_OUTPUT
 
   check-format:
-    name: Check code format and syntax
+    name: Check code format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
