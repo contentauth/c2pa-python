@@ -1560,19 +1560,18 @@ class Reader:
         self._cleanup_resources()
 
     def _ensure_valid_state(self):
-        """Ensure the reader is in a valid state for operations.
+        """Ensure the Reader is in a valid state for operations.
 
         Raises:
-            C2paError: If the reader is closed, not initialized, invalid, or
-            has no manifest to read
+            C2paError: If the Reader is closed, not initialized, invalid, or
+            has no manifest to read.
         """
+        # self._no_manifest_to_read is a valid state, albeit an empty one
         if self._closed:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
         if not self._initialized:
             raise C2paError(Reader._ERROR_MESSAGES['not_initialized_error'])
-        if self._no_manifest_to_read:
-            raise C2paError(Reader._ERROR_MESSAGES['no_manifest_error'])
-        if not self._reader:
+        if not self._reader and not self._no_manifest_to_read:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
 
     def _cleanup_resources(self):
@@ -2233,6 +2232,7 @@ class Builder:
         'cleanup_error': "Error during cleanup: {}",
         'builder_cleanup': "Error cleaning up builder: {}",
         'closed_error': "Builder is closed",
+        'not_initialized_error': "Builder is not properly initialized",
         'manifest_error': "Invalid manifest data: must be string or dict",
         'url_error': "Error setting remote URL: {}",
         'resource_error': "Error adding resource: {}",
@@ -2415,7 +2415,7 @@ class Builder:
         if self._closed:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
         if not self._initialized:
-            raise C2paError("Builder is not properly initialized")
+            raise C2paError(Builder._ERROR_MESSAGES['not_initialized_error'])
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
 

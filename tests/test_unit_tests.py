@@ -85,6 +85,11 @@ class TestReader(unittest.TestCase):
             expected_label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
             self.assertEqual(active_manifest["label"], expected_label)
 
+    def test_get_active_manifest_no_manifest(self):
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            self.assertIsNone(reader.get_active_manifest())
+
     def test_get_manifest_from_label(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
@@ -97,6 +102,15 @@ class TestReader(unittest.TestCase):
             # It should be the active manifest too, so cross-check
             active_manifest = reader.get_active_manifest()
             self.assertEqual(manifest, active_manifest)
+
+    def test_get_manifest_from_label_no_manifest(self):
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            reader = Reader("image/jpeg", file)
+
+            # Test getting manifest by the specific label
+            label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
+            manifest = reader.get_manifest_from_label(label)
+            self.assertIsNone(manifest)
 
     def test_stream_get_non_active_manifest_by_label(self):
         video_path = os.path.join(FIXTURES_DIR, "video1.mp4")
@@ -183,6 +197,11 @@ class TestReader(unittest.TestCase):
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
+
+    def test_read_no_manifest_context_manager(self):
+        with Reader("image/jpeg", INGREDIENT_TEST_FILE) as reader:
+            self.assertIsNone(reader.json())
+            self.assertIsNone(reader.get_active_manifest())
 
     def test_reader_double_close(self):
         with open(self.testPath, "rb") as file:
