@@ -1804,7 +1804,6 @@ class Reader:
 
         result = _lib.c2pa_reader_is_embedded(self._reader)
 
-        # c_bool should return a Python bool directly
         return bool(result)
 
     def get_remote_url(self) -> Optional[str]:
