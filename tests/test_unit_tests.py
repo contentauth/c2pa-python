@@ -73,13 +73,13 @@ class TestReader(unittest.TestCase):
             expected_label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
             self.assertEqual(active_manifest["label"], expected_label)
 
-    def test_get_manifest_by_label(self):
+    def test_get_manifest_from_label(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
 
             # Test getting manifest by the specific label
             label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
-            manifest = reader.get_manifest_by_label(label)
+            manifest = reader.get_manifest_from_label(label)
             self.assertEqual(manifest["label"], label)
 
             # It should be the active manifest too, so cross-check
@@ -92,7 +92,7 @@ class TestReader(unittest.TestCase):
             reader = Reader("video/mp4", file)
 
             non_active_label = "urn:uuid:54281c07-ad34-430e-bea5-112a18facf0b"
-            non_active_manifest = reader.get_manifest_by_label(non_active_label)
+            non_active_manifest = reader.get_manifest_from_label(non_active_label)
             self.assertEqual(non_active_manifest["label"], non_active_label)
 
             # Verify it's not the active manifest
@@ -109,7 +109,7 @@ class TestReader(unittest.TestCase):
             # Try to get a manifest with a label that clearly doesn't exist...
             non_existing_label = "urn:uuid:clearly-not-existing"
             with self.assertRaises(KeyError):
-                reader.get_manifest_by_label(non_existing_label)
+                reader.get_manifest_from_label(non_existing_label)
 
     def test_stream_read_get_validation_state(self):
         with open(self.testPath, "rb") as file:
@@ -336,6 +336,115 @@ class TestReader(unittest.TestCase):
             except Exception as e:
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
+    def test_read_cached_all_files(self):
+        """Test reading C2PA metadata with cache functionality from all files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                continue
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    reader = Reader(mime_type, file)
+
+                    # Test 1: Verify cache variables are initially None
+                    self.assertIsNone(reader._manifest_json_str_cache, f"JSON cache should be None initially for {filename}")
+                    self.assertIsNone(reader._manifest_data_cache, f"Manifest data cache should be None initially for {filename}")
+
+                    # Test 2: Multiple calls to json() should return the same result and use cache
+                    json_data_1 = reader.json()
+                    self.assertIsNotNone(reader._manifest_json_str_cache, f"JSON cache not set after first json() call for {filename}")
+                    self.assertEqual(json_data_1, reader._manifest_json_str_cache, f"JSON cache doesn't match return value for {filename}")
+
+                    json_data_2 = reader.json()
+                    self.assertEqual(json_data_1, json_data_2, f"JSON inconsistency for {filename}")
+                    self.assertIsInstance(json_data_1, str)
+
+                    # Test 3: Test methods that use the cache
+                    try:
+                        # Test get_active_manifest() which uses _get_cached_manifest_data()
+                        active_manifest = reader.get_active_manifest()
+                        self.assertIsInstance(active_manifest, dict, f"Active manifest not dict for {filename}")
+
+                        # Test 4: Verify cache is set after calling cache-using methods
+                        self.assertIsNotNone(reader._manifest_json_str_cache, f"JSON cache not set after get_active_manifest for {filename}")
+                        self.assertIsNotNone(reader._manifest_data_cache, f"Manifest data cache not set after get_active_manifest for {filename}")
+
+                        # Test 5: Multiple calls to cache-using methods should return the same result
+                        active_manifest_2 = reader.get_active_manifest()
+                        self.assertEqual(active_manifest, active_manifest_2, f"Active manifest cache inconsistency for {filename}")
+
+                        # Test get_validation_state() which uses the cache
+                        validation_state = reader.get_validation_state()
+                        # validation_state can be None, so just check it doesn't crash
+
+                        # Test get_validation_results() which uses the cache
+                        validation_results = reader.get_validation_results()
+                        # validation_results can be None, so just check it doesn't crash
+
+                        # Test 6: Multiple calls to validation methods should return the same result
+                        validation_state_2 = reader.get_validation_state()
+                        self.assertEqual(validation_state, validation_state_2, f"Validation state cache inconsistency for {filename}")
+
+                        validation_results_2 = reader.get_validation_results()
+                        self.assertEqual(validation_results, validation_results_2, f"Validation results cache inconsistency for {filename}")
+
+                    except KeyError as e:
+                        # Some files might not have active manifests or validation data
+                        # This is expected for some test files, so we'll skip cache testing for those
+                        pass
+
+                    # Test 7: Verify the manifest contains expected fields
+                    manifest = json.loads(json_data_1)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+
+                    # Test 8: Test cache clearing on close
+                    reader.close()
+                    self.assertIsNone(reader._manifest_json_str_cache, f"JSON cache not cleared for {filename}")
+                    self.assertIsNone(reader._manifest_data_cache, f"Manifest data cache not cleared for {filename}")
+
+            except Exception as e:
+                self.fail(f"Failed to read cached metadata from {filename}: {str(e)}")
+
     def test_reader_context_manager_with_exception(self):
         """Test Reader state after exception in context manager."""
         try:
@@ -495,6 +604,67 @@ class TestReader(unittest.TestCase):
             remote_url = reader.get_remote_url()
             self.assertEqual(remote_url, "https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391")
             self.assertFalse(reader.is_embedded())
+
+    def test_stream_read_and_parse_cached(self):
+        """Test reading and parsing with cache verification by repeating operations multiple times"""
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+
+            # Verify cache starts as None
+            self.assertIsNone(reader._manifest_json_str_cache, "JSON cache should be None initially")
+            self.assertIsNone(reader._manifest_data_cache, "Manifest data cache should be None initially")
+
+            # First operation - should populate cache
+            manifest_store_1 = json.loads(reader.json())
+            title_1 = manifest_store_1["manifests"][manifest_store_1["active_manifest"]]["title"]
+            self.assertEqual(title_1, DEFAULT_TEST_FILE_NAME)
+
+            # Verify cache is populated after first json() call
+            self.assertIsNotNone(reader._manifest_json_str_cache, "JSON cache should be set after first json() call")
+            self.assertEqual(manifest_store_1, json.loads(reader._manifest_json_str_cache), "Cached JSON should match parsed result")
+
+            # Repeat the same operation multiple times to verify cache usage
+            for i in range(5):
+                manifest_store = json.loads(reader.json())
+                title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+                self.assertEqual(title, DEFAULT_TEST_FILE_NAME, f"Title should be consistent on iteration {i+1}")
+
+                # Verify cache is still populated and consistent
+                self.assertIsNotNone(reader._manifest_json_str_cache, f"JSON cache should remain set on iteration {i+1}")
+                self.assertEqual(manifest_store, json.loads(reader._manifest_json_str_cache), f"Cached JSON should match parsed result on iteration {i+1}")
+
+            # Test methods that use the cache
+            # Test get_active_manifest() which uses _get_cached_manifest_data()
+            active_manifest_1 = reader.get_active_manifest()
+            self.assertIsInstance(active_manifest_1, dict, "Active manifest should be a dict")
+
+            # Verify manifest data cache is populated
+            self.assertIsNotNone(reader._manifest_data_cache, "Manifest data cache should be set after get_active_manifest()")
+
+            # Repeat get_active_manifest() multiple times to verify cache usage
+            for i in range(3):
+                active_manifest = reader.get_active_manifest()
+                self.assertEqual(active_manifest_1, active_manifest, f"Active manifest should be consistent on iteration {i+1}")
+
+                # Verify cache remains populated
+                self.assertIsNotNone(reader._manifest_data_cache, f"Manifest data cache should remain set on iteration {i+1}")
+
+            # Test get_validation_state() and get_validation_results() with cache
+            validation_state_1 = reader.get_validation_state()
+            validation_results_1 = reader.get_validation_results()
+
+            # Repeat validation methods to verify cache usage
+            for i in range(3):
+                validation_state = reader.get_validation_state()
+                validation_results = reader.get_validation_results()
+
+                self.assertEqual(validation_state_1, validation_state, f"Validation state should be consistent on iteration {i+1}")
+                self.assertEqual(validation_results_1, validation_results, f"Validation results should be consistent on iteration {i+1}")
+
+            # Verify cache clearing on close
+            reader.close()
+            self.assertIsNone(reader._manifest_json_str_cache, "JSON cache should be cleared on close")
+            self.assertIsNone(reader._manifest_data_cache, "Manifest data cache should be cleared on close")
 
     # TODO: Unskip once fixed configuration to read data is clarified
     # def test_read_cawg_data_file(self):

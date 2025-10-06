@@ -1358,6 +1358,10 @@ class Reader:
         # we may have opened ourselves, and that we need to close later
         self._backing_file = None
 
+        # Cache for manifest JSON string and parsed data to avoid multiple calls
+        self._manifest_json_str_cache = None
+        self._manifest_data_cache = None
+
         if stream is None:
             # If we don't get a stream as param:
             # Create a stream from the file path in format_or_path
@@ -1620,6 +1624,9 @@ class Reader:
                 Reader._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)))
         finally:
+            # Clear the cache when closing
+            self._manifest_json_str_cache = None
+            self._manifest_data_cache = None
             self._closed = True
 
     def json(self) -> str:
@@ -1634,6 +1641,10 @@ class Reader:
 
         self._ensure_valid_state()
 
+        # Return cached result if available
+        if self._manifest_json_str_cache is not None:
+            return self._manifest_json_str_cache
+
         result = _lib.c2pa_reader_json(self._reader)
 
         if result is None:
@@ -1642,7 +1653,29 @@ class Reader:
                 raise C2paError(error)
             raise C2paError("Error during manifest parsing in Reader")
 
-        return _convert_to_py_string(result)
+        # Cache the result and return it
+        self._manifest_json_str_cache = _convert_to_py_string(result)
+        return self._manifest_json_str_cache
+
+    def _get_cached_manifest_data(self) -> dict:
+        """Get the cached manifest data, fetching and parsing if not cached.
+
+        Returns:
+            A dictionary containing the parsed manifest data
+
+        Raises:
+            C2paError: If there was an error getting or parsing the JSON
+        """
+        if self._manifest_data_cache is None:
+            if self._manifest_json_str_cache is None:
+                self._manifest_json_str_cache = self.json()
+
+            try:
+                self._manifest_data_cache = json.loads(self._manifest_json_str_cache)
+            except json.JSONDecodeError as e:
+                raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+
+        return self._manifest_data_cache
 
     def get_active_manifest(self) -> dict:
         """Get the active manifest from the manifest store.
@@ -1658,12 +1691,8 @@ class Reader:
             C2paError: If there was an error getting the manifest JSON
             KeyError: If the active_manifest key is missing from the JSON
         """
-        # Self-read to get the JSON
-        manifest_json_str = self.json()
-        try:
-            manifest_data = json.loads(manifest_json_str)
-        except json.JSONDecodeError as e:
-            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
 
         # Get the active manfiest id/label
         if "active_manifest" not in manifest_data:
@@ -1681,7 +1710,7 @@ class Reader:
 
         return manifests[active_manifest_id]
 
-    def get_manifest_by_label(self, label: str) -> dict:
+    def get_manifest_from_label(self, label: str) -> dict:
         """Get a specific manifest from the manifest store by its label.
 
         This method retrieves the manifest JSON and extracts the manifest
@@ -1697,12 +1726,8 @@ class Reader:
             C2paError: If there was an error getting the manifest JSON
             KeyError: If the manifests key is missing from the JSON
         """
-        # Self-read to get the JSON
-        manifest_json_str = self.json()
-        try:
-            manifest_data = json.loads(manifest_json_str)
-        except json.JSONDecodeError as e:
-            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
 
         if "manifests" not in manifest_data:
             raise KeyError("No 'manifests' key found in manifest data")
@@ -1727,12 +1752,8 @@ class Reader:
         Raises:
             C2paError: If there was an error getting the manifest JSON
         """
-        manifest_json_str = self.json()
-        try:
-            # Self-read to get the JSON
-            manifest_data = json.loads(manifest_json_str)
-        except json.JSONDecodeError as e:
-            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
 
         return manifest_data.get("validation_state")
 
@@ -1751,12 +1772,8 @@ class Reader:
         Raises:
             C2paError: If there was an error getting the manifest JSON
         """
-        manifest_json_str = self.json()
-        try:
-            # Self-read to get the JSON
-            manifest_data = json.loads(manifest_json_str)
-        except json.JSONDecodeError as e:
-            raise C2paError(f"Failed to parse manifest JSON: {str(e)}") from e
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
 
         return manifest_data.get("validation_results")
 
