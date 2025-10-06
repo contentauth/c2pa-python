@@ -1639,6 +1639,9 @@ class Reader:
         """
         if self._no_manifest_to_read:
             return None
+
+        self._ensure_valid_state()
+
         if self._manifest_data_cache is None:
             if self._manifest_json_str_cache is None:
                 manifest_json = self.json()
@@ -1715,7 +1718,6 @@ class Reader:
                     # Set reader to no manifest state and return None
                     self._no_manifest_to_read = True
                     return None
-                raise C2paError(error)
             raise C2paError("Error during manifest parsing in Reader")
 
         # Cache the result and return it
@@ -1736,30 +1738,27 @@ class Reader:
         Raises:
             KeyError: If the active_manifest key is missing from the JSON
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                # raise C2paError("Failed to parse manifest JSON")
-                return None
-
-            # Get the active manfiest id/label
-            if "active_manifest" not in manifest_data:
-                raise KeyError("No 'active_manifest' key found")
-
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Retrieve the active manifest data using manifest id/label
-            if "manifests" not in manifest_data:
-                raise KeyError("No 'manifests' key found in manifest data")
-
-            manifests = manifest_data["manifests"]
-            if active_manifest_id not in manifests:
-                raise KeyError("Active manifest not found in manifest store")
-
-            return manifests[active_manifest_id]
-        except C2paError.ManifestNotFound:
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
+        if manifest_data is None:
+            # raise C2paError("Failed to parse manifest JSON")
             return None
+
+        # Get the active manfiest id/label
+        if "active_manifest" not in manifest_data:
+            raise KeyError("No 'active_manifest' key found")
+
+        active_manifest_id = manifest_data["active_manifest"]
+
+        # Retrieve the active manifest data using manifest id/label
+        if "manifests" not in manifest_data:
+            raise KeyError("No 'manifests' key found in manifest data")
+
+        manifests = manifest_data["manifests"]
+        if active_manifest_id not in manifests:
+            raise KeyError("Active manifest not found in manifest store")
+
+        return manifests[active_manifest_id]
 
     def get_manifest_from_label(self, label: str) -> Optional[dict]:
         """Get a specific manifest from the manifest store by its label.
@@ -1778,23 +1777,20 @@ class Reader:
         Raises:
             KeyError: If the manifests key is missing from the JSON
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                # raise C2paError("Failed to parse manifest JSON")
-                return None
-
-            if "manifests" not in manifest_data:
-                raise KeyError("No 'manifests' key found in manifest data")
-
-            manifests = manifest_data["manifests"]
-            if label not in manifests:
-                raise KeyError(f"Manifest {label} not found in manifest store")
-
-            return manifests[label]
-        except C2paError.ManifestNotFound:
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
+        if manifest_data is None:
+            # raise C2paError("Failed to parse manifest JSON")
             return None
+
+        if "manifests" not in manifest_data:
+            raise KeyError("No 'manifests' key found in manifest data")
+
+        manifests = manifest_data["manifests"]
+        if label not in manifests:
+            raise KeyError(f"Manifest {label} not found in manifest store")
+
+        return manifests[label]
 
     def get_validation_state(self) -> Optional[str]:
         """Get the validation state of the manifest store.
@@ -1808,15 +1804,12 @@ class Reader:
             or None if the validation_state field is not present or if no
             manifest is found or if there was an error parsing the JSON.
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                return None
-
-            return manifest_data.get("validation_state")
-        except C2paError.ManifestNotFound:
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
+        if manifest_data is None:
             return None
+
+        return manifest_data.get("validation_state")
 
     def get_validation_results(self) -> Optional[dict]:
         """Get the validation results of the manifest store.
@@ -1831,17 +1824,14 @@ class Reader:
             field is not present or if no manifest is found or if
             there was an error parsing the JSON.
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                return None
-
-            return manifest_data.get("validation_results")
-        except C2paError.ManifestNotFound:
+        # Get cached manifest data
+        manifest_data = self._get_cached_manifest_data()
+        if manifest_data is None:
             return None
 
-    def resource_to_stream(self, uri: str, stream: Any) -> int:
+        return manifest_data.get("validation_results")
+
+    def resource_to_stream(self, uri: str, stream: Any) -> Optional[int]:
         """Write a resource to a stream.
 
         Args:
@@ -1849,11 +1839,14 @@ class Reader:
             stream: The stream to write to (any Python stream-like object)
 
         Returns:
-            The number of bytes written
+            The number of bytes written, or None if no manifest to read
 
         Raises:
             C2paError: If there was an error writing the resource to stream
         """
+        if self._no_manifest_to_read:
+            return None
+
         self._ensure_valid_state()
 
         uri_str = uri.encode('utf-8')
@@ -1871,16 +1864,20 @@ class Reader:
 
             return result
 
-    def is_embedded(self) -> bool:
+    def is_embedded(self) -> Optional[bool]:
         """Check if the reader was created from an embedded manifest.
         This method determines whether the C2PA manifest is embedded directly
         in the asset file or stored remotely.
         Returns:
             True if the reader was created from an embedded manifest,
-            False if it was created from a remote manifest
+            False if it was created from a remote manifest,
+            None if no manifest to read
         Raises:
             C2paError: If there was an error checking the embedded status
         """
+        if self._no_manifest_to_read:
+            return None
+
         self._ensure_valid_state()
 
         result = _lib.c2pa_reader_is_embedded(self._reader)
@@ -1894,10 +1891,14 @@ class Reader:
         is embedded in the asset, this will return None.
         Returns:
             The remote URL as a string if the manifest was obtained remotely,
-            None if the manifest is embedded or no remote URL is available
+            None if the manifest is embedded, no remote URL is available,
+            or no manifest to read
         Raises:
             C2paError: If there was an error getting the remote URL
         """
+        if self._no_manifest_to_read:
+            return None
+
         self._ensure_valid_state()
 
         result = _lib.c2pa_reader_remote_url(self._reader)
