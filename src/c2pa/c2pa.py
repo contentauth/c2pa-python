@@ -1264,7 +1264,9 @@ class Reader:
         'file_error': "Error cleaning up file: {}",
         'reader_cleanup_error': "Error cleaning up reader: {}",
         'encoding_error': "Invalid UTF-8 characters in input: {}",
-        'closed_error': "Reader is closed"
+        'closed_error': "Reader is closed",
+        'not_initialized_error': "Reader is not properly initialized",
+        'no_manifest_error': "No manifest store to read"
     }
 
     @classmethod
@@ -1350,6 +1352,7 @@ class Reader:
 
         self._closed = False
         self._initialized = False
+        self._no_manifest_to_read = False
 
         self._reader = None
         self._own_stream = None
@@ -1397,6 +1400,12 @@ class Reader:
                         error = _parse_operation_result_for_error(
                             _lib.c2pa_error())
                         if error:
+                            # Check if this is a ManifestNotFound error
+                            if error.startswith("ManifestNotFound"):
+                                # Set reader to no manifest state
+                                self._no_manifest_to_read = True
+                                self._initialized = True
+                                return
                             raise C2paError(error)
                         raise C2paError(
                             Reader._ERROR_MESSAGES['reader_error'].format(
@@ -1460,6 +1469,12 @@ class Reader:
                         error = _parse_operation_result_for_error(
                             _lib.c2pa_error())
                         if error:
+                            # Check if this is a ManifestNotFound error
+                            if error.startswith("ManifestNotFound"):
+                                # Set reader to no manifest state
+                                self._no_manifest_to_read = True
+                                self._initialized = True
+                                return
                             raise C2paError(error)
                         raise C2paError(
                             Reader._ERROR_MESSAGES['reader_error'].format(
@@ -1514,6 +1529,12 @@ class Reader:
                     error = _parse_operation_result_for_error(
                         _lib.c2pa_error())
                     if error:
+                        # Check if this is a ManifestNotFound error
+                        if error.startswith("ManifestNotFound"):
+                            # Set reader to no manifest state
+                            self._no_manifest_to_read = True
+                            self._initialized = True
+                            return
                         raise C2paError(error)
                     raise C2paError(
                         Reader._ERROR_MESSAGES['reader_error'].format(
@@ -1542,12 +1563,15 @@ class Reader:
         """Ensure the reader is in a valid state for operations.
 
         Raises:
-            C2paError: If the reader is closed, not initialized, or invalid
+            C2paError: If the reader is closed, not initialized, invalid, or
+            has no manifest to read
         """
         if self._closed:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
         if not self._initialized:
-            raise C2paError("Reader is not properly initialized")
+            raise C2paError(Reader._ERROR_MESSAGES['not_initialized_error'])
+        if self._no_manifest_to_read:
+            raise C2paError(Reader._ERROR_MESSAGES['no_manifest_error'])
         if not self._reader:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
 
@@ -1609,14 +1633,19 @@ class Reader:
 
         Returns:
             A dictionary containing the parsed manifest data, or None if
-            JSON parsing fails
+            JSON parsing fails or reader has no manifest to read
 
         Raises:
             C2paError: If there was an error getting the JSON
         """
+        if self._no_manifest_to_read:
+            return None
         if self._manifest_data_cache is None:
             if self._manifest_json_str_cache is None:
-                self._manifest_json_str_cache = self.json()
+                manifest_json = self.json()
+                if manifest_json is None:
+                    return None
+                self._manifest_json_str_cache = manifest_json
 
             try:
                 self._manifest_data_cache = json.loads(
@@ -1656,15 +1685,20 @@ class Reader:
             self._manifest_data_cache = None
             self._closed = True
 
-    def json(self) -> str:
+    def json(self) -> Optional[str]:
         """Get the manifest store as a JSON string.
 
         Returns:
-            The manifest store as a JSON string
+            The manifest store as a JSON string, or None if no manifest is
+            found
 
         Raises:
-            C2paError: If there was an error getting the JSON
+            C2paError: If there was an error getting the JSON (other than
+            ManifestNotFound)
         """
+        # Check if reader is in no-manifest state first
+        if self._no_manifest_to_read:
+            return None
 
         self._ensure_valid_state()
 
@@ -1677,6 +1711,11 @@ class Reader:
         if result is None:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
+                # Check if this is a ManifestNotFound error
+                if error.startswith("ManifestNotFound"):
+                    # Set reader to no manifest state and return None
+                    self._no_manifest_to_read = True
+                    return None
                 raise C2paError(error)
             raise C2paError("Error during manifest parsing in Reader")
 

@@ -64,6 +64,18 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_stream_read_no_manifest(self):
+        # INGREDIENT_TEST_FILE does not have a manifest
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            # Reader should be created but in no-manifest state
+            self.assertIsNotNone(reader)
+            # Check that json() raises appropriate error for no-manifest files
+            self.assertIsNone(reader.json())
+
+            # Check that get_active_manifest() returns None for no-manifest files
+            self.assertIsNone(reader.get_active_manifest())
+
     def test_get_active_manifest(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
@@ -475,6 +487,7 @@ class TestReader(unittest.TestCase):
         reader._reader = None
         reader._own_stream = None
         reader._backing_file = None
+        reader._no_manifest_to_read = False
 
         with self.assertRaises(Error):
             reader._ensure_valid_state()
@@ -1169,8 +1182,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             output.seek(0)
             # When set_no_embed() is used, no manifest should be embedded in the file
             # So reading from the file should fail
-            with self.assertRaises(Error):
-                Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output)
+            self.assertIsNone(reader.json())
             output.close()
 
     def test_remote_sign_using_returned_bytes(self):
