@@ -73,13 +73,13 @@ class TestReader(unittest.TestCase):
             expected_label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
             self.assertEqual(active_manifest["label"], expected_label)
 
-    def test_get_manifest_from_label(self):
+    def test_get_manifest(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
 
             # Test getting manifest by the specific label
             label = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
-            manifest = reader.get_manifest_from_label(label)
+            manifest = reader.get_manifest(label)
             self.assertEqual(manifest["label"], label)
 
             # It should be the active manifest too, so cross-check
@@ -92,7 +92,7 @@ class TestReader(unittest.TestCase):
             reader = Reader("video/mp4", file)
 
             non_active_label = "urn:uuid:54281c07-ad34-430e-bea5-112a18facf0b"
-            non_active_manifest = reader.get_manifest_from_label(non_active_label)
+            non_active_manifest = reader.get_manifest(non_active_label)
             self.assertEqual(non_active_manifest["label"], non_active_label)
 
             # Verify it's not the active manifest
@@ -109,7 +109,7 @@ class TestReader(unittest.TestCase):
             # Try to get a manifest with a label that clearly doesn't exist...
             non_existing_label = "urn:uuid:clearly-not-existing"
             with self.assertRaises(KeyError):
-                reader.get_manifest_from_label(non_existing_label)
+                reader.get_manifest(non_existing_label)
 
     def test_stream_read_get_validation_state(self):
         with open(self.testPath, "rb") as file:

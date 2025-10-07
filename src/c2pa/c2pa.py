@@ -1723,7 +1723,7 @@ class Reader:
         except C2paError.ManifestNotFound:
             return None
 
-    def get_manifest_from_label(self, label: str) -> Optional[dict]:
+    def get_manifest(self, label: str) -> Optional[dict]:
         """Get a specific manifest from the manifest store by its label.
 
         This method retrieves the manifest JSON and extracts the manifest
