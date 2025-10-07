@@ -165,6 +165,156 @@ class TestReaderWithThreads(unittest.TestCase):
         if errors:
             self.fail("\n".join(errors))
 
+    def test_read_cached_all_files(self):
+        """Test reading C2PA metadata with cache functionality from all files in the fixtures/files-for-reading-tests directory using multithreading"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        def process_file_with_cache(filename):
+            if filename in skip_files:
+                return None
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    reader = Reader(mime_type, file)
+
+                    # Test 1: Verify cache variables are initially None
+                    if reader._manifest_json_str_cache is not None:
+                        return f"JSON cache should be None initially for {filename}"
+                    if reader._manifest_data_cache is not None:
+                        return f"Manifest data cache should be None initially for {filename}"
+
+                    # Test 2: Multiple calls to json() should return the same result and use cache
+                    json_data_1 = reader.json()
+                    if reader._manifest_json_str_cache is None:
+                        return f"JSON cache not set after first json() call for {filename}"
+                    if json_data_1 != reader._manifest_json_str_cache:
+                        return f"JSON cache doesn't match return value for {filename}"
+
+                    json_data_2 = reader.json()
+                    if json_data_1 != json_data_2:
+                        return f"JSON inconsistency for {filename}"
+                    if not isinstance(json_data_1, str):
+                        return f"JSON data is not a string for {filename}"
+
+                    # Test 3: Test methods that use the cache
+                    try:
+                        # Test get_active_manifest() which uses _get_cached_manifest_data()
+                        active_manifest = reader.get_active_manifest()
+                        if not isinstance(active_manifest, dict):
+                            return f"Active manifest not dict for {filename}"
+
+                        # Test 4: Verify cache is set after calling cache-using methods
+                        if reader._manifest_json_str_cache is None:
+                            return f"JSON cache not set after get_active_manifest for {filename}"
+                        if reader._manifest_data_cache is None:
+                            return f"Manifest data cache not set after get_active_manifest for {filename}"
+
+                        # Test 5: Multiple calls to cache-using methods should return the same result
+                        active_manifest_2 = reader.get_active_manifest()
+                        if active_manifest != active_manifest_2:
+                            return f"Active manifest cache inconsistency for {filename}"
+
+                        # Test get_validation_state() which uses the cache
+                        validation_state = reader.get_validation_state()
+                        # validation_state can be None, so just check it doesn't crash
+
+                        # Test get_validation_results() which uses the cache
+                        validation_results = reader.get_validation_results()
+                        # validation_results can be None, so just check it doesn't crash
+
+                        # Test 6: Multiple calls to validation methods should return the same result
+                        validation_state_2 = reader.get_validation_state()
+                        if validation_state != validation_state_2:
+                            return f"Validation state cache inconsistency for {filename}"
+
+                        validation_results_2 = reader.get_validation_results()
+                        if validation_results != validation_results_2:
+                            return f"Validation results cache inconsistency for {filename}"
+
+                    except KeyError:
+                        # Some files might not have active manifests or validation data
+                        # This is expected for some test files, so we'll skip cache testing for those
+                        pass
+
+                    # Test 7: Verify the manifest contains expected fields
+                    manifest = json.loads(json_data_1)
+                    if "manifests" not in manifest:
+                        return f"Missing 'manifests' key in {filename}"
+                    if "active_manifest" not in manifest:
+                        return f"Missing 'active_manifest' key in {filename}"
+
+                    # Test 8: Test cache clearing on close
+                    reader.close()
+                    if reader._manifest_json_str_cache is not None:
+                        return f"JSON cache not cleared for {filename}"
+                    if reader._manifest_data_cache is not None:
+                        return f"Manifest data cache not cleared for {filename}"
+
+                    return None  # Success case returns None
+
+            except Exception as e:
+                return f"Failed to read cached metadata from {filename}: {str(e)}"
+
+        # Create a thread pool with 6 workers
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            # Submit all files to the thread pool
+            future_to_file = {
+                executor.submit(process_file_with_cache, filename): filename
+                for filename in os.listdir(reading_dir)
+            }
+
+            # Collect results as they complete
+            errors = []
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename = future_to_file[future]
+                try:
+                    error = future.result()
+                    if error:
+                        errors.append(error)
+                except Exception as e:
+                    errors.append(
+                        f"Unexpected error processing {filename}: {str(e)}")
+
+        # If any errors occurred, fail the test with all error messages
+        if errors:
+            self.fail("\n".join(errors))
 
 class TestBuilderWithThreads(unittest.TestCase):
     def setUp(self):
