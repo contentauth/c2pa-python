@@ -749,7 +749,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 "version": "0.0.1",
             }],
             # claim version 2 is the default
-            # "claim_version": 2,
+            "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
             "ingredients": [],
@@ -2324,11 +2324,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         with self.assertRaises(Error):
             builder.set_no_embed()
 
-    def test_builder_minimal_manifest_add_actions_and_sign(self):
+    def test_builder_add_action_to_manifest_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled": false}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled": false}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled": false}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false}}}}')
+        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":false}}}}')
+        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
             "claim_generator": "python_test",
@@ -2336,12 +2336,29 @@ class TestBuilderWithSigner(unittest.TestCase):
                 "name": "python_test",
                 "version": "0.0.1",
             }],
+            # claim version 2 is the default
+            "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
+            "ingredients": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                }
+            ]
         }
-        builder = Builder.from_json(self.manifestDefinition)
+        builder = Builder.from_json(initial_manifest_definition)
 
-        builder.add_action('{ "action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}')
+        action_json = '{"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}'
+        builder.add_action(action_json)
 
         with open(self.testPath2, "rb") as file:
             output = io.BytesIO(bytearray())
@@ -2349,7 +2366,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             output.seek(0)
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
-            print(json_data)
             manifest_data = json.loads(json_data)
 
             # Verify active manifest exists
@@ -2365,7 +2381,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("assertions", active_manifest)
             assertions = active_manifest["assertions"]
 
-            # Find the c2pa.actions.v2 assertion
+            # Find the c2pa.actions.v2 assertion to check what we added
             actions_assertion = None
             for assertion in assertions:
                 if assertion.get("label") == "c2pa.actions.v2":
@@ -2373,8 +2389,76 @@ class TestBuilderWithSigner(unittest.TestCase):
                     break
 
             self.assertIsNotNone(actions_assertion)
+            self.assertIn("data", actions_assertion)
+            assertion_data = actions_assertion["data"]
+            # Verify the manifest now contains actions
+            self.assertIn("actions", assertion_data)
+            actions = assertion_data["actions"]
+            # Verify "c2pa.color_adjustments" action exists anywhere in the actions array
+            created_action_found = False
+            for action in actions:
+                if action.get("action") == "c2pa.color_adjustments":
+                    created_action_found = True
+                    break
 
-            # Check what we added is there
+            self.assertTrue(created_action_found)
+
+        builder.close()
+
+        # Reset settings
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+
+
+    def test_builder_minimal_manifest_add_actions_and_sign_no_auto_add(self):
+        # For testing, remove auto-added actions
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false}}}}')
+        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":false}}}}')
+        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":false}}}}')
+
+        initial_manifest_definition = {
+            "claim_generator": "python_test",
+            "claim_generator_info": [{
+                "name": "python_test",
+                "version": "0.0.1",
+            }],
+            "format": "image/jpeg",
+            "title": "Python Test Image V2",
+        }
+
+        builder = Builder.from_json(initial_manifest_definition)
+        builder.add_action('{ "action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}')
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify assertions object exists in active manifest
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the c2pa.actions.v2 assertion to look for what we added
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion.get("label") == "c2pa.actions.v2":
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
             self.assertIn("data", actions_assertion)
             assertion_data = actions_assertion["data"]
             # Verify the manifest now contains actions
@@ -2392,9 +2476,9 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled": true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled": true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled": true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
 
 
 class TestStream(unittest.TestCase):
