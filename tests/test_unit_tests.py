@@ -749,7 +749,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 "version": "0.0.1",
             }],
             # claim version 2 is the default
-            "claim_version": 2,
+            # "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
             "ingredients": [],
@@ -2337,7 +2337,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 "version": "0.0.1",
             }],
             # claim version 2 is the default
-            "claim_version": 2,
+            # "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
             "ingredients": [],
@@ -2423,7 +2423,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 "version": "0.0.1",
             }],
             # claim version 2 is the default
-            "claim_version": 2,
+            # "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
             "ingredients": [],
