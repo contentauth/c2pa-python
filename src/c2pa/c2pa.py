@@ -49,6 +49,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_set_remote_url',
     'c2pa_builder_add_resource',
     'c2pa_builder_add_ingredient_from_stream',
+    'c2pa_builder_add_action',
     'c2pa_builder_to_archive',
     'c2pa_builder_sign',
     'c2pa_manifest_bytes_free',
@@ -402,6 +403,9 @@ _setup_function(_lib.c2pa_builder_add_ingredient_from_stream,
                  ctypes.c_char_p,
                  ctypes.c_char_p,
                  ctypes.POINTER(C2paStream)],
+                ctypes.c_int)
+_setup_function(_lib.c2pa_builder_add_action,
+                [ctypes.POINTER(C2paBuilder), ctypes.c_char_p],
                 ctypes.c_int)
 _setup_function(_lib.c2pa_builder_to_archive,
                 [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
@@ -2198,6 +2202,7 @@ class Builder:
         'url_error': "Error setting remote URL: {}",
         'resource_error': "Error adding resource: {}",
         'ingredient_error': "Error adding ingredient: {}",
+        'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
         'sign_error': "Error during signing: {}",
         'encoding_error': "Invalid UTF-8 characters in manifest: {}",
@@ -2612,6 +2617,38 @@ class Builder:
             raise C2paError.FileNotFound(f"File not found: {filepath}") from e
         except Exception as e:
             raise C2paError.Other(f"Could not add ingredient: {e}") from e
+
+    def add_action(self, action_json: str) -> None:
+        """Add an action to the builder, that will be placed
+        in the actions assertion array in the generated manifest.
+
+        Args:
+            action_json: The JSON action definition
+
+        Raises:
+            C2paError: If there was an error adding the action
+            C2paError.Encoding: If the action JSON contains invalid UTF-8 characters
+        """
+        self._ensure_valid_state()
+
+        try:
+            action_str = action_json.encode('utf-8')
+        except UnicodeError as e:
+            raise C2paError.Encoding(
+                Builder._ERROR_MESSAGES['encoding_error'].format(str(e))
+            )
+
+        result = _lib.c2pa_builder_add_action(self._builder, action_str)
+
+        if result != 0:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError(
+                Builder._ERROR_MESSAGES['action_error'].format(
+                    "Unknown error"
+                )
+            )
 
     def to_archive(self, stream: Any) -> None:
         """Write an archive of the builder to a stream.
