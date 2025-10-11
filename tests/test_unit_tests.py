@@ -743,7 +743,6 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # Define a V2 manifest as a dictionary
         self.manifestDefinitionV2 = {
-            "claim_generator": "python_test",
             "claim_generator_info": [{
                 "name": "python_test",
                 "version": "0.0.1",
@@ -2326,12 +2325,9 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_action_to_manifest_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":false}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":false}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
-            "claim_generator": "python_test",
             "claim_generator_info": [{
                 "name": "python_test",
                 "version": "0.0.1",
@@ -2340,7 +2336,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             # "claim_version": 2,
             "format": "image/jpeg",
             "title": "Python Test Image V2",
-            "ingredients": [],
             "assertions": [
                 {
                     "label": "c2pa.actions",
@@ -2406,18 +2401,13 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
     def test_builder_add_action_to_manifest_with_auto_add(self):
         # For testing, force settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
         initial_manifest_definition = {
-            "claim_generator": "python_test",
             "claim_generator_info": [{
                 "name": "python_test",
                 "version": "0.0.1",
@@ -2500,15 +2490,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings to default
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":false}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":false}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
             "claim_generator": "python_test",
@@ -2569,18 +2555,13 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_with_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
         initial_manifest_definition = {
-            "claim_generator": "python_test",
             "claim_generator_info": [{
                 "name": "python_test",
                 "version": "0.0.1",
@@ -2648,9 +2629,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_opened_action":{"enabled":true}}}}')
-        load_settings('{"builder":{"actions":{"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
 
 class TestStream(unittest.TestCase):
