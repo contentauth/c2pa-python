@@ -2525,7 +2525,9 @@ class Builder:
                     )
                 )
 
-    def add_ingredient(self, ingredient_json: Union[str, dict], format: str, source: Any):
+    def add_ingredient(
+        self, ingredient_json: Union[str, dict], format: str, source: Any
+    ):
         """Add an ingredient to the builder (facade method).
         The added ingredient's source should be a stream-like object
         (for instance, a file opened as stream).
