@@ -692,7 +692,7 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     Raises:
         C2paError: If there was an error loading the settings
     """
-    # If settings is a dict, convert it to JSON string and set format
+    # Convert to JSON string as necessary
     try:
         if isinstance(settings, dict):
             settings_str = json.dumps(settings)
@@ -2573,7 +2573,6 @@ class Builder:
         """
         self._ensure_valid_state()
 
-        # Convert dict to JSON string as necessary
         if isinstance(ingredient_json, dict):
             ingredient_json = json.dumps(ingredient_json)
 
@@ -2665,7 +2664,6 @@ class Builder:
         """
         self._ensure_valid_state()
 
-        # Convert dict to JSON string as necessary
         if isinstance(action_json, dict):
             action_json = json.dumps(action_json)
 
