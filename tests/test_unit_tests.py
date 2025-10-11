@@ -1482,6 +1482,53 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Settings are thread-local, so we reset to the default "true" here
         load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
+    def test_builder_sign_with_settingdict_no_thumbnail_and_ingredient(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # The following removes the manifest's thumbnail - using dict instead of string
+        load_settings({"builder": {"thumbnail": {"enabled": False}}})
+
+        # Test adding ingredient
+        ingredient_json = '{ "title": "Test Ingredient" }'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # There should be no thumbnail anymore here
+            self.assertNotIn("thumbnail", active_manifest)
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+            self.assertNotIn("thumbnail", first_ingredient)
+
+        builder.close()
+
+        # Settings are thread-local, so we reset to the default "true" here - using dict instead of string
+        load_settings({"builder": {"thumbnail": {"enabled": True}}})
+
     def test_builder_sign_with_duplicate_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
@@ -2863,6 +2910,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # Reset settings
         load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):

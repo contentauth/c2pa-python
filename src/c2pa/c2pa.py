@@ -671,20 +671,45 @@ def version() -> str:
     return _convert_to_py_string(result)
 
 
+@overload
 def load_settings(settings: str, format: str = "json") -> None:
-    """Load C2PA settings from a string.
+    ...
+
+
+@overload
+def load_settings(settings: dict) -> None:
+    ...
+
+
+def load_settings(settings: Union[str, dict], format: str = "json") -> None:
+    """Load C2PA settings from a string or dict.
 
     Args:
-        settings: The settings string to load
-        format: The format of the settings string (default: "json")
+        settings: The settings string or dict to load
+        format: The format of the settings string (default: "json"). 
+                Ignored when settings is a dict.
 
     Raises:
         C2paError: If there was an error loading the settings
     """
-    result = _lib.c2pa_load_settings(
-        settings.encode('utf-8'),
-        format.encode('utf-8')
-    )
+    # If settings is a dict, convert it to JSON string and set format
+    try:
+        if isinstance(settings, dict):
+            settings_str = json.dumps(settings)
+            format = "json"
+        else:
+            settings_str = settings
+    except (TypeError, ValueError) as e:
+        raise C2paError(f"Failed to serialize settings to JSON: {e}")
+
+    # Encode strings to UTF-8 bytes outside of the C call
+    try:
+        settings_bytes = settings_str.encode('utf-8')
+        format_bytes = format.encode('utf-8')
+    except (AttributeError, UnicodeEncodeError) as e:
+        raise C2paError(f"Failed to encode settings to UTF-8: {e}")
+
+    result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
     if result != 0:
         error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
