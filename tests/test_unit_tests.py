@@ -1289,6 +1289,17 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
+    def test_builder_add_ingredient_dict(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient with a dictionary instead of JSON string
+        ingredient_dict = {"test": "ingredient"}
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_dict, "image/jpeg", f)
+
+        builder.close()
+
     def test_builder_add_multiple_ingredients(self):
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
@@ -1303,6 +1314,26 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         # Test adding another ingredient
+        ingredient_json = '{"test": "ingredient2"}'
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/png", f)
+
+        builder.close()
+
+    def test_builder_add_multiple_ingredients_2(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test builder operations
+        builder.set_no_embed()
+        builder.set_remote_url("http://test.url")
+
+        # Test adding ingredient with a dictionary
+        ingredient_dict = {"test": "ingredient"}
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_dict, "image/jpeg", f)
+
+        # Test adding another ingredient with a JSON string
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
             builder.add_ingredient(ingredient_json, "image/png", f)
@@ -1506,6 +1537,46 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath3, 'rb') as f:
             builder.add_ingredient_from_stream(
                 ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(
+                first_ingredient["title"],
+                "Test Ingredient Stream")
+
+        builder.close()
+
+    def test_builder_sign_with_ingredient_dict_from_stream(self):
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
+
+        # Test adding ingredient using stream with a dictionary
+        ingredient_dict = {"title": "Test Ingredient Stream"}
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient_from_stream(
+                ingredient_dict, "image/jpeg", f)
 
         with open(self.testPath2, "rb") as file:
             output = io.BytesIO(bytearray())
@@ -2712,6 +2783,86 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Reset settings
         load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
+    def test_builder_sign_dicts_no_auto_add(self):
+        # For testing, remove auto-added actions
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        initial_manifest_definition = {
+            "claim_generator_info": [{
+                "name": "python_test",
+                "version": "0.0.1",
+            }],
+            # claim version 2 is the default
+            # "claim_version": 2,
+            "format": "image/jpeg",
+            "title": "Python Test Image V2",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        builder = Builder.from_json(initial_manifest_definition)
+
+        # Using a dictionary instead of a JSON string
+        action_dict = {"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}
+        builder.add_action(action_dict)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify assertions object exists in active manifest
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the c2pa.actions.v2 assertion to check what we added
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion.get("label") == "c2pa.actions.v2":
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+            self.assertIn("data", actions_assertion)
+            assertion_data = actions_assertion["data"]
+            # Verify the manifest now contains actions
+            self.assertIn("actions", assertion_data)
+            actions = assertion_data["actions"]
+            # Verify "c2pa.color_adjustments" action exists anywhere in the actions array
+            created_action_found = False
+            for action in actions:
+                if action.get("action") == "c2pa.color_adjustments":
+                    created_action_found = True
+                    break
+
+            self.assertTrue(created_action_found)
+
+        builder.close()
+
+        # Reset settings
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
 class TestStream(unittest.TestCase):
     def setUp(self):
@@ -3146,6 +3297,46 @@ class TestLegacyAPI(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath3)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists in active manifest
+            self.assertIn("ingredients", active_manifest)
+            self.assertIsInstance(active_manifest["ingredients"], list)
+            self.assertTrue(len(active_manifest["ingredients"]) > 0)
+
+            # Verify the first ingredient's title matches what we set
+            first_ingredient = active_manifest["ingredients"][0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient From File")
+
+        builder.close()
+
+    def test_builder_sign_with_ingredient_dict_from_file(self):
+        """Test Builder class operations with an ingredient added from file path using a dictionary."""
+
+        builder = Builder.from_json(self.manifestDefinition)
+
+        # Test adding ingredient from file path with a dictionary
+        ingredient_dict = {"title": "Test Ingredient From File"}
+        # Suppress the specific deprecation warning for this test, as this is a legacy method
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            builder.add_ingredient_from_file_path(ingredient_dict, "image/jpeg", self.testPath3)
 
         with open(self.testPath2, "rb") as file:
             output = io.BytesIO(bytearray())

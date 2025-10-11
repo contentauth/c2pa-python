@@ -2500,13 +2500,13 @@ class Builder:
                     )
                 )
 
-    def add_ingredient(self, ingredient_json: str, format: str, source: Any):
+    def add_ingredient(self, ingredient_json: Union[str, dict], format: str, source: Any):
         """Add an ingredient to the builder (facade method).
         The added ingredient's source should be a stream-like object
         (for instance, a file opened as stream).
 
         Args:
-            ingredient_json: The JSON ingredient definition
+            ingredient_json: The JSON ingredient definition (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             source: The stream containing the ingredient data
               (any Python stream-like object)
@@ -2526,14 +2526,14 @@ class Builder:
 
     def add_ingredient_from_stream(
             self,
-            ingredient_json: str,
+            ingredient_json: Union[str, dict],
             format: str,
             source: Any):
         """Add an ingredient from a stream to the builder.
         Explicitly named API requiring a stream as input parameter.
 
         Args:
-            ingredient_json: The JSON ingredient definition
+            ingredient_json: The JSON ingredient definition (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             source: The stream containing the ingredient data
               (any Python stream-like object)
@@ -2544,6 +2544,10 @@ class Builder:
               contains invalid UTF-8 characters
         """
         self._ensure_valid_state()
+
+        # Convert dict to JSON string if necessary
+        if isinstance(ingredient_json, dict):
+            ingredient_json = json.dumps(ingredient_json)
 
         try:
             ingredient_str = ingredient_json.encode('utf-8')
@@ -2575,7 +2579,7 @@ class Builder:
 
     def add_ingredient_from_file_path(
             self,
-            ingredient_json: str,
+            ingredient_json: Union[str, dict],
             format: str,
             filepath: Union[str, Path]):
         """Add an ingredient from a file path to the builder (deprecated).
@@ -2586,7 +2590,7 @@ class Builder:
            Use :meth:`add_ingredient` with a file stream instead.
 
         Args:
-            ingredient_json: The JSON ingredient definition
+            ingredient_json: The JSON ingredient definition (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             filepath: The path to the file containing the ingredient data
               (can be a string or Path object)
