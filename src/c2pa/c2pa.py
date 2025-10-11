@@ -702,7 +702,6 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     except (TypeError, ValueError) as e:
         raise C2paError(f"Failed to serialize settings to JSON: {e}")
 
-    # Encode strings to UTF-8 bytes outside of the C call
     try:
         settings_bytes = settings_str.encode('utf-8')
         format_bytes = format.encode('utf-8')
@@ -2574,7 +2573,7 @@ class Builder:
         """
         self._ensure_valid_state()
 
-        # Convert dict to JSON string if necessary
+        # Convert dict to JSON string as necessary
         if isinstance(ingredient_json, dict):
             ingredient_json = json.dumps(ingredient_json)
 
@@ -2666,7 +2665,7 @@ class Builder:
         """
         self._ensure_valid_state()
 
-        # Convert dict to JSON string if necessary
+        # Convert dict to JSON string as necessary
         if isinstance(action_json, dict):
             action_json = json.dumps(action_json)
 
