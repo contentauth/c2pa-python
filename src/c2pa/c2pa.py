@@ -2618,18 +2618,22 @@ class Builder:
         except Exception as e:
             raise C2paError.Other(f"Could not add ingredient: {e}") from e
 
-    def add_action(self, action_json: str) -> None:
+    def add_action(self, action_json: Union[str, dict]) -> None:
         """Add an action to the builder, that will be placed
         in the actions assertion array in the generated manifest.
 
         Args:
-            action_json: The JSON action definition
+            action_json: The JSON action definition (either a JSON string or a dictionary)
 
         Raises:
             C2paError: If there was an error adding the action
             C2paError.Encoding: If the action JSON contains invalid UTF-8 characters
         """
         self._ensure_valid_state()
+
+        # Convert dict to JSON string if necessary
+        if isinstance(action_json, dict):
+            action_json = json.dumps(action_json)
 
         try:
             action_str = action_json.encode('utf-8')
