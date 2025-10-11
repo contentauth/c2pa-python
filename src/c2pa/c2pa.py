@@ -686,7 +686,7 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
 
     Args:
         settings: The settings string or dict to load
-        format: The format of the settings string (default: "json"). 
+        format: The format of the settings string (default: "json").
                 Ignored when settings is a dict.
 
     Raises:
@@ -2531,7 +2531,8 @@ class Builder:
         (for instance, a file opened as stream).
 
         Args:
-            ingredient_json: The JSON ingredient definition (either a JSON string or a dictionary)
+            ingredient_json: The JSON ingredient definition
+                (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             source: The stream containing the ingredient data
               (any Python stream-like object)
@@ -2558,7 +2559,8 @@ class Builder:
         Explicitly named API requiring a stream as input parameter.
 
         Args:
-            ingredient_json: The JSON ingredient definition (either a JSON string or a dictionary)
+            ingredient_json: The JSON ingredient definition
+                (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             source: The stream containing the ingredient data
               (any Python stream-like object)
@@ -2615,7 +2617,8 @@ class Builder:
            Use :meth:`add_ingredient` with a file stream instead.
 
         Args:
-            ingredient_json: The JSON ingredient definition (either a JSON string or a dictionary)
+            ingredient_json: The JSON ingredient definition
+                (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             filepath: The path to the file containing the ingredient data
               (can be a string or Path object)
@@ -2652,11 +2655,12 @@ class Builder:
         in the actions assertion array in the generated manifest.
 
         Args:
-            action_json: The JSON action definition (either a JSON string or a dictionary)
+            action_json: The JSON action definition
+                (either a JSON string or a dictionary)
 
         Raises:
             C2paError: If there was an error adding the action
-            C2paError.Encoding: If the action JSON contains invalid UTF-8 characters
+            C2paError.Encoding: If the action JSON contains invalid UTF-8 chars
         """
         self._ensure_valid_state()
 
