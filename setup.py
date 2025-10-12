@@ -104,7 +104,6 @@ def get_platform_classifier(platform_name):
 
 def get_current_platform():
     """Determine the current platform name."""
-    # Default platform detection
     if sys.platform == "win32":
         if platform.machine() == "ARM64":
             return "win_arm64"
