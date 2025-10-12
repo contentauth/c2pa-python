@@ -123,8 +123,17 @@ jobs:
           Write-Host "src/c2pa/libs directory contents:"
           Get-ChildItem -Recurse -Path src/c2pa/libs
 
+          # Create setup.cfg to specify platform-specific wheel
+          @"
+          [bdist_wheel]
+          plat-name = win_amd64
+          "@ | Out-File -FilePath setup.cfg -Encoding utf8
+
           # Build wheel using modern build tool
           python -m build --wheel
+
+          # Clean up setup.cfg
+          Remove-Item setup.cfg -ErrorAction SilentlyContinue
 
           # Verify wheel structure
           twine check dist/*
