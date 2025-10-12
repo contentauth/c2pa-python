@@ -65,12 +65,15 @@ jobs:
             /opt/python/cp310-cp310/bin/pip install toml &&
             C2PA_LIBS_PLATFORM=\"${{ format('{0}', inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu') }}\" /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py $C2PA_VERSION &&
             /opt/python/cp310-cp310/bin/python -c \"import sys; sys.path.insert(0, '/io'); from setup import copy_platform_libraries; copy_platform_libraries('${{ format('{0}', inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu') }}', clean_first=True)\" &&
+            echo '[bdist_wheel]' > /io/setup.cfg &&
+            echo 'plat-name = $PLATFORM_TAG' >> /io/setup.cfg &&
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
               \${PYBIN}/pip install --upgrade pip wheel build &&
               \${PYBIN}/pip install toml==0.10.2 &&
               \${PYBIN}/pip install setuptools==68.0.0 &&
-              cd /io && _PYTHON_HOST_PLATFORM=$PLATFORM_TAG \${PYBIN}/python -m build --wheel
+              cd /io && \${PYBIN}/python -m build --wheel
             done &&
+            rm -f /io/setup.cfg &&
             rm -f /io/dist/*-linux_*.whl
           "
 
@@ -182,8 +185,17 @@ jobs:
           # Copy libraries to package directory
           python -c "import sys; sys.path.insert(0, '.'); from setup import copy_platform_libraries; copy_platform_libraries('$RUST_PLATFORM', clean_first=True)"
 
-          # Build wheel using modern build tool with platform override
-          _PYTHON_HOST_PLATFORM="$PLATFORM_NAME" python -m build --wheel
+          # Create setup.cfg to specify platform for bdist_wheel
+          cat > setup.cfg << EOF
+          [bdist_wheel]
+          plat-name = $PLATFORM_NAME
+          EOF
+
+          # Build wheel using modern build tool
+          python -m build --wheel
+
+          # Clean up setup.cfg
+          rm -f setup.cfg
 
           # Verify wheel structure
           echo "Verifying wheels using twine check"
