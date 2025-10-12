@@ -13,6 +13,7 @@
 
 from setuptools import setup, find_namespace_packages
 import sys
+import os
 import platform
 import shutil
 from pathlib import Path
@@ -102,7 +103,17 @@ def get_platform_classifier(platform_name):
         raise ValueError(f"Unknown platform: {platform_name}")
 
 def get_current_platform():
-    """Determine the current platform name."""
+    """Determine the current platform name.
+
+    Respects _PYTHON_HOST_PLATFORM environment variable for platform namings.
+    """
+    # Check if we're cross-compiling (used by python -m build)
+    host_platform = os.environ.get('_PYTHON_HOST_PLATFORM')
+    if host_platform:
+        # Return the host platform as-is for proper wheel tagging
+        return host_platform
+
+    # Default platform detection
     if sys.platform == "win32":
         if platform.machine() == "ARM64":
             return "win_arm64"
