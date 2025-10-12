@@ -182,24 +182,27 @@ if 'develop' in sys.argv or 'install' in sys.argv:
     print("Installing in development mode for platform ", current_platform)
     copy_platform_libraries(current_platform)
 
-# Standard setup call
-# For release builds using 'python -m build', libraries should be copied
-# beforehand in the CI workflow
-setup(
-    name=PACKAGE_NAME,
-    version=VERSION,
-    package_dir={"": "src"},
-    packages=find_namespace_packages(where="src"),
-    include_package_data=True,
-    package_data={
-        "c2pa": ["libs/*"],  # Include all files in libs directory
-    },
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        get_platform_classifier(get_current_platform()),
-    ],
-    python_requires=">=3.10",
-    long_description=open("README.md").read(),
-    long_description_content_type="text/markdown",
-    license="MIT OR Apache-2.0",
-)
+# Only call setup() if we're being executed as a script (not imported)
+# This allows importing helper functions without triggering setup
+if __name__ == "__main__" or "setuptools.build_meta" in sys.modules:
+    # Standard setup call
+    # For release builds using 'python -m build', libraries should be copied
+    # beforehand in the CI workflow
+    setup(
+        name=PACKAGE_NAME,
+        version=VERSION,
+        package_dir={"": "src"},
+        packages=find_namespace_packages(where="src"),
+        include_package_data=True,
+        package_data={
+            "c2pa": ["libs/*"],  # Include all files in libs directory
+        },
+        classifiers=[
+            "Programming Language :: Python :: 3",
+            get_platform_classifier(get_current_platform()),
+        ],
+        python_requires=">=3.10",
+        long_description=open("README.md").read(),
+        long_description_content_type="text/markdown",
+        license="MIT OR Apache-2.0",
+    )
