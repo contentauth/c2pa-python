@@ -64,11 +64,12 @@ jobs:
             /opt/python/cp310-cp310/bin/pip install -r requirements.txt -r requirements-dev.txt &&
             /opt/python/cp310-cp310/bin/pip install toml &&
             C2PA_LIBS_PLATFORM=\"${{ format('{0}', inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu') }}\" /opt/python/cp310-cp310/bin/python scripts/download_artifacts.py $C2PA_VERSION &&
+            /opt/python/cp310-cp310/bin/python -c \"import sys; sys.path.insert(0, '/io'); from setup import copy_platform_libraries; copy_platform_libraries('${{ format('{0}', inputs.architecture == 'aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu') }}', clean_first=True)\" &&
             for PYBIN in /opt/python/cp3{10,11}-*/bin; do
-              \${PYBIN}/pip install --upgrade pip wheel &&
+              \${PYBIN}/pip install --upgrade pip wheel build &&
               \${PYBIN}/pip install toml==0.10.2 &&
               \${PYBIN}/pip install setuptools==68.0.0 &&
-              CFLAGS=\"-I/opt/python/cp310-cp310/include/python3.10\" LDFLAGS=\"-L/opt/python/cp310-cp310/lib\" \${PYBIN}/python setup.py bdist_wheel --plat-name $PLATFORM_TAG
+              cd /io && _PYTHON_HOST_PLATFORM=$PLATFORM_TAG \${PYBIN}/python -m build --wheel
             done &&
             rm -f /io/dist/*-linux_*.whl
           "
@@ -101,7 +102,7 @@ jobs:
           # Install dependencies
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-          pip install wheel
+          pip install wheel build
           pip install twine
 
           # Download native artifacts
@@ -112,11 +113,15 @@ jobs:
 
           Write-Host "Artifacts directory contents:"
           Get-ChildItem -Recurse -Path artifacts
+
+          # Copy libraries to package directory
+          python -c "import sys; sys.path.insert(0, '.'); from setup import copy_platform_libraries; copy_platform_libraries('x86_64-pc-windows-msvc', clean_first=True)"
+
           Write-Host "src/c2pa/libs directory contents:"
           Get-ChildItem -Recurse -Path src/c2pa/libs
 
-          # Build wheel
-          python setup.py bdist_wheel --plat-name win_amd64
+          # Build wheel using modern build tool
+          python -m build --wheel
 
           # Verify wheel structure
           twine check dist/*
@@ -132,8 +137,20 @@ jobs:
           # Install dependencies
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-          pip install wheel
+          pip install wheel build
           pip install twine
+
+          # Determine target platform for library copying
+          if [ "${{ inputs.architecture }}" = "universal2" ]; then
+            RUST_PLATFORM="universal-apple-darwin"
+          elif [ "${{ inputs.architecture }}" = "arm64" ]; then
+            RUST_PLATFORM="aarch64-apple-darwin"
+          elif [ "${{ inputs.architecture }}" = "x86_64" ]; then
+            RUST_PLATFORM="x86_64-apple-darwin"
+          else
+            echo "Unknown architecture: ${{ inputs.architecture }}"
+            exit 1
+          fi
 
           # Download native artifacts for the target architecture
           if [ "${{ inputs.architecture }}" = "universal2" ]; then
@@ -162,15 +179,11 @@ jobs:
           echo "Building wheel for architecture: ${{ inputs.architecture }}"
           echo "Using platform name: $PLATFORM_NAME"
 
-          # Build wheel with appropriate platform name
-          python setup.py bdist_wheel --plat-name $PLATFORM_NAME
+          # Copy libraries to package directory
+          python -c "import sys; sys.path.insert(0, '.'); from setup import copy_platform_libraries; copy_platform_libraries('$RUST_PLATFORM', clean_first=True)"
 
-          # Rename wheel to ensure unique filename
-          cd dist
-          for wheel in *.whl; do
-            mv "$wheel" "${wheel/$PLATFORM_NAME/$PLATFORM_NAME}"
-          done
-          cd ..
+          # Build wheel using modern build tool with platform override
+          _PYTHON_HOST_PLATFORM="$PLATFORM_NAME" python -m build --wheel
 
           # Verify wheel structure
           echo "Verifying wheels using twine check"

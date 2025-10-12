@@ -164,71 +164,16 @@ def find_available_platforms():
 
     return available_platforms
 
-# For development installation
+# For development installation - copy libraries automatically
+# When using pip install -e . or pip install ., this will copy the libraries
 if 'develop' in sys.argv or 'install' in sys.argv:
     current_platform = get_platform_identifier()
     print("Installing in development mode for platform ", current_platform)
     copy_platform_libraries(current_platform)
 
-# For wheel building (both bdist_wheel and build)
-if 'bdist_wheel' in sys.argv or 'build' in sys.argv:
-    # Check if we're building for a specific architecture
-    # This is mostly to support macOS wheel builds
-    target_arch = None
-    for i, arg in enumerate(sys.argv):
-        if arg == '--plat-name':
-            if i + 1 < len(sys.argv):
-                plat_name = sys.argv[i + 1]
-                if 'arm64' in plat_name:
-                    target_arch = 'arm64'
-                elif 'x86_64' in plat_name:
-                    target_arch = 'x86_64'
-                elif 'universal2' in plat_name:
-                    target_arch = 'universal2'
-                break
-
-    # Get the platform identifier for the target architecture
-    target_platform = get_platform_identifier(target_arch)
-    print(f"Building wheel for target platform: {target_platform}")
-
-    # Check if we have libraries for this platform
-    platform_dir = ARTIFACTS_DIR / target_platform
-    if not platform_dir.exists() or not any(platform_dir.iterdir()):
-        print(f"Warning: No libraries found for platform {target_platform}")
-        print("Available platforms:")
-        for platform_name in find_available_platforms():
-            print(f"  - {platform_name}")
-
-    # Copy libraries for the target platform
-    try:
-        copy_platform_libraries(target_platform, clean_first=True)
-
-        # Build the wheel
-        setup(
-            name=PACKAGE_NAME,
-            version=VERSION,
-            package_dir={"": "src"},
-            packages=find_namespace_packages(where="src"),
-            include_package_data=True,
-            package_data={
-                "c2pa": ["libs/*"],
-            },
-            classifiers=[
-                "Programming Language :: Python :: 3",
-                get_platform_classifier(target_platform),
-            ],
-            python_requires=">=3.10",
-            long_description=open("README.md").read(),
-            long_description_content_type="text/markdown",
-            license="MIT OR Apache-2.0",
-        )
-    finally:
-        # Clean up
-        if PACKAGE_LIBS_DIR.exists():
-            shutil.rmtree(PACKAGE_LIBS_DIR)
-    sys.exit(0)
-
-# For sdist and development installation
+# Standard setup call
+# For release builds using 'python -m build', libraries should be copied
+# beforehand in the CI workflow
 setup(
     name=PACKAGE_NAME,
     version=VERSION,
