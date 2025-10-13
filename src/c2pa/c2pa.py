@@ -601,6 +601,19 @@ def _convert_to_py_string(value) -> str:
     return py_string
 
 
+def _clear_error_state():
+    """Clear any existing error state from the C library.
+    
+    This function should be called at the beginning of object initialization
+    to ensure that stale error states from previous operations don't interfere
+    with new objects being created.
+    """
+    error = _lib.c2pa_error()
+    if error:
+        # Free the error to clear the state
+        _lib.c2pa_string_free(error)
+
+
 def _parse_operation_result_for_error(
         result: ctypes.c_void_p | None,
         check_error: bool = True) -> Optional[str]:
@@ -1375,6 +1388,9 @@ class Reader:
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
+        # Native libs plumbing:
+        # Clear any stale error state from previous operations
+        _clear_error_state()
 
         self._closed = False
         self._initialized = False
@@ -2095,6 +2111,10 @@ class Signer:
         Raises:
             C2paError: If the signer pointer is invalid
         """
+        # Native libs plumbing:
+        # Clear any stale error state from previous operations
+        _clear_error_state()
+        
         # Validate pointer before assignment
         if not signer_ptr:
             raise C2paError("Invalid signer pointer: pointer is null")
@@ -2352,6 +2372,10 @@ class Builder:
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
+        # Native libs plumbing:
+        # Clear any stale error state from previous operations
+        _clear_error_state()
+
         self._closed = False
         self._initialized = False
         self._builder = None
