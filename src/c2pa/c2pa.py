@@ -49,6 +49,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_set_remote_url',
     'c2pa_builder_add_resource',
     'c2pa_builder_add_ingredient_from_stream',
+    'c2pa_builder_add_action',
     'c2pa_builder_to_archive',
     'c2pa_builder_sign',
     'c2pa_manifest_bytes_free',
@@ -403,6 +404,9 @@ _setup_function(_lib.c2pa_builder_add_ingredient_from_stream,
                  ctypes.c_char_p,
                  ctypes.POINTER(C2paStream)],
                 ctypes.c_int)
+_setup_function(_lib.c2pa_builder_add_action,
+                [ctypes.POINTER(C2paBuilder), ctypes.c_char_p],
+                ctypes.c_int)
 _setup_function(_lib.c2pa_builder_to_archive,
                 [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
                 ctypes.c_int)
@@ -667,20 +671,44 @@ def version() -> str:
     return _convert_to_py_string(result)
 
 
+@overload
 def load_settings(settings: str, format: str = "json") -> None:
-    """Load C2PA settings from a string.
+    ...
+
+
+@overload
+def load_settings(settings: dict) -> None:
+    ...
+
+
+def load_settings(settings: Union[str, dict], format: str = "json") -> None:
+    """Load C2PA settings from a string or dict.
 
     Args:
-        settings: The settings string to load
-        format: The format of the settings string (default: "json")
+        settings: The settings string or dict to load
+        format: The format of the settings string (default: "json").
+                Ignored when settings is a dict.
 
     Raises:
         C2paError: If there was an error loading the settings
     """
-    result = _lib.c2pa_load_settings(
-        settings.encode('utf-8'),
-        format.encode('utf-8')
-    )
+    # Convert to JSON string as necessary
+    try:
+        if isinstance(settings, dict):
+            settings_str = json.dumps(settings)
+            format = "json"
+        else:
+            settings_str = settings
+    except (TypeError, ValueError) as e:
+        raise C2paError(f"Failed to serialize settings to JSON: {e}")
+
+    try:
+        settings_bytes = settings_str.encode('utf-8')
+        format_bytes = format.encode('utf-8')
+    except (AttributeError, UnicodeEncodeError) as e:
+        raise C2paError(f"Failed to encode settings to UTF-8: {e}")
+
+    result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
     if result != 0:
         error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
@@ -2198,6 +2226,7 @@ class Builder:
         'url_error': "Error setting remote URL: {}",
         'resource_error': "Error adding resource: {}",
         'ingredient_error': "Error adding ingredient: {}",
+        'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
         'sign_error': "Error during signing: {}",
         'encoding_error': "Invalid UTF-8 characters in manifest: {}",
@@ -2495,13 +2524,16 @@ class Builder:
                     )
                 )
 
-    def add_ingredient(self, ingredient_json: str, format: str, source: Any):
+    def add_ingredient(
+        self, ingredient_json: Union[str, dict], format: str, source: Any
+    ):
         """Add an ingredient to the builder (facade method).
         The added ingredient's source should be a stream-like object
         (for instance, a file opened as stream).
 
         Args:
             ingredient_json: The JSON ingredient definition
+                (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             source: The stream containing the ingredient data
               (any Python stream-like object)
@@ -2521,7 +2553,7 @@ class Builder:
 
     def add_ingredient_from_stream(
             self,
-            ingredient_json: str,
+            ingredient_json: Union[str, dict],
             format: str,
             source: Any):
         """Add an ingredient from a stream to the builder.
@@ -2529,6 +2561,7 @@ class Builder:
 
         Args:
             ingredient_json: The JSON ingredient definition
+                (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             source: The stream containing the ingredient data
               (any Python stream-like object)
@@ -2539,6 +2572,9 @@ class Builder:
               contains invalid UTF-8 characters
         """
         self._ensure_valid_state()
+
+        if isinstance(ingredient_json, dict):
+            ingredient_json = json.dumps(ingredient_json)
 
         try:
             ingredient_str = ingredient_json.encode('utf-8')
@@ -2570,7 +2606,7 @@ class Builder:
 
     def add_ingredient_from_file_path(
             self,
-            ingredient_json: str,
+            ingredient_json: Union[str, dict],
             format: str,
             filepath: Union[str, Path]):
         """Add an ingredient from a file path to the builder (deprecated).
@@ -2582,6 +2618,7 @@ class Builder:
 
         Args:
             ingredient_json: The JSON ingredient definition
+                (either a JSON string or a dictionary)
             format: The MIME type or extension of the ingredient
             filepath: The path to the file containing the ingredient data
               (can be a string or Path object)
@@ -2612,6 +2649,42 @@ class Builder:
             raise C2paError.FileNotFound(f"File not found: {filepath}") from e
         except Exception as e:
             raise C2paError.Other(f"Could not add ingredient: {e}") from e
+
+    def add_action(self, action_json: Union[str, dict]) -> None:
+        """Add an action to the builder, that will be placed
+        in the actions assertion array in the generated manifest.
+
+        Args:
+            action_json: The JSON action definition
+                (either a JSON string or a dictionary)
+
+        Raises:
+            C2paError: If there was an error adding the action
+            C2paError.Encoding: If the action JSON contains invalid UTF-8 chars
+        """
+        self._ensure_valid_state()
+
+        if isinstance(action_json, dict):
+            action_json = json.dumps(action_json)
+
+        try:
+            action_str = action_json.encode('utf-8')
+        except UnicodeError as e:
+            raise C2paError.Encoding(
+                Builder._ERROR_MESSAGES['encoding_error'].format(str(e))
+            )
+
+        result = _lib.c2pa_builder_add_action(self._builder, action_str)
+
+        if result != 0:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError(
+                Builder._ERROR_MESSAGES['action_error'].format(
+                    "Unknown error"
+                )
+            )
 
     def to_archive(self, stream: Any) -> None:
         """Write an archive of the builder to a stream.
