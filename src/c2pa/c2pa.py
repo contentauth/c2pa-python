@@ -250,7 +250,7 @@ def _clear_error_state():
     This function should be called at the beginning of object initialization
     and before any operations that could potentially raise an error,
     to ensure that stale error states from previous operations don't interfere
-    with new objects being created.
+    with new objects being created, or independent function calls.
     """
     error = _lib.c2pa_error()
     if error:
