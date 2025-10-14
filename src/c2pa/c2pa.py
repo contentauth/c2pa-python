@@ -244,6 +244,19 @@ class C2paStream(ctypes.Structure):
     ]
 
 
+def _clear_error_state():
+    """Clear any existing error state from the C library.
+
+    This function should be called at the beginning of object initialization
+    and before any operations that could potentially raise an error,
+    to ensure that stale error states from previous operations don't interfere
+    with new objects being created.
+    """
+    error = _lib.c2pa_error()
+    if error:
+        # Free the error to clear the state
+        _lib.c2pa_string_free(error)
+
 class C2paSignerInfo(ctypes.Structure):
     """Configuration for a Signer."""
     _fields_ = [
@@ -264,6 +277,7 @@ class C2paSignerInfo(ctypes.Structure):
             private_key: The private key as a string
             ta_url: The timestamp authority URL as bytes
         """
+        _clear_error_state()
 
         if sign_cert is None:
             raise ValueError("sign_cert must be set")
@@ -601,19 +615,6 @@ def _convert_to_py_string(value) -> str:
     return py_string
 
 
-def _clear_error_state():
-    """Clear any existing error state from the C library.
-    
-    This function should be called at the beginning of object initialization
-    to ensure that stale error states from previous operations don't interfere
-    with new objects being created.
-    """
-    error = _lib.c2pa_error()
-    if error:
-        # Free the error to clear the state
-        _lib.c2pa_string_free(error)
-
-
 def _parse_operation_result_for_error(
         result: ctypes.c_void_p | None,
         check_error: bool = True) -> Optional[str]:
@@ -705,6 +706,8 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     Raises:
         C2paError: If there was an error loading the settings
     """
+    _clear_error_state()
+
     # Convert to JSON string as necessary
     try:
         if isinstance(settings, dict):
@@ -789,6 +792,8 @@ def read_ingredient_file(
         stacklevel=2,
     )
 
+    _clear_error_state()
+
     container = _StringContainer()
 
     container._path_str = str(path).encode('utf-8')
@@ -833,6 +838,8 @@ def read_file(path: Union[str, Path],
         DeprecationWarning,
         stacklevel=2,
     )
+
+    _clear_error_state()
 
     container = _StringContainer()
 
@@ -919,6 +926,8 @@ def sign_file(
         DeprecationWarning,
         stacklevel=2,
     )
+
+    _clear_error_state()
 
     try:
         # Determine if we have a signer or signer info
@@ -1946,6 +1955,10 @@ class Signer:
         Raises:
             C2paError: If there was an error creating the signer
         """
+        # Native libs plumbing:
+        # Clear any stale error state from previous operations
+        _clear_error_state()
+
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
         if not signer_ptr:
@@ -2071,6 +2084,10 @@ class Signer:
                 cls._ERROR_MESSAGES['encoding_error'].format(
                     str(e)))
 
+        # Native libs plumbing:
+        # Clear any stale error state from previous operations
+        _clear_error_state()
+
         # Create the callback object using the callback function
         callback_cb = SignerCallback(wrapped_callback)
 
@@ -2114,7 +2131,7 @@ class Signer:
         # Native libs plumbing:
         # Clear any stale error state from previous operations
         _clear_error_state()
-        
+
         # Validate pointer before assignment
         if not signer_ptr:
             raise C2paError("Invalid signer pointer: pointer is null")
@@ -2347,6 +2364,7 @@ class Builder:
         """
         builder = cls({})
         stream_obj = Stream(stream)
+
         builder._builder = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
         if not builder._builder:
@@ -2908,6 +2926,8 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     Raises:
         C2paError: If there was an error converting the manifest
     """
+    _clear_error_state()
+
     format_str = format.encode('utf-8')
     manifest_array = (ctypes.c_ubyte * len(manifest_bytes))(*manifest_bytes)
     result_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
@@ -3017,6 +3037,8 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         C2paError: If there was an error signing the data
         C2paError.Encoding: If the private key contains invalid UTF-8 chars
     """
+    _clear_error_state()
+
     if not data:
         raise C2paError("Data to sign cannot be empty")
 
