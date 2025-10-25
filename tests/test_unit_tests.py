@@ -43,7 +43,9 @@ ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 def load_test_settings_as_json():
     """
-    Load the test_settings.toml file and return its content as JSON-compatible dict.
+    Load default trust configuration test settings from a
+    TOML config file and return its content as JSON-compatible dict.
+    The return value is used to load settings.
 
     Returns:
         dict: The parsed TOML content as a Python dictionary (JSON-compatible).
