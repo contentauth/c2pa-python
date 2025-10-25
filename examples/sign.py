@@ -26,7 +26,7 @@ from cryptography.hazmat.backends import default_backend
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
-# Ensure the output directory exists
+# Ensure the output directory exists.
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -43,7 +43,7 @@ with open(fixtures_dir + "es256_certs.pem", "rb") as cert_file:
 with open(fixtures_dir + "es256_private.key", "rb") as key_file:
     key = key_file.read()
 
-# Define a callback signer function
+# Define a callback signer function.
 def callback_signer_es256(data: bytes) -> bytes:
     """Callback function that signs data using ES256 algorithm."""
     private_key = serialization.load_pem_private_key(
@@ -60,7 +60,6 @@ def callback_signer_es256(data: bytes) -> bytes:
 # Create a manifest definition as a dictionary.
 # This manifest follows the V2 manifest format.
 manifest_definition = {
-    "claim_generator": "python_example",
     "claim_generator_info": [{
         "name": "python_example",
         "version": "0.0.1",
@@ -87,7 +86,7 @@ manifest_definition = {
 }
 
 # Sign the image with the signer created above,
-# which will use the callback signer
+# which will use the callback signer.
 print("\nSigning the image file...")
 
 with c2pa.Signer.from_callback(
@@ -107,6 +106,9 @@ with c2pa.Signer.from_callback(
 print("\nReading signed image metadata:")
 with open(output_dir + "A_signed.jpg", "rb") as file:
     with c2pa.Reader("image/jpeg", file) as reader:
+        # The validation state will depend on loaded trust settings.
+        # Without loaded trust settings,
+        # the manifest validation_state will be "Invalid".
         print(reader.json())
 
 print("\nExample completed successfully!")
