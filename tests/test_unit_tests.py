@@ -1000,8 +1000,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
 
             # Write buffer to file
@@ -1028,8 +1028,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
@@ -1057,8 +1057,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
@@ -1082,8 +1082,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             output.close()
 
@@ -1097,8 +1097,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             output.close()
 
@@ -1173,8 +1173,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             output.close()
 
@@ -1261,8 +1261,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             output.close()
 
@@ -1289,8 +1289,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             output.close()
 
@@ -1393,8 +1393,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             archive.close()
             output.close()
@@ -1466,8 +1466,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             archive.close()
             output.close()
@@ -1676,8 +1676,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                         json_data = reader.json()
                         self.assertIn("Python Test", json_data)
                         # Needs trust configuration to be set up to validate as Trusted,
-                        # Or validation on read reports `signing certificate untrusted`
-                        # (which makes the manifest Invalid)
+                        # or validation_status on read reports `signing certificate untrusted`
+                        # which makes the manifest validation_state become Invalid.
                         self.assertIn("Invalid", json_data)
                         reader.close()
                         output.close()
@@ -2210,8 +2210,8 @@ class TestBuilderWithSigner(unittest.TestCase):
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
           # Needs trust configuration to be set up to validate as Trusted,
-          # Or validation on read reports `signing certificate untrusted` (which makes the manifest Invalid)
-          # (which makes the manifest Invalid)
+          # or validation_status on read reports `signing certificate untrusted` (which makes the manifest Invalid)
+          # which makes the manifest validation_state become Invalid.
           self.assertIn("Invalid", json_data)
           output.close()
 
@@ -2228,8 +2228,8 @@ class TestBuilderWithSigner(unittest.TestCase):
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
           # Needs trust configuration to be set up to validate as Trusted,
-          # Or validation on read reports `signing certificate untrusted`
-          # (which makes the manifest Invalid)
+          # or validation_status on read reports `signing certificate untrusted`
+          # which makes the manifest validation_state become Invalid.
           self.assertIn("Invalid", json_data)
           output.close()
 
@@ -2246,8 +2246,8 @@ class TestBuilderWithSigner(unittest.TestCase):
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
           # Needs trust configuration to be set up to validate as Trusted,
-          # Or validation on read reports `signing certificate untrusted`
-          # (which makes the manifest Invalid)
+          # or validation_status on read reports `signing certificate untrusted`
+          # which makes the manifest validation_state become Invalid.
           self.assertIn("Invalid", json_data)
           output.close()
 
@@ -2274,8 +2274,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
@@ -2305,8 +2305,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
@@ -2360,8 +2360,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
                 # Parse the JSON and verify the signature algorithm
@@ -2414,8 +2414,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
                 # Parse the JSON and verify the signature algorithm
@@ -2470,8 +2470,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
             # Needs trust configuration to be set up to validate as Trusted,
-            # Or validation on read reports `signing certificate untrusted`
-            # (which makes the manifest Invalid)
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
             self.assertIn("Invalid", json_data)
             reader.close()
             output.close()
@@ -2497,8 +2497,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                     # Basic verification of the manifest
                     self.assertIn("Python Test Image V2", json_data)
                     # Needs trust configuration to be set up to validate as Trusted,
-                    # Or validation on read reports `signing certificate untrusted`
-                    # (which makes the manifest Invalid)
+                    # or validation_status on read reports `signing certificate untrusted`
+                    # which makes the manifest validation_state become Invalid.
                     self.assertIn("Invalid", json_data)
 
                 output.close()
@@ -2533,8 +2533,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
@@ -2564,8 +2564,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
             # Verify also signed file using manifest bytes
@@ -2573,8 +2573,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
@@ -2604,8 +2604,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
             # Verify also signed file using manifest bytes
@@ -2613,8 +2613,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
                 # Needs trust configuration to be set up to validate as Trusted,
-                # Or validation on read reports `signing certificate untrusted`
-                # (which makes the manifest Invalid)
+                # or validation_status on read reports `signing certificate untrusted`
+                # which makes the manifest validation_state become Invalid.
                 self.assertIn("Invalid", json_data)
 
         finally:
