@@ -2251,37 +2251,6 @@ class TestBuilderWithSigner(unittest.TestCase):
           self.assertIn("Invalid", json_data)
           output.close()
 
-    def test_sign_file_tmn_wip(self):
-        temp_dir = tempfile.mkdtemp()
-        try:
-            # Create a temporary output file path
-            output_path = os.path.join(temp_dir, "signed_output.jpg")
-
-            # Use the sign_file method
-            builder = Builder(self.manifestDefinition)
-            builder.sign_file(
-                self.testPath,
-                output_path,
-                self.signer
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path))
-
-            # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
-                json_data = reader.json()
-                self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate as Trusted,
-                # or validation_status on read reports `signing certificate untrusted`
-                # which makes the manifest validation_state become Invalid.
-                self.assertIn("Invalid", json_data)
-
-        finally:
-            # Clean up the temporary directory
-            shutil.rmtree(temp_dir)
-
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
         try:
