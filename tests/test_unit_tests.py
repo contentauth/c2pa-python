@@ -23,6 +23,8 @@ from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
 import ctypes
+import toml
+import threading
 
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -37,6 +39,43 @@ INGREDIENT_TEST_FILE_NAME = "A.jpg"
 DEFAULT_TEST_FILE = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
 INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
+
+
+def load_test_settings_as_json():
+    """
+    Load the test_settings.toml file and return its content as JSON-compatible dict.
+    
+    Returns:
+        dict: The parsed TOML content as a Python dictionary (JSON-compatible).
+        
+    Raises:
+        FileNotFoundError: If test_settings.toml is not found.
+        toml.TomlDecodeError: If the TOML file is malformed.
+    """
+    # Get the directory where this file is located
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    settings_path = os.path.join(tests_dir, 'test_settings.toml')
+    
+    # Load the TOML file
+    with open(settings_path, 'r') as f:
+        settings_data = toml.load(f)
+    
+    return settings_data
+
+
+def load_test_settings_as_json_string():
+    """
+    Load the test_settings.toml file and return its content as a JSON string.
+    
+    Returns:
+        str: The parsed TOML content serialized as a JSON string.
+        
+    Raises:
+        FileNotFoundError: If test_settings.toml is not found.
+        toml.TomlDecodeError: If the TOML file is malformed.
+    """
+    settings_data = load_test_settings_as_json()
+    return json.dumps(settings_data, indent=2)
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
@@ -116,8 +155,44 @@ class TestReader(unittest.TestCase):
             reader = Reader("image/jpeg", file)
             validation_state = reader.get_validation_state()
             self.assertIsNotNone(validation_state)
-            # Needs trust configuration to be set up to validate
-            # self.assertEqual(validation_state, "Valid")
+            # Needs trust configuration to be set up to validate as Trusted, otherwise manifest is Invalid
+            self.assertEqual(validation_state, "Invalid")
+
+    def test_stream_read_get_validation_state_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def read_with_trust_config():
+            try:
+                # Load trust configuration from test_settings.toml
+                settings_dict = load_test_settings_as_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    reader = Reader("image/jpeg", file)
+                    validation_state = reader.get_validation_state()
+                    result['validation_state'] = validation_state
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=read_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIsNotNone(result.get('validation_state'))
+        # With trust configuration loaded, manifest is Trusted
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_stream_read_get_validation_results(self):
         with open(self.testPath, "rb") as file:
@@ -925,8 +1000,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
             output.close()
 
     def test_streams_sign_with_es256_alg_v1_manifest(self):
@@ -938,8 +1011,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
 
             # Write buffer to file
             # output.seek(0)
@@ -964,8 +1039,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("image/jpeg", target)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up...
@@ -991,8 +1068,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("image/jpeg", target)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up...
@@ -1014,8 +1093,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             output.close()
 
     def test_streams_sign_with_es256_alg_2(self):
@@ -1027,9 +1108,59 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             output.close()
+
+    def test_streams_sign_with_es256_alg_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration from test_settings.toml
+                settings_dict = load_test_settings_as_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
+
 
     def test_sign_with_ed25519_alg(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
@@ -1053,9 +1184,71 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             output.close()
+
+    def test_sign_with_ed25519_alg_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration from test_settings.toml
+                settings_dict = load_test_settings_as_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
+                    certs = cert_file.read()
+                with open(os.path.join(self.data_dir, "ed25519.pem"), "rb") as key_file:
+                    key = key_file.read()
+
+                signer_info = C2paSignerInfo(
+                    alg=b"ed25519",
+                    sign_cert=certs,
+                    private_key=key,
+                    ta_url=b"http://timestamp.digicert.com"
+                )
+                signer = Signer.from_info(signer_info)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_sign_with_ed25519_alg_2(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
@@ -1079,8 +1272,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             output.close()
 
     def test_sign_with_ps256_alg(self):
@@ -1105,8 +1300,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             output.close()
 
     def test_sign_with_ps256_alg_2(self):
@@ -1131,9 +1328,69 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
+            # Needs trust configuration to be set up to validate as Trusted
             # self.assertNotIn("validation_status", json_data)
             output.close()
+
+    def test_sign_with_ps256_alg_2_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration from test_settings.toml
+                settings_dict = load_test_settings_as_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(os.path.join(self.data_dir, "ps256.pub"), "rb") as cert_file:
+                    certs = cert_file.read()
+                with open(os.path.join(self.data_dir, "ps256.pem"), "rb") as key_file:
+                    key = key_file.read()
+
+                signer_info = C2paSignerInfo(
+                    alg=b"ps256",
+                    sign_cert=certs,
+                    private_key=key,
+                    ta_url=b"http://timestamp.digicert.com"
+                )
+                signer = Signer.from_info(signer_info)
+
+                with open(self.testPath2, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_archive_sign(self):
         with open(self.testPath, "rb") as file:
@@ -1147,8 +1404,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             archive.close()
             output.close()
 
@@ -1167,8 +1426,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             archive.close()
             output.close()
 
@@ -1271,8 +1532,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                         reader = Reader(mime_type, output)
                         json_data = reader.json()
                         self.assertIn("Python Test", json_data)
-                        # Needs trust configuration to be set up to validate
-                        # self.assertNotIn("validation_status", json_data)
+                        # Needs trust configuration to be set up to validate as Trusted,
+                        # Or validation on red reports `signing certificate untrusted`
+                        # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                        self.assertIn("Invalid", json_data)
                         reader.close()
                         output.close()
                 except Error.NotSupported:
@@ -1803,8 +2066,10 @@ class TestBuilderWithSigner(unittest.TestCase):
           reader = Reader("image/jpeg", output)
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
-          # Needs trust configuration to be set up to validate
-          # self.assertNotIn("validation_status", json_data)
+          # Needs trust configuration to be set up to validate as Trusted,
+          # Or validation on red reports `signing certificate untrusted`
+          # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+          self.assertIn("Invalid", json_data)
           output.close()
 
     def test_sign_mp4_video_file_single(self):
@@ -1819,8 +2084,10 @@ class TestBuilderWithSigner(unittest.TestCase):
           reader = Reader("video/mp4", output)
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
-          # Needs trust configuration to be set up to validate
-          # self.assertNotIn("validation_status", json_data)
+          # Needs trust configuration to be set up to validate as Trusted,
+          # Or validation on red reports `signing certificate untrusted`
+          # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+          self.assertIn("Invalid", json_data)
           output.close()
 
     def test_sign_mov_video_file_single(self):
@@ -1835,8 +2102,10 @@ class TestBuilderWithSigner(unittest.TestCase):
           reader = Reader("mov", output)
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
-          # Needs trust configuration to be set up to validate
-          # self.assertNotIn("validation_status", json_data)
+          # Needs trust configuration to be set up to validate as Trusted,
+          # Or validation on red reports `signing certificate untrusted`
+          # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+          self.assertIn("Invalid", json_data)
           output.close()
 
     def test_sign_file_tmn_wip(self):
@@ -1861,8 +2130,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("image/jpeg", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -1890,8 +2161,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("video/mp4", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -1943,8 +2216,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
                 # Parse the JSON and verify the signature algorithm
                 manifest_data = json.loads(json_data)
@@ -1995,8 +2270,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
                 # Parse the JSON and verify the signature algorithm
                 manifest_data = json.loads(json_data)
@@ -2049,8 +2326,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            # Needs trust configuration to be set up to validate
-            # self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # Or validation on red reports `signing certificate untrusted`
+            # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+            self.assertIn("Invalid", json_data)
             reader.close()
             output.close()
 
@@ -2074,8 +2353,10 @@ class TestBuilderWithSigner(unittest.TestCase):
 
                     # Basic verification of the manifest
                     self.assertIn("Python Test Image V2", json_data)
-                    # Needs trust configuration to be set up to validate
-                    # self.assertNotIn("validation_status", json_data)
+                    # Needs trust configuration to be set up to validate as Trusted,
+                    # Or validation on red reports `signing certificate untrusted`
+                    # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                    self.assertIn("Invalid", json_data)
 
                 output.close()
 
@@ -2108,8 +2389,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("video/mp4", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -2137,15 +2420,19 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("mov", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explciitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
             # Verify also signed file using manifest bytes
             with Reader("mov", output_path, manifest_bytes) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explciitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -2173,15 +2460,19 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("mov", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
             # Verify also signed file using manifest bytes
             with Reader("mov", output_path, manifest_bytes) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                # Needs trust configuration to be set up to validate
-                # self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # Or validation on red reports `signing certificate untrusted`
+                # (for most tests, where we don't explicitly want to test that, we don't need it, but it is needed for a correct e2e signing flow)
+                self.assertIn("Invalid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -3699,7 +3990,7 @@ class TestLegacyAPI(unittest.TestCase):
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
-                # Needs trust configuration to be set up to validate
+                # Needs trust configuration to be set up to validate as Trusted
                 # self.assertNotIn("validation_status", json_data)
 
                 # Parse the JSON and verify the signature algorithm
@@ -3749,7 +4040,7 @@ class TestLegacyAPI(unittest.TestCase):
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
-                # Needs trust configuration to be set up to validate
+                # Needs trust configuration to be set up to validate as Trusted
                 # self.assertNotIn("validation_status", json_data)
 
                 # Parse the JSON and verify the signature algorithm
@@ -3796,7 +4087,7 @@ class TestLegacyAPI(unittest.TestCase):
                 with Reader("image/jpeg", file) as reader:
                     json_data = reader.json()
                     self.assertIn("Python Test", json_data)
-                    # Needs trust configuration to be set up to validate
+                    # Needs trust configuration to be set up to validate as Trusted
                     # self.assertNotIn("validation_status", json_data)
 
                     # Parse the JSON and verify the signature algorithm
@@ -3858,7 +4149,7 @@ class TestLegacyAPI(unittest.TestCase):
                     with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                         json_data = reader.json()
                         self.assertIn("Python Test", json_data)
-                        # Needs trust configuration to be set up to validate
+                        # Needs trust configuration to be set up to validate as Trusted
                         # self.assertNotIn("validation_status", json_data)
 
                         # Parse the JSON and verify the signature algorithm
