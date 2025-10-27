@@ -64,6 +64,12 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_stream_read_detailed(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            json_data = reader.detailed_json()
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
     def test_get_active_manifest(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
@@ -140,6 +146,13 @@ class TestReader(unittest.TestCase):
             reader = Reader("image/jpeg", file)
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+            self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
+
+    def test_stream_read_detailed_and_parse(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            manifest_store = json.loads(reader.detailed_json())
+            title = manifest_store["manifests"][manifest_store["active_manifest"]]["claim"]["dc:title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
     def test_stream_read_string_stream(self):
