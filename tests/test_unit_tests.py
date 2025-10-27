@@ -41,7 +41,7 @@ INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 
-def load_test_settings_as_json():
+def load_toml_test_settings_as_json():
     """
     Load default trust configuration test settings from a
     TOML config file and return its content as JSON-compatible dict.
@@ -61,6 +61,29 @@ def load_test_settings_as_json():
     # Load the located default test settings
     with open(settings_path, 'r') as f:
         settings_data = toml.load(f)
+
+    return settings_data
+
+def load_test_settings_json():
+    """
+    Load default trust configuration test settings from a
+    JSON config file and return its content as JSON-compatible dict.
+    The return value is used to load settings.
+
+    Returns:
+        dict: The parsed JSON content as a Python dictionary (JSON-compatible).
+
+    Raises:
+        FileNotFoundError: If trust_config_test_settings.json is not found.
+        json.JSONDecodeError: If the JSON file is malformed.
+    """
+    # Locate the file which contains default settings for tests
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    settings_path = os.path.join(tests_dir, 'trust_config_test_settings.json')
+
+    # Load the located default test settings
+    with open(settings_path, 'r') as f:
+        settings_data = json.load(f)
 
     return settings_data
 
@@ -146,6 +169,42 @@ class TestReader(unittest.TestCase):
             # Needs trust configuration to be set up to validate as Trusted, otherwise manifest is Invalid
             self.assertEqual(validation_state, "Invalid")
 
+    def test_stream_read_get_validation_state_with_trust_config_from_toml(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def read_with_trust_config():
+            try:
+                # Load trust configuration from test_settings.toml
+                settings_dict = load_toml_test_settings_as_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    reader = Reader("image/jpeg", file)
+                    validation_state = reader.get_validation_state()
+                    result['validation_state'] = validation_state
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=read_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIsNotNone(result.get('validation_state'))
+        # With trust configuration loaded, manifest is Trusted
+        self.assertEqual(result.get('validation_state'), "Trusted")
+
     def test_stream_read_get_validation_state_with_trust_config(self):
         # Run in a separate thread to isolate thread-local settings
         result = {}
@@ -154,7 +213,7 @@ class TestReader(unittest.TestCase):
         def read_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
@@ -1110,7 +1169,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def sign_and_validate_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
@@ -1186,7 +1245,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def sign_and_validate_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
@@ -1328,7 +1387,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def sign_and_validate_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
@@ -1407,7 +1466,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def sign_and_validate_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
@@ -1480,7 +1539,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def sign_and_validate_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
@@ -1576,7 +1635,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         def sign_and_validate_with_trust_config():
             try:
                 # Load trust configuration from test_settings.toml
-                settings_dict = load_test_settings_as_json()
+                settings_dict = load_test_settings_json()
 
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
