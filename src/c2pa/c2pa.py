@@ -41,6 +41,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_from_manifest_data_and_stream',
     'c2pa_reader_free',
     'c2pa_reader_json',
+    'c2pa_reader_detailed_json',
     'c2pa_reader_resource_to_stream',
     'c2pa_builder_from_json',
     'c2pa_builder_from_archive',
@@ -378,6 +379,9 @@ _setup_function(
 _setup_function(_lib.c2pa_reader_free, [ctypes.POINTER(C2paReader)], None)
 _setup_function(
     _lib.c2pa_reader_json, [
+        ctypes.POINTER(C2paReader)], ctypes.c_void_p)
+_setup_function(
+    _lib.c2pa_reader_detailed_json, [
         ctypes.POINTER(C2paReader)], ctypes.c_void_p)
 _setup_function(_lib.c2pa_reader_resource_to_stream, [ctypes.POINTER(
     C2paReader), ctypes.c_char_p, ctypes.POINTER(C2paStream)], ctypes.c_int64)
@@ -1736,6 +1740,34 @@ class Reader:
         # Cache the result and return it
         self._manifest_json_str_cache = _convert_to_py_string(result)
         return self._manifest_json_str_cache
+
+    def detailed_json(self) -> str:
+        """Get the detailed JSON representation of the C2PA manifest store.
+
+        This method returns a more detailed JSON string than Reader.json(),
+        providing additional information about the manifest structure.
+        Note that the returned JSON by this method has a slightly different
+        structure than the one returned by Reader.json().
+
+        Returns:
+            A JSON string containing the detailed manifest store data.
+
+        Raises:
+            C2paError: If there is an error reading the manifest data or if
+                      the Reader has been closed.
+        """
+
+        self._ensure_valid_state()
+
+        result = _lib.c2pa_reader_detailed_json(self._reader)
+
+        if result is None:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError("Error during detailed manifest parsing in Reader")
+
+        return _convert_to_py_string(result)
 
     def get_active_manifest(self) -> Optional[dict]:
         """Get the active manifest from the manifest store.
