@@ -1745,6 +1745,74 @@ class TestBuilderWithSigner(unittest.TestCase):
                 except Exception as e:
                     self.fail(f"Failed to sign {filename}: {str(e)}")
 
+    def test_sign_all_files_V2(self):
+        """Test signing all files in both fixtures directories"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        # Process both directories
+        for directory in [signing_dir, reading_dir]:
+            for filename in os.listdir(directory):
+                if filename in skip_files:
+                    continue
+
+                file_path = os.path.join(directory, filename)
+                if not os.path.isfile(file_path):
+                    continue
+
+                # Get file extension and corresponding MIME type
+                _, ext = os.path.splitext(filename)
+                ext = ext.lower()
+                if ext not in mime_types:
+                    continue
+
+                mime_type = mime_types[ext]
+
+                try:
+                    with open(file_path, "rb") as file:
+                        builder = Builder(self.manifestDefinitionV2)
+                        output = io.BytesIO(bytearray())
+                        builder.sign(self.signer, mime_type, file, output)
+                        builder.close()
+                        output.seek(0)
+                        reader = Reader(mime_type, output)
+                        json_data = reader.json()
+                        self.assertIn("Python Test", json_data)
+                        # Needs trust configuration to be set up to validate as Trusted,
+                        # or validation_status on read reports `signing certificate untrusted`
+                        # which makes the manifest validation_state become Invalid.
+                        self.assertIn("Invalid", json_data)
+                        reader.close()
+                        output.close()
+                except Error.NotSupported:
+                    continue
+                except Exception as e:
+                    self.fail(f"Failed to sign {filename}: {str(e)}")
+
     def test_builder_no_added_ingredient_on_closed_builder(self):
         builder = Builder(self.manifestDefinition)
 
