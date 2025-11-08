@@ -1184,7 +1184,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             output.seek(0)
             reader = Reader("image/jpeg", output)
             json_str = reader.json()
-            print(json_str)
             # Verify the manifest was created
             self.assertIsNotNone(json_str)
 
@@ -2138,6 +2137,107 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Verify the first ingredient's title matches what we set
             first_ingredient = active_manifest["ingredients"][0]
             self.assertEqual(first_ingredient["title"], "Test Ingredient")
+
+        builder.close()
+
+    def test_builder_sign_with_ingredients_edit_intend(self):
+        """Test signing with EDIT intent and ingredient."""
+        builder = Builder.from_json({})
+        assert builder._builder is not None
+
+        # Set the intent for editing existing content
+        builder.set_intent(C2paBuilderIntent.EDIT)
+
+        # Test adding ingredient
+        ingredient_json = '{ "title": "Test Ingredient" }'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists with exactly 2 ingredients
+            self.assertIn("ingredients", active_manifest)
+            ingredients_manifest = active_manifest["ingredients"]
+            self.assertIsInstance(ingredients_manifest, list)
+            self.assertEqual(len(ingredients_manifest), 2, "Should have exactly two ingredients")
+
+            # Verify the first ingredient is the one we added manually with componentOf relationship
+            first_ingredient = ingredients_manifest[0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+            self.assertEqual(first_ingredient["format"], "image/jpeg")
+            self.assertIn("instance_id", first_ingredient)
+            self.assertIn("thumbnail", first_ingredient)
+            self.assertEqual(first_ingredient["thumbnail"]["format"], "image/jpeg")
+            self.assertIn("identifier", first_ingredient["thumbnail"])
+            self.assertEqual(first_ingredient["relationship"], "componentOf")
+            self.assertIn("label", first_ingredient)
+
+            # Verify the second ingredient is the auto-created parent with parentOf relationship
+            second_ingredient = ingredients_manifest[1]
+            # Parent ingredient may not have a title field, or may have an empty one
+            self.assertEqual(second_ingredient["format"], "image/jpeg")
+            self.assertIn("instance_id", second_ingredient)
+            self.assertIn("thumbnail", second_ingredient)
+            self.assertEqual(second_ingredient["thumbnail"]["format"], "image/jpeg")
+            self.assertIn("identifier", second_ingredient["thumbnail"])
+            self.assertEqual(second_ingredient["relationship"], "parentOf")
+            self.assertIn("label", second_ingredient)
+
+            # Count ingredients with parentOf relationship - should be exactly one
+            parent_ingredients = [
+                ing for ing in ingredients_manifest
+                if ing.get("relationship") == "parentOf"
+            ]
+            self.assertEqual(len(parent_ingredients), 1, "Should have exactly one parentOf ingredient")
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion, "Should have c2pa.actions assertion")
+
+            # Verify exactly one c2pa.opened action exists for EDIT intent
+            actions = actions_assertion["data"]["actions"]
+            opened_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.opened"
+            ]
+            self.assertEqual(len(opened_actions), 1, "Should have exactly one c2pa.opened action")
+
+            # Verify the c2pa.opened action has the correct structure with parameters and ingredients
+            opened_action = opened_actions[0]
+            self.assertIn("parameters", opened_action, "c2pa.opened action should have parameters")
+            self.assertIn("ingredients", opened_action["parameters"], "parameters should have ingredients array")
+            ingredients_params = opened_action["parameters"]["ingredients"]
+            self.assertIsInstance(ingredients_params, list)
+            self.assertGreater(len(ingredients_params), 0, "Should have at least one ingredient reference")
+
+            # Verify each ingredient reference has url and hash
+            for ingredient_ref in ingredients_params:
+                self.assertIn("url", ingredient_ref, "Ingredient reference should have url")
+                self.assertIn("hash", ingredient_ref, "Ingredient reference should have hash")
 
         builder.close()
 
