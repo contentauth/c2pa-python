@@ -1115,7 +1115,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("Invalid", json_data)
             output.close()
 
-    def test_streams_sign_with_es256_alg_create_intend(self):
+    def test_streams_sign_with_es256_alg_create_intent(self):
         """Test signing with CREATE intent and empty manifest."""
 
         with open(self.testPath2, "rb") as file:
@@ -1167,7 +1167,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertEqual(manifest_data["validation_state"], "Invalid")
             output.close()
 
-    def test_streams_sign_with_es256_alg_create_intend_2(self):
+    def test_streams_sign_with_es256_alg_create_intent_2(self):
         """Test signing with CREATE intent and manifestDefinitionV2."""
 
         with open(self.testPath2, "rb") as file:
@@ -1246,7 +1246,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertEqual(manifest_data["validation_state"], "Invalid")
             output.close()
 
-    def test_streams_sign_with_es256_alg_edit_intend(self):
+    def test_streams_sign_with_es256_alg_edit_intent(self):
         """Test signing with EDIT intent and empty manifest."""
 
         with open(self.testPath2, "rb") as file:
@@ -2140,7 +2140,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-    def test_builder_sign_with_ingredients_edit_intend(self):
+    def test_builder_sign_with_ingredients_edit_intent(self):
         """Test signing with EDIT intent and ingredient."""
         builder = Builder.from_json({})
         assert builder._builder is not None
