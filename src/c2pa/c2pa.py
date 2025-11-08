@@ -48,6 +48,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_free',
     'c2pa_builder_set_no_embed',
     'c2pa_builder_set_remote_url',
+    'c2pa_builder_set_intent',
     'c2pa_builder_add_resource',
     'c2pa_builder_add_ingredient_from_stream',
     'c2pa_builder_add_action',
@@ -158,6 +159,37 @@ class C2paSigningAlg(enum.IntEnum):
     ED25519 = 6
 
 
+class C2paDigitalSourceType(enum.IntEnum):
+    """List of possible digital source types."""
+    EMPTY = 0
+    TRAINED_ALGORITHMIC_DATA = 1
+    DIGITAL_CAPTURE = 2
+    COMPUTATIONAL_CAPTURE = 3
+    NEGATIVE_FILM = 4
+    POSITIVE_FILM = 5
+    PRINT = 6
+    HUMAN_EDITS = 7
+    COMPOSITE_WITH_TRAINED_ALGORITHMIC_MEDIA = 8
+    ALGORITHMICALLY_ENHANCED = 9
+    DIGITAL_CREATION = 10
+    DATA_DRIVEN_MEDIA = 11
+    TRAINED_ALGORITHMIC_MEDIA = 12
+    ALGORITHMIC_MEDIA = 13
+    SCREEN_CAPTURE = 14
+    VIRTUAL_RECORDING = 15
+    COMPOSITE = 16
+    COMPOSITE_CAPTURE = 17
+    COMPOSITE_SYNTHETIC = 18
+
+
+class C2paBuilderIntent(enum.IntEnum):
+    """Builder intent enumeration.
+    """
+    CREATE = 0  # New digital creation with specified digital source type
+    EDIT = 1    # Edit of a pre-existing parent asset
+    UPDATE = 2  # Restricted version of Edit for non-editorial changes
+
+
 # Mapping from C2paSigningAlg enum to string representation,
 # as the enum value currently maps by default to an integer value.
 _ALG_TO_STRING_BYTES_MAPPING = {
@@ -257,6 +289,7 @@ def _clear_error_state():
     if error:
         # Free the error to clear the state
         _lib.c2pa_string_free(error)
+
 
 class C2paSignerInfo(ctypes.Structure):
     """Configuration for a Signer."""
@@ -414,6 +447,9 @@ _setup_function(_lib.c2pa_builder_set_no_embed, [
 _setup_function(
     _lib.c2pa_builder_set_remote_url, [
         ctypes.POINTER(C2paBuilder), ctypes.c_char_p], ctypes.c_int)
+_setup_function(
+    _lib.c2pa_builder_set_intent, [
+        ctypes.POINTER(C2paBuilder), ctypes.c_int, ctypes.c_int], ctypes.c_int)
 _setup_function(_lib.c2pa_builder_add_resource, [ctypes.POINTER(
     C2paBuilder), ctypes.c_char_p, ctypes.POINTER(C2paStream)], ctypes.c_int)
 _setup_function(_lib.c2pa_builder_add_ingredient_from_stream,
@@ -2569,6 +2605,46 @@ class Builder:
                 raise C2paError(error)
             raise C2paError(
                 Builder._ERROR_MESSAGES['url_error'].format("Unknown error"))
+
+    def set_intent(
+        self,
+        intent: C2paBuilderIntent,
+        digital_source_type: C2paDigitalSourceType = (
+            C2paDigitalSourceType.EMPTY
+        )
+    ):
+        """Set the intent for the manifest.
+
+        The intent specifies what kind of manifest to create:
+        - CREATE: New digital creation with specified digital source type.
+                  Must not have a parent ingredient.
+        - EDIT: Edit of a pre-existing parent asset.
+                Must have a parent ingredient.
+        - UPDATE: Restricted version of Edit for non-editorial changes.
+                  Must have only one ingredient as a parent.
+
+        Args:
+            intent: The builder intent (C2paBuilderIntent enum value)
+            digital_source_type: The digital source type (required
+                for CREATE intent). Defaults to C2paDigitalSourceType.EMPTY
+                (for all other cases).
+
+        Raises:
+            C2paError: If there was an error setting the intent
+        """
+        self._ensure_valid_state()
+
+        result = _lib.c2pa_builder_set_intent(
+            self._builder,
+            int(intent),
+            int(digital_source_type)
+        )
+
+        if result != 0:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError("Error setting intent for Builder: Unknown error")
 
     def add_resource(self, uri: str, stream: Any):
         """Add a resource to the builder.
