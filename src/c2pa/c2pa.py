@@ -448,8 +448,9 @@ _setup_function(
     _lib.c2pa_builder_set_remote_url, [
         ctypes.POINTER(C2paBuilder), ctypes.c_char_p], ctypes.c_int)
 _setup_function(
-    _lib.c2pa_builder_set_intent, [
-        ctypes.POINTER(C2paBuilder), ctypes.c_int, ctypes.c_int], ctypes.c_int)
+    _lib.c2pa_builder_set_intent,
+    [ctypes.POINTER(C2paBuilder), ctypes.c_uint, ctypes.c_uint],
+    ctypes.c_int)
 _setup_function(_lib.c2pa_builder_add_resource, [ctypes.POINTER(
     C2paBuilder), ctypes.c_char_p, ctypes.POINTER(C2paStream)], ctypes.c_int)
 _setup_function(_lib.c2pa_builder_add_ingredient_from_stream,
@@ -2616,7 +2617,7 @@ class Builder:
         """Set the intent for the manifest.
 
         The intent specifies what kind of manifest to create:
-        - CREATE: New digital creation with specified digital source type.
+        - CREATE: New with specified digital source type.
                   Must not have a parent ingredient.
         - EDIT: Edit of a pre-existing parent asset.
                 Must have a parent ingredient.
@@ -2636,8 +2637,8 @@ class Builder:
 
         result = _lib.c2pa_builder_set_intent(
             self._builder,
-            int(intent),
-            int(digital_source_type)
+            ctypes.c_uint(intent),
+            ctypes.c_uint(digital_source_type),
         )
 
         if result != 0:

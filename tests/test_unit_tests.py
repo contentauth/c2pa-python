@@ -29,7 +29,7 @@ import threading
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
 
 PROJECT_PATH = os.getcwd()
@@ -1115,6 +1115,64 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("Invalid", json_data)
             output.close()
 
+    def test_streams_sign_with_es256_alg_create_intend(self):
+        """Test signing with CREATE intent and empty manifest."""
+        with open(self.testPath2, "rb") as file:
+            # Start with an empty manifest
+            builder = Builder({})
+            # Set the intent for creating new content
+            builder.set_intent(
+                C2paBuilderIntent.CREATE,
+                C2paDigitalSourceType.DIGITAL_CREATION
+            )
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(
+                actions_assertion,
+                "Should have c2pa.actions or c2pa.actions.v2 assertion"
+            )
+
+            # Verify c2pa.created action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            created_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.created"
+            ]
+
+            self.assertEqual(
+                len(created_actions),
+                1,
+                "Should have exactly one c2pa.created action"
+            )
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
+            self.assertEqual(manifest_data["validation_state"], "Invalid")
+            output.close()
+
     def test_streams_sign_with_es256_alg_with_trust_config(self):
         # Run in a separate thread to isolate thread-local settings
         result = {}
@@ -1161,7 +1219,6 @@ class TestBuilderWithSigner(unittest.TestCase):
         # With trust configuration loaded, validation should return "Trusted"
         self.assertIsNotNone(result.get('validation_state'))
         self.assertEqual(result.get('validation_state'), "Trusted")
-
 
     def test_sign_with_ed25519_alg(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
