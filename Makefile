@@ -37,6 +37,7 @@ run-examples:
 
 # Runs the examples, then the unit tests
 test:
+    make run-examples
 	python3 ./tests/test_unit_tests.py
 	python3 ./tests/test_unit_tests_threaded.py
 
