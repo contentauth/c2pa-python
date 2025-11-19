@@ -29,7 +29,7 @@ import threading
 # Suppress deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
 
 PROJECT_PATH = os.getcwd()
@@ -67,7 +67,7 @@ def load_test_settings_json():
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.71.0", sdk_version())
+        self.assertIn("0.71.2", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -1115,6 +1115,215 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("Invalid", json_data)
             output.close()
 
+    def test_streams_sign_with_es256_alg_create_intent(self):
+        """Test signing with CREATE intent and empty manifest."""
+
+        with open(self.testPath2, "rb") as file:
+            # Start with an empty manifest
+            builder = Builder({})
+            # Set the intent for creating new content
+            builder.set_intent(
+                C2paBuilderIntent.CREATE,
+                C2paDigitalSourceType.DIGITAL_CREATION
+            )
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+
+            # Verify c2pa.created action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            created_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.created"
+            ]
+
+            self.assertEqual(len(created_actions), 1)
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
+            self.assertEqual(manifest_data["validation_state"], "Invalid")
+            output.close()
+
+    def test_streams_sign_with_es256_alg_create_intent_2(self):
+        """Test signing with CREATE intent and manifestDefinitionV2."""
+
+        with open(self.testPath2, "rb") as file:
+            # Start with manifestDefinitionV2 which has predefined metadata
+            builder = Builder(self.manifestDefinitionV2)
+            # Set the intent for creating new content
+            # If we provided a full manifest, the digital source type from the full manifest "wins"
+            builder.set_intent(
+                C2paBuilderIntent.CREATE,
+                C2paDigitalSourceType.SCREEN_CAPTURE
+            )
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Verify title from manifestDefinitionV2 is preserved
+            self.assertIn("title", active_manifest)
+            self.assertEqual(active_manifest["title"], "Python Test Image V2")
+
+            # Verify claim_generator_info is present
+            self.assertIn("claim_generator_info", active_manifest)
+            claim_generator_info = active_manifest["claim_generator_info"]
+            self.assertIsInstance(claim_generator_info, list)
+            self.assertGreater(len(claim_generator_info), 0)
+
+            # Check for the custom claim generator info from manifestDefinitionV2
+            has_python_test = any(
+                gen.get("name") == "python_test" and gen.get("version") == "0.0.1"
+                for gen in claim_generator_info
+            )
+            self.assertTrue(has_python_test, "Should have python_test claim generator")
+
+            # Verify no ingredients for CREATE intent
+            ingredients_manifest = active_manifest.get("ingredients", [])
+            self.assertEqual(len(ingredients_manifest), 0, "CREATE intent should have no ingredients")
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+
+            # Verify c2pa.created action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            created_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.created"
+            ]
+
+            self.assertEqual(len(created_actions), 1)
+
+            # Verify the digitalSourceType is present in the created action
+            created_action = created_actions[0]
+            self.assertIn("digitalSourceType", created_action)
+            self.assertIn("digitalCreation", created_action["digitalSourceType"])
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
+            self.assertEqual(manifest_data["validation_state"], "Invalid")
+            output.close()
+
+    def test_streams_sign_with_es256_alg_edit_intent(self):
+        """Test signing with EDIT intent and empty manifest."""
+
+        with open(self.testPath2, "rb") as file:
+            # Start with an empty manifest
+            builder = Builder({})
+            # Set the intent for editing existing content
+            builder.set_intent(C2paBuilderIntent.EDIT)
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Check that ingredients exist in the active manifest
+            self.assertIn("ingredients", active_manifest)
+            ingredients_manifest = active_manifest["ingredients"]
+            self.assertIsInstance(ingredients_manifest, list)
+            self.assertEqual(len(ingredients_manifest), 1)
+
+            # Verify the ingredient has relationship "parentOf"
+            ingredient = ingredients_manifest[0]
+            self.assertIn("relationship", ingredient)
+            self.assertEqual(
+                ingredient["relationship"],
+                "parentOf"
+            )
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+
+            # Verify c2pa.opened action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            opened_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.opened"
+            ]
+
+            self.assertEqual(len(opened_actions), 1)
+
+            # Verify the c2pa.opened action has the correct structure
+            opened_action = opened_actions[0]
+            self.assertIn("parameters", opened_action)
+            self.assertIn("ingredients", opened_action["parameters"])
+            ingredients = opened_action["parameters"]["ingredients"]
+            self.assertIsInstance(ingredients, list)
+            self.assertGreater(len(ingredients), 0)
+
+            # Verify each ingredient has url and hash
+            for ingredient in ingredients:
+                self.assertIn("url", ingredient)
+                self.assertIn("hash", ingredient)
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`
+            # which makes the manifest validation_state become Invalid.
+            self.assertEqual(manifest_data["validation_state"], "Invalid")
+            output.close()
+
     def test_streams_sign_with_es256_alg_with_trust_config(self):
         # Run in a separate thread to isolate thread-local settings
         result = {}
@@ -1161,7 +1370,6 @@ class TestBuilderWithSigner(unittest.TestCase):
         # With trust configuration loaded, validation should return "Trusted"
         self.assertIsNotNone(result.get('validation_state'))
         self.assertEqual(result.get('validation_state'), "Trusted")
-
 
     def test_sign_with_ed25519_alg(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
@@ -1931,6 +2139,107 @@ class TestBuilderWithSigner(unittest.TestCase):
             # Verify the first ingredient's title matches what we set
             first_ingredient = active_manifest["ingredients"][0]
             self.assertEqual(first_ingredient["title"], "Test Ingredient")
+
+        builder.close()
+
+    def test_builder_sign_with_ingredients_edit_intent(self):
+        """Test signing with EDIT intent and ingredient."""
+        builder = Builder.from_json({})
+        assert builder._builder is not None
+
+        # Set the intent for editing existing content
+        builder.set_intent(C2paBuilderIntent.EDIT)
+
+        # Test adding ingredient
+        ingredient_json = '{ "title": "Test Ingredient" }'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists with exactly 2 ingredients
+            self.assertIn("ingredients", active_manifest)
+            ingredients_manifest = active_manifest["ingredients"]
+            self.assertIsInstance(ingredients_manifest, list)
+            self.assertEqual(len(ingredients_manifest), 2, "Should have exactly two ingredients")
+
+            # Verify the first ingredient is the one we added manually with componentOf relationship
+            first_ingredient = ingredients_manifest[0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+            self.assertEqual(first_ingredient["format"], "image/jpeg")
+            self.assertIn("instance_id", first_ingredient)
+            self.assertIn("thumbnail", first_ingredient)
+            self.assertEqual(first_ingredient["thumbnail"]["format"], "image/jpeg")
+            self.assertIn("identifier", first_ingredient["thumbnail"])
+            self.assertEqual(first_ingredient["relationship"], "componentOf")
+            self.assertIn("label", first_ingredient)
+
+            # Verify the second ingredient is the auto-created parent with parentOf relationship
+            second_ingredient = ingredients_manifest[1]
+            # Parent ingredient may not have a title field, or may have an empty one
+            self.assertEqual(second_ingredient["format"], "image/jpeg")
+            self.assertIn("instance_id", second_ingredient)
+            self.assertIn("thumbnail", second_ingredient)
+            self.assertEqual(second_ingredient["thumbnail"]["format"], "image/jpeg")
+            self.assertIn("identifier", second_ingredient["thumbnail"])
+            self.assertEqual(second_ingredient["relationship"], "parentOf")
+            self.assertIn("label", second_ingredient)
+
+            # Count ingredients with parentOf relationship - should be exactly one
+            parent_ingredients = [
+                ing for ing in ingredients_manifest
+                if ing.get("relationship") == "parentOf"
+            ]
+            self.assertEqual(len(parent_ingredients), 1, "Should have exactly one parentOf ingredient")
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion, "Should have c2pa.actions assertion")
+
+            # Verify exactly one c2pa.opened action exists for EDIT intent
+            actions = actions_assertion["data"]["actions"]
+            opened_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.opened"
+            ]
+            self.assertEqual(len(opened_actions), 1, "Should have exactly one c2pa.opened action")
+
+            # Verify the c2pa.opened action has the correct structure with parameters and ingredients
+            opened_action = opened_actions[0]
+            self.assertIn("parameters", opened_action, "c2pa.opened action should have parameters")
+            self.assertIn("ingredients", opened_action["parameters"], "parameters should have ingredients array")
+            ingredients_params = opened_action["parameters"]["ingredients"]
+            self.assertIsInstance(ingredients_params, list)
+            self.assertGreater(len(ingredients_params), 0, "Should have at least one ingredient reference")
+
+            # Verify each ingredient reference has url and hash
+            for ingredient_ref in ingredients_params:
+                self.assertIn("url", ingredient_ref, "Ingredient reference should have url")
+                self.assertIn("hash", ingredient_ref, "Ingredient reference should have hash")
 
         builder.close()
 
@@ -3029,7 +3338,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_add_action_to_manifest_from_dict_no_auto_add(self):
         # For testing, remove auto-added actions
@@ -3110,11 +3419,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_add_action_to_manifest_with_auto_add(self):
         # For testing, force settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -3199,7 +3508,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings to default
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_no_auto_add(self):
         # For testing, remove auto-added actions
@@ -3264,11 +3573,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_with_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -3338,7 +3647,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_sign_dicts_no_auto_add(self):
         # For testing, remove auto-added actions
@@ -3419,7 +3728,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
 
 class TestStream(unittest.TestCase):
