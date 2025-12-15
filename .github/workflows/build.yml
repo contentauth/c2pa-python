@@ -384,6 +384,8 @@ jobs:
         include:
           - target: arm64
             runs-on: macos-latest
+          - target: universal2
+            runs-on: macos-latest
 
     if: |
       github.event_name != 'pull_request' ||
