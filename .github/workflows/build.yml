@@ -367,6 +367,8 @@ jobs:
             runs-on: macos-latest
           - target: arm64
             runs-on: macos-latest
+          - target: x86_64
+            runs-on: macos-15-intel
 
     if: |
       github.event_name != 'pull_request' ||
@@ -386,6 +388,8 @@ jobs:
             runs-on: macos-latest
           - target: universal2
             runs-on: macos-latest
+          - target: x86_64
+            runs-on: macos-15-intel
 
     if: |
       github.event_name != 'pull_request' ||
