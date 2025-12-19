@@ -2924,6 +2924,313 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Reset settings
         load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
 
+    def test_builder_opened_action_one_ingredient_no_auto_add(self):
+        """Test Builder with c2pa.opened action and one ingredient, following Adobe provenance patterns"""
+        # Disable auto-added actions
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        # Instance IDs for linking ingredients and actions
+        # This can be any unique id so the ingredient can be uniquely identified and linked to the action
+        parent_ingredient_id = "xmp:iid:a965983b-36fb-445a-aa80-a2d911dcc53c"
+
+        manifestDefinition = {
+            "claim_generator_info": [{
+                "name": "Python CAI test",
+                "version": "3.14.16"
+            }],
+            "title": "A title for the provenance test",
+            "ingredients": [
+                # The parent ingredient will be added through add_ingredient
+                # And a properly crafted manifest json so they link
+            ],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "softwareAgent": {
+                                    "name": "Opened asset",
+                                },
+                                "parameters": {
+                                    "ingredientIds": [
+                                        parent_ingredient_id
+                                    ]
+                                },
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # The ingredient json for the opened action needs to match the instance_id in the manifestDefinition
+        # Aka the unique parent_ingredient_id we rely on for linking
+        ingredient_json = {
+            "relationship": "parentOf",
+            "instance_id": parent_ingredient_id
+        }
+        # An opened ingredient is always a parent, and there can only be exactly one parent ingredient
+
+        # Read the input file (A.jpg will be signed)
+        with open(self.testPath2, "rb") as test_file:
+            file_content = test_file.read()
+
+        builder = Builder.from_json(manifestDefinition)
+
+        # Add C.jpg as the parent "opened" ingredient
+        with open(self.testPath, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+            output_buffer = io.BytesIO(bytearray())
+            builder.sign(
+                self.signer,
+                "image/jpeg",
+                io.BytesIO(file_content),
+                output_buffer)
+            output_buffer.seek(0)
+
+            # Read and verify the manifest
+            reader = Reader("image/jpeg", output_buffer)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify the ingredient instance ID is present
+            self.assertIn(parent_ingredient_id, json_data)
+
+            # Verify c2pa.opened action is present
+            self.assertIn("c2pa.opened", json_data)
+
+        builder.close()
+
+        # Make sure settings are put back to the common test defaults
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_builder_one_opened_one_placed_action_no_auto_add(self):
+        """Test Builder with c2pa.opened action where asset is its own parent ingredient"""
+        # Disable auto-added actions
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        # Instance IDs for linking ingredients and actions,
+        # need to be unique even if the same binary file is used, so ingredients link properly to actions
+        parent_ingredient_id = "xmp:iid:a965983b-36fb-445a-aa80-a2d911dcc53c"
+        placed_ingredient_id = "xmp:iid:a965983b-36fb-445a-aa80-f3f800ebe42b"
+
+        manifestDefinition = {
+            "claim_generator_info": [{
+                "name": "Python CAI test",
+                "version": "0.2.942"
+            }],
+            "title": "A title for the provenance test",
+            "ingredients": [
+                # The parent ingredient will be added through add_ingredient
+                {
+                    # Represents the bubbled up AI asset/ingredient
+                    "format": "jpeg",
+                    "relationship": "componentOf",
+                    # Instance ID must be generated to match what is in parameters ingredientIds array
+                    "instance_id": placed_ingredient_id,
+                }
+            ],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "softwareAgent": {
+                                    "name": "Opened asset",
+                                },
+                                "parameters": {
+                                    "ingredientIds": [
+                                        parent_ingredient_id
+                                    ]
+                                },
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "softwareAgent": {
+                                    "name": "Placed asset",
+                                },
+                                "parameters": {
+                                    "ingredientIds": [
+                                        placed_ingredient_id
+                                    ]
+                                },
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # The ingredient json for the opened action needs to match the instance_id in the manifestDefinition for c2pa.opened
+        # So that ingredients can link together.
+        ingredient_json = {
+            "relationship": "parentOf",
+            "when": "2025-08-07T18:01:55.934Z",
+            "instance_id": parent_ingredient_id
+        }
+
+        # Read the input file (A.jpg will be signed)
+        with open(self.testPath2, "rb") as test_file:
+            file_content = test_file.read()
+
+        builder = Builder.from_json(manifestDefinition)
+
+        # An asset can be its own parent ingredient!
+        # We add A.jpg as its own parent ingredient
+        with open(self.testPath2, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+            output_buffer = io.BytesIO(bytearray())
+            builder.sign(
+                self.signer,
+                "image/jpeg",
+                io.BytesIO(file_content),
+                output_buffer)
+            output_buffer.seek(0)
+
+            # Read and verify the manifest
+            reader = Reader("image/jpeg", output_buffer)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify both ingredient instance IDs are present
+            self.assertIn(parent_ingredient_id, json_data)
+            self.assertIn(placed_ingredient_id, json_data)
+
+            # Verify both actions are present
+            self.assertIn("c2pa.opened", json_data)
+            self.assertIn("c2pa.placed", json_data)
+
+        builder.close()
+
+        # Make sure settings are put back to the common test defaults
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_builder_opened_action_multiple_ingredient_no_auto_add(self):
+        """Test Builder with c2pa.opened and c2pa.placed actions with multiple ingredients"""
+        # Disable auto-added actions, as what we are doing here can confuse auto-placements
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        # Instance IDs for linking ingredients and actions
+        # With multiple ingredients, we need multiple different unique ids so they each link properly
+        parent_ingredient_id = "xmp:iid:a965983b-36fb-445a-aa80-a2d911dcc53c"
+        placed_ingredient_1_id = "xmp:iid:a965983b-36fb-445a-aa80-f3f800ebe42b"
+        placed_ingredient_2_id = "xmp:iid:a965983b-36fb-445a-aa80-f2d712acd14c"
+
+        manifestDefinition = {
+            "claim_generator_info": [{
+                "name": "Python CAI test",
+                "version": "0.2.942"
+            }],
+            "title": "A title for the provenance test with multiple ingredients",
+            "ingredients": [
+                # More ingredients will be added using add_ingredient
+                {
+                    "format": "jpeg",
+                    "relationship": "componentOf",
+                    # Instance ID must be generated to match what is in parameters ingredientIds array
+                    "instance_id": placed_ingredient_1_id,
+                }
+            ],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "softwareAgent": {
+                                    "name": "A parent opened asset",
+                                },
+                                "parameters": {
+                                    "ingredientIds": [
+                                        parent_ingredient_id
+                                    ]
+                                },
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "softwareAgent": {
+                                    "name": "Component placed assets",
+                                },
+                                "parameters": {
+                                    "ingredientIds": [
+                                        placed_ingredient_1_id,
+                                        placed_ingredient_2_id
+                                    ]
+                                },
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # The ingredient json for the opened action needs to match the instance_id in the manifestDefinition,
+        # so that ingredients properly link with their action
+        ingredient_json_parent = {
+            "relationship": "parentOf",
+            "instance_id": parent_ingredient_id
+        }
+
+        # The ingredient json for the placed action needs to match the instance_id in the manifestDefinition,
+        # so that ingredients properly link with their action
+        ingredient_json_placed = {
+            "relationship": "componentOf",
+            "instance_id": placed_ingredient_2_id
+        }
+
+        # Read the input file (A.jpg will be signed)
+        with open(self.testPath2, "rb") as test_file:
+            file_content = test_file.read()
+
+        builder = Builder.from_json(manifestDefinition)
+
+        # Add C.jpg as the parent ingredient (for c2pa.opened, it's the opened asset)
+        with open(self.testPath, 'rb') as f1:
+            builder.add_ingredient(ingredient_json_parent, "image/jpeg", f1)
+
+            # Add cloud.jpg as another placed ingredient (for instance, added on the opened asset)
+            with open(self.testPath4, 'rb') as f2:
+                builder.add_ingredient(ingredient_json_placed, "image/jpeg", f2)
+
+                output_buffer = io.BytesIO(bytearray())
+                builder.sign(
+                    self.signer,
+                    "image/jpeg",
+                    io.BytesIO(file_content),
+                    output_buffer)
+                output_buffer.seek(0)
+
+                # Read and verify the manifest
+                reader = Reader("image/jpeg", output_buffer)
+                json_data = reader.json()
+                manifest_data = json.loads(json_data)
+
+                # Verify all ingredient instance IDs are present
+                self.assertIn(parent_ingredient_id, json_data)
+                self.assertIn(placed_ingredient_1_id, json_data)
+                self.assertIn(placed_ingredient_2_id, json_data)
+
+                # Verify both actions are present
+                self.assertIn("c2pa.opened", json_data)
+                self.assertIn("c2pa.placed", json_data)
+
+        builder.close()
+
+        # Make sure settings are put back to the common test defaults
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):
