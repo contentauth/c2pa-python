@@ -640,7 +640,8 @@ class TestReader(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
-                                "action": "c2pa.opened"
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                             }
                         ]
                     }
@@ -808,8 +809,8 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
-                                "action": "c2pa.opened"
-                                # Should have more parameters here, but omitted in tests
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                             }
                         ]
                     }
@@ -2996,8 +2997,9 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
-                                "action": "c2pa.opened",
-                                "description": "Opened with Unicode: test"
+                                "action": "c2pa.created",
+                                "description": "Unicode: test",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
                             }
                         ]
                     }
