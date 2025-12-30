@@ -12,8 +12,8 @@
 # each license.
 
 try:
-    from importlib.metadata import version
-    __version__ = version("c2pa-python")
+    from importlib.metadata import version as get_version
+    __version__ = get_version("c2pa-python")
 except ImportError:  # pragma: no cover
     __version__ = "unknown"
 
@@ -26,7 +26,9 @@ from .c2pa import (
     Signer,
     Stream,
     sdk_version,
-    read_ingredient_file
+    read_ingredient_file,
+    load_settings,
+    version
 )  # NOQA
 
 # Re-export C2paError and its subclasses
@@ -39,5 +41,7 @@ __all__ = [
     'Signer',
     'Stream',
     'sdk_version',
-    'read_ingredient_file'
+    'read_ingredient_file',
+    'load_settings',
+    'version'
 ]
