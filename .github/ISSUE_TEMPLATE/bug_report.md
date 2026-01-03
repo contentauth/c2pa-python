@@ -14,7 +14,7 @@ A description of the observed issue.
 Describe steps to reproduce the issue.
 
 **Attachments**
-If the issue can be reproduced using certain assets, please consider adding them to this report (when possible).
+If the issue can be reproduced using certain assets, please consider attaching them to this report (when possible).
 
 **Expected behavior**
 Describe what you expected to happen.
