@@ -27,17 +27,21 @@ def load_trust_anchors():
         print(f"Warning: Could not load trust anchors from {TRUST_ANCHORS_URL}: {e}")
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print(f"Usage: python {sys.argv[0]} <image_path>")
-        sys.exit(1)
-
-    load_trust_anchors()
-
-    image_path = sys.argv[1]
+def read_c2pa_data(media_path: str):
+    print(f"Reading {media_path}")
     try:
-        with c2pa.Reader(image_path) as reader:
+        with c2pa.Reader(media_path) as reader:
             print(reader.detailed_json())
     except Exception as e:
-        print(f"Error reading C2PA data from {image_path}: {e}")
+        print(f"Error reading C2PA data from {media_path}: {e}")
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        media_path = "tests/fixtures/cloud.jpg"
+    else:
+        media_path = sys.argv[1]
+
+    load_trust_anchors()
+    read_c2pa_data(media_path)
