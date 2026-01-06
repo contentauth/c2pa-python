@@ -533,71 +533,114 @@ _setup_function(
 
 
 class C2paError(Exception):
-    """Exception raised for C2PA errors."""
+    """Exception raised for C2PA errors.
+
+    This is the base class for all C2PA exceptions. Catching C2paError will
+    catch all typed C2PA exceptions (e.g., C2paError.ManifestNotFound).
+    """
 
     def __init__(self, message: str = ""):
         self.message = message
         super().__init__(message)
 
-    class Assertion(Exception):
-        """Exception raised for assertion errors."""
-        pass
 
-    class AssertionNotFound(Exception):
-        """Exception raised when an assertion is not found."""
-        pass
+# Define typed exception subclasses that properly inherit from C2paError
+# These are attached to C2paError as class attributes for backward compatibility
+# (e.g., C2paError.ManifestNotFound)
 
-    class Decoding(Exception):
-        """Exception raised for decoding errors."""
-        pass
+class _C2paAssertion(C2paError):
+    """Exception raised for assertion errors."""
+    pass
 
-    class Encoding(Exception):
-        """Exception raised for encoding errors."""
-        pass
 
-    class FileNotFound(Exception):
-        """Exception raised when a file is not found."""
-        pass
+class _C2paAssertionNotFound(C2paError):
+    """Exception raised when an assertion is not found."""
+    pass
 
-    class Io(Exception):
-        """Exception raised for IO errors."""
-        pass
 
-    class Json(Exception):
-        """Exception raised for JSON errors."""
-        pass
+class _C2paDecoding(C2paError):
+    """Exception raised for decoding errors."""
+    pass
 
-    class Manifest(Exception):
-        """Exception raised for manifest errors."""
-        pass
 
-    class ManifestNotFound(Exception):
-        """Exception raised when a manifest is not found."""
-        pass
+class _C2paEncoding(C2paError):
+    """Exception raised for encoding errors."""
+    pass
 
-    class NotSupported(Exception):
-        """Exception raised for unsupported operations."""
-        pass
 
-    class Other(Exception):
-        """Exception raised for other errors."""
-        pass
+class _C2paFileNotFound(C2paError):
+    """Exception raised when a file is not found."""
+    pass
 
-    class RemoteManifest(Exception):
-        """Exception raised for remote manifest errors."""
-        pass
 
-    class ResourceNotFound(Exception):
-        """Exception raised when a resource is not found."""
-        pass
+class _C2paIo(C2paError):
+    """Exception raised for IO errors."""
+    pass
 
-    class Signature(Exception):
-        """Exception raised for signature errors."""
-        pass
 
-    class Verify(Exception):
-        """Exception raised for verification errors."""
-        pass
+class _C2paJson(C2paError):
+    """Exception raised for JSON errors."""
+    pass
+
+
+class _C2paManifest(C2paError):
+    """Exception raised for manifest errors."""
+    pass
+
+
+class _C2paManifestNotFound(C2paError):
+    """Exception raised when a manifest is not found."""
+    pass
+
+
+class _C2paNotSupported(C2paError):
+    """Exception raised for unsupported operations."""
+    pass
+
+
+class _C2paOther(C2paError):
+    """Exception raised for other errors."""
+    pass
+
+
+class _C2paRemoteManifest(C2paError):
+    """Exception raised for remote manifest errors."""
+    pass
+
+
+class _C2paResourceNotFound(C2paError):
+    """Exception raised when a resource is not found."""
+    pass
+
+
+class _C2paSignature(C2paError):
+    """Exception raised for signature errors."""
+    pass
+
+
+class _C2paVerify(C2paError):
+    """Exception raised for verification errors."""
+    pass
+
+
+# Attach exception subclasses to C2paError for backward compatibility
+# Preservers behavio for exception catching like except C2paError.ManifestNotFound,
+# also reduces imports (think of it as an alias of sorts)
+C2paError.Assertion = _C2paAssertion
+C2paError.AssertionNotFound = _C2paAssertionNotFound
+C2paError.Decoding = _C2paDecoding
+C2paError.Encoding = _C2paEncoding
+C2paError.FileNotFound = _C2paFileNotFound
+C2paError.Io = _C2paIo
+C2paError.Json = _C2paJson
+C2paError.Manifest = _C2paManifest
+C2paError.ManifestNotFound = _C2paManifestNotFound
+C2paError.NotSupported = _C2paNotSupported
+C2paError.Other = _C2paOther
+C2paError.RemoteManifest = _C2paRemoteManifest
+C2paError.ResourceNotFound = _C2paResourceNotFound
+C2paError.Signature = _C2paSignature
+C2paError.Verify = _C2paVerify
 
 
 class _StringContainer:
@@ -652,10 +695,84 @@ def _convert_to_py_string(value) -> str:
     return py_string
 
 
+def _raise_typed_c2pa_error(error_str: str) -> None:
+    """Parse an error string and raise the appropriate typed C2paError.
+
+    Error strings from the native library have the format "ErrorType: message".
+    This function parses the error type and raises the corresponding
+    C2paError subclass with the full original error string as the message
+    for backward compatibility.
+
+    Args:
+        error_str: The error string from the native library
+
+    Raises:
+        C2paError subclass: The appropriate typed exception based on error_str
+    """
+    # Error format from native library is "ErrorType: message" or "ErrorType message"
+    # Try splitting on ": " first (colon-space), then fall back to space only
+    if ': ' in error_str:
+        parts = error_str.split(': ', 1)
+    else:
+        parts = error_str.split(' ', 1)
+    if len(parts) > 1:
+        error_type = parts[0]
+        # Use the full error string as the message for backward compatibility
+        if error_type == "Assertion":
+            raise C2paError.Assertion(error_str)
+        elif error_type == "AssertionNotFound":
+            raise C2paError.AssertionNotFound(error_str)
+        elif error_type == "Decoding":
+            raise C2paError.Decoding(error_str)
+        elif error_type == "Encoding":
+            raise C2paError.Encoding(error_str)
+        elif error_type == "FileNotFound":
+            raise C2paError.FileNotFound(error_str)
+        elif error_type == "Io":
+            raise C2paError.Io(error_str)
+        elif error_type == "Json":
+            raise C2paError.Json(error_str)
+        elif error_type == "Manifest":
+            raise C2paError.Manifest(error_str)
+        elif error_type == "ManifestNotFound":
+            raise C2paError.ManifestNotFound(error_str)
+        elif error_type == "NotSupported":
+            raise C2paError.NotSupported(error_str)
+        elif error_type == "Other":
+            raise C2paError.Other(error_str)
+        elif error_type == "RemoteManifest":
+            raise C2paError.RemoteManifest(error_str)
+        elif error_type == "ResourceNotFound":
+            raise C2paError.ResourceNotFound(error_str)
+        elif error_type == "Signature":
+            raise C2paError.Signature(error_str)
+        elif error_type == "Verify":
+            raise C2paError.Verify(error_str)
+    # If no recognized error type, raise base C2paError
+    raise C2paError(error_str)
+
+
 def _parse_operation_result_for_error(
         result: ctypes.c_void_p | None,
         check_error: bool = True) -> Optional[str]:
-    """Helper function to handle string results from C2PA functions."""
+    """Helper function to handle string results from C2PA functions.
+
+    When result is falsy and check_error is True, this function retrieves the
+    error from the native library, parses it, and raises a typed C2paError.
+
+    When result is truthy (a pointer to an error string), this function
+    converts it to a Python string, parses it, and raises a typed C2paError.
+
+    Args:
+        result: A pointer to a result string, or None/falsy on error
+        check_error: Whether to check for errors when result is falsy
+
+    Returns:
+        None if no error occurred
+
+    Raises:
+        C2paError subclass: The appropriate typed exception if an error occurred
+    """
     if not result:  # pragma: no cover
         if check_error:
             error = _lib.c2pa_error()
@@ -663,44 +780,14 @@ def _parse_operation_result_for_error(
                 error_str = ctypes.cast(
                     error, ctypes.c_char_p).value.decode('utf-8')
                 _lib.c2pa_string_free(error)
-                parts = error_str.split(' ', 1)
-                if len(parts) > 1:
-                    error_type, message = parts
-                    if error_type == "Assertion":
-                        raise C2paError.Assertion(message)
-                    elif error_type == "AssertionNotFound":
-                        raise C2paError.AssertionNotFound(message)
-                    elif error_type == "Decoding":
-                        raise C2paError.Decoding(message)
-                    elif error_type == "Encoding":
-                        raise C2paError.Encoding(message)
-                    elif error_type == "FileNotFound":
-                        raise C2paError.FileNotFound(message)
-                    elif error_type == "Io":
-                        raise C2paError.Io(message)
-                    elif error_type == "Json":
-                        raise C2paError.Json(message)
-                    elif error_type == "Manifest":
-                        raise C2paError.Manifest(message)
-                    elif error_type == "ManifestNotFound":
-                        raise C2paError.ManifestNotFound(message)
-                    elif error_type == "NotSupported":
-                        raise C2paError.NotSupported(message)
-                    elif error_type == "Other":
-                        raise C2paError.Other(message)
-                    elif error_type == "RemoteManifest":
-                        raise C2paError.RemoteManifest(message)
-                    elif error_type == "ResourceNotFound":
-                        raise C2paError.ResourceNotFound(message)
-                    elif error_type == "Signature":
-                        raise C2paError.Signature(message)
-                    elif error_type == "Verify":
-                        raise C2paError.Verify(message)
-                return error_str
+                _raise_typed_c2pa_error(error_str)
         return None
 
     # In the case result would be a string already (error message)
-    return _convert_to_py_string(result)
+    error_str = _convert_to_py_string(result)
+    if error_str:
+        _raise_typed_c2pa_error(error_str)
+    return None
 
 
 def sdk_version() -> str:
@@ -1370,12 +1457,10 @@ class Reader:
         returning None if no manifest/c2pa data/JUMBF data could be read
         (instead of raising a ManifestNotFound: no JUMBF data found exception).
 
-        That method handles the case where you want to try to read C2PA data
-        from an asset that may or may not contain a c2pa manifest. As such,
-        this method takes the same parameters as the Reader constructor
-        __init__ method to attempt to read c2pa data from the asset, but returns
-        None if no c2pa manifest data could be read instead of throwing
-        an error.
+        Returns None instead of raising C2paError.ManifestNotFound if no
+        C2PA manifest data is found in the asset. This is useful when you
+        want to check if an asset contains C2PA data without handling
+        exceptions for the expected case of no manifest.
 
         Args:
             format_or_path: The format or path to read from
@@ -1387,17 +1472,14 @@ class Reader:
             None if no manifest found (ManifestNotFound: no JUMBF data found)
 
         Raises:
-            C2paError: If there was an error other than "ManifestNotFound"
+            C2paError: If there was an error other than ManifestNotFound
         """
         try:
             # Reader creations checks deferred to the constructor __init__ method
             return cls(format_or_path, stream, manifest_data)
-        except C2paError as e:
-            if "ManifestNotFound" in str(e) or "no JUMBF data found" in str(e):
-                # Nothing to read, so no Reader returned
-                return None
-            # Any other error that may happen will still raise an exception
-            raise
+        except C2paError.ManifestNotFound:
+            # Nothing to read, so no Reader returned
+            return None
 
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
