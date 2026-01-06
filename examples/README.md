@@ -97,6 +97,6 @@ In this example, `SignerInfo` creates a `Signer` object that signs the manifest.
 python examples/sign_info.py
 ```
 
-## Full-application example
+## Full application example
 
 [c2pa-python-example](https://github.com/contentauth/c2pa-python-example) is an example of a simple application that accepts an uploaded JPEG image file, attaches a C2PA manifest, and signs it using a certificate. The app uses the CAI Python library and the Flask Python framework to implement a back-end REST endpoint; it does not have an HTML front-end, so you have to use something like curl to access it.
