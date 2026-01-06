@@ -704,8 +704,7 @@ def _raise_typed_c2pa_error(error_str: str) -> None:
 
     Error strings from the native library have the format "ErrorType: message".
     This function parses the error type and raises the corresponding
-    C2paError subclass with the full original error string as the message
-    for backward compatibility.
+    C2paError subclass with the full original error string as the message.
 
     Args:
         error_str: The error string from the native library
