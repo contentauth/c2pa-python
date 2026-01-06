@@ -544,9 +544,9 @@ class C2paError(Exception):
         super().__init__(message)
 
 
-# Define typed exception subclasses that properly inherit from C2paError
+# Define typed exception subclasses that inherit from C2paError
 # These are attached to C2paError as class attributes for backward compatibility
-# (e.g., C2paError.ManifestNotFound)
+# (eg., C2paError.ManifestNotFound), and also to ensure properly inheritance hierarchy
 
 class _C2paAssertion(C2paError):
     """Exception raised for assertion errors."""
@@ -589,7 +589,11 @@ class _C2paManifest(C2paError):
 
 
 class _C2paManifestNotFound(C2paError):
-    """Exception raised when a manifest is not found."""
+    """
+    Exception raised when a manifest is not found,
+    aka there is no C2PA metadata to read
+    aka there is no JUMBF data to read.
+    """
     pass
 
 
@@ -624,7 +628,7 @@ class _C2paVerify(C2paError):
 
 
 # Attach exception subclasses to C2paError for backward compatibility
-# Preservers behavio for exception catching like except C2paError.ManifestNotFound,
+# Preserves behavior for exception catching like except C2paError.ManifestNotFound,
 # also reduces imports (think of it as an alias of sorts)
 C2paError.Assertion = _C2paAssertion
 C2paError.AssertionNotFound = _C2paAssertionNotFound
