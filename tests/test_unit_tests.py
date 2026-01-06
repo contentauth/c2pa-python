@@ -114,6 +114,17 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_from_asset_reader_from_stream_context_manager(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.from_asset("image/jpeg", file)
+            self.assertIsNotNone(reader)
+            # Check that a Reader returned by from_asset is not None,
+            # before using it in a context manager pattern (with)
+            if reader is not None:
+                with reader:
+                    json_data = reader.json()
+                    self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
     def test_stream_read_detailed(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
@@ -470,7 +481,10 @@ class TestReader(unittest.TestCase):
                 self.fail(f"Failed to read metadata from {filename}: {str(e)}")
 
     def test_from_asset_all_files_using_extension(self):
-        """Test reading C2PA metadata using Reader.from_asset from files in the fixtures/files-for-reading-tests directory"""
+        """
+        Test reading C2PA metadata using Reader.from_asset
+        from files in the fixtures/files-for-reading-tests directory
+        """
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
 
         # Map of file extensions to MIME types

@@ -1378,10 +1378,11 @@ class Reader:
             manifest_data: Optional manifest data in bytes
 
         Returns:
-            Reader instance if the asset contains C2PA data, None if no manifest found
+            Reader instance if the asset contains C2PA data,
+            None if no manifest found (ManifestNotFound: no JUMBF data found)
 
         Raises:
-            C2paError: If there was an error other than "no manifest found"
+            C2paError: If there was an error other than "ManifestNotFound"
         """
         try:
             return cls(format_or_path, stream, manifest_data)
