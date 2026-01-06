@@ -1364,12 +1364,12 @@ class Reader:
                    format_or_path: Union[str, Path],
                    stream: Optional[Any] = None,
                    manifest_data: Optional[Any] = None) -> Optional["Reader"]:
-        """This is a factory method to create a new Reader from an asset,
+        """This is a factory-like method to create a new Reader from an asset,
         returning None if no manifest found (instead of raising a
         ManifestNotFound: no JUMBF data found exception).
 
         That method handles the case where you want to try to read C2PA data
-        from an asset that may or may not contain a manifest. As such, this methods
+        from an asset that may or may not contain a manifest. As such, this method
         takes the same parameters as the Reader constructor __init__ method.
 
         Args:
