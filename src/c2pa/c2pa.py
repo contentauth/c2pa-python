@@ -1360,6 +1360,10 @@ class Reader:
     }
 
     @classmethod
+    def get_reader():
+      pass
+
+    @classmethod
     def get_supported_mime_types(cls) -> list[str]:
         """Get the list of supported MIME types for the Reader.
         This method retrieves supported MIME types from the native library.
