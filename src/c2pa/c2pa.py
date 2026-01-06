@@ -707,7 +707,8 @@ def sdk_version() -> str:
     """
     Returns the underlying c2pa-rs/c2pa-c-ffi version string
     c2pa-rs and c2pa-c-ffi versions are in lockstep release,
-    so the version string is the same for both.
+    so the version string is the same for both and we return
+    the shared semantic version number.
     """
     vstr = version()
     # Example: "c2pa-c/0.60.1 c2pa-rs/0.60.1"
@@ -720,8 +721,9 @@ def sdk_version() -> str:
 
 def version() -> str:
     """
-    Get the C2PA library version with the fully qualified name
-    of the native core libraries.
+    Get the C2PA library version with the fully qualified names
+    of the native core libraries (library names and semantic version
+    numbers).
     """
     result = _lib.c2pa_version()
     return _convert_to_py_string(result)
