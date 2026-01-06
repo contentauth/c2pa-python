@@ -71,10 +71,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_remote_url',
 ]
 
-# TODO Bindings:
-# c2pa_reader_is_embedded
-# c2pa_reader_remote_url
-
 
 def _validate_library_exports(lib):
     """Validate that all required functions are present in the loaded library.
@@ -710,6 +706,8 @@ def _parse_operation_result_for_error(
 def sdk_version() -> str:
     """
     Returns the underlying c2pa-rs/c2pa-c-ffi version string
+    c2pa-rs and c2pa-c-ffi versions are in lockstep release,
+    so the version string is the same for both.
     """
     vstr = version()
     # Example: "c2pa-c/0.60.1 c2pa-rs/0.60.1"
@@ -721,7 +719,10 @@ def sdk_version() -> str:
 
 
 def version() -> str:
-    """Get the C2PA library version."""
+    """
+    Get the C2PA library version with the fully qualified name
+    of the native core libraries.
+    """
     result = _lib.c2pa_version()
     return _convert_to_py_string(result)
 
