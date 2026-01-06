@@ -1367,12 +1367,15 @@ class Reader:
                    stream: Optional[Any] = None,
                    manifest_data: Optional[Any] = None) -> Optional["Reader"]:
         """This is a factory-like method to create a new Reader from an asset,
-        returning None if no manifest found (instead of raising a
-        ManifestNotFound: no JUMBF data found exception).
+        returning None if no manifest/c2pa data/JUMBF data could be read
+        (instead of raising a ManifestNotFound: no JUMBF data found exception).
 
         That method handles the case where you want to try to read C2PA data
-        from an asset that may or may not contain a manifest. As such, this method
-        takes the same parameters as the Reader constructor __init__ method.
+        from an asset that may or may not contain a c2pa manifest. As such,
+        this method takes the same parameters as the Reader constructor
+        __init__ method to attempt to read c2pa data from the asset, but returns
+        None if no c2pa manifest data could be read instead of throwing
+        an error.
 
         Args:
             format_or_path: The format or path to read from
@@ -1387,6 +1390,7 @@ class Reader:
             C2paError: If there was an error other than "ManifestNotFound"
         """
         try:
+            # Reader creations checks deferred to the constructor __init__ method
             return cls(format_or_path, stream, manifest_data)
         except C2paError as e:
             if "ManifestNotFound" in str(e) or "no JUMBF data found" in str(e):
