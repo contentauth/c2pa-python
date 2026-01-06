@@ -2663,7 +2663,7 @@ class Builder:
         - EDIT: Edit of a pre-existing parent asset.
                 Must have a parent ingredient.
         - UPDATE: Restricted version of Edit for non-editorial changes.
-                  Must have only one ingredient as a parent.
+                  Must have only one ingredient, as a parent.
 
         Args:
             intent: The builder intent (C2paBuilderIntent enum value)
