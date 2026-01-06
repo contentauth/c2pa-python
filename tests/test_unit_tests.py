@@ -93,9 +93,24 @@ class TestReader(unittest.TestCase):
                 reader = Reader("image/jpeg", file)
             self.assertIn("ManifestNotFound: no JUMBF data found", str(context.exception))
 
+    def test_from_asset_reader_nothing_to_read(self):
+        # The ingredient test file has no manifest
+        # So if we use Reader.from_asset, in this case we'll get None
+        # And no error should be raised
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            reader = Reader.from_asset("image/jpeg", file)
+            self.assertIsNone(reader)
+
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
+            json_data = reader.json()
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_from_asset_reader_from_stream(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.from_asset("image/jpeg", file)
+            self.assertIsNotNone(reader)
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 

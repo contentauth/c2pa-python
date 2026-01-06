@@ -1360,8 +1360,37 @@ class Reader:
     }
 
     @classmethod
-    def get_reader():
-      pass
+    def from_asset(cls,
+                   format_or_path: Union[str, Path],
+                   stream: Optional[Any] = None,
+                   manifest_data: Optional[Any] = None) -> Optional["Reader"]:
+        """This is a factory method to create a new Reader from an asset,
+        returning None if no manifest found (instead of raising a
+        ManifestNotFound: no JUMBF data found exception).
+
+        That method handles the case where you want to try to read C2PA data
+        from an asset that may or may not contain a manifest. As such, this methods
+        takes the same parameters as the Reader constructor __init__ method.
+
+        Args:
+            format_or_path: The format or path to read from
+            stream: Optional stream to read from (Python stream-like object)
+            manifest_data: Optional manifest data in bytes
+
+        Returns:
+            Reader instance if the asset contains C2PA data, None if no manifest found
+
+        Raises:
+            C2paError: If there was an error other than "no manifest found"
+        """
+        try:
+            return cls(format_or_path, stream, manifest_data)
+        except C2paError as e:
+            if "ManifestNotFound" in str(e) or "no JUMBF data found" in str(e):
+                # Nothing to read, so no Reader returned
+                return None
+            # Any other error that may happen will still raise an exception
+            raise
 
     @classmethod
     def get_supported_mime_types(cls) -> list[str]:
