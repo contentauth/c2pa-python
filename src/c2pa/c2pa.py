@@ -1362,11 +1362,11 @@ class Reader:
     }
 
     @classmethod
-    def from_asset(cls,
+    def try_create(cls,
                    format_or_path: Union[str, Path],
                    stream: Optional[Any] = None,
                    manifest_data: Optional[Any] = None) -> Optional["Reader"]:
-        """This is a factory-like method to create a new Reader from an asset,
+        """This is a factory method to create a new Reader from an asset,
         returning None if no manifest/c2pa data/JUMBF data could be read
         (instead of raising a ManifestNotFound: no JUMBF data found exception).
 
