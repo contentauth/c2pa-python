@@ -252,9 +252,19 @@ class TestReader(unittest.TestCase):
             # as mimetype chemical/x-xyz
             Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
 
+    def test_from_asset_raises_mimetype_not_supported(self):
+        with self.assertRaises(Error.NotSupported):
+            # xyz is actually an extension that is recognized
+            # as mimetype chemical/x-xyz, but we don't support it
+            Reader.from_asset(os.path.join(FIXTURES_DIR, "C.xyz"))
+
     def test_stream_read_string_stream_mimetype_not_recognized(self):
         with self.assertRaises(Error.NotSupported):
             Reader(os.path.join(FIXTURES_DIR, "C.test"))
+
+    def test_from_asset_raises_mimetype_not_recognized(self):
+        with self.assertRaises(Error.NotSupported):
+            Reader.from_asset(os.path.join(FIXTURES_DIR, "C.test"))
 
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
@@ -332,6 +342,75 @@ class TestReader(unittest.TestCase):
             # Just run and verify there is no crash
             json.loads(reader.json())
 
+    def test_from_asset_from_path(self):
+        test_path = os.path.join(self.data_dir, "C.dng")
+
+        # Create reader with the file content
+        reader = Reader.from_asset(test_path)
+        self.assertIsNotNone(reader)
+        # Just run and verify there is no crash
+        json.loads(reader.json())
+
+    def test_from_asset_all_files(self):
+        """Test reading C2PA metadata using Reader.from_asset from all files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                continue
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    reader = Reader.from_asset(mime_type, file)
+                    # from_asset returns None if no manifest found, otherwise a Reader
+                    self.assertIsNotNone(reader, f"Expected Reader for {filename}")
+                    json_data = reader.json()
+                    reader.close()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
     def test_read_all_files(self):
         """Test reading C2PA metadata from all files in the fixtures/files-for-reading-tests directory"""
         reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
@@ -380,6 +459,53 @@ class TestReader(unittest.TestCase):
             try:
                 with open(file_path, "rb") as file:
                     reader = Reader(mime_type, file)
+                    json_data = reader.json()
+                    reader.close()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
+    def test_from_asset_all_files_using_extension(self):
+        """Test reading C2PA metadata using Reader.from_asset from files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        extensions = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in extensions:
+                continue
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Remove the leading dot
+                    parsed_extension = ext[1:]
+                    reader = Reader.from_asset(parsed_extension, file)
+                    # from_asset returns None if no manifest found, otherwise a Reader
+                    self.assertIsNotNone(reader, f"Expected Reader for {filename}")
                     json_data = reader.json()
                     reader.close()
                     self.assertIsInstance(json_data, str)
