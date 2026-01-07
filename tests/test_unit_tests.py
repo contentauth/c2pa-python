@@ -93,11 +93,37 @@ class TestReader(unittest.TestCase):
                 reader = Reader("image/jpeg", file)
             self.assertIn("ManifestNotFound: no JUMBF data found", str(context.exception))
 
+    def test_try_create_reader_nothing_to_read(self):
+        # The ingredient test file has no manifest
+        # So if we use Reader.try_create, in this case we'll get None
+        # And no error should be raised
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            reader = Reader.try_create("image/jpeg", file)
+            self.assertIsNone(reader)
+
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_try_create_reader_from_stream(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create("image/jpeg", file)
+            self.assertIsNotNone(reader)
+            json_data = reader.json()
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_try_create_reader_from_stream_context_manager(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create("image/jpeg", file)
+            self.assertIsNotNone(reader)
+            # Check that a Reader returned by try_create is not None,
+            # before using it in a context manager pattern (with)
+            if reader is not None:
+                with reader:
+                    json_data = reader.json()
+                    self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_stream_read_detailed(self):
         with open(self.testPath, "rb") as file:
@@ -231,15 +257,34 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
+    def test_try_create_from_path(self):
+        test_path = os.path.join(self.data_dir, "C.dng")
+
+        # Create reader with the file content
+        reader = Reader.try_create(test_path)
+        self.assertIsNotNone(reader)
+        # Just run and verify there is no crash
+        json.loads(reader.json())
+
     def test_stream_read_string_stream_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
             # xyz is actually an extension that is recognized
             # as mimetype chemical/x-xyz
             Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
 
+    def test_try_create_raises_mimetype_not_supported(self):
+        with self.assertRaises(Error.NotSupported):
+            # xyz is actually an extension that is recognized
+            # as mimetype chemical/x-xyz, but we don't support it
+            Reader.try_create(os.path.join(FIXTURES_DIR, "C.xyz"))
+
     def test_stream_read_string_stream_mimetype_not_recognized(self):
         with self.assertRaises(Error.NotSupported):
             Reader(os.path.join(FIXTURES_DIR, "C.test"))
+
+    def test_try_create_raises_mimetype_not_recognized(self):
+        with self.assertRaises(Error.NotSupported):
+            Reader.try_create(os.path.join(FIXTURES_DIR, "C.test"))
 
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
@@ -365,6 +410,116 @@ class TestReader(unittest.TestCase):
             try:
                 with open(file_path, "rb") as file:
                     reader = Reader(mime_type, file)
+                    json_data = reader.json()
+                    reader.close()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
+    def test_try_create_all_files(self):
+        """Test reading C2PA metadata using Reader.try_create from all files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                continue
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    reader = Reader.try_create(mime_type, file)
+                    # try_create returns None if no manifest found, otherwise a Reader
+                    self.assertIsNotNone(reader, f"Expected Reader for {filename}")
+                    json_data = reader.json()
+                    reader.close()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
+    def test_try_create_all_files_using_extension(self):
+        """
+        Test reading C2PA metadata using Reader.try_create
+        from files in the fixtures/files-for-reading-tests directory
+        """
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        extensions = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in extensions:
+                continue
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Remove the leading dot
+                    parsed_extension = ext[1:]
+                    reader = Reader.try_create(parsed_extension, file)
+                    # try_create returns None if no manifest found, otherwise a Reader
+                    self.assertIsNotNone(reader, f"Expected Reader for {filename}")
                     json_data = reader.json()
                     reader.close()
                     self.assertIsInstance(json_data, str)
