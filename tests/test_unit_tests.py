@@ -67,7 +67,7 @@ def load_test_settings_json():
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.73.2", sdk_version())
+        self.assertIn("0.74.0", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -2401,6 +2401,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             output.seek(0)
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
+
+            print("#####################################")
+            print(json_data)
+            print("#################################")
             manifest_data = json.loads(json_data)
 
             # Verify active manifest exists
