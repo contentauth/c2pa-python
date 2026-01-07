@@ -1,4 +1,4 @@
-# Python example code 
+# Python example code
 
 The `examples` directory contains some small examples of using the Python library.
 The examples use asset files from the `tests/fixtures` directory, save the resulting signed assets to the temporary `output` directory, and display manifest store data and other output to the console.
@@ -96,3 +96,7 @@ In this example, `SignerInfo` creates a `Signer` object that signs the manifest.
 ```bash
 python examples/sign_info.py
 ```
+
+## Backend application example
+
+[c2pa-python-example](https://github.com/contentauth/c2pa-python-example) is an example of a simple application that accepts an uploaded JPEG image file, attaches a C2PA manifest, and signs it using a certificate. The app uses the CAI Python library and the Flask Python framework to implement a back-end REST endpoint; it does not have an HTML front-end, so you have to use something like curl to access it. This example is a development setup and should not be deployed as-is to a production environment.

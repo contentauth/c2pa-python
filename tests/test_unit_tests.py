@@ -85,6 +85,14 @@ class TestReader(unittest.TestCase):
 
         self.assertEqual(result1, result2)
 
+    def test_stream_read_nothing_to_read(self):
+        # The ingredient test file has no manifest
+        # So if we instantiate directly, the Reader instance should throw
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            with self.assertRaises(Error) as context:
+                reader = Reader("image/jpeg", file)
+            self.assertIn("ManifestNotFound: no JUMBF data found", str(context.exception))
+
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
