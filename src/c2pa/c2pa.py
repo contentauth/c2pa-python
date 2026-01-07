@@ -1452,39 +1452,6 @@ class Reader:
     }
 
     @classmethod
-    def try_create(cls,
-                   format_or_path: Union[str, Path],
-                   stream: Optional[Any] = None,
-                   manifest_data: Optional[Any] = None) -> Optional["Reader"]:
-        """This is a factory method to create a new Reader from an asset,
-        returning None if no manifest/c2pa data/JUMBF data could be read
-        (instead of raising a ManifestNotFound: no JUMBF data found exception).
-
-        Returns None instead of raising C2paError.ManifestNotFound if no
-        C2PA manifest data is found in the asset. This is useful when you
-        want to check if an asset contains C2PA data without handling
-        exceptions for the expected case of no manifest.
-
-        Args:
-            format_or_path: The format or path to read from
-            stream: Optional stream to read from (Python stream-like object)
-            manifest_data: Optional manifest data in bytes
-
-        Returns:
-            Reader instance if the asset contains C2PA data,
-            None if no manifest found (ManifestNotFound: no JUMBF data found)
-
-        Raises:
-            C2paError: If there was an error other than ManifestNotFound
-        """
-        try:
-            # Reader creations checks deferred to the constructor __init__ method
-            return cls(format_or_path, stream, manifest_data)
-        except C2paError.ManifestNotFound:
-            # Nothing to read, so no Reader returned
-            return None
-
-    @classmethod
     def get_supported_mime_types(cls) -> list[str]:
         """Get the list of supported MIME types for the Reader.
         This method retrieves supported MIME types from the native library.
