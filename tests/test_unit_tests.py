@@ -2384,11 +2384,12 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
     def test_builder_sign_with_setting_no_thumbnail_and_ingredient(self):
+        # The following removes the manifest's thumbnail
+        # Settings should be loaded before the builder is created
+        load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+
         builder = Builder.from_json(self.manifestDefinition)
         assert builder._builder is not None
-
-        # The following removes the manifest's thumbnail
-        load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -2401,10 +2402,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             output.seek(0)
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
-
-            print("#####################################")
-            print(json_data)
-            print("#################################")
             manifest_data = json.loads(json_data)
 
             # Verify active manifest exists
@@ -2435,11 +2432,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
     def test_builder_sign_with_settingdict_no_thumbnail_and_ingredient(self):
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
-
         # The following removes the manifest's thumbnail - using dict instead of string
         load_settings({"builder": {"thumbnail": {"enabled": False}}})
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._builder is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -2713,8 +2710,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_set_remote_url_no_embed(self):
         """Test setting the remote url of a builder with no embed flag."""
-        builder = Builder.from_json(self.manifestDefinition)
+
+        # Settings need to be loaded before the builder is created
         load_settings(r'{"verify": { "remote_manifest_fetch": false} }')
+
+        builder = Builder.from_json(self.manifestDefinition)
         builder.set_no_embed()
         builder.set_remote_url("http://this_does_not_exist/foo.jpg")
 
@@ -4398,6 +4398,7 @@ class TestLegacyAPI(unittest.TestCase):
         temp_data_dir = os.path.join(self.data_dir, "temp_data")
         os.makedirs(temp_data_dir, exist_ok=True)
 
+        # Load settings first, before they need to be used
         load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
 
         ingredient_json_with_dir = read_ingredient_file(self.testPath2, temp_data_dir)
