@@ -1,6 +1,6 @@
 # Python example code
 
-The `examples` directory contains some small examples of using the Python library.
+The `examples` directory contains some small examples of using this Python library.
 The examples use asset files from the `tests/fixtures` directory, save the resulting signed assets to the temporary `output` directory, and display manifest store data and other output to the console.
 
 ## Signing and verifying assets
