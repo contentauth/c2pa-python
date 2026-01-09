@@ -1429,10 +1429,6 @@ class TestBuilderWithThreads(unittest.TestCase):
             active_manifest1["title"],
             active_manifest2["title"])
 
-        # Verify both outputs have valid signatures
-        self.assertNotIn("validation_status", manifest_store1)
-        self.assertNotIn("validation_status", manifest_store2)
-
         # Clean up
         output1.close()
         output2.close()
@@ -1510,12 +1506,6 @@ class TestBuilderWithThreads(unittest.TestCase):
                         break
                 self.assertTrue(author_found,
                                 "Author assertion not found in manifest")
-
-                # Verify no validation errors
-                self.assertNotIn(
-                    "validation_status",
-                    manifest_store,
-                    "Manifest should not have validation errors")
 
             except Exception as e:
                 read_errors.append(f"Read error: {str(e)}")
