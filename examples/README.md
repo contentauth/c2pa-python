@@ -75,7 +75,13 @@ except Exception as err:
 
 To run the examples, make sure you have the c2pa-python package installed (`pip install c2pa-python`) and you're in the root directory of the project. We recommend working using virtual environments (venv). Then run the examples as shown below.
 
-Run the "do not train" assertion example:
+### Run the reading C2PA data example
+
+```bash
+python examples/read.py
+```
+
+### Run the "do not train" assertion example:
 
 ```bash
 python examples/training.py
