@@ -67,7 +67,7 @@ def load_test_settings_json():
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.74.0", sdk_version())
+        self.assertIn("0.75.2", sdk_version())
 
 
 class TestReader(unittest.TestCase):
