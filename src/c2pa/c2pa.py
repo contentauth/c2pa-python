@@ -3328,6 +3328,7 @@ __all__ = [
     'C2paSeekMode',
     'C2paSigningAlg',
     'C2paSignerInfo',
+    'C2paBuilderIntent',
     'Stream',
     'Reader',
     'Builder',
