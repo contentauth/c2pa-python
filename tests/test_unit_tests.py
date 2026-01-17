@@ -43,7 +43,7 @@ ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 def load_test_settings_json():
     """
-    Load default trust configuration test settings from a
+    Load default (legacy) trust configuration test settings from a
     JSON config file and return its content as JSON-compatible dict.
     The return value is used to load settings.
 
@@ -67,7 +67,7 @@ def load_test_settings_json():
 
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.75.2", sdk_version())
+        self.assertIn("0.75.4", sdk_version())
 
 
 class TestReader(unittest.TestCase):
