@@ -28,7 +28,8 @@ from .c2pa import (
     Signer,
     Stream,
     sdk_version,
-    read_ingredient_file
+    read_ingredient_file,
+    load_settings
 )  # NOQA
 
 # Re-export C2paError and its subclasses
@@ -43,5 +44,6 @@ __all__ = [
     'Signer',
     'Stream',
     'sdk_version',
-    'read_ingredient_file'
+    'read_ingredient_file',
+    'load_settings'
 ]
