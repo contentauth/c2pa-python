@@ -3327,6 +3327,7 @@ __all__ = [
     'C2paError',
     'C2paSeekMode',
     'C2paSigningAlg',
+    'C2paDigitalSourceType',
     'C2paSignerInfo',
     'C2paBuilderIntent',
     'Stream',
