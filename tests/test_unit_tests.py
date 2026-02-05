@@ -45,7 +45,7 @@ def load_test_settings_json():
     """
     Load default (legacy) trust configuration test settings from a
     JSON config file and return its content as JSON-compatible dict.
-    The return value is used to load settings.
+    The return value is used to load settings (thread_local) in tests.
 
     Returns:
         dict: The parsed JSON content as a Python dictionary (JSON-compatible).
