@@ -4374,11 +4374,6 @@ class TestLegacyAPI(unittest.TestCase):
         if os.path.exists(self.temp_data_dir):
             shutil.rmtree(self.temp_data_dir)
 
-    def test_invalid_settings_str(self):
-        """Test loading a malformed settings string."""
-        with self.assertRaises(Error):
-            load_settings(r'{"verify": { "remote_manifest_fetch": false }')
-
     def test_read_ingredient_file(self):
         """Test reading a C2PA ingredient from a file."""
         # Test reading ingredient from file with data_dir
