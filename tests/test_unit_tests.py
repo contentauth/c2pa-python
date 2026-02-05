@@ -68,7 +68,7 @@ def load_test_settings_json():
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version
-        self.assertIn("0.75.14", sdk_version())
+        self.assertIn("0.75.15", sdk_version())
 
 
 class TestReader(unittest.TestCase):
