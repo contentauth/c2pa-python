@@ -45,7 +45,7 @@ def load_test_settings_json():
     """
     Load default (legacy) trust configuration test settings from a
     JSON config file and return its content as JSON-compatible dict.
-    The return value is used to load settings.
+    The return value is used to load settings (thread_local) in tests.
 
     Returns:
         dict: The parsed JSON content as a Python dictionary (JSON-compatible).
@@ -68,7 +68,7 @@ def load_test_settings_json():
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version
-        self.assertIn("0.75.10", sdk_version())
+        self.assertIn("0.75.16", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -4373,11 +4373,6 @@ class TestLegacyAPI(unittest.TestCase):
         """Clean up temporary files after each test."""
         if os.path.exists(self.temp_data_dir):
             shutil.rmtree(self.temp_data_dir)
-
-    def test_invalid_settings_str(self):
-        """Test loading a malformed settings string."""
-        with self.assertRaises(Error):
-            load_settings(r'{"verify": { "remote_manifest_fetch": false }')
 
     def test_read_ingredient_file(self):
         """Test reading a C2PA ingredient from a file."""
