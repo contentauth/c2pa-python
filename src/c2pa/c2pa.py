@@ -1524,7 +1524,7 @@ class Reader:
 
     @classmethod
     def _is_mime_type_supported(cls, mime_type: str) -> bool:
-        """Check if a MIME type is supported using O(1) frozenset lookup."""
+        """Check if a MIME type is supported"""
         if cls._supported_mime_types_cache is None:
             cls.get_supported_mime_types()  # Populates cache
         return mime_type in cls._supported_mime_types_cache
@@ -2554,7 +2554,7 @@ class Builder:
 
     @classmethod
     def _is_mime_type_supported(cls, mime_type: str) -> bool:
-        """Check if a MIME type is supported using O(1) frozenset lookup."""
+        """Check if a MIME type is supported"""
         if cls._supported_mime_types_cache is None:
             cls.get_supported_mime_types()  # Populates cache
         return mime_type in cls._supported_mime_types_cache
