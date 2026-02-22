@@ -40,7 +40,9 @@ See the [`examples` directory](https://github.com/contentauth/c2pa-python/tree/m
 
 ## API reference documentation
 
-See [the section in Contributing to the project](https://github.com/contentauth/c2pa-python/blob/main/docs/project-contributions.md#api-reference-documentation).
+Documentation is published at [github.io/c2pa-python/api/c2pa](https://contentauth.github.io/c2pa-python/api/c2pa/index.html).
+
+To build documentation locally, refer to [this section in Contributing to the project](https://github.com/contentauth/c2pa-python/blob/main/docs/project-contributions.md#api-reference-documentation).
 
 ## Contributing
 
