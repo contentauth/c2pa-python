@@ -30,7 +30,7 @@ import threading
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa.c2pa import Stream, LifecycleState, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -328,7 +328,7 @@ class TestReader(unittest.TestCase):
             self.assertIsNone(reader._reader)
             self.assertIsNone(reader._own_stream)
             # Verify reader is marked as closed
-            self.assertTrue(reader._closed)
+            self.assertEqual(reader._state, LifecycleState.CLOSED)
 
     def test_resource_to_stream_on_closed_reader(self):
         """Test that resource_to_stream correctly raises error on closed."""
@@ -690,8 +690,7 @@ class TestReader(unittest.TestCase):
         try:
             with Reader(self.testPath) as reader:
                 # Inside context - should be valid
-                self.assertFalse(reader._closed)
-                self.assertTrue(reader._initialized)
+                self.assertEqual(reader._state, LifecycleState.ACTIVE)
                 self.assertIsNotNone(reader._reader)
                 self.assertIsNotNone(reader._own_stream)
                 self.assertIsNotNone(reader._backing_file)
@@ -700,18 +699,16 @@ class TestReader(unittest.TestCase):
             pass
 
         # After exception - should still be closed
-        self.assertTrue(reader._closed)
-        self.assertFalse(reader._initialized)
+        self.assertEqual(reader._state, LifecycleState.CLOSED)
         self.assertIsNone(reader._reader)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
     def test_reader_partial_initialization_states(self):
         """Test Reader behavior with partial initialization failures."""
-        # Test with _reader = None but _initialized = True
+        # Test with _reader = None but state = ACTIVE
         reader = Reader.__new__(Reader)
-        reader._closed = False
-        reader._initialized = True
+        reader._state = LifecycleState.ACTIVE
         reader._reader = None
         reader._own_stream = None
         reader._backing_file = None
@@ -724,8 +721,7 @@ class TestReader(unittest.TestCase):
         reader = Reader(self.testPath)
 
         reader._cleanup_resources()
-        self.assertTrue(reader._closed)
-        self.assertFalse(reader._initialized)
+        self.assertEqual(reader._state, LifecycleState.CLOSED)
         self.assertIsNone(reader._reader)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
@@ -736,12 +732,11 @@ class TestReader(unittest.TestCase):
 
         # First cleanup
         reader._cleanup_resources()
-        self.assertTrue(reader._closed)
+        self.assertEqual(reader._state, LifecycleState.CLOSED)
 
         # Second cleanup should not change state
         reader._cleanup_resources()
-        self.assertTrue(reader._closed)
-        self.assertFalse(reader._initialized)
+        self.assertEqual(reader._state, LifecycleState.CLOSED)
         self.assertIsNone(reader._reader)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
@@ -3259,30 +3254,26 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder = Builder(self.manifestDefinition)
 
         # Initial state
-        self.assertFalse(builder._closed)
-        self.assertTrue(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.ACTIVE)
         self.assertIsNotNone(builder._builder)
 
         # After close
         builder.close()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
     def test_builder_context_manager_states(self):
         """Test Builder state management in context manager."""
         with Builder(self.manifestDefinition) as builder:
             # Inside context - should be valid
-            self.assertFalse(builder._closed)
-            self.assertTrue(builder._initialized)
+            self.assertEqual(builder._state, LifecycleState.ACTIVE)
             self.assertIsNotNone(builder._builder)
 
             # Placeholder operation
             builder.set_no_embed()
 
         # After context exit - should be closed
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
     def test_builder_context_manager_with_exception(self):
@@ -3290,24 +3281,21 @@ class TestBuilderWithSigner(unittest.TestCase):
         try:
             with Builder(self.manifestDefinition) as builder:
                 # Inside context - should be valid
-                self.assertFalse(builder._closed)
-                self.assertTrue(builder._initialized)
+                self.assertEqual(builder._state, LifecycleState.ACTIVE)
                 self.assertIsNotNone(builder._builder)
                 raise ValueError("Test exception")
         except ValueError:
             pass
 
         # After exception - should still be closed
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
     def test_builder_partial_initialization_states(self):
         """Test Builder behavior with partial initialization failures."""
-        # Test with _builder = None but _initialized = True
+        # Test with _builder = None but state = ACTIVE
         builder = Builder.__new__(Builder)
-        builder._closed = False
-        builder._initialized = True
+        builder._state = LifecycleState.ACTIVE
         builder._builder = None
 
         with self.assertRaises(Error):
@@ -3319,8 +3307,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # Test _cleanup_resources method
         builder._cleanup_resources()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
     def test_builder_cleanup_idempotency(self):
@@ -3329,12 +3316,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # First cleanup
         builder._cleanup_resources()
-        self.assertTrue(builder._closed)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
 
         # Second cleanup should not change state
         builder._cleanup_resources()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
     def test_builder_state_after_sign_operations(self):
@@ -3345,8 +3331,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
 
         # State should still be valid after signing
-        self.assertFalse(builder._closed)
-        self.assertTrue(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.ACTIVE)
         self.assertIsNotNone(builder._builder)
 
         # Should be able to sign again
@@ -3362,8 +3347,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.to_archive(archive_stream)
 
         # State should still be valid
-        self.assertFalse(builder._closed)
-        self.assertTrue(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.ACTIVE)
         self.assertIsNotNone(builder._builder)
 
     def test_builder_state_after_double_close(self):
@@ -3372,14 +3356,12 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # First close
         builder.close()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
         # Second close should not change state
         builder.close()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
         self.assertIsNone(builder._builder)
 
     def test_builder_state_with_invalid_native_pointer(self):

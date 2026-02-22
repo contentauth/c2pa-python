@@ -186,6 +186,17 @@ class C2paBuilderIntent(enum.IntEnum):
     UPDATE = 2  # Restricted version of Edit for non-editorial changes
 
 
+class LifecycleState(enum.IntEnum):
+    """Internal state for resource lifecycle management.
+
+    Shared by Reader and Builder for consistent state tracking.
+    Transitions: UNINITIALIZED -> ACTIVE -> CLOSED
+    """
+    UNINITIALIZED = 0
+    ACTIVE = 1
+    CLOSED = 2
+
+
 # Mapping from C2paSigningAlg enum to string representation,
 # as the enum value currently maps by default to an integer value.
 _ALG_TO_STRING_BYTES_MAPPING = {
@@ -1434,7 +1445,8 @@ class Reader:
         Where `output` is either an in-memory stream or an opened file.
     """
 
-    # Supported mimetypes cache
+    # Supported mimetypes cache (frozenset for O(1) lookups,
+    # converted to list for the public API return value)
     _supported_mime_types_cache = None
 
     # Class-level error messages to avoid multiple creation
@@ -1463,7 +1475,7 @@ class Reader:
             C2paError: If there was an error retrieving the MIME types
         """
         if cls._supported_mime_types_cache is not None:
-            return cls._supported_mime_types_cache
+            return list(cls._supported_mime_types_cache)
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
@@ -1508,11 +1520,18 @@ class Reader:
                 # Ignore cleanup errors
                 pass
 
-        # Cache the result
+        # Cache as frozenset for O(1) lookups; public API returns list()
         if result:
-            cls._supported_mime_types_cache = result
+            cls._supported_mime_types_cache = frozenset(result)
 
-        return cls._supported_mime_types_cache
+        return list(cls._supported_mime_types_cache) if cls._supported_mime_types_cache else []
+
+    @classmethod
+    def _is_mime_type_supported(cls, mime_type: str) -> bool:
+        """Check if a MIME type is supported using O(1) frozenset lookup."""
+        if cls._supported_mime_types_cache is None:
+            cls.get_supported_mime_types()  # Populates cache
+        return mime_type in cls._supported_mime_types_cache
 
     @classmethod
     def try_create(cls,
@@ -1568,8 +1587,7 @@ class Reader:
         # Clear any stale error state from previous operations
         _clear_error_state()
 
-        self._closed = False
-        self._initialized = False
+        self._state = LifecycleState.UNINITIALIZED
 
         self._reader = None
         self._own_stream = None
@@ -1592,7 +1610,7 @@ class Reader:
                 raise C2paError.NotSupported(
                     f"Could not determine MIME type for file: {path}")
 
-            if mime_type not in Reader.get_supported_mime_types():
+            if not Reader._is_mime_type_supported(mime_type):
                 raise C2paError.NotSupported(
                     f"Reader does not support {mime_type}")
 
@@ -1603,37 +1621,38 @@ class Reader:
                     Reader._ERROR_MESSAGES['encoding_error'].format(
                         str(e)))
 
+            file = None
             try:
-                with open(path, 'rb') as file:
-                    self._own_stream = Stream(file)
+                file = open(path, 'rb')
+                self._own_stream = Stream(file)
 
-                    self._reader = _lib.c2pa_reader_from_stream(
-                        mime_type_str,
-                        self._own_stream._stream
+                self._reader = _lib.c2pa_reader_from_stream(
+                    mime_type_str,
+                    self._own_stream._stream
+                )
+
+                if not self._reader:
+                    self._own_stream.close()
+                    error = _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    if error:
+                        raise C2paError(error)
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
+                        )
                     )
 
-                    if not self._reader:
-                        self._own_stream.close()
-                        error = _parse_operation_result_for_error(
-                            _lib.c2pa_error())
-                        if error:
-                            raise C2paError(error)
-                        raise C2paError(
-                            Reader._ERROR_MESSAGES['reader_error'].format(
-                                "Unknown error"
-                            )
-                        )
-
-                    # Store the file to close it later
-                    self._backing_file = file
-                    self._initialized = True
+                # Store the file — lifecycle managed by _cleanup_resources()
+                self._backing_file = file
+                self._state = LifecycleState.ACTIVE
 
             except Exception as e:
-                # File automatically closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_backing_file') and self._backing_file:
-                    self._backing_file.close()
+                if file:
+                    file.close()
+                self._backing_file = None
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -1643,65 +1662,67 @@ class Reader:
 
             # format_or_path is a format
             format_lower = format_or_path.lower()
-            if format_lower not in Reader.get_supported_mime_types():
+            if not Reader._is_mime_type_supported(format_lower):
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_or_path}")
 
+            file = None
             try:
-                with open(stream, 'rb') as file:
-                    self._own_stream = Stream(file)
+                file = open(stream, 'rb')
+                self._own_stream = Stream(file)
 
-                    format_str = str(format_or_path)
-                    format_bytes = format_str.encode('utf-8')
+                format_str = str(format_or_path)
+                format_bytes = format_str.encode('utf-8')
 
-                    if manifest_data is None:
-                        self._reader = _lib.c2pa_reader_from_stream(
-                            format_bytes, self._own_stream._stream)
-                    else:
-                        if not isinstance(manifest_data, bytes):
-                            raise TypeError(
-                                Reader._ERROR_MESSAGES['manifest_error'])
-                        manifest_array = (
-                            ctypes.c_ubyte *
-                            len(manifest_data))(
-                            *
-                            manifest_data)
-                        self._reader = (
-                            _lib.c2pa_reader_from_manifest_data_and_stream(
-                                format_bytes,
-                                self._own_stream._stream,
-                                manifest_array,
-                                len(manifest_data),
-                            )
+                if manifest_data is None:
+                    self._reader = _lib.c2pa_reader_from_stream(
+                        format_bytes, self._own_stream._stream)
+                else:
+                    if not isinstance(manifest_data, bytes):
+                        raise TypeError(
+                            Reader._ERROR_MESSAGES['manifest_error'])
+                    manifest_array = (
+                        ctypes.c_ubyte *
+                        len(manifest_data))(
+                        *
+                        manifest_data)
+                    self._reader = (
+                        _lib.c2pa_reader_from_manifest_data_and_stream(
+                            format_bytes,
+                            self._own_stream._stream,
+                            manifest_array,
+                            len(manifest_data),
                         )
+                    )
 
-                    if not self._reader:
-                        self._own_stream.close()
-                        error = _parse_operation_result_for_error(
-                            _lib.c2pa_error())
-                        if error:
-                            raise C2paError(error)
-                        raise C2paError(
-                            Reader._ERROR_MESSAGES['reader_error'].format(
-                                "Unknown error"
-                            )
+                if not self._reader:
+                    self._own_stream.close()
+                    error = _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    if error:
+                        raise C2paError(error)
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
                         )
+                    )
 
-                    self._backing_file = file
-                    self._initialized = True
+                # Store the file — lifecycle managed by _cleanup_resources()
+                self._backing_file = file
+                self._state = LifecycleState.ACTIVE
             except Exception as e:
-                # File closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_backing_file') and self._backing_file:
-                    self._backing_file.close()
+                if file:
+                    file.close()
+                self._backing_file = None
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
         else:
             # format_or_path is a format string
             format_str = str(format_or_path)
-            if format_str.lower() not in Reader.get_supported_mime_types():
+            if not Reader._is_mime_type_supported(format_str.lower()):
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_str}")
 
@@ -1741,7 +1762,7 @@ class Reader:
                         )
                     )
 
-                self._initialized = True
+                self._state = LifecycleState.ACTIVE
 
     def __enter__(self):
         self._ensure_valid_state()
@@ -1764,9 +1785,9 @@ class Reader:
         Raises:
             C2paError: If the reader is closed, not initialized, or invalid
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
-        if not self._initialized:
+        if self._state != LifecycleState.ACTIVE:
             raise C2paError("Reader is not properly initialized")
         if not self._reader:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
@@ -1779,8 +1800,8 @@ class Reader:
         """
         try:
             # Only cleanup if not already closed and we have a valid reader
-            if hasattr(self, '_closed') and not self._closed:
-                self._closed = True
+            if hasattr(self, '_state') and self._state != LifecycleState.CLOSED:
+                self._state = LifecycleState.CLOSED
 
                 # Clean up reader
                 if hasattr(self, '_reader') and self._reader:
@@ -1816,9 +1837,6 @@ class Reader:
                         pass
                     finally:
                         self._backing_file = None
-
-                # Reset initialized state after cleanup
-                self._initialized = False
 
         except Exception:
             # Ensure we don't raise exceptions during cleanup
@@ -1859,7 +1877,7 @@ class Reader:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
 
         try:
@@ -1874,7 +1892,7 @@ class Reader:
             # Clear the cache when closing
             self._manifest_json_str_cache = None
             self._manifest_data_cache = None
-            self._closed = True
+            self._state = LifecycleState.CLOSED
 
     def json(self) -> str:
         """Get the manifest store as a JSON string.
@@ -2445,7 +2463,8 @@ class Signer:
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
 
-    # Supported mimetypes cache
+    # Supported mimetypes cache (frozenset for O(1) lookups,
+    # converted to list for the public API return value)
     _supported_mime_types_cache = None
 
     # Class-level error messages to avoid multiple creation
@@ -2477,7 +2496,7 @@ class Builder:
             C2paError: If there was an error retrieving the MIME types
         """
         if cls._supported_mime_types_cache is not None:
-            return cls._supported_mime_types_cache
+            return list(cls._supported_mime_types_cache)
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
@@ -2522,11 +2541,18 @@ class Builder:
                 # Ignore cleanup errors
                 pass
 
-        # Cache the result
+        # Cache as frozenset for O(1) lookups; public API returns list()
         if result:
-            cls._supported_mime_types_cache = result
+            cls._supported_mime_types_cache = frozenset(result)
 
-        return cls._supported_mime_types_cache
+        return list(cls._supported_mime_types_cache) if cls._supported_mime_types_cache else []
+
+    @classmethod
+    def _is_mime_type_supported(cls, mime_type: str) -> bool:
+        """Check if a MIME type is supported using O(1) frozenset lookup."""
+        if cls._supported_mime_types_cache is None:
+            cls.get_supported_mime_types()  # Populates cache
+        return mime_type in cls._supported_mime_types_cache
 
     @classmethod
     def from_json(cls, manifest_json: Any) -> 'Builder':
@@ -2571,7 +2597,7 @@ class Builder:
                 raise C2paError(error)
             raise C2paError("Failed to create builder from archive")
 
-        builder._initialized = True
+        builder._state = LifecycleState.ACTIVE
         return builder
 
     def __init__(self, manifest_json: Any):
@@ -2589,8 +2615,7 @@ class Builder:
         # Clear any stale error state from previous operations
         _clear_error_state()
 
-        self._closed = False
-        self._initialized = False
+        self._state = LifecycleState.UNINITIALIZED
         self._builder = None
 
         if not isinstance(manifest_json, str):
@@ -2620,7 +2645,7 @@ class Builder:
                 )
             )
 
-        self._initialized = True
+        self._state = LifecycleState.ACTIVE
 
     def __del__(self):
         """Ensure resources are cleaned up if close() wasn't called."""
@@ -2639,9 +2664,9 @@ class Builder:
         Raises:
             C2paError: If the builder is closed, not initialized, or invalid
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-        if not self._initialized:
+        if self._state != LifecycleState.ACTIVE:
             raise C2paError("Builder is not properly initialized")
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
@@ -2654,8 +2679,8 @@ class Builder:
         """
         try:
             # Only cleanup if not already closed and we have a valid builder
-            if hasattr(self, '_closed') and not self._closed:
-                self._closed = True
+            if hasattr(self, '_state') and self._state != LifecycleState.CLOSED:
+                self._state = LifecycleState.CLOSED
 
                 if hasattr(
                         self,
@@ -2670,9 +2695,6 @@ class Builder:
                         pass
                     finally:
                         self._builder = None
-
-                # Reset initialized state after cleanup
-                self._initialized = False
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
@@ -2685,7 +2707,7 @@ class Builder:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
 
         try:
@@ -2697,7 +2719,7 @@ class Builder:
                 Builder._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)))
         finally:
-            self._closed = True
+            self._state = LifecycleState.CLOSED
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -3018,7 +3040,7 @@ class Builder:
             raise C2paError("Invalid or closed signer")
 
         format_lower = format.lower()
-        if format_lower not in Builder.get_supported_mime_types():
+        if not Builder._is_mime_type_supported(format_lower):
             raise C2paError.NotSupported(
                 f"Builder does not support {format}")
 
@@ -3282,16 +3304,18 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
 
     # Create secure memory buffer for data
     data_array = None
-    key_bytes = None
+    key_buffer = None
 
     try:
         # Create data array with size validation
         data_size = len(data)
         data_array = (ctypes.c_ubyte * data_size)(*data)
 
-        # Encode private key to bytes
+        # Encode private key into a mutable ctypes buffer
+        # so it can be safely zeroed after use
         try:
-            key_bytes = private_key.encode('utf-8')
+            key_buffer = ctypes.create_string_buffer(
+                private_key.encode('utf-8'))
         except UnicodeError as e:
             raise C2paError.Encoding(
                 f"Invalid UTF-8 characters in private key: {str(e)}")
@@ -3300,7 +3324,7 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         signature_ptr = _lib.c2pa_ed25519_sign(
             data_array,
             data_size,
-            key_bytes
+            key_buffer
         )
 
         if not signature_ptr:
@@ -3318,9 +3342,9 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         return signature
 
     finally:
-        if key_bytes:
-            ctypes.memset(key_bytes, 0, len(key_bytes))
-            del key_bytes
+        if key_buffer:
+            ctypes.memset(key_buffer, 0, len(key_buffer))
+            del key_buffer
 
 
 __all__ = [
