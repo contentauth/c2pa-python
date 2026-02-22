@@ -1628,6 +1628,8 @@ class Reader:
                 )
 
                 if not self._reader:
+                    self._own_stream.close()
+                    self._own_stream = None
                     error = _parse_operation_result_for_error(
                         _lib.c2pa_error())
                     if error:
@@ -1644,7 +1646,7 @@ class Reader:
 
             except Exception as e:
                 # Clean up in reverse order of creation:
-                # 1. Release the native stream wrapper
+                # 1. Release the native stream wrapper (if not already closed)
                 if self._own_stream:
                     self._own_stream.close()
                     self._own_stream = None
@@ -1695,6 +1697,8 @@ class Reader:
                     )
 
                 if not self._reader:
+                    self._own_stream.close()
+                    self._own_stream = None
                     error = _parse_operation_result_for_error(
                         _lib.c2pa_error())
                     if error:
@@ -1710,7 +1714,7 @@ class Reader:
                 self._state = LifecycleState.ACTIVE
             except Exception as e:
                 # Clean up in reverse order of creation:
-                # 1. Release the native stream wrapper
+                # 1. Release the native stream wrapper (if not already closed)
                 if self._own_stream:
                     self._own_stream.close()
                     self._own_stream = None
@@ -1822,6 +1826,7 @@ class Reader:
                 if hasattr(self, '_own_stream') and self._own_stream:
                     try:
                         self._own_stream.close()
+                        self._own_stream = None
                     except Exception:
                         # Cleanup failure doesn't raise exceptions
                         logger.error("Failed to close Reader stream")
