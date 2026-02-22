@@ -64,6 +64,7 @@ def get_platform_identifier(target_arch=None) -> str:
     - universal-apple-darwin (for macOS universal)
     - aarch64-apple-darwin (for macOS ARM64)
     - x86_64-apple-darwin (for macOS x86_64)
+    - aarch64-pc-windows-msvc (for Windows ARM 64-bit)
     - x86_64-pc-windows-msvc (for Windows 64-bit)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM64)
