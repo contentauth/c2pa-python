@@ -187,10 +187,8 @@ class C2paBuilderIntent(enum.IntEnum):
 
 
 class LifecycleState(enum.IntEnum):
-    """Internal state for resource lifecycle management.
-
-    Shared by Reader and Builder for consistent state tracking.
-    Transitions: UNINITIALIZED -> ACTIVE -> CLOSED
+    """Internal state for lifecycle management.
+    Object transitions: UNINITIALIZED -> ACTIVE -> CLOSED
     """
     UNINITIALIZED = 0
     ACTIVE = 1
@@ -1445,8 +1443,7 @@ class Reader:
         Where `output` is either an in-memory stream or an opened file.
     """
 
-    # Supported mimetypes cache (frozenset for O(1) lookups,
-    # converted to list for the public API return value)
+    # Supported mimetypes cache
     _supported_mime_types_cache = None
 
     # Class-level error messages to avoid multiple creation
@@ -1520,7 +1517,6 @@ class Reader:
                 # Ignore cleanup errors
                 pass
 
-        # Cache as frozenset for O(1) lookups; public API returns list()
         if result:
             cls._supported_mime_types_cache = frozenset(result)
 
@@ -1632,7 +1628,6 @@ class Reader:
                 )
 
                 if not self._reader:
-                    self._own_stream.close()
                     error = _parse_operation_result_for_error(
                         _lib.c2pa_error())
                     if error:
@@ -1643,13 +1638,17 @@ class Reader:
                         )
                     )
 
-                # Store the file — lifecycle managed by _cleanup_resources()
+                # Success: store references for _cleanup_resources()
                 self._backing_file = file
                 self._state = LifecycleState.ACTIVE
 
             except Exception as e:
+                # Clean up in reverse order of creation:
+                # 1. Release the native stream wrapper
                 if self._own_stream:
                     self._own_stream.close()
+                    self._own_stream = None
+                # 2. Close the file we opened
                 if file:
                     file.close()
                 self._backing_file = None
@@ -1696,7 +1695,6 @@ class Reader:
                     )
 
                 if not self._reader:
-                    self._own_stream.close()
                     error = _parse_operation_result_for_error(
                         _lib.c2pa_error())
                     if error:
@@ -1707,12 +1705,16 @@ class Reader:
                         )
                     )
 
-                # Store the file — lifecycle managed by _cleanup_resources()
+                # Success: store references for _cleanup_resources()
                 self._backing_file = file
                 self._state = LifecycleState.ACTIVE
             except Exception as e:
+                # Clean up in reverse order of creation:
+                # 1. Release the native stream wrapper
                 if self._own_stream:
                     self._own_stream.close()
+                    self._own_stream = None
+                # 2. Close the file we opened
                 if file:
                     file.close()
                 self._backing_file = None
@@ -2463,8 +2465,7 @@ class Signer:
 class Builder:
     """High-level wrapper for C2PA Builder operations."""
 
-    # Supported mimetypes cache (frozenset for O(1) lookups,
-    # converted to list for the public API return value)
+    # Supported mimetypes cache
     _supported_mime_types_cache = None
 
     # Class-level error messages to avoid multiple creation
@@ -2541,7 +2542,6 @@ class Builder:
                 # Ignore cleanup errors
                 pass
 
-        # Cache as frozenset for O(1) lookups; public API returns list()
         if result:
             cls._supported_mime_types_cache = frozenset(result)
 
