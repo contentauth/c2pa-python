@@ -82,11 +82,11 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 
 ## How should I add ingredients?
 
-There are two ways: using `add_ingredient()` (or `add_ingredient_file()`) and injecting ingredient JSON directly into the manifest definition.
+There are two ways: using `add_ingredient()` (or `add_ingredient_from_file_path()`) and injecting ingredient JSON directly into the manifest definition.
 
 | Approach | What it does | When to use |
 | --- | --- | --- |
-| `add_ingredient(json, format, stream)` or `add_ingredient_file(json, path)` | Reads the source (a signed asset, an unsigned file, or a `.c2pa` archive), extracts its manifest store automatically, generates a thumbnail | Adding an ingredient where the library should handle extraction |
+| `add_ingredient(json, format, stream)` or `add_ingredient_from_file_path(json, format, path)` | Reads the source (a signed asset, an unsigned file, or a `.c2pa` archive), extracts its manifest store automatically, generates a thumbnail | Adding an ingredient where the library should handle extraction |
 | Inject via manifest JSON + `add_resource()` | Accepts the ingredient JSON and all binary resources provided manually | Reconstructing from a reader or merging from multiple readers, where the data has already been extracted |
 
 ## When to use archives
