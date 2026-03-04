@@ -1,0 +1,648 @@
+# Manifests, working stores, and archives
+
+This table summarizes the fundamental entities that you work with when using the CAI SDK.
+
+| Object | Description | Where it is | Primary API |
+|--------|-------------|-------------|-------------|
+| [**Manifest store**](#manifest-store) | Final signed provenance data. Contains one or more manifests. | Embedded in asset or remotely in cloud | `Reader` class |
+| [**Working store**](#working-store) | Editable in-progress manifest. | `Builder` object | `Builder` class |
+| [**Archive**](#archive) | Serialized working store | `.c2pa` file/stream | `Builder.to_archive()` / `Builder.from_archive()` |
+| [**Resources**](#working-with-resources) | Binary assets referenced by manifest assertions, such as thumbnails or ingredient thumbnails. | In manifest. | `Builder.add_resource()` / `Reader.resource_to_stream()` |
+| [**Ingredients**](#working-with-ingredients) | Source materials used to create an asset. | In manifest. | `Builder.add_ingredient()` |
+
+This diagram summarizes the relationships among these entities.
+
+```mermaid
+graph TD
+    subgraph MS["Manifest Store"]
+        subgraph M1["Manifests"]
+            R1[Resources]
+            I1[Ingredients]
+        end
+    end
+
+    A[Working Store<br/>Builder object] -->|sign| MS
+    A -->|to_archive| C[C2PA Archive<br/>.c2pa file]
+    C -->|from_archive| A
+```
+
+## Key entities
+
+### Manifest store
+
+A _manifest store_ is the data structure that's embedded in (or attached to) a signed asset. It contains one or more manifests that contain provenance data and cryptographic signatures.
+
+**Characteristics:**
+
+- Final, immutable signed data embedded in or attached to an asset.
+- Contains one or more manifests (identified by URIs).
+- Has exactly one `active_manifest` property pointing to the most recent manifest.
+- Read it by using a `Reader` object.
+
+**Example:** When you open a signed JPEG file, the C2PA data embedded in it is the manifest store.
+
+For more information, see:
+
+- [Reading manifest stores from assets](#reading-manifest-stores-from-assets)
+- [Creating and signing manifests](#creating-and-signing-manifests)
+- [Embedded vs external manifests](#embedded-vs-external-manifests)
+
+### Working store
+
+A _working store_ is a `Builder` object representing an editable, in-progress manifest that has not yet been signed and bound to an asset. Think of it as a manifest in progress, or a manifest being built.
+
+**Characteristics:**
+
+- Editable, mutable state in memory (a Builder object).
+- Contains claims, ingredients, and assertions that can be modified.
+- Can be saved to a C2PA archive (`.c2pa` JUMBF binary format) for later use.
+
+**Example:** When you create a `Builder` object and add assertions to it, you're dealing with a working store, as it is an "in progress" manifest being built.
+
+For more information, see [Using Working stores](#using-working-stores).
+
+### Archive
+
+A _C2PA archive_ (or just _archive_) contains the serialized bytes of a working store saved to a file or stream (typically a `.c2pa` file). It uses the standard JUMBF `application/c2pa` format.
+
+**Characteristics:**
+
+- Portable serialization of a working store (Builder).
+- Save an archive by using `Builder.to_archive()` and restore a full working store from an archive by using `Builder.from_archive()`.
+- Useful for separating manifest preparation ("work in progress") from final signing.
+
+For more information, see [Working with archives](#working-with-archives).
+
+## Reading manifest stores from assets
+
+Use the `Reader` class to read manifest stores from signed assets.
+
+### Reading from a file
+
+```py
+from c2pa import Reader
+
+try:
+    # Create a Reader from a signed asset file
+    reader = Reader("signed_image.jpg")
+
+    # Get the manifest store as JSON
+    manifest_store_json = reader.json()
+except Exception as e:
+    print(f"C2PA Error: {e}")
+```
+
+### Reading from a stream
+
+```py
+with open("signed_image.jpg", "rb") as stream:
+    # Create Reader from stream with MIME type
+    reader = Reader("image/jpeg", stream)
+    manifest_json = reader.json()
+```
+
+### Using Context for configuration
+
+For more control over validation and trust settings, use a `Context`:
+
+```py
+from c2pa import Context, Reader
+
+# Create context with custom validation settings
+ctx = Context.from_dict({
+    "verify": {
+        "verify_after_sign": True
+    }
+})
+
+# Use context when creating Reader
+reader = Reader("signed_image.jpg", context=ctx)
+manifest_json = reader.json()
+```
+
+## Using working stores
+
+A **working store** is represented by a `Builder` object. It contains "live" manifest data as you add information to it.
+
+### Creating a working store
+
+```py
+import json
+from c2pa import Builder, Context
+
+# Create a working store with a manifest definition
+manifest_json = json.dumps({
+    "claim_generator_info": [{
+        "name": "example-app",
+        "version": "0.1.0"
+    }],
+    "title": "Example asset",
+    "assertions": []
+})
+
+builder = Builder(manifest_json)
+
+# Or with custom context
+ctx = Context.from_dict({
+    "builder": {
+        "thumbnail": {"enabled": True}
+    }
+})
+builder = Builder(manifest_json, context=ctx)
+```
+
+### Modifying a working store
+
+Before signing, you can modify the working store (Builder):
+
+```py
+import io
+
+# Add binary resources (like thumbnails)
+with open("thumbnail.jpg", "rb") as thumb:
+    builder.add_resource("thumbnail", thumb)
+
+# Add ingredients (source files)
+ingredient_json = json.dumps({
+    "title": "Original asset",
+    "relationship": "parentOf"
+})
+with open("source.jpg", "rb") as ingredient:
+    builder.add_ingredient(ingredient_json, "image/jpeg", ingredient)
+
+# Add actions
+action_json = {
+    "action": "c2pa.created",
+    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+}
+builder.add_action(action_json)
+
+# Configure embedding behavior
+builder.set_no_embed()  # Don't embed manifest in asset
+builder.set_remote_url("https://example.com/manifests/")
+```
+
+### From working store to manifest store
+
+When you sign an asset, the working store (Builder) becomes a manifest store embedded in the output:
+
+```py
+from c2pa import Signer, C2paSignerInfo, C2paSigningAlg
+
+# Create a signer
+signer_info = C2paSignerInfo(
+    alg=C2paSigningAlg.ES256,
+    sign_cert=certs,
+    private_key=private_key,
+    ta_url=b"http://timestamp.digicert.com"
+)
+signer = Signer.from_info(signer_info)
+
+# Sign the asset - working store becomes a manifest store
+with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+
+# Now "signed.jpg" contains a manifest store
+# You can read it back with Reader
+reader = Reader("signed.jpg")
+manifest_store_json = reader.json()
+```
+
+## Creating and signing manifests
+
+### Creating a Builder (working store)
+
+```py
+# Create with manifest definition
+builder = Builder(manifest_json)
+
+# Or with custom context
+ctx = Context.from_dict({
+    "builder": {
+        "thumbnail": {"enabled": True}
+    }
+})
+builder = Builder(manifest_json, context=ctx)
+```
+
+### Creating a Signer
+
+For testing, create a `Signer` with certificates and private key:
+
+```py
+from c2pa import Signer, C2paSignerInfo, C2paSigningAlg
+
+# Load credentials
+with open("certs.pem", "rb") as f:
+    certs = f.read()
+with open("private_key.pem", "rb") as f:
+    private_key = f.read()
+
+# Create signer
+signer_info = C2paSignerInfo(
+    alg=C2paSigningAlg.ES256,  # ES256, ES384, ES512, PS256, PS384, PS512, ED25519
+    sign_cert=certs,            # Certificate chain in PEM format
+    private_key=private_key,    # Private key in PEM format
+    ta_url=b"http://timestamp.digicert.com"  # Optional timestamp authority URL
+)
+signer = Signer.from_info(signer_info)
+```
+
+**WARNING**: Never hard-code or directly access private keys in production. Use a Hardware Security Module (HSM) or Key Management Service (KMS).
+
+### Signing an asset
+
+```py
+try:
+    # Sign using streams
+    with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+        manifest_bytes = builder.sign(signer, "image/jpeg", src, dst)
+
+    print("Signed successfully!")
+
+except Exception as e:
+    print(f"Signing failed: {e}")
+```
+
+### Signing with file paths
+
+You can also sign using file paths directly:
+
+```py
+# Sign using file paths (uses native Rust file I/O for better performance)
+manifest_bytes = builder.sign_file(
+    "source.jpg", "signed.jpg", signer
+)
+```
+
+### Complete example
+
+This code combines the above examples to create, sign, and read a manifest.
+
+```py
+import json
+from c2pa import Builder, Reader, Signer, C2paSignerInfo, C2paSigningAlg
+
+try:
+    # 1. Define manifest for working store
+    manifest_json = json.dumps({
+        "claim_generator_info": [{"name": "demo-app", "version": "0.1.0"}],
+        "title": "Signed image",
+        "assertions": []
+    })
+
+    # 2. Load credentials
+    with open("certs.pem", "rb") as f:
+        certs = f.read()
+    with open("private_key.pem", "rb") as f:
+        private_key = f.read()
+
+    # 3. Create signer
+    signer_info = C2paSignerInfo(
+        alg=C2paSigningAlg.ES256,
+        sign_cert=certs,
+        private_key=private_key,
+        ta_url=b"http://timestamp.digicert.com"
+    )
+    signer = Signer.from_info(signer_info)
+
+    # 4. Create working store (Builder) and sign
+    builder = Builder(manifest_json)
+    with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+        builder.sign(signer, "image/jpeg", src, dst)
+
+    print("Asset signed - working store is now a manifest store")
+
+    # 5. Read back the manifest store
+    reader = Reader("signed.jpg")
+    print(reader.json())
+
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+## Working with resources
+
+_Resources_ are binary assets referenced by manifest assertions, such as thumbnails or ingredient thumbnails.
+
+### Understanding resource identifiers
+
+When you add a resource to a working store (Builder), you assign it an identifier string. When the manifest store is created during signing, the SDK automatically converts this to a proper JUMBF URI.
+
+**Resource identifier workflow:**
+
+```mermaid
+graph LR
+    A[Simple identifier<br/>'thumbnail'] -->|add_resource| B[Working Store<br/>Builder]
+    B -->|sign| C[JUMBF URI<br/>'self#jumbf=...']
+    C --> D[Manifest Store<br/>in asset]
+```
+
+1. **During manifest creation**: You use a string identifier (e.g., `"thumbnail"`, `"thumbnail1"`).
+2. **During signing**: The SDK converts these to JUMBF URIs (e.g., `"self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"`).
+3. **After signing**: The manifest store contains the full JUMBF URI that you use to extract the resource.
+
+### Extracting resources from a manifest store
+
+To extract a resource, you need its JUMBF URI from the manifest store:
+
+```py
+import json
+
+reader = Reader("signed_image.jpg")
+manifest_store = json.loads(reader.json())
+
+# Get active manifest
+active_uri = manifest_store["active_manifest"]
+manifest = manifest_store["manifests"][active_uri]
+
+# Extract thumbnail if it exists
+if "thumbnail" in manifest:
+    # The identifier is the JUMBF URI
+    thumbnail_uri = manifest["thumbnail"]["identifier"]
+    # Example: "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+
+    # Extract to a stream
+    with open("thumbnail.jpg", "wb") as f:
+        reader.resource_to_stream(thumbnail_uri, f)
+    print("Thumbnail extracted")
+```
+
+### Adding resources to a working store
+
+When building a manifest, you add resources using identifiers. The SDK will reference these in your manifest JSON and convert them to JUMBF URIs during signing.
+
+```py
+builder = Builder(manifest_json)
+
+# Add resource from a stream
+with open("thumbnail.jpg", "rb") as thumb:
+    builder.add_resource("thumbnail", thumb)
+
+# Sign: the "thumbnail" identifier becomes a JUMBF URI in the manifest store
+with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+## Working with ingredients
+
+Ingredients represent source materials used to create an asset, preserving the provenance chain. Ingredients themselves can be turned into ingredient archives (`.c2pa`).
+
+An ingredient archive is a serialized `Builder` with _exactly one_ ingredient. Once archived with only one ingredient, the Builder archive is an ingredient archive. Such ingredient archives can be used as ingredient in other working stores.
+
+### Adding ingredients to a working store
+
+When creating a manifest, add ingredients to preserve the provenance chain:
+
+```py
+builder = Builder(manifest_json)
+
+# Define ingredient metadata
+ingredient_json = json.dumps({
+    "title": "Original asset",
+    "relationship": "parentOf"
+})
+
+# Add ingredient from a stream
+with open("source.jpg", "rb") as ingredient:
+    builder.add_ingredient(ingredient_json, "image/jpeg", ingredient)
+
+# Or add ingredient from a file path
+builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", "source.jpg")
+
+# Sign: ingredients become part of the manifest store
+with open("new_asset.jpg", "rb") as src, open("signed_asset.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+### Ingredient relationships
+
+Specify the relationship between the ingredient and the current asset:
+
+| Relationship | Meaning |
+|--------------|---------|
+| `parentOf` | The ingredient is a direct parent of this asset |
+| `componentOf` | The ingredient is a component used in this asset |
+| `inputTo` | The ingredient was an input to creating this asset |
+
+Example with explicit relationship:
+
+```py
+ingredient_json = json.dumps({
+    "title": "Base layer",
+    "relationship": "componentOf"
+})
+
+with open("base_layer.png", "rb") as ingredient:
+    builder.add_ingredient(ingredient_json, "image/png", ingredient)
+```
+
+## Working with archives
+
+An _archive_ (C2PA archive) is a serialized working store (`Builder` object) saved to a stream.
+
+Using archives provides these advantages:
+
+- **Save work-in-progress**: Persist a working store between sessions.
+- **Separate creation from signing**: Prepare manifests on one machine, sign on another.
+- **Share manifests**: Transfer working stores between systems.
+- **Offline preparation**: Build manifests offline, sign them later.
+
+The default binary format of an archive is the **C2PA JUMBF binary format** (`application/c2pa`), which is the standard way to save and restore working stores.
+
+### Saving a working store to archive
+
+```py
+import io
+
+# Create and configure a working store
+builder = Builder(manifest_json)
+with open("thumbnail.jpg", "rb") as thumb:
+    builder.add_resource("thumbnail", thumb)
+with open("source.jpg", "rb") as ingredient:
+    builder.add_ingredient(ingredient_json, "image/jpeg", ingredient)
+
+# Save working store to archive stream
+archive = io.BytesIO()
+builder.to_archive(archive)
+
+# Or save to a file
+with open("manifest.c2pa", "wb") as f:
+    archive.seek(0)
+    f.write(archive.read())
+
+print("Working store saved to archive")
+```
+
+A Builder containing **only one ingredient and only the ingredient data** (no other ingredient, no other actions) is an ingredient archive. Ingredient archives can be added directly as ingredient to other working stores too.
+
+### Restoring a working store from archive
+
+Create a new `Builder` (working store) from an archive:
+
+```py
+# Restore from stream
+with open("manifest.c2pa", "rb") as archive:
+    builder = Builder.from_archive(archive)
+
+# Now you can sign with the restored working store
+with open("asset.jpg", "rb") as src, open("signed_asset.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+### Restoring with context preservation
+
+Pass a `context` to `from_archive()` to preserve custom settings:
+
+```py
+# Create context with custom settings
+ctx = Context.from_dict({
+    "builder": {
+        "thumbnail": {"enabled": False}
+    }
+})
+
+# Load archive with context
+with open("manifest.c2pa", "rb") as archive:
+    builder = Builder.from_archive(archive, context=ctx)
+
+# The builder has the archived manifest but keeps the custom context
+with open("asset.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+### Two-phase workflow example
+
+#### Phase 1: Prepare manifest
+
+```py
+import io
+import json
+
+manifest_json = json.dumps({
+    "title": "Artwork draft",
+    "assertions": []
+})
+
+builder = Builder(manifest_json)
+with open("thumb.jpg", "rb") as thumb:
+    builder.add_resource("thumbnail", thumb)
+with open("sketch.png", "rb") as sketch:
+    builder.add_ingredient(
+        json.dumps({"title": "Sketch"}), "image/png", sketch
+    )
+
+# Save working store as archive
+with open("artwork_manifest.c2pa", "wb") as f:
+    builder.to_archive(f)
+
+print("Working store saved to artwork_manifest.c2pa")
+```
+
+#### Phase 2: Sign the asset
+
+```py
+# Restore the working store
+with open("artwork_manifest.c2pa", "rb") as archive:
+    builder = Builder.from_archive(archive)
+
+# Sign
+with open("artwork.jpg", "rb") as src, open("signed_artwork.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+
+print("Asset signed with manifest store")
+```
+
+## Embedded vs external manifests
+
+By default, manifest stores are **embedded** directly into the asset file. You can also use **external** or **remote** manifest stores.
+
+### Default: embedded manifest stores
+
+```py
+builder = Builder(manifest_json)
+
+# Default behavior: manifest store is embedded in the output
+with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+
+# Read it back — manifest store is embedded
+reader = Reader("signed.jpg")
+```
+
+### External manifest stores (no embed)
+
+Prevent embedding the manifest store in the asset:
+
+```py
+builder = Builder(manifest_json)
+builder.set_no_embed()  # Don't embed the manifest store
+
+# Sign: manifest store is NOT embedded, manifest bytes are returned
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    manifest_bytes = builder.sign(signer, "image/jpeg", src, dst)
+
+# manifest_bytes contains the manifest store
+# Save it separately (as a sidecar file or upload to server)
+with open("output.c2pa", "wb") as f:
+    f.write(manifest_bytes)
+
+print("Manifest store saved externally to output.c2pa")
+```
+
+### Remote manifest stores
+
+Reference a manifest store stored at a remote URL:
+
+```py
+builder = Builder(manifest_json)
+builder.set_remote_url("https://example.com/manifests/")
+
+# The asset will contain a reference to the remote manifest store
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+## Best practices
+
+### Use Context for configuration
+
+Always use `Context` objects for SDK configuration:
+
+```py
+ctx = Context.from_dict({
+    "verify": {
+        "verify_after_sign": True
+    },
+    "trust": {
+        "user_anchors": trust_anchors_pem
+    }
+})
+
+builder = Builder(manifest_json, context=ctx)
+reader = Reader("asset.jpg", context=ctx)
+```
+
+### Use ingredients to build provenance chains
+
+Add ingredients to your manifests to maintain a clear provenance chain:
+
+```py
+ingredient_json = json.dumps({
+    "title": "Original source",
+    "relationship": "parentOf"
+})
+
+with open("original.jpg", "rb") as ingredient:
+    builder.add_ingredient(ingredient_json, "image/jpeg", ingredient)
+
+with open("edited.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+## Additional resources
+
+- [Manifest reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref)
+- [X.509 certificates](https://opensource.contentauthenticity.org/docs/c2patool/x_509)
+- [Trust lists](https://opensource.contentauthenticity.org/docs/conformance/trust-lists/)
+- [CAWG identity](https://cawg.io/identity/)
