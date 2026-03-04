@@ -5639,14 +5639,14 @@ class TestContextProvider(unittest.TestCase):
     def test_custom_context_provider(self):
         real_ctx = Context()
 
-        class MyProvider:
+        class MyProvider(ContextProvider):
             @property
             def is_valid(self) -> bool:
                 return True
 
             @property
-            def _c_context(self):
-                return real_ctx._c_context
+            def execution_context(self):
+                return real_ctx.execution_context
 
         provider = MyProvider()
         self.assertIsInstance(
@@ -5668,7 +5668,7 @@ class TestContextProvider(unittest.TestCase):
                 return False
 
             @property
-            def _c_context(self):
+            def execution_context(self):
                 return None
 
         with self.assertRaises(Error):

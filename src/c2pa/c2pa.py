@@ -19,9 +19,9 @@ import sys
 import os
 import warnings
 from pathlib import Path
+from abc import ABC, abstractmethod
 from typing import (
     Optional, Union, Callable, Any, overload,
-    Protocol, runtime_checkable,
 )
 import io
 from .lib import dynamically_load_library
@@ -1223,19 +1223,20 @@ def sign_file(
             signer.close()
 
 
-@runtime_checkable
-class ContextProvider(Protocol):
-    """Protocol (interface) for types that provide a C2PA context.
+class ContextProvider(ABC):
+    """Abstract base class for types that provide a C2PA context.
 
-    Allows implementations of custom context providers.
-    The built-in Context class satisfies this protocol.
+    Subclass this to implement a custom context provider.
+    The built-in Context class is the standard implementation.
     """
 
     @property
+    @abstractmethod
     def is_valid(self) -> bool: ...
 
     @property
-    def _c_context(self): ...
+    @abstractmethod
+    def execution_context(self): ...
 
 
 class Settings:
@@ -1440,7 +1441,7 @@ class Settings:
         self._cleanup_resources()
 
 
-class Context:
+class Context(ContextProvider):
     """Per-instance context for C2PA operations.
 
     A Context may carry Settings and a  Signer,
@@ -1608,8 +1609,8 @@ class Context:
         return self._has_signer
 
     @property
-    def _c_context(self):
-        """Expose the raw pointer (ContextProvider protocol)."""
+    def execution_context(self):
+        """Return the raw C2paContext pointer."""
         self._ensure_valid_state()
         return self._context
 
@@ -2430,7 +2431,7 @@ class Reader:
         try:
             # Create base reader from context
             reader_ptr = _lib.c2pa_reader_from_context(
-                context._c_context,
+                context.execution_context,
             )
             if not reader_ptr:
                 _parse_operation_result_for_error(
@@ -3438,7 +3439,7 @@ class Builder:
             raise C2paError("Context is not valid")
 
         builder_ptr = _lib.c2pa_builder_from_context(
-            context._c_context,
+            context.execution_context,
         )
         if not builder_ptr:
             _parse_operation_result_for_error(
