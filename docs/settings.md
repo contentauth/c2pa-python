@@ -56,10 +56,6 @@ settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
 
 # Merge additional configuration
 settings.update({"verify": {"remote_manifest_fetch": True}})
-
-# Use as a context manager for automatic cleanup
-with Settings() as settings:
-    settings.set("builder.thumbnail.enabled", "false")
 ```
 
 ## Overview of the Settings structure
