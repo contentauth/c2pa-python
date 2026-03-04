@@ -5268,10 +5268,11 @@ class TestSettings(unittest.TestCase):
         self.assertIs(result, s)
         s.close()
 
-    def test_settings_setitem(self):
+    def test_settings_no_setitem(self):
+        """__setitem__ was removed; use set() instead."""
         s = Settings()
-        s["builder.thumbnail.enabled"] = "false"
-        self.assertTrue(s.is_valid)
+        with self.assertRaises(TypeError):
+            s["builder.thumbnail.enabled"] = "false"
         s.close()
 
     def test_settings_context_manager(self):
@@ -5296,9 +5297,10 @@ class TestSettings(unittest.TestCase):
                 "builder.thumbnail.enabled", "false"
             )
 
-    def test_settings_update_only_json(self):
+    def test_settings_update_no_format_param(self):
+        """format parameter was removed; passing it raises TypeError."""
         s = Settings()
-        with self.assertRaises(Error):
+        with self.assertRaises(TypeError):
             s.update("data", format="toml")
         s.close()
 

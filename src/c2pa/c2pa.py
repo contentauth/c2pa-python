@@ -42,13 +42,11 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_read_ingredient_file',
     'c2pa_reader_from_stream',
     'c2pa_reader_from_manifest_data_and_stream',
-    'c2pa_reader_free',
     'c2pa_reader_json',
     'c2pa_reader_detailed_json',
     'c2pa_reader_resource_to_stream',
     'c2pa_builder_from_json',
     'c2pa_builder_from_archive',
-    'c2pa_builder_free',
     'c2pa_builder_set_no_embed',
     'c2pa_builder_set_remote_url',
     'c2pa_builder_set_intent',
@@ -64,7 +62,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_signer_create',
     'c2pa_signer_from_info',
     'c2pa_signer_reserve_size',
-    'c2pa_signer_free',
     'c2pa_ed25519_sign',
     'c2pa_signature_free',
     'c2pa_free_string_array',
@@ -435,7 +432,6 @@ _setup_function(
     _lib.c2pa_reader_from_manifest_data_and_stream, [
         ctypes.c_char_p, ctypes.POINTER(C2paStream), ctypes.POINTER(
             ctypes.c_ubyte), ctypes.c_size_t], ctypes.POINTER(C2paReader))
-_setup_function(_lib.c2pa_reader_free, [ctypes.POINTER(C2paReader)], None)
 _setup_function(
     _lib.c2pa_reader_json, [
         ctypes.POINTER(C2paReader)], ctypes.c_void_p)
@@ -467,7 +463,6 @@ _setup_function(
 _setup_function(_lib.c2pa_builder_from_archive,
                 [ctypes.POINTER(C2paStream)],
                 ctypes.POINTER(C2paBuilder))
-_setup_function(_lib.c2pa_builder_free, [ctypes.POINTER(C2paBuilder)], None)
 _setup_function(_lib.c2pa_builder_set_no_embed, [
                 ctypes.POINTER(C2paBuilder)], None)
 _setup_function(
@@ -545,7 +540,6 @@ _setup_function(
 _setup_function(
     _lib.c2pa_signer_reserve_size, [
         ctypes.POINTER(C2paSigner)], ctypes.c_int64)
-_setup_function(_lib.c2pa_signer_free, [ctypes.POINTER(C2paSigner)], None)
 _setup_function(
     _lib.c2pa_ed25519_sign, [
         ctypes.POINTER(
@@ -1273,7 +1267,7 @@ class Settings:
             A new Settings instance with the given configuration.
         """
         settings = cls()
-        settings.update(json_str, format="json")
+        settings.update(json_str)
         return settings
 
     @classmethod
@@ -1319,15 +1313,13 @@ class Settings:
         return self
 
     def update(
-        self, data: Union[str, dict], format: str = "json"
+        self, data: Union[str, dict],
     ) -> 'Settings':
         """Merge configuration from a JSON string or dict.
 
         Args:
             data: A JSON string or dict with configuration
                   to merge.
-            format: Format of the data string. Only "json"
-                    is supported.
 
         Returns:
             self, for method chaining.
@@ -1335,33 +1327,23 @@ class Settings:
         self._ensure_valid_state()
         _clear_error_state()
 
-        if format != "json":
-            raise C2paError(
-                "Only JSON format is supported for settings"
-            )
-
         if isinstance(data, dict):
             data = json.dumps(data)
 
         try:
             data_bytes = data.encode('utf-8')
-            format_bytes = format.encode('utf-8')
         except (UnicodeEncodeError, AttributeError) as e:
             raise C2paError.Encoding(
                 f"Encoding: {str(e)}"
             ) from e
 
         result = _lib.c2pa_settings_update_from_string(
-            self._settings, data_bytes, format_bytes
+            self._settings, data_bytes, b"json"
         )
         if result != 0:
             _parse_operation_result_for_error(None)
 
         return self
-
-    def __setitem__(self, path: str, value: str) -> None:
-        """Dict-like setter: settings["path"] = "value"."""
-        self.set(path, value)
 
     @property
     def _c_settings(self):
@@ -2514,7 +2496,12 @@ class Reader:
                 # Clean up reader
                 if hasattr(self, '_reader') and self._reader:
                     try:
-                        _lib.c2pa_reader_free(self._reader)
+                        _lib.c2pa_free(
+                            ctypes.cast(
+                                self._reader,
+                                ctypes.c_void_p,
+                            )
+                        )
                     except Exception:
                         # Cleanup failure doesn't raise exceptions
                         logger.error(
@@ -3090,7 +3077,12 @@ class Signer:
                 self._closed = True
 
                 try:
-                    _lib.c2pa_signer_free(self._signer)
+                    _lib.c2pa_free(
+                        ctypes.cast(
+                            self._signer,
+                            ctypes.c_void_p,
+                        )
+                    )
                 except Exception:
                     # Log cleanup errors but don't raise exceptions
                     logger.error("Failed to free native Signer resources")
@@ -3511,7 +3503,12 @@ class Builder:
                         self,
                         '_builder') and self._builder and self._builder != 0:
                     try:
-                        _lib.c2pa_builder_free(self._builder)
+                        _lib.c2pa_free(
+                            ctypes.cast(
+                                self._builder,
+                                ctypes.c_void_p,
+                            )
+                        )
                     except Exception:
                         # Log cleanup errors but don't raise exceptions
                         logger.error(
@@ -3918,18 +3915,40 @@ class Builder:
 
         return manifest_bytes
 
+    @overload
     def sign(
         self,
-        signer=None,
-        format=None,
-        source=None,
-        dest=None,
-    ) -> bytes:
+        signer: Signer,
+        format: str,
+        source: Any,
+        dest: Any = None,
+    ) -> bytes: ...
+
+    @overload
+    def sign(
+        self,
+        format: str,
+        source: Any,
+        dest: Any = None,
+    ) -> bytes: ...
+
+    def sign(self, *args, **kwargs) -> bytes:
         """Sign the builder's content.
 
+        Can be called in two ways:
+
+        With an explicit signer::
+
+            builder.sign(signer, "image/jpeg", source, dest)
+
+        With a context signer (builder must have been created
+        with a Context that has a signer)::
+
+            builder.sign("image/jpeg", source, dest)
+
         Args:
-            signer: The signer to use. If None, the
-                context's signer is used.
+            signer: The signer to use (optional if context
+                has a signer).
             format: The MIME type of the content.
             source: The source stream.
             dest: The destination stream (optional).
@@ -3940,11 +3959,9 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        if format is None or source is None:
-            raise C2paError(
-                "format and source are required"
-                " for sign()"
-            )
+        signer, format, source, dest = (
+            self._parse_sign_args(args, kwargs)
+        )
 
         source_stream = Stream(source)
 
@@ -3977,6 +3994,54 @@ class Builder:
             dest_stream.close()
 
         return manifest_bytes
+
+    @staticmethod
+    def _parse_sign_args(args, kwargs):
+        """Parse sign() arguments for both overloads.
+
+        Returns (signer, format, source, dest).
+        """
+        signer = None
+        format = None
+        source = None
+        dest = None
+
+        if args:
+            if isinstance(args[0], Signer):
+                # sign(signer, format, source, dest=None)
+                signer = args[0]
+                if len(args) > 1:
+                    format = args[1]
+                if len(args) > 2:
+                    source = args[2]
+                if len(args) > 3:
+                    dest = args[3]
+            elif isinstance(args[0], str):
+                # sign(format, source, dest=None)
+                format = args[0]
+                if len(args) > 1:
+                    source = args[1]
+                if len(args) > 2:
+                    dest = args[2]
+            else:
+                raise C2paError(
+                    "First argument to sign() must be"
+                    " a Signer or a format string"
+                )
+
+        # Keyword args override positional
+        signer = kwargs.get('signer', signer)
+        format = kwargs.get('format', format)
+        source = kwargs.get('source', source)
+        dest = kwargs.get('dest', dest)
+
+        if format is None or source is None:
+            raise C2paError(
+                "format and source are required"
+                " for sign()"
+            )
+
+        return signer, format, source, dest
 
     def _sign_context_internal(
         self,
@@ -4057,13 +4122,33 @@ class Builder:
 
         return manifest_bytes
 
+    @overload
     def sign_file(
         self,
         source_path: Union[str, Path],
         dest_path: Union[str, Path],
-        signer=None,
+        signer: Signer,
+    ) -> bytes: ...
+
+    @overload
+    def sign_file(
+        self,
+        source_path: Union[str, Path],
+        dest_path: Union[str, Path],
+    ) -> bytes: ...
+
+    def sign_file(
+        self,
+        source_path: Union[str, Path],
+        dest_path: Union[str, Path],
+        signer: Optional[Signer] = None,
     ) -> bytes:
         """Sign a file and write signed data to output.
+
+        Can be called with or without an explicit signer.
+        If no signer is provided, the context's signer is
+        used (builder must have been created with a Context
+        that has a signer).
 
         Args:
             source_path: Path to the source file.
@@ -4086,10 +4171,16 @@ class Builder:
                 open(source_path, 'rb') as source_file,
                 open(dest_path, 'w+b') as dest_file,
             ):
-                return self.sign(
-                    signer, mime_type,
-                    source_file, dest_file,
-                )
+                if signer is not None:
+                    return self.sign(
+                        signer, mime_type,
+                        source_file, dest_file,
+                    )
+                else:
+                    return self.sign(
+                        mime_type,
+                        source_file, dest_file,
+                    )
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 
