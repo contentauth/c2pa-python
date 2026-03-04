@@ -16,7 +16,7 @@ autopep8==2.0.4  # For automatic code formatting
 flake8==7.3.0
 
 # Test dependencies (for callback signers)
-cryptography==45.0.6
+cryptography==46.0.5
  
 # Documentation
 Sphinx>=7.3.0
