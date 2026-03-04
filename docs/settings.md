@@ -1,7 +1,7 @@
 # Using settings
 
 You can configure SDK settings using a JSON format that controls many aspects of the library's behavior.
-The settings JSON format is the same across all languages in the SDK (Rust, C/C++, Python, and so on).
+The settings JSON format is the same across all languages for the C2PA SDKs (Rust, C/C++, Python, and so on).
 
 This document describes how to use settings in Python. The Settings schema is the same as the [Rust library](https://github.com/contentauth/c2pa-rs); for the complete JSON schema, see the [Settings reference](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/).
 
