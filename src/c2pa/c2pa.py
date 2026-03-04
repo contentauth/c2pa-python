@@ -931,10 +931,15 @@ def load_settings(settings: dict) -> None:
 
 def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     """Load C2PA settings from a string or dict.
+    Settings will be set thread-local and apply to
+    all C2PA operations in the current thread.
 
     .. deprecated::
         Use :class:`Settings` and :class:`Context` for
-        per-instance configuration instead.
+        per-instance configuration instead. Settings and
+        Context will propagate configurations through object instances,
+        no thread-local configurations. Avoid mixing Context APIs
+        and legacy load_settings usage.
 
     Args:
         settings: The settings string or dict to load
@@ -1220,9 +1225,9 @@ def sign_file(
 
 @runtime_checkable
 class ContextProvider(Protocol):
-    """Protocol for types that provide a C2PA context.
+    """Protocol (interface) for types that provide a C2PA context.
 
-    Allows third-party implementations of custom context providers.
+    Allows implementations of custom context providers.
     The built-in Context class satisfies this protocol.
     """
 
@@ -1236,24 +1241,9 @@ class ContextProvider(Protocol):
 class Settings:
     """Per-instance configuration for C2PA operations.
 
-    Settings control behavior such as thumbnail generation,
-    trust lists, and verification flags. Use with Context to
+    Settings control behavior such as thumbnail generation and
+    trust lists configurations. Use with Context to
     apply settings to Reader/Builder operations.
-
-    Example::
-
-        settings = Settings()
-        settings.set("builder.thumbnail.enabled", "false")
-
-        # Or via from_json / from_dict:
-        settings = Settings.from_json('{"verify": {...}}')
-        settings = Settings.from_dict({"verify": {...}})
-
-        # Dict-like access:
-        settings["builder.thumbnail.enabled"] = "false"
-
-        # Method chaining:
-        settings.set("a", "1").set("b", "2")
     """
 
     def __init__(self):
@@ -1453,25 +1443,14 @@ class Settings:
 class Context:
     """Per-instance context for C2PA operations.
 
-    A Context carries optional Settings and an optional Signer,
-    and is passed to Reader or Builder to control their behavior.
+    A Context may carry Settings and a  Signer,
+    and is passed to Reader or Builder to control their behavior,
+    thus propagating settings and configurations by passing
+    object as parameter.
 
-    When a Signer is provided the Signer object is **consumed**
-    and must not be used again.
-
-    Example::
-
-        # Default context
-        ctx = Context()
-
-        # With settings
-        settings = Settings()
-        settings.set("builder.thumbnail.enabled", "false")
-        ctx = Context(settings=settings)
-
-        # With settings and signer (signer is consumed)
-        signer = Signer.from_info(info)
-        ctx = Context(settings=settings, signer=signer)
+    When a Signer is provided, the Signer object is consumed,
+    as it becomes included into the Context, and must not be
+    used directly again after that.
     """
 
     def __init__(
@@ -1483,9 +1462,10 @@ class Context:
 
         Args:
             settings: Optional Settings for configuration.
-                If None, default settings are used.
+                If None, default SDK settings are used.
             signer: Optional Signer. If provided it is
-                CONSUMED and must not be used again.
+                consumed and must not be used directly again
+                after that call.
 
         Raises:
             C2paError: If creation fails or if signer is
