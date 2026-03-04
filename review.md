@@ -2,19 +2,29 @@
 
 ## Context
 
-The user asked for a design critique of the Settings and Context APIs in the c2pa Python SDK, focusing on what could be improved and made more Pythonic. This is a review document, not an implementation plan — the goal is to identify issues and propose improvements for discussion.
+Design critique of the Settings and Context APIs in the c2pa Python SDK, focusing on what could be improved and made more Pythonic. This is a review document, not an implementation plan — the goal is to identify issues and propose improvements for discussion.
+
+**Last updated:** After commits through a2c2eb9 (ContextProvider switched to ABC, `_c_context` → `execution_context`).
 
 ---
 
 ## Bugs
 
-### 1. Resource leak in `Builder.from_archive()` when `context` is provided
+### 1. Resource leaks in `Builder.from_archive()`
 
 **File:** `src/c2pa/c2pa.py`, `Builder.from_archive()` classmethod
 
-When `context` is non-None, `cls({}, context=context)` runs `__init__`, which calls `_init_from_context` and allocates a native builder pointer. Then `from_archive` immediately **overwrites** `self._builder` with a new pointer from `c2pa_builder_from_archive`. The original pointer is leaked — never freed.
+Two leaks exist:
 
-**Fix:** `from_archive` should bypass `_init_from_context` when creating the initial Builder. It could pass `context=None` to `__init__` and then manually apply the context to the archive-loaded builder, or use `object.__new__(cls)` to skip `__init__` entirely.
+**a) Native builder pointer leak when `context` is provided.**
+`cls({}, context=context)` runs `__init__`, which allocates a native builder pointer. Then `from_archive` immediately **overwrites** `self._builder` with a new pointer from `c2pa_builder_from_archive`. The original pointer is leaked — never freed.
+
+**b) `stream_obj` never closed on the success path.**
+`stream_obj = Stream(stream)` is created without a `with` statement. `stream_obj.close()` is only called in the error branch (`if not builder._builder`). On success, the `Stream` is abandoned — cleanup depends on `__del__`, which is non-deterministic.
+
+**Fix (a):** `from_archive` should bypass `_init_from_context` when creating the initial Builder. It could pass `context=None` to `__init__` and then manually apply the context to the archive-loaded builder, or use `object.__new__(cls)` to skip `__init__` entirely.
+
+**Fix (b):** Use a `try/finally` or `with` block to ensure `stream_obj` is closed regardless of outcome.
 
 ### 2. Dead code on every error-handling call site
 
@@ -166,9 +176,11 @@ Reader/Builder set it inside `_cleanup_resources` AND in the `finally` block of 
 
 `self._has_signer = True` is set after `set_signer` succeeds but before `build()`. If `build()` fails, the flag is stale. Not exploitable (since `is_valid` would be `False`), but inaccurate internal state.
 
-### 15. `_c_context` is a private-convention name in a public Protocol
+### ~~15. `_c_context` is a private-convention name in a public Protocol~~ RESOLVED
 
-`ContextProvider` is a public protocol that third-party code can implement. But it requires implementing `_c_context` — a leading-underscore property. This is an unusual contract. The underscore signals "don't use this" while the protocol signals "you must implement this."
+~~`ContextProvider` is a public protocol that third-party code can implement. But it requires implementing `_c_context` — a leading-underscore property.~~
+
+**Fixed in a2c2eb9:** `ContextProvider` is now an `ABC` (not `Protocol`) with two abstract properties: `is_valid` and `execution_context`. The underscore-prefixed `_c_context` was renamed to `execution_context`. `Context` now explicitly extends `ContextProvider`.
 
 ---
 
@@ -198,4 +210,5 @@ This is a review document — no code changes to verify. The findings can be val
 1. Reading the source at `src/c2pa/c2pa.py`
 2. Running `settings.set("builder.thumbnail.enabled", False)` to confirm the `AttributeError` → `C2paError.Encoding` mistype
 3. Confirming the dead-code `if error:` branches by tracing `_parse_operation_result_for_error`
-4. Confirming the `from_archive` leak by adding a breakpoint in `_cleanup_resources` and observing the overwritten pointer is never freed
+4. Confirming the `from_archive` leaks: (a) add a breakpoint in `_cleanup_resources` and observe the overwritten pointer is never freed, (b) observe `stream_obj` is not closed on success path
+5. Confirming item #15 is resolved: `ContextProvider` at line 1226 uses `execution_context` (no underscore) as an `@abstractmethod` on an `ABC`

@@ -3331,25 +3331,27 @@ class Builder:
         builder = cls({}, context=context)
         stream_obj = Stream(stream)
 
-        builder._builder = (
-            _lib.c2pa_builder_from_archive(
-                stream_obj._stream
+        try:
+            builder._builder = (
+                _lib.c2pa_builder_from_archive(
+                    stream_obj._stream
+                )
             )
-        )
 
-        if not builder._builder:
+            if not builder._builder:
+                error = _parse_operation_result_for_error(
+                    _lib.c2pa_error()
+                )
+                if error:
+                    raise C2paError(error)
+                raise C2paError(
+                    "Failed to create builder from archive"
+                )
+
+            builder._initialized = True
+            return builder
+        finally:
             stream_obj.close()
-            error = _parse_operation_result_for_error(
-                _lib.c2pa_error()
-            )
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                "Failed to create builder from archive"
-            )
-
-        builder._initialized = True
-        return builder
 
     def __init__(
         self,
