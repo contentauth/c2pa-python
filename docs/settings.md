@@ -3,13 +3,13 @@
 You can configure SDK settings using a JSON format that controls many aspects of the library's behavior.
 The settings JSON format is the same across all languages in the SDK (Rust, C/C++, Python, and so on).
 
-This document describes how to use settings in C++. The Settings schema is the same as the [Rust library](https://github.com/contentauth/c2pa-rs); for the complete JSON schema, see the [Settings reference](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/).
+This document describes how to use settings in Python. The Settings schema is the same as the [Rust library](https://github.com/contentauth/c2pa-rs); for the complete JSON schema, see the [Settings reference](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/).
 
 ## Using settings with Context
 
-The recommended approach is to pass settings to a `Context` object and then use the `Context` with `Reader` and `Builder`. This gives you explicit, isolated configuration with no global or thread-local state. For details on creating and using contexts, see [Using Context to configure the SDK](context.md).
+The recommended approach is to pass settings to a `Context` object and then use the `Context` with `Reader` and `Builder`. This gives you explicit, isolated configuration with no global state. For details on creating and using contexts, see [Using Context to configure the SDK](context.md).
 
-**Legacy approach:** The deprecated `c2pa::load_settings(data, format)` sets thread-local settings. Don't use that approach; instead pass a `Context` (with settings) to `Reader` and `Builder`. See [Using Context with Reader](context.md#using-context-with-reader) and [Using Context with Builder](context.md#using-context-with-builder).
+**Legacy approach:** The deprecated `load_settings()` function sets global settings. Don't use that approach; instead pass a `Context` (with settings) to `Reader` and `Builder`. See [Using Context with Reader](context.md#configuring-reader) and [Using Context with Builder](context.md#configuring-builder).
 
 ## Settings API
 
@@ -18,17 +18,49 @@ Create and configure settings:
 | Method | Description |
 |--------|-------------|
 | `Settings()` | Create default settings with SDK defaults. |
-| `Settings(data, format)` | Parse settings from a string. `format` is `"json"` or `"toml"`. Throws `C2paException` on parse error. |
-| `set(path, json_value)` | Set a single value by dot-separated path (e.g. `"verify.verify_after_sign"`). Value must be JSON-encoded. Returns `*this` for chaining. Use this for programmatic configuration. |
-| `update(data)` | Merge JSON configuration into existing settings (same as `update(data, "json")`). Later keys override earlier ones. Use this to apply configuration files or JSON strings. |
-| `update(data, format)` | Merge configuration from a string; `format` is `"json"` or `"toml"`. |
-| `is_valid()` | Returns `true` if the object holds a valid handle (e.g. not moved-from). |
+| `Settings.from_json(json_str)` | Create settings from a JSON string. Raises `C2paError` on parse error. |
+| `Settings.from_dict(config)` | Create settings from a Python dictionary. |
+| `set(path, value)` | Set a single value by dot-separated path (e.g. `"verify.verify_after_sign"`). Value must be a string. Returns `self` for chaining. Use this for programmatic configuration. |
+| `update(data, format="json")` | Merge JSON configuration into existing settings. `data` can be a JSON string or a dict. Later keys override earlier ones. Use this to apply configuration files or JSON strings. Only `"json"` format is supported. |
+| `settings["path"] = "value"` | Dict-like setter. Equivalent to `set(path, value)`. |
+| `is_valid` | Property that returns `True` if the object holds valid resources (not closed). |
+| `close()` | Release native resources. Called automatically when used as a context manager. |
 
 **Important notes:**
 
-- Settings are **not copyable**; they are **moveable**. After moving, the source's `is_valid()` is `false`.
 - The `set()` and `update()` methods can be chained for sequential configuration.
 - When using multiple configuration methods, later calls override earlier ones (last wins).
+- Use the `with` statement for automatic resource cleanup.
+- Only JSON format is supported for settings in the Python SDK.
+
+```py
+from c2pa import Settings
+
+# Create with defaults
+settings = Settings()
+
+# Set individual values by dot-notation path
+settings.set("builder.thumbnail.enabled", "false")
+
+# Method chaining
+settings.set("builder.thumbnail.enabled", "false").set("verify.verify_after_sign", "true")
+
+# Dict-like access
+settings["builder.thumbnail.enabled"] = "false"
+
+# Create from JSON string
+settings = Settings.from_json('{"builder": {"thumbnail": {"enabled": false}}}')
+
+# Create from a dictionary
+settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
+
+# Merge additional configuration
+settings.update({"verify": {"remote_manifest_fetch": True}})
+
+# Use as a context manager for automatic cleanup
+with Settings() as settings:
+    settings.set("builder.thumbnail.enabled", "false")
+```
 
 ## Overview of the Settings structure
 
@@ -49,34 +81,41 @@ The Settings JSON has this top-level structure:
 
 ### Settings format
 
-Settings can be provided in **JSON** or **TOML**. Use `Settings(data, format)` with `"json"` or `"toml"`, or pass JSON to `Context(json_string)` or `ContextBuilder::with_json()`. JSON is preferred for settings in the C++ SDK.
+Settings are provided in **JSON** only. Pass JSON strings to `Settings.from_json()` or dictionaries to `Settings.from_dict()`.
 
-```cpp
-// JSON
-c2pa::Settings settings(R"({"verify": {"verify_after_sign": true}})", "json");
+```py
+# From JSON string
+settings = Settings.from_json('{"verify": {"verify_after_sign": true}}')
 
-// TOML
-c2pa::Settings settings(R"(
-    [verify]
-    verify_after_sign = true
-)", "toml");
+# From dict
+settings = Settings.from_dict({"verify": {"verify_after_sign": True}})
 
-// Context from JSON string
-c2pa::Context context(R"({"verify": {"verify_after_sign": true}})");
+# Context from JSON string
+ctx = Context.from_json('{"verify": {"verify_after_sign": true}}')
+
+# Context from dict
+ctx = Context.from_dict({"verify": {"verify_after_sign": True}})
 ```
 
-To load from a file, read the file contents into a string and pass to `Settings` or use `Context::ContextBuilder::with_json_settings_file(path)`.
+To load from a file, read the file contents and pass them to `Settings.from_json()`:
+
+```py
+import json
+
+with open("config/settings.json", "r") as f:
+    settings = Settings.from_json(f.read())
+```
 
 ## Default configuration
 
-The settings JSON schema&mdash;including the complete default configuration with all properties and their default values&mdash;is shared with all languages in the SDK:
+The settings JSON schema — including the complete default configuration with all properties and their default values — is shared with all languages in the SDK:
 
 ```json
 {
   "version": 1,
   "builder": {
     "claim_generator_info": null,
-    "created_assertion_labels": null,    
+    "created_assertion_labels": null,
     "certificate_status_fetch": null,
     "certificate_status_should_override": null,
     "generate_c2pa_archive": true,
@@ -105,7 +144,7 @@ The settings JSON schema&mdash;including the complete default configuration with
       "format": null,
       "prefer_smallest_format": true,
       "quality": "medium"
-    },    
+    }
   },
   "cawg_trust": {
     "verify_trust_list": true,
@@ -149,20 +188,20 @@ For a complete reference to all the Settings properties, see the [SDK object ref
 | Property | Description |
 |----------|-------------|
 | `version` | Settings format version (integer). The default and only supported value is 1. |
-| [`builder`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings) | Configuration for [Builder](https://contentauth.github.io/c2pa-c/da/db7/classc2pa_1_1Builder.html). |
+| [`builder`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings) | Configuration for Builder. |
 | [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for CAWG trust lists. |
 | [`cawg_x509_signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the CAWG x.509 signer. |
 | [`core`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#core) | Configuration for core features. |
-| [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://contentauth.github.io/c2pa-c/d3/da1/classc2pa_1_1Signer.html). |
+| [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base C2PA signer. |
 | [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA trust lists. |
 | [`verify`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#verify) | Configuration for verification (validation). |
 
 The top-level `version` property must be `1`. All other properties are optional.
 
-For Boolean values, use JSON Booleans `true` and `false`, not the strings `"true"` and `"false"`.
+For Boolean values, use JSON Booleans `true` and `false` in JSON strings, or Python `True` and `False` when using `from_dict()` or `update()` with a dict.
 
 > [!IMPORTANT]
-> If you don't specify a value for a property, the SDK uses the default value. If you specify a value of `null`, the property is explicitly set to `null`, not the default. This distinction is important when you want to override a default behavior.
+> If you don't specify a value for a property, the SDK uses the default value. If you specify a value of `null` (or `None` in a dict), the property is explicitly set to `null`, not the default. This distinction is important when you want to override a default behavior.
 
 ### Trust configuration
 
@@ -170,7 +209,6 @@ The [`trust` properties](https://opensource.contentauthenticity.org/docs/manifes
 
 - Using `user_anchors`: recommended for development
 - Using `allowed_list` (bypass chain validation)
-- For team development, you can load trust configuration from a file using `ContextBuilder`; see [Using Context to configure the SDK](context.md#using-contextbuilder) for details.
 
 | Property | Type | Description | Default |
 |----------|------|-------------|---------|
@@ -186,21 +224,17 @@ When using self-signed certificates or custom certificate authorities during dev
 For development, you can add your test root CA to the trusted anchors without replacing the SDK's default trust store.
 For example:
 
-```cpp
-// Read your test root CA certificate
-std::string test_root_ca = R"(-----BEGIN CERTIFICATE-----
-MIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ
-...
------END CERTIFICATE-----)";
+```py
+with open("test-ca.pem", "r") as f:
+    test_root_ca = f.read()
 
-c2pa::Context context(R"({
-    "version": 1,
+ctx = Context.from_dict({
     "trust": {
-        "user_anchors": ")" + test_root_ca + R"("
+        "user_anchors": test_root_ca
     }
-})");
+})
 
-c2pa::Reader reader(context, "signed_asset.jpg");
+reader = Reader("signed_asset.jpg", context=ctx)
 ```
 
 #### Using `allowed_list`
@@ -208,20 +242,19 @@ c2pa::Reader reader(context, "signed_asset.jpg");
 To bypass chain validation, for quick testing, explicitly allow a specific certificate without validating the chain.
 For example:
 
-```cpp
-// Read your test signing certificate
-std::string test_cert = read_file("test_cert.pem");
+```py
+with open("test_cert.pem", "r") as f:
+    test_cert = f.read()
 
-c2pa::Settings settings;
-settings.update(R"({
-    "version": 1,
+settings = Settings()
+settings.update({
     "trust": {
-        "allowed_list": ")" + test_cert + R"("
+        "allowed_list": test_cert
     }
-})");
+})
 
-c2pa::Context context(settings);
-c2pa::Reader reader(context, "signed_asset.jpg");
+ctx = Context(settings=settings)
+reader = Reader("signed_asset.jpg", context=ctx)
 ```
 
 ### CAWG trust configuration
@@ -265,50 +298,48 @@ By default, the following `verify` properties are `true`, which enables verifica
 
 Set `remote_manifest_fetch` and `ocsp_fetch` to `false` to disable network-dependent verification features:
 
-```cpp
-c2pa::Context context(R"({
-    "version": 1,
+```py
+ctx = Context.from_dict({
     "verify": {
-        "remote_manifest_fetch": false,
-        "ocsp_fetch": false
+        "remote_manifest_fetch": False,
+        "ocsp_fetch": False
     }
-})");
+})
 
-c2pa::Reader reader(context, "signed_asset.jpg");
+reader = Reader("signed_asset.jpg", context=ctx)
 ```
 
-See also [Using Context with Reader](context.md#using-context-with-reader).
+See also [Using Context with Reader](context.md#configuring-reader).
 
 #### Fast development iteration
 
 During active development, you can disable verification for faster iteration:
 
-```cpp
-// WARNING: Only use during development, not in production!
-c2pa::Settings dev_settings;
-dev_settings.set("verify.verify_after_reading", "false");
-dev_settings.set("verify.verify_after_sign", "false");
+```py
+# WARNING: Only use during development, not in production!
+settings = Settings()
+settings.set("verify.verify_after_reading", "false")
+settings.set("verify.verify_after_sign", "false")
 
-c2pa::Context dev_context(dev_settings);
+dev_ctx = Context(settings=settings)
 ```
 
 #### Strict validation
 
 For certification or compliance testing, enable strict validation:
 
-```cpp
-c2pa::Context context(R"({
-    "version": 1,
+```py
+ctx = Context.from_dict({
     "verify": {
-        "strict_v1_validation": true,
-        "ocsp_fetch": true,
-        "verify_trust": true,
-        "verify_timestamp_trust": true
+        "strict_v1_validation": True,
+        "ocsp_fetch": True,
+        "verify_trust": True,
+        "verify_timestamp_trust": True
     }
-})");
+})
 
-c2pa::Reader reader(context, "asset_to_validate.jpg");
-auto validation_result = reader.json();
+reader = Reader("asset_to_validate.jpg", context=ctx)
+validation_result = reader.json()
 ```
 
 ### Builder
@@ -326,9 +357,8 @@ The `claim_generator_info` object identifies your application in the C2PA manife
 
 **Example:**
 
-```cpp
-c2pa::Context context(R"({
-    "version": 1,
+```py
+ctx = Context.from_dict({
     "builder": {
         "claim_generator_info": {
             "name": "My Photo Editor",
@@ -336,7 +366,7 @@ c2pa::Context context(R"({
             "operating_system": "auto"
         }
     }
-})");
+})
 ```
 
 #### Thumbnail settings
@@ -367,26 +397,24 @@ You can use `Context` to set `Builder` intent for different workflows.
 
 For example, for original digital capture (photos from camera):
 
-```cpp
-c2pa::Context camera_context(R"({
-    "version": 1,
+```py
+camera_ctx = Context.from_dict({
     "builder": {
         "intent": {"Create": "digitalCapture"},
         "claim_generator_info": {"name": "Camera App", "version": "1.0"}
     }
-})");
+})
 ```
 
 Or for editing existing content:
 
-```cpp
-c2pa::Context editor_context(R"({
-    "version": 1,
+```py
+editor_ctx = Context.from_dict({
     "builder": {
-        "intent": {"Edit": null},
+        "intent": {"Edit": None},
         "claim_generator_info": {"name": "Photo Editor", "version": "2.0"}
     }
-})");
+})
 ```
 
 ### Signer
@@ -394,56 +422,17 @@ c2pa::Context editor_context(R"({
 The [`signer` properties](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/#signersettings) configure the primary C2PA signer configuration. Set it to `null` if you provide the signer at runtime, or configure as either a **local** or **remote** signer in settings.
 
 > [!NOTE]
-> While you can configure the signer in settings, the typical approach is to pass a `Signer` object directly to the `Builder.sign()` method. Use settings-based signing when you need the same signing configuration across multiple operations or when loading configuration from files.
+> The typical approach in Python is to create a `Signer` object with `Signer.from_info()` and pass it directly to `Builder.sign()`. Alternatively, pass a `Signer` to `Context` for the signer-on-context pattern. See [Configuring a signer](context.md#configuring-a-signer) for details.
 
 #### Local signer
 
 Use a local signer when you have direct access to the private key and certificate.
 For information on all `signer.local` properties, see [signer.local](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/#signerlocal) in the SDK object reference.
 
-**Example: Local signer with ES256**
-
-```cpp
-std::string config = R"({
-    "version": 1,
-    "signer": {
-        "local": {
-            "alg": "es256",
-            "sign_cert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
-            "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
-            "tsa_url": "http://timestamp.digicert.com"
-        }
-    }
-})";
-
-c2pa::Context context(config);
-c2pa::Builder builder(context, manifest_json);
-// Signer is already configured in context
-builder.sign(source_path, dest_path);
-```
-
 #### Remote signer
 
 Use a remote signer when the private key is stored on a secure signing service (HSM, cloud KMS, and so on).
 For information on all `signer.remote` properties, see [signer.remote](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/#signerremote) in the SDK object reference.
-
-The remote signing service receives a POST request with the data to sign and must return the signature in the expected format.
-
-For example:
-
-```cpp
-c2pa::Context context(R"({
-    "version": 1,
-    "signer": {
-        "remote": {
-            "url": "https://signing-service.example.com/sign",
-            "alg": "ps256",
-            "sign_cert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
-            "tsa_url": "http://timestamp.digicert.com"
-        }
-    }
-})");
-```
 
 ### CAWG X.509 signer configuration
 
@@ -453,28 +442,6 @@ The `cawg_x509_signer` property specifies configuration for identity assertions.
 
 - Main claim signature comes from `signer`
 - Identity assertions are signed with `cawg_x509_signer`
-
-**Example: Dual signer configuration**
-
-```cpp
-c2pa::Context context(R"({
-    "version": 1,
-    "signer": {
-        "local": {
-            "alg": "es256",
-            "sign_cert": "...",
-            "private_key": "..."
-        }
-    },
-    "cawg_x509_signer": {
-        "local": {
-            "alg": "ps256",
-            "sign_cert": "...",
-            "private_key": "..."
-        }
-    }
-})");
-```
 
 For additional JSON configuration examples (minimal configuration, local/remote signer, development/production configurations), see the [Rust SDK settings examples](https://github.com/contentauth/c2pa-rs/blob/main/docs/settings.md#examples).
 
