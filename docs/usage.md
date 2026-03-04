@@ -13,8 +13,7 @@ from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
 from c2pa import Settings, Context, ContextProvider
 ```
 
-You can use `Builder`, `Reader`, `Signer`, `Settings`, and `Context` classes with context managers by using a `with` statement.
-Doing this is recommended to ensure proper resource and memory cleanup.
+You can use both `Builder`, `Reader` and `Signer` classes with context managers by using a `with` statement.
 
 ## Define manifest JSON
 
