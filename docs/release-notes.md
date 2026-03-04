@@ -1,5 +1,21 @@
 # Release notes
 
+## Version vNext
+
+New features:
+
+- **`Settings` class**: Per-instance configuration for C2PA operations. Supports `set()` with dot-notation paths, `from_json()`, `from_dict()`, `update()`, dict-like `[]` access, and method chaining. Replaces the global `load_settings()` function.
+- **`Context` class**: Carries optional `Settings` and an optional `Signer` for `Reader` and `Builder` operations. Supports `from_json()` and `from_dict()` convenience constructors. When a `Signer` is provided, it is consumed (ownership is transferred to the context).
+- **`ContextProvider` protocol**: A `runtime_checkable` protocol that allows third-party implementations of custom context providers. Both `Reader` and `Builder` accept `context` as a keyword-only parameter.
+- **`Signer._release()` internal method**: Transfers ownership of the native signer pointer without freeing it, enabling the signer-on-context pattern.
+- **`Builder.sign()` with optional signer**: The `signer` parameter is now optional. When omitted, the context's signer is used. Explicit signer always takes precedence over context signer.
+- **`Builder.sign_file()` with optional signer**: The `signer` parameter is now optional, matching `sign()`.
+- **`Reader` and `Builder` context integration**: Both accept `context=` keyword-only parameter. Reader uses `c2pa_reader_from_context` + `c2pa_reader_with_stream`. Builder uses `c2pa_builder_from_context` + `c2pa_builder_with_definition`.
+
+Deprecations:
+
+- **`load_settings()`** is deprecated with a `DeprecationWarning`. Use `Settings` and `Context` for per-instance configuration instead. The function remains fully functional for backward compatibility.
+
 ## Version 0.6.0
 
 <!-- Get features and updates -->

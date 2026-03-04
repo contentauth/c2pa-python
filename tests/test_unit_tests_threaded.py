@@ -21,8 +21,9 @@ import time
 import asyncio
 import random
 
-from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
+from c2pa import Context, Settings
+from c2pa.c2pa import Stream, _has_signer_context
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -66,6 +67,28 @@ class TestReaderWithThreads(unittest.TestCase):
         def read_and_parse():
             with open(self.testPath, "rb") as file:
                 reader = Reader("image/jpeg", file)
+                manifest_store = json.loads(reader.json())
+                title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+                self.assertEqual(title, "C.jpg")
+                return manifest_store
+
+        # Create two threads
+        thread1 = threading.Thread(target=read_and_parse)
+        thread2 = threading.Thread(target=read_and_parse)
+
+        # Start both threads
+        thread1.start()
+        thread2.start()
+
+        # Wait for both threads to complete
+        thread1.join()
+        thread2.join()
+
+    def test_stream_read_and_parse_with_context(self):
+        def read_and_parse():
+            ctx = Context()
+            with open(self.testPath, "rb") as file:
+                reader = Reader("image/jpeg", file, context=ctx)
                 manifest_store = json.loads(reader.json())
                 title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
                 self.assertEqual(title, "C.jpg")
@@ -537,6 +560,122 @@ class TestBuilderWithThreads(unittest.TestCase):
         if errors:
             self.fail("\n".join(errors))
 
+    def test_sign_all_files_with_context(self):
+        """Test signing all files using a thread pool with Context"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        def sign_file(filename, thread_id):
+            if filename in skip_files:
+                return None
+
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Choose manifest based on thread number
+                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
+                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
+
+                    ctx = Context()
+                    builder = Builder(manifest_def, context=ctx)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+
+                    # Verify the signed file using context
+                    read_ctx = Context()
+                    reader = Reader(mime_type, output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                    # Verify the correct manifest was used
+                    expected_claim_generator = f"python_test_{
+                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    self.assertEqual(
+                        active_manifest["claim_generator"],
+                        expected_claim_generator)
+
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "com.unit.test":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+
+                    output.close()
+                    return None  # Success case
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {
+                    filename} in thread {thread_id}: {str(e)}"
+
+        # Create a thread pool with 6 workers
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            # Get all files from both directories
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+
+            # Submit all files to the thread pool with thread IDs
+            future_to_file = {
+                executor.submit(sign_file, filename, i): (filename, i)
+                for i, filename in enumerate(all_files)
+            }
+
+            # Collect results as they complete
+            errors = []
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename, thread_id = future_to_file[future]
+                try:
+                    error = future.result()
+                    if error:
+                        errors.append(error)
+                except Exception as e:
+                    errors.append(f"Unexpected error processing {
+                                  filename} in thread {thread_id}: {str(e)}")
+
+        # If any errors occurred, fail the test with all error messages
+        if errors:
+            self.fail("\n".join(errors))
+
     def test_sign_all_files_async(self):
         """Test signing all files using asyncio with a pool of workers"""
         signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
@@ -596,6 +735,124 @@ class TestBuilderWithThreads(unittest.TestCase):
 
                     # Verify the signed file
                     reader = Reader(mime_type, output)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+                    # Verify the correct manifest was used
+                    expected_claim_generator = f"python_test_{
+                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    self.assertEqual(
+                        active_manifest["claim_generator"],
+                        expected_claim_generator)
+
+                    # Verify the author is correct
+                    assertions = active_manifest["assertions"]
+                    for assertion in assertions:
+                        if assertion["label"] == "com.unit.test":
+                            author_name = assertion["data"]["author"][0]["name"]
+                            self.assertEqual(author_name, expected_author)
+                            break
+
+                    output.close()
+                    return None  # Success case
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {
+                    filename} in thread {thread_id}: {str(e)}"
+
+        async def run_async_tests():
+            # Get all files from both directories
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+
+            # Create tasks for all files
+            tasks = []
+            for i, filename in enumerate(all_files):
+                task = asyncio.create_task(async_sign_file(filename, i))
+                tasks.append(task)
+
+            # Wait for all tasks to complete and collect results
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            errors = []
+            for result in results:
+                if isinstance(result, Exception):
+                    errors.append(str(result))
+                elif result:  # Non-None result indicates an error
+                    errors.append(result)
+
+            # If any errors occurred, fail the test with all error messages
+            if errors:
+                self.fail("\n".join(errors))
+
+        # Run the async tests
+        asyncio.run(run_async_tests())
+
+    def test_sign_all_files_async_with_context(self):
+        """Test signing all files using asyncio with Context"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        async def async_sign_file(filename, thread_id):
+            """Async version of file signing operation with Context"""
+            if filename in skip_files:
+                return None
+
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Choose manifest based on thread number
+                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
+                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
+
+                    ctx = Context()
+                    builder = Builder(manifest_def, context=ctx)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+
+                    # Verify the signed file using context
+                    read_ctx = Context()
+                    reader = Reader(mime_type, output, context=read_ctx)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]

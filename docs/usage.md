@@ -10,9 +10,10 @@ Import the objects needed from the API:
 
 ```py
 from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
+from c2pa import Settings, Context, ContextProvider
 ```
 
-You can use both `Builder`, `Reader` and `Signer` classes with context managers by using a `with` statement.
+You can use `Builder`, `Reader`, `Signer`, `Settings`, and `Context` classes with context managers by using a `with` statement.
 Doing this is recommended to ensure proper resource and memory cleanup.
 
 ## Define manifest JSON
@@ -116,6 +117,130 @@ try:
 
 except Exception as e:
     print("Failed to sign manifest store: " + str(e))
+```
+
+## Settings, Context, and ContextProvider
+
+The `Settings` and `Context` classes provide **per-instance configuration** for Reader and Builder operations. This replaces the global `load_settings()` function, which is now deprecated.
+
+### Settings
+
+`Settings` controls behavior such as thumbnail generation, trust lists, and verification flags.
+
+```py
+from c2pa import Settings
+
+# Create with defaults
+settings = Settings()
+
+# Set individual values by dot-notation path
+settings.set("builder.thumbnail.enabled", "false")
+
+# Method chaining
+settings.set("builder.thumbnail.enabled", "false").set("verify.remote_manifest_fetch", "true")
+
+# Dict-like access
+settings["builder.thumbnail.enabled"] = "false"
+
+# Create from JSON string
+settings = Settings.from_json('{"builder": {"thumbnail": {"enabled": false}}}')
+
+# Create from a dictionary
+settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
+
+# Merge additional configuration
+settings.update({"verify": {"remote_manifest_fetch": True}})
+
+# Use as a context manager for automatic cleanup
+with Settings() as settings:
+    settings.set("builder.thumbnail.enabled", "false")
+```
+
+### Context
+
+A `Context` carries optional `Settings` and an optional `Signer`, and is passed to `Reader` or `Builder` to control their behavior.
+
+```py
+from c2pa import Context, Settings, Reader, Builder, Signer
+
+# Default context (no custom settings)
+ctx = Context()
+
+# Context with settings
+settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
+ctx = Context(settings=settings)
+
+# Create from JSON or dict directly
+ctx = Context.from_json('{"builder": {"thumbnail": {"enabled": false}}}')
+ctx = Context.from_dict({"builder": {"thumbnail": {"enabled": False}}})
+
+# Use with Reader
+reader = Reader("path/to/media_file.jpg", context=ctx)
+
+# Use with Builder
+builder = Builder(manifest_json, context=ctx)
+```
+
+### Context with a Signer
+
+When a `Signer` is passed to `Context`, the signer is **consumed** — the `Signer` object becomes invalid after this call and must not be reused. The `Context` takes ownership of the underlying native signer. This allows signing without passing an explicit signer to `Builder.sign()`.
+
+```py
+from c2pa import Context, Settings, Builder, Signer, C2paSignerInfo, C2paSigningAlg
+
+# Create a signer
+signer_info = C2paSignerInfo(
+    alg=C2paSigningAlg.ES256,
+    sign_cert=cert_data,
+    private_key=key_data,
+    ta_url=b"http://timestamp.digicert.com"
+)
+signer = Signer.from_info(signer_info)
+
+# Create context with signer (signer is consumed)
+ctx = Context(settings=settings, signer=signer)
+# signer is now invalid and must not be used again
+
+# Build and sign — no signer argument needed
+builder = Builder(manifest_json, context=ctx)
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    manifest_bytes = builder.sign(format="image/jpeg", source=src, dest=dst)
+```
+
+If both an explicit signer and a context signer are available, the explicit signer always takes precedence:
+
+```py
+# Explicit signer wins over context signer
+manifest_bytes = builder.sign(explicit_signer, "image/jpeg", source, dest)
+```
+
+### ContextProvider protocol
+
+The `ContextProvider` protocol allows third-party implementations of custom context providers. Any class that implements `is_valid` and `_c_context` properties satisfies the protocol and can be passed to `Reader` or `Builder` as `context`.
+
+```py
+from c2pa import ContextProvider, Context
+
+# The built-in Context satisfies ContextProvider
+ctx = Context()
+assert isinstance(ctx, ContextProvider)  # True
+```
+
+### Migrating from load_settings
+
+The `load_settings()` function is deprecated. Replace it with `Settings` and `Context`:
+
+```py
+# Before (deprecated):
+from c2pa import load_settings
+load_settings({"builder": {"thumbnail": {"enabled": False}}})
+reader = Reader("file.jpg")
+
+# After (recommended):
+from c2pa import Settings, Context, Reader
+settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
+ctx = Context(settings=settings)
+reader = Reader("file.jpg", context=ctx)
 ```
 
 ## Stream-based operation

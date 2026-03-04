@@ -27,6 +27,9 @@ from .c2pa import (
     C2paSignerInfo,
     Signer,
     Stream,
+    Settings,
+    Context,
+    ContextProvider,
     sdk_version,
     read_ingredient_file,
     load_settings
@@ -43,6 +46,9 @@ __all__ = [
     'C2paSignerInfo',
     'Signer',
     'Stream',
+    'Settings',
+    'Context',
+    'ContextProvider',
     'sdk_version',
     'read_ingredient_file',
     'load_settings'

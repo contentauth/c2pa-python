@@ -19,7 +19,10 @@ import sys
 import os
 import warnings
 from pathlib import Path
-from typing import Optional, Union, Callable, Any, overload
+from typing import (
+    Optional, Union, Callable, Any, overload,
+    Protocol, runtime_checkable,
+)
 import io
 from .lib import dynamically_load_library
 import mimetypes
@@ -69,6 +72,18 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_supported_mime_types',
     'c2pa_reader_is_embedded',
     'c2pa_reader_remote_url',
+    'c2pa_settings_new',
+    'c2pa_settings_set_value',
+    'c2pa_settings_update_from_string',
+    'c2pa_context_builder_new',
+    'c2pa_context_builder_set_settings',
+    'c2pa_context_builder_build',
+    'c2pa_context_new',
+    'c2pa_reader_from_context',
+    'c2pa_reader_with_stream',
+    'c2pa_builder_from_context',
+    'c2pa_builder_with_definition',
+    'c2pa_free',
 ]
 
 
@@ -135,6 +150,17 @@ else:
     _lib = dynamically_load_library(_lib_name_default)
 
 _validate_library_exports(_lib)
+
+# Signer-on-context functions may not yet be in the native library.
+# Guard with hasattr checks for forward compatibility.
+_SIGNER_CONTEXT_FUNCTIONS = [
+    'c2pa_context_builder_set_signer',
+    'c2pa_builder_sign_context',
+]
+
+_has_signer_context = all(
+    hasattr(_lib, fn) for fn in _SIGNER_CONTEXT_FUNCTIONS
+)
 
 
 class C2paSeekMode(enum.IntEnum):
@@ -360,6 +386,21 @@ class C2paBuilder(ctypes.Structure):
     """Opaque structure for builder context."""
     _fields_ = []  # Empty as it's opaque in the C API
 
+
+class C2paSettings(ctypes.Structure):
+    """Opaque structure for settings context."""
+    _fields_ = []  # Empty as it's opaque in the C API
+
+
+class C2paContextBuilder(ctypes.Structure):
+    """Opaque structure for context builder."""
+    _fields_ = []  # Empty as it's opaque in the C API
+
+
+class C2paContext(ctypes.Structure):
+    """Opaque structure for context."""
+    _fields_ = []  # Empty as it's opaque in the C API
+
 # Helper function to set function prototypes
 
 
@@ -530,6 +571,78 @@ _setup_function(
     [ctypes.POINTER(ctypes.c_size_t)],
     ctypes.POINTER(ctypes.c_char_p)
 )
+
+# Set up Settings function prototypes
+_setup_function(_lib.c2pa_settings_new, [], ctypes.POINTER(C2paSettings))
+_setup_function(
+    _lib.c2pa_settings_set_value,
+    [ctypes.POINTER(C2paSettings), ctypes.c_char_p, ctypes.c_char_p],
+    ctypes.c_int
+)
+_setup_function(
+    _lib.c2pa_settings_update_from_string,
+    [ctypes.POINTER(C2paSettings), ctypes.c_char_p, ctypes.c_char_p],
+    ctypes.c_int
+)
+
+# Set up ContextBuilder function prototypes
+_setup_function(
+    _lib.c2pa_context_builder_new,
+    [],
+    ctypes.POINTER(C2paContextBuilder)
+)
+_setup_function(
+    _lib.c2pa_context_builder_set_settings,
+    [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paSettings)],
+    ctypes.c_int
+)
+_setup_function(
+    _lib.c2pa_context_builder_build,
+    [ctypes.POINTER(C2paContextBuilder)],
+    ctypes.POINTER(C2paContext)
+)
+
+# Set up Context function prototypes
+_setup_function(_lib.c2pa_context_new, [], ctypes.POINTER(C2paContext))
+_setup_function(
+    _lib.c2pa_reader_from_context,
+    [ctypes.POINTER(C2paContext)],
+    ctypes.POINTER(C2paReader)
+)
+_setup_function(
+    _lib.c2pa_reader_with_stream,
+    [ctypes.POINTER(C2paReader), ctypes.c_char_p,
+     ctypes.POINTER(C2paStream)],
+    ctypes.POINTER(C2paReader)
+)
+_setup_function(
+    _lib.c2pa_builder_from_context,
+    [ctypes.POINTER(C2paContext)],
+    ctypes.POINTER(C2paBuilder)
+)
+_setup_function(
+    _lib.c2pa_builder_with_definition,
+    [ctypes.POINTER(C2paBuilder), ctypes.c_char_p],
+    ctypes.POINTER(C2paBuilder)
+)
+_setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
+
+# Conditionally set up signer-on-context function prototypes
+if _has_signer_context:
+    _setup_function(
+        _lib.c2pa_context_builder_set_signer,
+        [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paSigner)],
+        ctypes.c_int
+    )
+    _setup_function(
+        _lib.c2pa_builder_sign_context,
+        [ctypes.POINTER(C2paBuilder),
+         ctypes.c_char_p,
+         ctypes.POINTER(C2paStream),
+         ctypes.POINTER(C2paStream),
+         ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
+        ctypes.c_int64
+    )
 
 
 class C2paError(Exception):
@@ -832,14 +945,25 @@ def load_settings(settings: dict) -> None:
 def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     """Load C2PA settings from a string or dict.
 
+    .. deprecated::
+        Use :class:`Settings` and :class:`Context` for
+        per-instance configuration instead.
+
     Args:
         settings: The settings string or dict to load
-        format: The format of the settings string (default: "json").
+        format: The format of the settings string
+                (default: "json").
                 Ignored when settings is a dict.
 
     Raises:
-        C2paError: If there was an error loading the settings
+        C2paError: If there was an error loading settings
     """
+    warnings.warn(
+        "load_settings() is deprecated. Use Settings"
+        " and Context for per-instance configuration.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _clear_error_state()
 
     # Convert to JSON string as necessary
@@ -1105,6 +1229,502 @@ def sign_file(
             builder.close()
         if 'signer' in locals() and own_signer:
             signer.close()
+
+
+@runtime_checkable
+class ContextProvider(Protocol):
+    """Protocol for types that provide a C2PA context.
+
+    Allows third-party implementations of custom context providers.
+    The built-in Context class satisfies this protocol.
+    """
+
+    @property
+    def is_valid(self) -> bool: ...
+
+    @property
+    def _c_context(self): ...
+
+
+class Settings:
+    """Per-instance configuration for C2PA operations.
+
+    Settings control behavior such as thumbnail generation,
+    trust lists, and verification flags. Use with Context to
+    apply settings to Reader/Builder operations.
+
+    Example::
+
+        settings = Settings()
+        settings.set("builder.thumbnail.enabled", "false")
+
+        # Or via from_json / from_dict:
+        settings = Settings.from_json('{"verify": {...}}')
+        settings = Settings.from_dict({"verify": {...}})
+
+        # Dict-like access:
+        settings["builder.thumbnail.enabled"] = "false"
+
+        # Method chaining:
+        settings.set("a", "1").set("b", "2")
+    """
+
+    def __init__(self):
+        """Create new Settings with default values."""
+        _clear_error_state()
+        self._closed = False
+        self._initialized = False
+        self._settings = None
+
+        ptr = _lib.c2pa_settings_new()
+        if not ptr:
+            _parse_operation_result_for_error(None)
+            raise C2paError("Failed to create Settings")
+
+        self._settings = ptr
+        self._initialized = True
+
+    @classmethod
+    def from_json(cls, json_str: str) -> 'Settings':
+        """Create Settings from a JSON configuration string.
+
+        Args:
+            json_str: JSON string with settings configuration.
+
+        Returns:
+            A new Settings instance with the given configuration.
+        """
+        settings = cls()
+        settings.update(json_str, format="json")
+        return settings
+
+    @classmethod
+    def from_dict(cls, config: dict) -> 'Settings':
+        """Create Settings from a dictionary.
+
+        Args:
+            config: Dictionary with settings configuration.
+
+        Returns:
+            A new Settings instance with the given configuration.
+        """
+        return cls.from_json(json.dumps(config))
+
+    def set(self, path: str, value: str) -> 'Settings':
+        """Set a configuration value by dot-notation path.
+
+        Args:
+            path: Dot-notation path (e.g.
+                  "builder.thumbnail.enabled").
+            value: The value to set.
+
+        Returns:
+            self, for method chaining.
+        """
+        self._ensure_valid_state()
+        _clear_error_state()
+
+        try:
+            path_bytes = path.encode('utf-8')
+            value_bytes = value.encode('utf-8')
+        except (UnicodeEncodeError, AttributeError) as e:
+            raise C2paError.Encoding(
+                f"Encoding: {str(e)}"
+            ) from e
+
+        result = _lib.c2pa_settings_set_value(
+            self._settings, path_bytes, value_bytes
+        )
+        if result != 0:
+            _parse_operation_result_for_error(None)
+
+        return self
+
+    def update(
+        self, data: Union[str, dict], format: str = "json"
+    ) -> 'Settings':
+        """Merge configuration from a JSON string or dict.
+
+        Args:
+            data: A JSON string or dict with configuration
+                  to merge.
+            format: Format of the data string. Only "json"
+                    is supported.
+
+        Returns:
+            self, for method chaining.
+        """
+        self._ensure_valid_state()
+        _clear_error_state()
+
+        if format != "json":
+            raise C2paError(
+                "Only JSON format is supported for settings"
+            )
+
+        if isinstance(data, dict):
+            data = json.dumps(data)
+
+        try:
+            data_bytes = data.encode('utf-8')
+            format_bytes = format.encode('utf-8')
+        except (UnicodeEncodeError, AttributeError) as e:
+            raise C2paError.Encoding(
+                f"Encoding: {str(e)}"
+            ) from e
+
+        result = _lib.c2pa_settings_update_from_string(
+            self._settings, data_bytes, format_bytes
+        )
+        if result != 0:
+            _parse_operation_result_for_error(None)
+
+        return self
+
+    def __setitem__(self, path: str, value: str) -> None:
+        """Dict-like setter: settings["path"] = "value"."""
+        self.set(path, value)
+
+    @property
+    def _c_settings(self):
+        """Expose the raw pointer for Context to consume."""
+        self._ensure_valid_state()
+        return self._settings
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if the Settings is in a valid state."""
+        return (
+            not self._closed
+            and self._initialized
+            and self._settings is not None
+        )
+
+    def _ensure_valid_state(self):
+        """Ensure the settings are in a valid state.
+
+        Raises:
+            C2paError: If the settings are closed or invalid.
+        """
+        if self._closed:
+            raise C2paError("Settings is closed")
+        if not self._initialized:
+            raise C2paError(
+                "Settings is not properly initialized"
+            )
+        if not self._settings:
+            raise C2paError("Settings is closed")
+
+    def _cleanup_resources(self):
+        """Release native resources safely."""
+        try:
+            if hasattr(self, '_closed') and not self._closed:
+                self._closed = True
+                if (
+                    hasattr(self, '_settings')
+                    and self._settings
+                ):
+                    try:
+                        _lib.c2pa_free(
+                            ctypes.cast(
+                                self._settings,
+                                ctypes.c_void_p
+                            )
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to free native"
+                            " Settings resources"
+                        )
+                    finally:
+                        self._settings = None
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Release the Settings resources."""
+        if self._closed:
+            return
+        try:
+            self._cleanup_resources()
+        except Exception as e:
+            logger.error(
+                f"Error during Settings close: {e}"
+            )
+
+    def __enter__(self) -> 'Settings':
+        self._ensure_valid_state()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self._cleanup_resources()
+
+
+class Context:
+    """Per-instance context for C2PA operations.
+
+    A Context carries optional Settings and an optional Signer,
+    and is passed to Reader or Builder to control their behavior.
+
+    When a Signer is provided the Signer object is **consumed**
+    and must not be used again.
+
+    Example::
+
+        # Default context
+        ctx = Context()
+
+        # With settings
+        settings = Settings()
+        settings.set("builder.thumbnail.enabled", "false")
+        ctx = Context(settings=settings)
+
+        # With settings and signer (signer is consumed)
+        signer = Signer.from_info(info)
+        ctx = Context(settings=settings, signer=signer)
+    """
+
+    def __init__(
+        self,
+        settings: Optional['Settings'] = None,
+        signer: Optional['Signer'] = None,
+    ):
+        """Create a Context.
+
+        Args:
+            settings: Optional Settings for configuration.
+                If None, default settings are used.
+            signer: Optional Signer. If provided it is
+                CONSUMED and must not be used again.
+
+        Raises:
+            C2paError: If creation fails or if signer is
+                provided but the library does not support
+                signer-on-context.
+        """
+        _clear_error_state()
+        self._closed = False
+        self._initialized = False
+        self._context = None
+        self._has_signer = False
+        self._signer_callback_cb = None
+
+        if settings is None and signer is None:
+            # Simple default context
+            ptr = _lib.c2pa_context_new()
+            if not ptr:
+                _parse_operation_result_for_error(None)
+                raise C2paError(
+                    "Failed to create Context"
+                )
+            self._context = ptr
+        else:
+            # Use ContextBuilder for settings/signer
+            builder_ptr = _lib.c2pa_context_builder_new()
+            if not builder_ptr:
+                _parse_operation_result_for_error(None)
+                raise C2paError(
+                    "Failed to create ContextBuilder"
+                )
+
+            try:
+                if settings is not None:
+                    result = (
+                        _lib.c2pa_context_builder_set_settings(
+                            builder_ptr,
+                            settings._c_settings,
+                        )
+                    )
+                    if result != 0:
+                        _parse_operation_result_for_error(
+                            None
+                        )
+
+                if signer is not None:
+                    if not _has_signer_context:
+                        raise C2paError(
+                            "Signer-on-Context requires"
+                            " a newer c2pa-c library"
+                            " version"
+                        )
+                    signer_ptr, callback_cb = (
+                        signer._release()
+                    )
+                    self._signer_callback_cb = (
+                        callback_cb
+                    )
+                    result = (
+                        _lib
+                        .c2pa_context_builder_set_signer(
+                            builder_ptr, signer_ptr,
+                        )
+                    )
+                    if result != 0:
+                        _parse_operation_result_for_error(
+                            None
+                        )
+                    self._has_signer = True
+
+                # Build consumes builder_ptr
+                ptr = (
+                    _lib.c2pa_context_builder_build(
+                        builder_ptr
+                    )
+                )
+                # builder_ptr is now invalid
+                builder_ptr = None
+
+                if not ptr:
+                    _parse_operation_result_for_error(
+                        None
+                    )
+                    raise C2paError(
+                        "Failed to build Context"
+                    )
+                self._context = ptr
+            except Exception:
+                # Free builder if build was not reached
+                if builder_ptr is not None:
+                    try:
+                        _lib.c2pa_free(
+                            ctypes.cast(
+                                builder_ptr,
+                                ctypes.c_void_p,
+                            )
+                        )
+                    except Exception:
+                        pass
+                raise
+
+        self._initialized = True
+
+    @classmethod
+    def from_json(
+        cls,
+        json_str: str,
+        signer: Optional['Signer'] = None,
+    ) -> 'Context':
+        """Create Context from a JSON configuration string.
+
+        Args:
+            json_str: JSON string with settings config.
+            signer: Optional Signer (consumed if provided).
+
+        Returns:
+            A new Context instance.
+        """
+        settings = Settings.from_json(json_str)
+        try:
+            return cls(settings=settings, signer=signer)
+        finally:
+            settings.close()
+
+    @classmethod
+    def from_dict(
+        cls,
+        config: dict,
+        signer: Optional['Signer'] = None,
+    ) -> 'Context':
+        """Create Context from a dictionary.
+
+        Args:
+            config: Dictionary with settings configuration.
+            signer: Optional Signer (consumed if provided).
+
+        Returns:
+            A new Context instance.
+        """
+        return cls.from_json(
+            json.dumps(config), signer=signer
+        )
+
+    @property
+    def has_signer(self) -> bool:
+        """Whether this context was created with a signer."""
+        return self._has_signer
+
+    @property
+    def _c_context(self):
+        """Expose the raw pointer (ContextProvider protocol)."""
+        self._ensure_valid_state()
+        return self._context
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if the Context is in a valid state."""
+        return (
+            not self._closed
+            and self._initialized
+            and self._context is not None
+        )
+
+    def _ensure_valid_state(self):
+        """Ensure the context is in a valid state.
+
+        Raises:
+            C2paError: If the context is closed or invalid.
+        """
+        if self._closed:
+            raise C2paError("Context is closed")
+        if not self._initialized:
+            raise C2paError(
+                "Context is not properly initialized"
+            )
+        if not self._context:
+            raise C2paError("Context is closed")
+
+    def _cleanup_resources(self):
+        """Release native resources safely."""
+        try:
+            if (
+                hasattr(self, '_closed')
+                and not self._closed
+            ):
+                self._closed = True
+                if (
+                    hasattr(self, '_context')
+                    and self._context
+                ):
+                    try:
+                        _lib.c2pa_free(
+                            ctypes.cast(
+                                self._context,
+                                ctypes.c_void_p,
+                            )
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to free native"
+                            " Context resources"
+                        )
+                    finally:
+                        self._context = None
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Release the Context resources."""
+        if self._closed:
+            return
+        try:
+            self._cleanup_resources()
+        except Exception as e:
+            logger.error(
+                f"Error during Context close: {e}"
+            )
+
+    def __enter__(self) -> 'Context':
+        self._ensure_valid_state()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self._cleanup_resources()
 
 
 class Stream:
@@ -1515,52 +2135,67 @@ class Reader:
         return cls._supported_mime_types_cache
 
     @classmethod
-    def try_create(cls,
-                   format_or_path: Union[str, Path],
-                   stream: Optional[Any] = None,
-                   manifest_data: Optional[Any] = None) -> Optional["Reader"]:
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any] = None,
+        manifest_data: Optional[Any] = None,
+        *,
+        context: Optional['ContextProvider'] = None,
+    ) -> Optional["Reader"]:
         """This is a factory method to create a new Reader,
-        returning None if no manifest/c2pa data/JUMBF data could be read
-        (instead of raising a ManifestNotFound: no JUMBF data found exception).
+        returning None if no manifest/c2pa data/JUMBF data
+        could be read (instead of raising a ManifestNotFound
+        exception).
 
-        Returns None instead of raising C2paError.ManifestNotFound if no
-        C2PA manifest data is found in the asset. This is useful when you
-        want to check if an asset contains C2PA data without handling
-        exceptions for the expected case of no manifest.
+        Returns None instead of raising
+        C2paError.ManifestNotFound if no C2PA manifest data
+        is found in the asset. This is useful when you want
+        to check if an asset contains C2PA data without
+        handling exceptions for the expected case of no
+        manifest.
 
         Args:
             format_or_path: The format or path to read from
-            stream: Optional stream to read from (Python stream-like object)
+            stream: Optional stream to read from
             manifest_data: Optional manifest data in bytes
+            context: Optional ContextProvider for settings
 
         Returns:
             Reader instance if the asset contains C2PA data,
-            None if no manifest found (ManifestNotFound: no JUMBF data found)
+            None if no manifest found
 
         Raises:
-            C2paError: If there was an error other than ManifestNotFound
+            C2paError: If there was an error other than
+                ManifestNotFound
         """
         try:
-            # Reader creations checks deferred to the constructor __init__ method
-            return cls(format_or_path, stream, manifest_data)
+            return cls(
+                format_or_path, stream, manifest_data,
+                context=context,
+            )
         except C2paError.ManifestNotFound:
-            # Nothing to read, so no Reader returned
             return None
 
-    def __init__(self,
-                 format_or_path: Union[str,
-                                       Path],
-                 stream: Optional[Any] = None,
-                 manifest_data: Optional[Any] = None):
+    def __init__(
+        self,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any] = None,
+        manifest_data: Optional[Any] = None,
+        *,
+        context: Optional['ContextProvider'] = None,
+    ):
         """Create a new Reader.
 
         Args:
             format_or_path: The format or path to read from
-            stream: Optional stream to read from (Python stream-like object)
+            stream: Optional stream to read from
             manifest_data: Optional manifest data in bytes
+            context: Optional ContextProvider for settings
 
         Raises:
-            C2paError: If there was an error creating the reader
+            C2paError: If there was an error creating
+                the reader
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
@@ -1575,12 +2210,22 @@ class Reader:
         self._own_stream = None
 
         # This is used to keep track of a file
-        # we may have opened ourselves, and that we need to close later
+        # we may have opened ourselves,
+        # and that we need to close later
         self._backing_file = None
 
         # Caches for manifest JSON string and parsed data
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
+
+        # Keep context reference alive for lifetime
+        self._context = context
+
+        if context is not None:
+            self._init_from_context(
+                context, format_or_path, stream,
+            )
+            return
 
         if stream is None:
             # If we don't get a stream as param:
@@ -1742,6 +2387,128 @@ class Reader:
                     )
 
                 self._initialized = True
+
+    def _init_from_context(self, context, format_or_path,
+                           stream):
+        """Initialize Reader from a ContextProvider.
+
+        Uses c2pa_reader_from_context + c2pa_reader_with_stream.
+        """
+        if not context.is_valid:
+            raise C2paError("Context is not valid")
+
+        # Determine format and open stream
+        if stream is None:
+            path = str(format_or_path)
+            mime_type = _get_mime_type_from_path(path)
+            if not mime_type:
+                raise C2paError.NotSupported(
+                    "Could not determine MIME type"
+                    f" for file: {path}"
+                )
+            if mime_type not in (
+                Reader.get_supported_mime_types()
+            ):
+                raise C2paError.NotSupported(
+                    "Reader does not support"
+                    f" {mime_type}"
+                )
+            try:
+                format_bytes = mime_type.encode('utf-8')
+            except UnicodeError as e:
+                raise C2paError.Encoding(
+                    Reader._ERROR_MESSAGES[
+                        'encoding_error'
+                    ].format(str(e))
+                )
+            self._backing_file = open(path, 'rb')
+            self._own_stream = Stream(
+                self._backing_file
+            )
+        elif isinstance(stream, str):
+            fmt = format_or_path.lower()
+            if fmt not in Reader.get_supported_mime_types():
+                raise C2paError.NotSupported(
+                    "Reader does not support"
+                    f" {format_or_path}"
+                )
+            try:
+                format_bytes = str(
+                    format_or_path
+                ).encode('utf-8')
+            except UnicodeError as e:
+                raise C2paError.Encoding(
+                    Reader._ERROR_MESSAGES[
+                        'encoding_error'
+                    ].format(str(e))
+                )
+            self._backing_file = open(stream, 'rb')
+            self._own_stream = Stream(
+                self._backing_file
+            )
+        else:
+            fmt_str = str(format_or_path)
+            if (
+                fmt_str.lower()
+                not in Reader.get_supported_mime_types()
+            ):
+                raise C2paError.NotSupported(
+                    "Reader does not support"
+                    f" {fmt_str}"
+                )
+            try:
+                format_bytes = fmt_str.encode('utf-8')
+            except UnicodeError as e:
+                raise C2paError.Encoding(
+                    Reader._ERROR_MESSAGES[
+                        'encoding_error'
+                    ].format(str(e))
+                )
+            self._own_stream = Stream(stream)
+
+        try:
+            # Create base reader from context
+            reader_ptr = _lib.c2pa_reader_from_context(
+                context._c_context,
+            )
+            if not reader_ptr:
+                _parse_operation_result_for_error(
+                    _lib.c2pa_error()
+                )
+                raise C2paError(
+                    Reader._ERROR_MESSAGES[
+                        'reader_error'
+                    ].format("Unknown error")
+                )
+
+            # Consume-and-return: reader_ptr is consumed,
+            # new_ptr is the valid pointer going forward
+            new_ptr = _lib.c2pa_reader_with_stream(
+                reader_ptr, format_bytes,
+                self._own_stream._stream,
+            )
+            # reader_ptr is NOW INVALID
+
+            if not new_ptr:
+                _parse_operation_result_for_error(
+                    _lib.c2pa_error()
+                )
+                raise C2paError(
+                    Reader._ERROR_MESSAGES[
+                        'reader_error'
+                    ].format("Unknown error")
+                )
+
+            self._reader = new_ptr
+            self._initialized = True
+        except Exception:
+            if self._own_stream:
+                self._own_stream.close()
+                self._own_stream = None
+            if self._backing_file:
+                self._backing_file.close()
+                self._backing_file = None
+            raise
 
     def __enter__(self):
         self._ensure_valid_state()
@@ -2387,6 +3154,34 @@ class Signer:
         if not self._signer:
             raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
 
+    def _release(self):
+        """Release ownership of the native signer pointer.
+
+        After this call the Signer is marked closed and must
+        not be used. The caller takes ownership of the
+        returned pointer and is responsible for its lifetime.
+
+        Returns:
+            Tuple of (signer_ptr, callback_cb):
+              signer_ptr: The native C2paSigner pointer.
+              callback_cb: The callback reference (if any).
+                The caller must store this to prevent GC.
+
+        Raises:
+            C2paError: If the signer is already closed.
+        """
+        self._ensure_valid_state()
+
+        ptr = self._signer
+        callback_cb = self._callback_cb
+
+        # Detach pointer without freeing — caller now owns it
+        self._signer = None
+        self._callback_cb = None
+        self._closed = True
+
+        return ptr, callback_cb
+
     def close(self):
         """Release the signer resources.
 
@@ -2529,98 +3324,189 @@ class Builder:
         return cls._supported_mime_types_cache
 
     @classmethod
-    def from_json(cls, manifest_json: Any) -> 'Builder':
+    def from_json(
+        cls,
+        manifest_json: Any,
+        *,
+        context: Optional['ContextProvider'] = None,
+    ) -> 'Builder':
         """Create a new Builder from a JSON manifest.
 
         Args:
             manifest_json: The JSON manifest definition
+            context: Optional ContextProvider for settings
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating the builder
+            C2paError: If there was an error creating
+                the builder
         """
-        return cls(manifest_json)
+        return cls(manifest_json, context=context)
 
     @classmethod
-    def from_archive(cls, stream: Any) -> 'Builder':
+    def from_archive(
+        cls,
+        stream: Any,
+        *,
+        context: Optional['ContextProvider'] = None,
+    ) -> 'Builder':
         """Create a new Builder from an archive stream.
 
         Args:
             stream: The stream containing the archive
                 (any Python stream-like object)
+            context: Optional ContextProvider for settings
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating the builder from archive
+            C2paError: If there was an error creating
+                the builder from archive
         """
-        builder = cls({})
+        builder = cls({}, context=context)
         stream_obj = Stream(stream)
 
-        builder._builder = _lib.c2pa_builder_from_archive(stream_obj._stream)
+        builder._builder = (
+            _lib.c2pa_builder_from_archive(
+                stream_obj._stream
+            )
+        )
 
         if not builder._builder:
-            # Clean up the stream object if builder creation fails
             stream_obj.close()
-
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
+            error = _parse_operation_result_for_error(
+                _lib.c2pa_error()
+            )
             if error:
                 raise C2paError(error)
-            raise C2paError("Failed to create builder from archive")
+            raise C2paError(
+                "Failed to create builder from archive"
+            )
 
         builder._initialized = True
         return builder
 
-    def __init__(self, manifest_json: Any):
+    def __init__(
+        self,
+        manifest_json: Any,
+        *,
+        context: Optional['ContextProvider'] = None,
+    ):
         """Initialize a new Builder instance.
 
         Args:
-            manifest_json: The manifest JSON definition (string or dict)
+            manifest_json: The manifest JSON definition
+                (string or dict)
+            context: Optional ContextProvider for settings
 
         Raises:
-            C2paError: If there was an error creating the builder
-            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
-            C2paError.Json: If the manifest JSON cannot be serialized
+            C2paError: If there was an error creating
+                the builder
+            C2paError.Encoding: If manifest JSON contains
+                invalid UTF-8 chars
+            C2paError.Json: If the manifest JSON cannot
+                be serialized
         """
         # Native libs plumbing:
-        # Clear any stale error state from previous operations
+        # Clear any stale error state from previous ops
         _clear_error_state()
 
         self._closed = False
         self._initialized = False
         self._builder = None
 
+        # Keep context reference alive for lifetime
+        self._context = context
+        self._has_context_signer = (
+            context is not None
+            and hasattr(context, 'has_signer')
+            and context.has_signer
+        )
+
         if not isinstance(manifest_json, str):
             try:
                 manifest_json = json.dumps(manifest_json)
             except (TypeError, ValueError) as e:
                 raise C2paError.Json(
-                    Builder._ERROR_MESSAGES['json_error'].format(
-                        str(e)))
+                    Builder._ERROR_MESSAGES[
+                        'json_error'
+                    ].format(str(e))
+                )
 
         try:
             json_str = manifest_json.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
-
-        self._builder = _lib.c2pa_builder_from_json(json_str)
-
-        if not self._builder:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['builder_error'].format(
-                    "Unknown error"
-                )
+                Builder._ERROR_MESSAGES[
+                    'encoding_error'
+                ].format(str(e))
             )
 
+        if context is not None:
+            self._init_from_context(context, json_str)
+        else:
+            self._builder = (
+                _lib.c2pa_builder_from_json(json_str)
+            )
+            if not self._builder:
+                error = (
+                    _parse_operation_result_for_error(
+                        _lib.c2pa_error()
+                    )
+                )
+                if error:
+                    raise C2paError(error)
+                raise C2paError(
+                    Builder._ERROR_MESSAGES[
+                        'builder_error'
+                    ].format("Unknown error")
+                )
+
         self._initialized = True
+
+    def _init_from_context(self, context, json_str):
+        """Initialize Builder from a ContextProvider.
+
+        Uses c2pa_builder_from_context +
+        c2pa_builder_with_definition (consume-and-return).
+        """
+        if not context.is_valid:
+            raise C2paError("Context is not valid")
+
+        builder_ptr = _lib.c2pa_builder_from_context(
+            context._c_context,
+        )
+        if not builder_ptr:
+            _parse_operation_result_for_error(
+                _lib.c2pa_error()
+            )
+            raise C2paError(
+                Builder._ERROR_MESSAGES[
+                    'builder_error'
+                ].format("Unknown error")
+            )
+
+        # Consume-and-return: builder_ptr is consumed,
+        # new_ptr is the valid pointer going forward
+        new_ptr = _lib.c2pa_builder_with_definition(
+            builder_ptr, json_str,
+        )
+        # builder_ptr is NOW INVALID
+
+        if not new_ptr:
+            _parse_operation_result_for_error(
+                _lib.c2pa_error()
+            )
+            raise C2paError(
+                Builder._ERROR_MESSAGES[
+                    'builder_error'
+                ].format("Unknown error")
+            )
+
+        self._builder = new_ptr
 
     def __del__(self):
         """Ensure resources are cleaned up if close() wasn't called."""
@@ -3069,19 +3955,20 @@ class Builder:
         return manifest_bytes
 
     def sign(
-            self,
-            signer: Signer,
-            format: str,
-            source: Any,
-            dest: Any = None) -> bytes:
-        """Sign the builder's content and write to a destination stream.
+        self,
+        signer=None,
+        format=None,
+        source=None,
+        dest=None,
+    ) -> bytes:
+        """Sign the builder's content.
 
         Args:
-            format: The MIME type or extension of the content
-            source: The source stream (any Python stream-like object)
-            dest: The destination stream (any Python stream-like object),
-              opened in w+b (write+read binary) mode.
-            signer: The signer to use
+            signer: The signer to use. If None, the
+                context's signer is used.
+            format: The MIME type of the content.
+            source: The source stream.
+            dest: The destination stream (optional).
 
         Returns:
             Manifest bytes
@@ -3089,46 +3976,142 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        # Convert Python streams to Stream objects
+        if format is None or source is None:
+            raise C2paError(
+                "format and source are required"
+                " for sign()"
+            )
+
         source_stream = Stream(source)
 
         if dest:
-            # dest is optional, only if we write back somewhere
             dest_stream = Stream(dest)
         else:
-            # no destination?
-            # we keep things in-memory for validation and processing
             mem_buffer = io.BytesIO()
             dest_stream = Stream(mem_buffer)
 
-        # Use the internal stream-base signing logic
-        manifest_bytes = self._sign_internal(
-            signer,
-            format,
-            source_stream,
-            dest_stream
-        )
+        if signer is not None:
+            # Explicit signer always wins
+            manifest_bytes = self._sign_internal(
+                signer, format,
+                source_stream, dest_stream,
+            )
+        elif self._has_context_signer:
+            # Context signer as fallback
+            manifest_bytes = self._sign_context_internal(
+                format, source_stream, dest_stream,
+            )
+        else:
+            raise C2paError(
+                "No signer provided. Either pass a"
+                " signer parameter or create the"
+                " Builder with a Context that has"
+                " a signer."
+            )
 
         if not dest:
-            # Close temporary in-memory stream since we own it
             dest_stream.close()
 
         return manifest_bytes
 
-    def sign_file(self,
-                  source_path: Union[str,
-                                     Path],
-                  dest_path: Union[str,
-                                   Path],
-                  signer: Signer) -> bytes:
-        """Sign a file and write the signed data to an output file.
+    def _sign_context_internal(
+        self,
+        format: str,
+        source_stream: 'Stream',
+        dest_stream: 'Stream',
+    ) -> bytes:
+        """Sign using the signer stored in the context.
+
+        Uses c2pa_builder_sign_context instead of
+        c2pa_builder_sign.
+        """
+        self._ensure_valid_state()
+
+        if not _has_signer_context:
+            raise C2paError(
+                "Signer-on-Context requires a newer"
+                " version of the c2pa-c library."
+            )
+
+        format_lower = format.lower()
+        if (
+            format_lower
+            not in Builder.get_supported_mime_types()
+        ):
+            raise C2paError.NotSupported(
+                "Builder does not support"
+                f" {format}"
+            )
+
+        format_str = format.encode('utf-8')
+        manifest_bytes_ptr = (
+            ctypes.POINTER(ctypes.c_ubyte)()
+        )
+
+        try:
+            result = _lib.c2pa_builder_sign_context(
+                self._builder,
+                format_str,
+                source_stream._stream,
+                dest_stream._stream,
+                ctypes.byref(manifest_bytes_ptr),
+            )
+        except Exception as e:
+            raise C2paError(
+                "Error calling"
+                f" c2pa_builder_sign_context: {e}"
+            )
+
+        if result < 0:
+            error = _parse_operation_result_for_error(
+                _lib.c2pa_error()
+            )
+            if error:
+                raise C2paError(error)
+            raise C2paError(
+                "Error during context-based signing"
+            )
+
+        manifest_bytes = b""
+        if manifest_bytes_ptr and result > 0:
+            try:
+                temp_buffer = (
+                    ctypes.c_ubyte * result
+                )()
+                ctypes.memmove(
+                    temp_buffer,
+                    manifest_bytes_ptr,
+                    result,
+                )
+                manifest_bytes = bytes(temp_buffer)
+            except Exception:
+                manifest_bytes = b""
+            finally:
+                try:
+                    _lib.c2pa_manifest_bytes_free(
+                        manifest_bytes_ptr
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to release native"
+                        " manifest bytes memory"
+                    )
+
+        return manifest_bytes
+
+    def sign_file(
+        self,
+        source_path: Union[str, Path],
+        dest_path: Union[str, Path],
+        signer=None,
+    ) -> bytes:
+        """Sign a file and write signed data to output.
 
         Args:
-            source_path: Path to the source file. We will attempt
-              to guess the mimetype of the source file based on
-              the extension.
-            dest_path: Path to write the signed file to
-            signer: The signer to use
+            source_path: Path to the source file.
+            dest_path: Path to write the signed file to.
+            signer: The signer to use. If None, the
+                context's signer is used.
 
         Returns:
             Manifest bytes
@@ -3136,14 +4119,19 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        # Get the MIME type from the file extension
-        mime_type = _get_mime_type_from_path(source_path)
+        mime_type = _get_mime_type_from_path(
+            source_path
+        )
 
         try:
-            # Open source file and destination file, then use the sign method
-            with open(source_path, 'rb') as source_file, \
-                 open(dest_path, 'w+b') as dest_file:
-                return self.sign(signer, mime_type, source_file, dest_file)
+            with (
+                open(source_path, 'rb') as source_file,
+                open(dest_path, 'w+b') as dest_file,
+            ):
+                return self.sign(
+                    signer, mime_type,
+                    source_file, dest_file,
+                )
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 
@@ -3330,6 +4318,9 @@ __all__ = [
     'C2paDigitalSourceType',
     'C2paSignerInfo',
     'C2paBuilderIntent',
+    'ContextProvider',
+    'Settings',
+    'Context',
     'Stream',
     'Reader',
     'Builder',
