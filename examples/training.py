@@ -13,6 +13,8 @@
 # This example shows how to add a do not train assertion to an asset and then verify it
 # We use python crypto to sign the data using openssl with Ps256 here
 
+# TMN-TODO: Use context APIs
+
 import json
 import os
 

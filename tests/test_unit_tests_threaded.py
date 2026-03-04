@@ -23,7 +23,7 @@ import random
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
-from c2pa.c2pa import Stream, _has_signer_context
+from c2pa.c2pa import Stream
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")

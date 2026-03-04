@@ -35,7 +35,7 @@ warnings.filterwarnings(
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType  # noqa: E501
 from c2pa import Settings, Context, ContextProvider
 from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable  # noqa: E501
-from c2pa.c2pa import _has_signer_context
+
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -5367,10 +5367,6 @@ class TestContext(unittest.TestCase):
 # ── 3. Context with Signer ──────────────────────
 
 
-@unittest.skipUnless(
-    _has_signer_context,
-    "Signer-on-context not supported by native lib",
-)
 class TestContextWithSigner(unittest.TestCase):
 
     def test_context_with_signer(self):
@@ -5560,10 +5556,6 @@ class TestBuilderWithContext(unittest.TestCase):
         builder.close()
         ctx.close()
 
-    @unittest.skipUnless(
-        _has_signer_context,
-        "Signer-on-context not supported",
-    )
     def test_builder_sign_context_signer(self):
         signer = _ctx_make_signer()
         ctx = Context(signer=signer)
@@ -5590,10 +5582,6 @@ class TestBuilderWithContext(unittest.TestCase):
         builder.close()
         ctx.close()
 
-    @unittest.skipUnless(
-        _has_signer_context,
-        "Signer-on-context not supported",
-    )
     def test_builder_sign_explicit_overrides(self):
         ctx_signer = _ctx_make_signer()
         ctx = Context(signer=ctx_signer)
@@ -5726,10 +5714,6 @@ class TestContextIntegration(unittest.TestCase):
         ctx.close()
         s.close()
 
-    @unittest.skipUnless(
-        _has_signer_context,
-        "Signer-on-context not supported",
-    )
     def test_sign_read_roundtrip(self):
         signer = _ctx_make_signer()
         ctx = Context(signer=signer)
@@ -5788,10 +5772,6 @@ class TestContextIntegration(unittest.TestCase):
         signer2.close()
         ctx.close()
 
-    @unittest.skipUnless(
-        _has_signer_context,
-        "Signer-on-context not supported",
-    )
     def test_sign_callback_signer_in_ctx(self):
         signer = _ctx_make_callback_signer()
         ctx = Context(signer=signer)

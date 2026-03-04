@@ -151,17 +151,6 @@ else:
 
 _validate_library_exports(_lib)
 
-# Signer-on-context functions may not yet be in the native library.
-# Guard with hasattr checks for forward compatibility.
-_SIGNER_CONTEXT_FUNCTIONS = [
-    'c2pa_context_builder_set_signer',
-    'c2pa_builder_sign_context',
-]
-
-_has_signer_context = all(
-    hasattr(_lib, fn) for fn in _SIGNER_CONTEXT_FUNCTIONS
-)
-
 
 class C2paSeekMode(enum.IntEnum):
     """Seek mode for stream operations."""
@@ -627,22 +616,20 @@ _setup_function(
 )
 _setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
 
-# Conditionally set up signer-on-context function prototypes
-if _has_signer_context:
-    _setup_function(
-        _lib.c2pa_context_builder_set_signer,
-        [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paSigner)],
-        ctypes.c_int
-    )
-    _setup_function(
-        _lib.c2pa_builder_sign_context,
-        [ctypes.POINTER(C2paBuilder),
-         ctypes.c_char_p,
-         ctypes.POINTER(C2paStream),
-         ctypes.POINTER(C2paStream),
-         ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
-        ctypes.c_int64
-    )
+_setup_function(
+    _lib.c2pa_context_builder_set_signer,
+    [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paSigner)],
+    ctypes.c_int
+)
+_setup_function(
+    _lib.c2pa_builder_sign_context,
+    [ctypes.POINTER(C2paBuilder),
+     ctypes.c_char_p,
+     ctypes.POINTER(C2paStream),
+     ctypes.POINTER(C2paStream),
+     ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
+    ctypes.c_int64
+)
 
 
 class C2paError(Exception):
@@ -1544,12 +1531,6 @@ class Context:
                         )
 
                 if signer is not None:
-                    if not _has_signer_context:
-                        raise C2paError(
-                            "Signer-on-Context requires"
-                            " a newer c2pa-c library"
-                            " version"
-                        )
                     signer_ptr, callback_cb = (
                         signer._release()
                     )
@@ -4026,12 +4007,6 @@ class Builder:
         c2pa_builder_sign.
         """
         self._ensure_valid_state()
-
-        if not _has_signer_context:
-            raise C2paError(
-                "Signer-on-Context requires a newer"
-                " version of the c2pa-c library."
-            )
 
         format_lower = format.lower()
         if (

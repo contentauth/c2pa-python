@@ -7,7 +7,6 @@ The examples use asset files from the `tests/fixtures` directory, save the resul
 
 The [`examples/sign.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/sign.py) script shows how to sign an asset with a C2PA manifest and verify the asset.
 
-
 The `examples/sign.py` script shows how to sign an asset with a C2PA manifest and verify it using a callback signer. Callback signers let you define signing logic, for example where to load keys from.
 
 The `examples/sign_info.py` script shows how to sign an asset with a C2PA manifest and verify it using a "default" signer created with the needed signer information.

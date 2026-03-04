@@ -40,7 +40,7 @@ from c2pa import (  # noqa: E402
     ContextProvider,
     load_settings,
 )
-from c2pa.c2pa import _has_signer_context  # noqa: E402
+
 
 # ── Paths ────────────────────────────────────────────────────
 
@@ -297,10 +297,6 @@ class TestContextDocs(unittest.TestCase):
 
     # -- Configuring a signer -----------------------------------------
 
-    @unittest.skipUnless(
-        _has_signer_context,
-        "Signer-on-context not supported by native lib",
-    )
     def test_signer_on_context(self):
         """context.md § From Settings (signer-on-context)"""
         from c2pa import Context, Settings, Builder, Signer, C2paSignerInfo, C2paSigningAlg

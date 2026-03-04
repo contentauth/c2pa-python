@@ -13,6 +13,8 @@
 # This example shows how to sign an image with a C2PA manifest
 # using a callback signer and read the metadata added to the image.
 
+# TMN-TODO: Use context APIs
+
 import os
 import c2pa
 from cryptography.hazmat.primitives import hashes, serialization
