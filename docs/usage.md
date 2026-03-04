@@ -153,7 +153,7 @@ settings.update({"verify": {"remote_manifest_fetch": True}})
 
 ### Context
 
-A `Context` carries optional `Settings` and an optional `Signer`, and is passed to `Reader` or `Builder` to control their behavior.
+A `Context` can carry `Settings` and a `Signer`, and is passed to `Reader` or `Builder` to control their behavior through settings propagation.
 
 ```py
 from c2pa import Context, Settings, Reader, Builder, Signer
@@ -178,7 +178,7 @@ builder = Builder(manifest_json, context=ctx)
 
 ### Context with a Signer
 
-When a `Signer` is passed to `Context`, the signer is **consumed** — the `Signer` object becomes invalid after this call and must not be reused. The `Context` takes ownership of the underlying native signer. This allows signing without passing an explicit signer to `Builder.sign()`.
+When a `Signer` is passed to `Context`, the `Signer` object becomes invalid after this call and must not be reused directly anymore as it became part of the Context. The `Context` takes ownership of the underlying native signer. This allows signing without passing an explicit signer to `Builder.sign()`.
 
 ```py
 from c2pa import Context, Settings, Builder, Signer, C2paSignerInfo, C2paSigningAlg
@@ -194,9 +194,9 @@ signer = Signer.from_info(signer_info)
 
 # Create context with signer (signer is consumed)
 ctx = Context(settings=settings, signer=signer)
-# signer is now invalid and must not be used again
+# The signer object is now invalid and must not be used directly again
 
-# Build and sign — no signer argument needed
+# Build and sign: no signer argument needed, since the signer is in the context!
 builder = Builder(manifest_json, context=ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     manifest_bytes = builder.sign(format="image/jpeg", source=src, dest=dst)
@@ -205,7 +205,7 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 If both an explicit signer and a context signer are available, the explicit signer always takes precedence:
 
 ```py
-# Explicit signer wins over context signer
+# Explicit signer wins over context signer and will be used for signing in this call
 manifest_bytes = builder.sign(explicit_signer, "image/jpeg", source, dest)
 ```
 
@@ -218,21 +218,24 @@ from c2pa import ContextProvider, Context
 
 # The built-in Context satisfies ContextProvider
 ctx = Context()
-assert isinstance(ctx, ContextProvider)  # True
+assert isinstance(ctx, ContextProvider)
 ```
 
 ### Migrating from load_settings
 
-The `load_settings()` function is deprecated. Replace it with `Settings` and `Context`:
+The `load_settings()` function that set settings in a thread-local fashion is deprecated.
+Replace it with `Settings` and `Context` usage to propagate configurations:
 
 ```py
-# Before (deprecated):
+# Before:
 from c2pa import load_settings
 load_settings({"builder": {"thumbnail": {"enabled": False}}})
 reader = Reader("file.jpg")
 
-# After (recommended):
+# After:
 from c2pa import Settings, Context, Reader
+
+# Settings are on the context, and move with the context
 settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
 ctx = Context(settings=settings)
 reader = Reader("file.jpg", context=ctx)
