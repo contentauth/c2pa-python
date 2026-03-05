@@ -7,7 +7,6 @@ import urllib.request
 # that it is trusted according to the official trust anchor certificate list.
 # The output is printed as prettified JSON.
 
-
 TRUST_ANCHORS_URL = "https://contentcredentials.org/trust/anchors.pem"
 
 
