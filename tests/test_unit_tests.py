@@ -331,7 +331,7 @@ class TestReader(unittest.TestCase):
             # Close the reader
             reader.close()
             # Verify all resources are cleaned up
-            self.assertIsNone(reader._reader)
+            self.assertIsNone(reader._handle)
             self.assertIsNone(reader._own_stream)
             # Verify reader is marked as closed
             self.assertEqual(reader._state, LifecycleState.CLOSED)
@@ -697,7 +697,7 @@ class TestReader(unittest.TestCase):
             with Reader(self.testPath) as reader:
                 # Inside context - should be valid
                 self.assertEqual(reader._state, LifecycleState.ACTIVE)
-                self.assertIsNotNone(reader._reader)
+                self.assertIsNotNone(reader._handle)
                 self.assertIsNotNone(reader._own_stream)
                 self.assertIsNotNone(reader._backing_file)
                 raise ValueError("Test exception")
@@ -706,7 +706,7 @@ class TestReader(unittest.TestCase):
 
         # After exception - should still be closed
         self.assertEqual(reader._state, LifecycleState.CLOSED)
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._handle)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
@@ -715,7 +715,7 @@ class TestReader(unittest.TestCase):
         # Test with _reader = None but _state = ACTIVE
         reader = Reader.__new__(Reader)
         reader._state = LifecycleState.ACTIVE
-        reader._reader = None
+        reader._handle = None
         reader._own_stream = None
         reader._backing_file = None
 
@@ -728,7 +728,7 @@ class TestReader(unittest.TestCase):
 
         reader._cleanup_resources()
         self.assertEqual(reader._state, LifecycleState.CLOSED)
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._handle)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
@@ -743,7 +743,7 @@ class TestReader(unittest.TestCase):
         # Second cleanup should not change state
         reader._cleanup_resources()
         self.assertEqual(reader._state, LifecycleState.CLOSED)
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._handle)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
@@ -752,7 +752,7 @@ class TestReader(unittest.TestCase):
         reader = Reader(self.testPath)
 
         # Simulate invalid native pointer
-        reader._reader = 0
+        reader._handle = 0
 
         # Operations should fail gracefully
         with self.assertRaises(Error):
@@ -2129,7 +2129,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{"test": "ingredient"}'
@@ -2140,7 +2140,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_ingredient_dict(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient with a dictionary instead of JSON string
         ingredient_dict = {"test": "ingredient"}
@@ -2151,7 +2151,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test builder operations
         builder.set_no_embed()
@@ -2171,7 +2171,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients_2(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test builder operations
         builder.set_no_embed()
@@ -2191,7 +2191,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients_and_resources(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test builder operations
         builder.set_no_embed()
@@ -2220,7 +2220,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         with open(self.testPath, 'rb') as f:
             builder.add_resource("test_uri_1", f)
@@ -2243,7 +2243,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -2287,7 +2287,7 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_builder_sign_with_ingredients_edit_intent(self):
         """Test signing with EDIT intent and ingredient."""
         builder = Builder.from_json({})
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Set the intent for editing existing content
         builder.set_intent(C2paBuilderIntent.EDIT)
@@ -2391,7 +2391,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
 
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -2438,7 +2438,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         load_settings({"builder": {"thumbnail": {"enabled": False}}})
 
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -2482,7 +2482,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_duplicate_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{"title": "Test Ingredient"}'
@@ -2528,7 +2528,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_ingredient_from_stream(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient using stream
         ingredient_json = '{"title": "Test Ingredient Stream"}'
@@ -2568,7 +2568,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_ingredient_dict_from_stream(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient using stream with a dictionary
         ingredient_dict = {"title": "Test Ingredient Stream"}
@@ -2608,7 +2608,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_multiple_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Add first ingredient
         ingredient_json1 = '{"title": "Test Ingredient 1"}'
@@ -2653,7 +2653,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_multiple_ingredients_from_stream(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Add first ingredient using stream
         ingredient_json1 = '{"title": "Test Ingredient Stream 1"}'
@@ -3140,7 +3140,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Use a mock object that looks like a signer but isn't
         class MockSigner:
             def __init__(self):
-                self._signer = None
+                self._handle = None
 
         mock_signer = MockSigner()
 
@@ -3261,26 +3261,26 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # Initial state
         self.assertEqual(builder._state, LifecycleState.ACTIVE)
-        self.assertIsNotNone(builder._builder)
+        self.assertIsNotNone(builder._handle)
 
         # After close
         builder.close()
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
     def test_builder_context_manager_states(self):
         """Test Builder state management in context manager."""
         with Builder(self.manifestDefinition) as builder:
             # Inside context - should be valid
             self.assertEqual(builder._state, LifecycleState.ACTIVE)
-            self.assertIsNotNone(builder._builder)
+            self.assertIsNotNone(builder._handle)
 
             # Placeholder operation
             builder.set_no_embed()
 
         # After context exit - should be closed
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
     def test_builder_context_manager_with_exception(self):
         """Test Builder state after exception in context manager."""
@@ -3288,21 +3288,21 @@ class TestBuilderWithSigner(unittest.TestCase):
             with Builder(self.manifestDefinition) as builder:
                 # Inside context - should be valid
                 self.assertEqual(builder._state, LifecycleState.ACTIVE)
-                self.assertIsNotNone(builder._builder)
+                self.assertIsNotNone(builder._handle)
                 raise ValueError("Test exception")
         except ValueError:
             pass
 
         # After exception - should still be closed
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
     def test_builder_partial_initialization_states(self):
         """Test Builder behavior with partial initialization failures."""
         # Test with _builder = None but _state = ACTIVE
         builder = Builder.__new__(Builder)
         builder._state = LifecycleState.ACTIVE
-        builder._builder = None
+        builder._handle = None
 
         with self.assertRaises(Error):
             builder._ensure_valid_state()
@@ -3314,7 +3314,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Test _cleanup_resources method
         builder._cleanup_resources()
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
     def test_builder_cleanup_idempotency(self):
         """Test that cleanup operations are idempotent."""
@@ -3327,7 +3327,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Second cleanup should not change state
         builder._cleanup_resources()
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
     def test_builder_state_after_sign_operations(self):
         """Test Builder state after signing operations."""
@@ -3338,7 +3338,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # State should still be valid after signing
         self.assertEqual(builder._state, LifecycleState.ACTIVE)
-        self.assertIsNotNone(builder._builder)
+        self.assertIsNotNone(builder._handle)
 
         # Should be able to sign again
         with open(self.testPath, "rb") as file:
@@ -3354,7 +3354,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # State should still be valid
         self.assertEqual(builder._state, LifecycleState.ACTIVE)
-        self.assertIsNotNone(builder._builder)
+        self.assertIsNotNone(builder._handle)
 
     def test_builder_state_after_double_close(self):
         """Test Builder state after double close operations."""
@@ -3363,19 +3363,19 @@ class TestBuilderWithSigner(unittest.TestCase):
         # First close
         builder.close()
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
         # Second close should not change state
         builder.close()
         self.assertEqual(builder._state, LifecycleState.CLOSED)
-        self.assertIsNone(builder._builder)
+        self.assertIsNone(builder._handle)
 
     def test_builder_state_with_invalid_native_pointer(self):
         """Test Builder state handling with invalid native pointer."""
         builder = Builder(self.manifestDefinition)
 
         # Simulate invalid native pointer
-        builder._builder = 0
+        builder._handle = 0
 
         # Operations should fail gracefully
         with self.assertRaises(Error):
