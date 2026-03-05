@@ -3767,19 +3767,24 @@ class Builder:
 
     def _sign_internal(
             self,
-            signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> bytes:
-        """Internal signing logic shared between sign() and sign_file() methods
-        to use same native calls but expose different API surface.
+            dest_stream: Stream,
+            signer: Optional[Signer] = None) -> bytes:
+        """Internal signing implementation used by both explicit-signer and
+        context-signer code paths.
+
+        When ``signer`` is provided, calls ``c2pa_builder_sign`` (explicit
+        signer).  When ``signer`` is ``None``, calls
+        ``c2pa_builder_sign_context`` (context-based signer).
 
         Args:
-            signer: The signer to use
             format: The MIME type or extension of the content
             source_stream: The source stream
             dest_stream: The destination stream,
-            opened in w+b (write+read binary) mode.
+                opened in w+b (write+read binary) mode.
+            signer: Optional explicit signer. When None the context
+                signer is used instead.
 
         Returns:
             Manifest bytes
@@ -3789,31 +3794,34 @@ class Builder:
         """
         self._ensure_valid_state()
 
-        # Validate signer pointer before use
-        if not signer or not hasattr(signer, '_signer') or not signer._signer:
-            raise C2paError("Invalid or closed signer")
+        if signer is not None:
+            if not hasattr(signer, '_signer') or not signer._signer:
+                raise C2paError("Invalid or closed signer")
 
-        format_lower = format.lower()
-        if format_lower not in Builder.get_supported_mime_types():
-            raise C2paError.NotSupported(
-                f"Builder does not support {format}")
-
-        format_str = format.encode('utf-8')
+        format_bytes = _validate_and_encode_format(
+            format, Builder.get_supported_mime_types(), "Builder")
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
-        # c2pa_builder_sign uses streams
         try:
-            result = _lib.c2pa_builder_sign(
-                self._builder,
-                format_str,
-                source_stream._stream,
-                dest_stream._stream,
-                signer._signer,
-                ctypes.byref(manifest_bytes_ptr)
-            )
+            if signer is not None:
+                result = _lib.c2pa_builder_sign(
+                    self._builder,
+                    format_bytes,
+                    source_stream._stream,
+                    dest_stream._stream,
+                    signer._signer,
+                    ctypes.byref(manifest_bytes_ptr)
+                )
+            else:
+                result = _lib.c2pa_builder_sign_context(
+                    self._builder,
+                    format_bytes,
+                    source_stream._stream,
+                    dest_stream._stream,
+                    ctypes.byref(manifest_bytes_ptr),
+                )
         except Exception as e:
-            # Handle errors during the C function call
-            raise C2paError(f"Error calling c2pa_builder_sign: {str(e)}")
+            raise C2paError(f"Error during signing: {e}")
 
         if result < 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3825,22 +3833,18 @@ class Builder:
         manifest_bytes = b""
         if manifest_bytes_ptr and result > 0:
             try:
-                # Convert the C pointer to Python bytes
                 temp_buffer = (ctypes.c_ubyte * result)()
                 ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
                 manifest_bytes = bytes(temp_buffer)
             except Exception:
                 manifest_bytes = b""
             finally:
-                # Always free the C-allocated memory,
-                # even if we failed to copy manifest bytes
                 try:
                     _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                 except Exception:
                     logger.error(
                         "Failed to release native manifest bytes memory"
                     )
-                    pass
 
         return manifest_bytes
 
@@ -3863,32 +3867,35 @@ class Builder:
             Manifest bytes
         """
         source_stream = Stream(source)
+        try:
+            if dest:
+                dest_stream = Stream(dest)
+            else:
+                mem_buffer = io.BytesIO()
+                dest_stream = Stream(mem_buffer)
 
-        if dest:
-            dest_stream = Stream(dest)
-        else:
-            mem_buffer = io.BytesIO()
-            dest_stream = Stream(mem_buffer)
-
-        if signer is not None:
-            manifest_bytes = self._sign_internal(
-                signer, format,
-                source_stream, dest_stream,
-            )
-        elif self._has_context_signer:
-            manifest_bytes = self._sign_context_internal(
-                format, source_stream, dest_stream,
-            )
-        else:
-            raise C2paError(
-                "No signer provided. Either pass a"
-                " signer parameter or create the"
-                " Builder with a Context that has"
-                " a signer."
-            )
-
-        if not dest:
-            dest_stream.close()
+            try:
+                if signer is not None:
+                    manifest_bytes = self._sign_internal(
+                        format, source_stream, dest_stream,
+                        signer=signer,
+                    )
+                elif self._has_context_signer:
+                    manifest_bytes = self._sign_internal(
+                        format, source_stream, dest_stream,
+                    )
+                else:
+                    raise C2paError(
+                        "No signer provided. Either pass a"
+                        " signer parameter or create the"
+                        " Builder with a Context that has"
+                        " a signer."
+                    )
+            finally:
+                if not dest:
+                    dest_stream.close()
+        finally:
+            source_stream.close()
 
         return manifest_bytes
 
@@ -3946,85 +3953,6 @@ class Builder:
             C2paError: If there was an error during signing
         """
         return self._sign_common(None, format, source, dest)
-
-    def _sign_context_internal(
-        self,
-        format: str,
-        source_stream: 'Stream',
-        dest_stream: 'Stream',
-    ) -> bytes:
-        """Sign using the signer stored in the context.
-
-        Uses c2pa_builder_sign_context instead of
-        c2pa_builder_sign.
-        """
-        self._ensure_valid_state()
-
-        format_lower = format.lower()
-        if (
-            format_lower
-            not in Builder.get_supported_mime_types()
-        ):
-            raise C2paError.NotSupported(
-                "Builder does not support"
-                f" {format}"
-            )
-
-        format_str = format.encode('utf-8')
-        manifest_bytes_ptr = (
-            ctypes.POINTER(ctypes.c_ubyte)()
-        )
-
-        try:
-            result = _lib.c2pa_builder_sign_context(
-                self._builder,
-                format_str,
-                source_stream._stream,
-                dest_stream._stream,
-                ctypes.byref(manifest_bytes_ptr),
-            )
-        except Exception as e:
-            raise C2paError(
-                "Error calling"
-                f" c2pa_builder_sign_context: {e}"
-            )
-
-        if result < 0:
-            error = _parse_operation_result_for_error(
-                _lib.c2pa_error()
-            )
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                "Error during context-based signing"
-            )
-
-        manifest_bytes = b""
-        if manifest_bytes_ptr and result > 0:
-            try:
-                temp_buffer = (
-                    ctypes.c_ubyte * result
-                )()
-                ctypes.memmove(
-                    temp_buffer,
-                    manifest_bytes_ptr,
-                    result,
-                )
-                manifest_bytes = bytes(temp_buffer)
-            except Exception:
-                manifest_bytes = b""
-            finally:
-                try:
-                    _lib.c2pa_manifest_bytes_free(
-                        manifest_bytes_ptr
-                    )
-                except Exception:
-                    logger.error(
-                        "Failed to release native"
-                        " manifest bytes memory"
-                    )
-
-        return manifest_bytes
 
     @overload
     def sign_file(
