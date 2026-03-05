@@ -200,6 +200,15 @@ class C2paBuilderIntent(enum.IntEnum):
     UPDATE = 2  # Restricted version of Edit for non-editorial changes
 
 
+class LifecycleState(enum.IntEnum):
+    """Internal state for lifecycle management.
+    Object transitions: UNINITIALIZED -> ACTIVE -> CLOSED
+    """
+    UNINITIALIZED = 0
+    ACTIVE = 1
+    CLOSED = 2
+
+
 # Mapping from C2paSigningAlg enum to string representation,
 # as the enum value currently maps by default to an integer value.
 _ALG_TO_STRING_BYTES_MAPPING = {
@@ -1246,8 +1255,7 @@ class Settings:
     def __init__(self):
         """Create new Settings with default values."""
         _clear_error_state()
-        self._closed = False
-        self._initialized = False
+        self._state = LifecycleState.UNINITIALIZED
         self._settings = None
 
         ptr = _lib.c2pa_settings_new()
@@ -1256,7 +1264,7 @@ class Settings:
             raise C2paError("Failed to create Settings")
 
         self._settings = ptr
-        self._initialized = True
+        self._state = LifecycleState.ACTIVE
 
     @classmethod
     def from_json(cls, json_str: str) -> 'Settings':
@@ -1357,8 +1365,7 @@ class Settings:
     def is_valid(self) -> bool:
         """Check if the Settings is in a valid state."""
         return (
-            not self._closed
-            and self._initialized
+            self._state == LifecycleState.ACTIVE
             and self._settings is not None
         )
 
@@ -1368,9 +1375,9 @@ class Settings:
         Raises:
             C2paError: If the settings are closed or invalid.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError("Settings is closed")
-        if not self._initialized:
+        if self._state != LifecycleState.ACTIVE:
             raise C2paError(
                 "Settings is not properly initialized"
             )
@@ -1380,8 +1387,11 @@ class Settings:
     def _cleanup_resources(self):
         """Release native resources safely."""
         try:
-            if hasattr(self, '_closed') and not self._closed:
-                self._closed = True
+            if (
+                hasattr(self, '_state')
+                and self._state != LifecycleState.CLOSED
+            ):
+                self._state = LifecycleState.CLOSED
                 if (
                     hasattr(self, '_settings')
                     and self._settings
@@ -1405,7 +1415,7 @@ class Settings:
 
     def close(self) -> None:
         """Release the Settings resources."""
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
         try:
             self._cleanup_resources()
@@ -1458,8 +1468,7 @@ class Context(ContextProvider):
                 signer-on-context.
         """
         _clear_error_state()
-        self._closed = False
-        self._initialized = False
+        self._state = LifecycleState.UNINITIALIZED
         self._context = None
         self._has_signer = False
         self._signer_callback_cb = None
@@ -1545,7 +1554,7 @@ class Context(ContextProvider):
                         pass
                 raise
 
-        self._initialized = True
+        self._state = LifecycleState.ACTIVE
 
     @classmethod
     def from_json(
@@ -1602,8 +1611,7 @@ class Context(ContextProvider):
     def is_valid(self) -> bool:
         """Check if the Context is in a valid state."""
         return (
-            not self._closed
-            and self._initialized
+            self._state == LifecycleState.ACTIVE
             and self._context is not None
         )
 
@@ -1613,9 +1621,9 @@ class Context(ContextProvider):
         Raises:
             C2paError: If the context is closed or invalid.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError("Context is closed")
-        if not self._initialized:
+        if self._state != LifecycleState.ACTIVE:
             raise C2paError(
                 "Context is not properly initialized"
             )
@@ -1626,10 +1634,10 @@ class Context(ContextProvider):
         """Release native resources safely."""
         try:
             if (
-                hasattr(self, '_closed')
-                and not self._closed
+                hasattr(self, '_state')
+                and self._state != LifecycleState.CLOSED
             ):
-                self._closed = True
+                self._state = LifecycleState.CLOSED
                 if (
                     hasattr(self, '_context')
                     and self._context
@@ -1653,7 +1661,7 @@ class Context(ContextProvider):
 
     def close(self) -> None:
         """Release the Context resources."""
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
         try:
             self._cleanup_resources()
@@ -2029,7 +2037,7 @@ class Reader:
             C2paError: If there was an error retrieving the MIME types
         """
         if cls._supported_mime_types_cache is not None:
-            return cls._supported_mime_types_cache
+            return list(cls._supported_mime_types_cache)
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
@@ -2074,11 +2082,27 @@ class Reader:
                 # Ignore cleanup errors
                 pass
 
-        # Cache the result
+        # Cache as frozenset for O(1) lookups
         if result:
-            cls._supported_mime_types_cache = result
+            cls._supported_mime_types_cache = frozenset(result)
 
-        return cls._supported_mime_types_cache
+        if cls._supported_mime_types_cache:
+            return list(cls._supported_mime_types_cache)
+        return []
+
+    @classmethod
+    def _is_mime_type_supported(cls, mime_type: str) -> bool:
+        """Check if a MIME type is supported.
+
+        Args:
+            mime_type: The MIME type to check
+
+        Returns:
+            True if the MIME type is supported
+        """
+        if cls._supported_mime_types_cache is None:
+            cls.get_supported_mime_types()
+        return mime_type in cls._supported_mime_types_cache
 
     @classmethod
     def try_create(
@@ -2149,8 +2173,7 @@ class Reader:
         # Clear any stale error state from previous operations
         _clear_error_state()
 
-        self._closed = False
-        self._initialized = False
+        self._state = LifecycleState.UNINITIALIZED
 
         self._reader = None
         self._own_stream = None
@@ -2194,37 +2217,40 @@ class Reader:
                     Reader._ERROR_MESSAGES['encoding_error'].format(
                         str(e)))
 
+            file = None
             try:
-                with open(path, 'rb') as file:
-                    self._own_stream = Stream(file)
+                file = open(path, 'rb')
+                self._own_stream = Stream(file)
 
-                    self._reader = _lib.c2pa_reader_from_stream(
-                        mime_type_str,
-                        self._own_stream._stream
+                self._reader = _lib.c2pa_reader_from_stream(
+                    mime_type_str,
+                    self._own_stream._stream
+                )
+
+                if not self._reader:
+                    self._own_stream.close()
+                    self._own_stream = None
+                    error = _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    if error:
+                        raise C2paError(error)
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
+                        )
                     )
 
-                    if not self._reader:
-                        self._own_stream.close()
-                        error = _parse_operation_result_for_error(
-                            _lib.c2pa_error())
-                        if error:
-                            raise C2paError(error)
-                        raise C2paError(
-                            Reader._ERROR_MESSAGES['reader_error'].format(
-                                "Unknown error"
-                            )
-                        )
-
-                    # Store the file to close it later
-                    self._backing_file = file
-                    self._initialized = True
+                # Store the file to close it later
+                self._backing_file = file
+                self._state = LifecycleState.ACTIVE
 
             except Exception as e:
-                # File automatically closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_backing_file') and self._backing_file:
-                    self._backing_file.close()
+                    self._own_stream = None
+                if file:
+                    file.close()
+                self._backing_file = None
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -2238,54 +2264,57 @@ class Reader:
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_or_path}")
 
+            file = None
             try:
-                with open(stream, 'rb') as file:
-                    self._own_stream = Stream(file)
+                file = open(stream, 'rb')
+                self._own_stream = Stream(file)
 
-                    format_str = str(format_or_path)
-                    format_bytes = format_str.encode('utf-8')
+                format_str = str(format_or_path)
+                format_bytes = format_str.encode('utf-8')
 
-                    if manifest_data is None:
-                        self._reader = _lib.c2pa_reader_from_stream(
-                            format_bytes, self._own_stream._stream)
-                    else:
-                        if not isinstance(manifest_data, bytes):
-                            raise TypeError(
-                                Reader._ERROR_MESSAGES['manifest_error'])
-                        manifest_array = (
-                            ctypes.c_ubyte *
-                            len(manifest_data))(
-                            *
-                            manifest_data)
-                        self._reader = (
-                            _lib.c2pa_reader_from_manifest_data_and_stream(
-                                format_bytes,
-                                self._own_stream._stream,
-                                manifest_array,
-                                len(manifest_data),
-                            )
+                if manifest_data is None:
+                    self._reader = _lib.c2pa_reader_from_stream(
+                        format_bytes, self._own_stream._stream)
+                else:
+                    if not isinstance(manifest_data, bytes):
+                        raise TypeError(
+                            Reader._ERROR_MESSAGES['manifest_error'])
+                    manifest_array = (
+                        ctypes.c_ubyte *
+                        len(manifest_data))(
+                        *
+                        manifest_data)
+                    self._reader = (
+                        _lib.c2pa_reader_from_manifest_data_and_stream(
+                            format_bytes,
+                            self._own_stream._stream,
+                            manifest_array,
+                            len(manifest_data),
                         )
+                    )
 
-                    if not self._reader:
-                        self._own_stream.close()
-                        error = _parse_operation_result_for_error(
-                            _lib.c2pa_error())
-                        if error:
-                            raise C2paError(error)
-                        raise C2paError(
-                            Reader._ERROR_MESSAGES['reader_error'].format(
-                                "Unknown error"
-                            )
+                if not self._reader:
+                    self._own_stream.close()
+                    self._own_stream = None
+                    error = _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    if error:
+                        raise C2paError(error)
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES['reader_error'].format(
+                            "Unknown error"
                         )
+                    )
 
-                    self._backing_file = file
-                    self._initialized = True
+                self._backing_file = file
+                self._state = LifecycleState.ACTIVE
             except Exception as e:
-                # File closed by context manager
                 if self._own_stream:
                     self._own_stream.close()
-                if hasattr(self, '_backing_file') and self._backing_file:
-                    self._backing_file.close()
+                    self._own_stream = None
+                if file:
+                    file.close()
+                self._backing_file = None
                 raise C2paError.Io(
                     Reader._ERROR_MESSAGES['io_error'].format(
                         str(e)))
@@ -2332,7 +2361,7 @@ class Reader:
                         )
                     )
 
-                self._initialized = True
+                self._state = LifecycleState.ACTIVE
 
     def _init_from_context(self, context, format_or_path,
                            stream):
@@ -2446,7 +2475,7 @@ class Reader:
                 )
 
             self._reader = new_ptr
-            self._initialized = True
+            self._state = LifecycleState.ACTIVE
         except Exception:
             if self._own_stream:
                 self._own_stream.close()
@@ -2477,9 +2506,9 @@ class Reader:
         Raises:
             C2paError: If the reader is closed, not initialized, or invalid
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
-        if not self._initialized:
+        if self._state != LifecycleState.ACTIVE:
             raise C2paError("Reader is not properly initialized")
         if not self._reader:
             raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
@@ -2492,8 +2521,11 @@ class Reader:
         """
         try:
             # Only cleanup if not already closed and we have a valid reader
-            if hasattr(self, '_closed') and not self._closed:
-                self._closed = True
+            if (
+                hasattr(self, '_state')
+                and self._state != LifecycleState.CLOSED
+            ):
+                self._state = LifecycleState.CLOSED
 
                 # Clean up reader
                 if hasattr(self, '_reader') and self._reader:
@@ -2535,9 +2567,6 @@ class Reader:
                     finally:
                         self._backing_file = None
 
-                # Reset initialized state after cleanup
-                self._initialized = False
-
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
@@ -2577,7 +2606,7 @@ class Reader:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
 
         try:
@@ -2592,7 +2621,7 @@ class Reader:
             # Clear the cache when closing
             self._manifest_json_str_cache = None
             self._manifest_data_cache = None
-            self._closed = True
+            self._state = LifecycleState.CLOSED
 
     def json(self) -> str:
         """Get the manifest store as a JSON string.
@@ -3050,7 +3079,7 @@ class Signer:
             raise C2paError("Invalid signer pointer: pointer is null")
 
         self._signer = signer_ptr
-        self._closed = False
+        self._state = LifecycleState.ACTIVE
 
         # Set only for signers which are callback signers
         self._callback_cb = None
@@ -3075,8 +3104,11 @@ class Signer:
         from both close() and __del__ without causing double frees.
         """
         try:
-            if not self._closed and self._signer:
-                self._closed = True
+            if (
+                self._state != LifecycleState.CLOSED
+                and self._signer
+            ):
+                self._state = LifecycleState.CLOSED
 
                 try:
                     _lib.c2pa_free(
@@ -3105,7 +3137,7 @@ class Signer:
         Raises:
             C2paError: If the signer is closed or invalid
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
         if not self._signer:
             raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
@@ -3134,7 +3166,7 @@ class Signer:
         # Detach pointer without freeing — caller now owns it
         self._signer = None
         self._callback_cb = None
-        self._closed = True
+        self._state = LifecycleState.CLOSED
 
         return ptr, callback_cb
 
@@ -3149,7 +3181,7 @@ class Signer:
             Errors during cleanup are logged but not raised
             to ensure cleanup.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
 
         try:
@@ -3169,7 +3201,7 @@ class Signer:
                     str(e)))
         finally:
             # Always mark as closed, regardless of cleanup success
-            self._closed = True
+            self._state = LifecycleState.CLOSED
 
     def reserve_size(self) -> int:
         """Get the size to reserve for signatures from this signer.
@@ -3228,7 +3260,7 @@ class Builder:
             C2paError: If there was an error retrieving the MIME types
         """
         if cls._supported_mime_types_cache is not None:
-            return cls._supported_mime_types_cache
+            return list(cls._supported_mime_types_cache)
 
         count = ctypes.c_size_t()
         arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
@@ -3273,11 +3305,13 @@ class Builder:
                 # Ignore cleanup errors
                 pass
 
-        # Cache the result
+        # Cache as frozenset for O(1) lookups
         if result:
-            cls._supported_mime_types_cache = result
+            cls._supported_mime_types_cache = frozenset(result)
 
-        return cls._supported_mime_types_cache
+        if cls._supported_mime_types_cache:
+            return list(cls._supported_mime_types_cache)
+        return []
 
     @classmethod
     def from_json(
@@ -3342,7 +3376,7 @@ class Builder:
                     "Failed to create builder from archive"
                 )
 
-            builder._initialized = True
+            builder._state = LifecycleState.ACTIVE
             return builder
         finally:
             stream_obj.close()
@@ -3372,8 +3406,7 @@ class Builder:
         # Clear any stale error state from previous ops
         _clear_error_state()
 
-        self._closed = False
-        self._initialized = False
+        self._state = LifecycleState.UNINITIALIZED
         self._builder = None
 
         # Keep context reference alive for lifetime
@@ -3423,7 +3456,7 @@ class Builder:
                     ].format("Unknown error")
                 )
 
-        self._initialized = True
+        self._state = LifecycleState.ACTIVE
 
     def _init_from_context(self, context, json_str):
         """Initialize Builder from a ContextProvider.
@@ -3483,9 +3516,9 @@ class Builder:
         Raises:
             C2paError: If the builder is closed, not initialized, or invalid
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-        if not self._initialized:
+        if self._state != LifecycleState.ACTIVE:
             raise C2paError("Builder is not properly initialized")
         if not self._builder:
             raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
@@ -3498,8 +3531,11 @@ class Builder:
         """
         try:
             # Only cleanup if not already closed and we have a valid builder
-            if hasattr(self, '_closed') and not self._closed:
-                self._closed = True
+            if (
+                hasattr(self, '_state')
+                and self._state != LifecycleState.CLOSED
+            ):
+                self._state = LifecycleState.CLOSED
 
                 if hasattr(
                         self,
@@ -3520,8 +3556,6 @@ class Builder:
                     finally:
                         self._builder = None
 
-                # Reset initialized state after cleanup
-                self._initialized = False
         except Exception:
             # Ensure we don't raise exceptions during cleanup
             pass
@@ -3534,7 +3568,7 @@ class Builder:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        if self._closed:
+        if self._state == LifecycleState.CLOSED:
             return
 
         try:
@@ -3546,7 +3580,7 @@ class Builder:
                 Builder._ERROR_MESSAGES['cleanup_error'].format(
                     str(e)))
         finally:
-            self._closed = True
+            self._state = LifecycleState.CLOSED
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -4369,6 +4403,7 @@ __all__ = [
     'C2paDigitalSourceType',
     'C2paSignerInfo',
     'C2paBuilderIntent',
+    'LifecycleState',
     'ContextProvider',
     'Settings',
     'Context',

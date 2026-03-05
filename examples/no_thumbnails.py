@@ -10,20 +10,18 @@
 # specific language governing permissions and limitations under
 # each license.
 
-# This example shows how to sign an image with a C2PA manifest
-# using a callback signer and read the metadata added to the image.
+# This example shows how to use Context and Settings to disable
+# automatic thumbnail addition to the manifest.
 #
-# This example uses default Context and Settings.
+# By default, the SDK adds a thumbnail to the manifest. This example
+# uses Settings to turn off that behavior.
 
+import json
 import os
 import c2pa
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
-
-# Note: Builder, Reader, and Signer support being used as context managers
-# (with 'with' statements), but this example shows manual usage which requires
-# explicitly calling the close() function to clean up resources.
 
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
@@ -32,18 +30,12 @@ output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-print("c2pa version:")
-version = c2pa.sdk_version()
-print(version)
-
-
 # Load certificates and private key (here from the test fixtures).
-# This is OK for development, but in production you should use a
-# secure way to load the certificates and private key.
 with open(fixtures_dir + "es256_certs.pem", "rb") as cert_file:
     certs = cert_file.read()
 with open(fixtures_dir + "es256_private.key", "rb") as key_file:
     key = key_file.read()
+
 
 # Define a callback signer function.
 def callback_signer_es256(data: bytes) -> bytes:
@@ -59,18 +51,15 @@ def callback_signer_es256(data: bytes) -> bytes:
     )
     return signature
 
-# Create a manifest definition as a dictionary.
-# This manifest follows the V2 manifest format.
+
+# Create a manifest definition.
 manifest_definition = {
     "claim_generator_info": [{
-        "name": "python_example",
+        "name": "python_no_thumbnail_example",
         "version": "0.0.1",
     }],
-    # Claims version 2 is the default, so the version
-    # number can be omitted.
-    # "claim_version": 2,
     "format": "image/jpeg",
-    "title": "Python Example Image",
+    "title": "No Thumbnail Example",
     "ingredients": [],
     "assertions": [
         {
@@ -87,12 +76,16 @@ manifest_definition = {
     ]
 }
 
-# Sign the image with the signer created above,
-# which will use the callback signer.
-print("\nSigning the image file...")
+# Use Settings to disable thumbnail generation.
+settings = c2pa.Settings.from_dict({
+    "builder": {
+        "thumbnail": {"enabled": False}
+    }
+})
 
-# Use default Context and Settings.
-with c2pa.Context() as context:
+print("Signing image with thumbnails disabled...")
+
+with c2pa.Context(settings=settings) as context:
     with c2pa.Signer.from_callback(
         callback=callback_signer_es256,
         alg=c2pa.C2paSigningAlg.ES256,
@@ -102,17 +95,19 @@ with c2pa.Context() as context:
         with c2pa.Builder(manifest_definition, context=context) as builder:
             builder.sign_file(
                 source_path=fixtures_dir + "A.jpg",
-                dest_path=output_dir + "A_signed.jpg",
+                dest_path=output_dir + "A_no_thumbnail.jpg",
                 signer=signer
             )
 
-    # Re-Read the signed image to verify
-    print("\nReading signed image metadata:")
-    with open(output_dir + "A_signed.jpg", "rb") as file:
-        with c2pa.Reader("image/jpeg", file, context=context) as reader:
-            # The validation state will depend on loaded trust settings.
-            # Without loaded trust settings,
-            # the manifest validation_state will be "Invalid".
-            print(reader.json())
+    # Read back the signed image and verify no thumbnail is present.
+    print("\nReading signed image to verify no thumbnail...")
+    with c2pa.Reader(output_dir + "A_no_thumbnail.jpg", context=context) as reader:
+        manifest_store = json.loads(reader.json())
+        manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+        if manifest.get("thumbnail") is None:
+            print("Confirmed: No thumbnail in the manifest.")
+        else:
+            print("Unexpected: Thumbnail found in the manifest.")
 
 print("\nExample completed successfully!")
