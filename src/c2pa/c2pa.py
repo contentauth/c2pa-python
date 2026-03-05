@@ -904,7 +904,7 @@ def _raise_typed_c2pa_error(error_str: str) -> None:
     Raises:
         C2paError subclass: The appropriate typed exception based on error_str
     """
-    # Error format from lib is "ErrorType: message" or "ErrorType message"
+    # Error format from native library is "ErrorType: message" or "ErrorType message"
     # Try splitting on ": " first (colon-space), then fall back to space only
     if ': ' in error_str:
         parts = error_str.split(': ', 1)
@@ -966,7 +966,7 @@ def _parse_operation_result_for_error(
         None if no error occurred
 
     Raises:
-        C2paError subclass: typed exception if an error occurred
+        C2paError subclass: The appropriate typed exception if an error occurred
     """
     if not result:  # pragma: no cover
         if check_error:
