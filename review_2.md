@@ -75,7 +75,7 @@ src/c2pa/
 ### 2.3 Replace `Builder.sign()` *args/**kwargs with explicit methods
 - **File:** `src/c2pa/c2pa.py:3971-4080`
 - **Problem:** `_parse_sign_args` manually inspects positional args by type. Breaks IDE autocompletion, type checking, is un-Pythonic.
-- **Fix:** Create `sign(signer, format, source, dest=None)` and `sign_with_context(format, source, dest=None)` as explicit methods. Keep current signature as deprecated wrapper.
+- **Fix:** Create `sign(signer, format, source, dest=None)` and `sign_with_context(format, source, dest=None)` as explicit methods.
 
 ### 2.4 Replace `C2paSignerInfo` ctypes.Structure with a dataclass
 - **File:** `src/c2pa/c2pa.py:313-374`
@@ -158,7 +158,3 @@ Accept `Path` objects throughout. Convert internally. Update docstrings.
 4. **Test error type preservation:** Verify `C2paError.ManifestNotFound` is not wrapped as `C2paError.Io`
 5. **Test Signer cleanup:** Create Signer without `with` block, verify `__del__` cleans up
 6. **Manual smoke test:** Run `examples/sign.py` and `examples/read.py` end-to-end
-
-## Implementation Order
-
-Phase 1 first (all items are independent, can be separate commits). Phase 2.1 (module split) is the largest change — do after Phase 1. Phase 3 is backward-compatible and can be done anytime. Phase 4 is polish.

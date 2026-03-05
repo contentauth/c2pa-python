@@ -5552,7 +5552,7 @@ class TestBuilderWithContext(unittest.TestCase):
                 open(DEFAULT_TEST_FILE, "rb") as src,
                 open(dest, "w+b") as dst,
             ):
-                mb = builder.sign(
+                mb = builder.sign_with_context(
                     format="image/jpeg",
                     source=src,
                     dest=dst,
@@ -5601,7 +5601,7 @@ class TestBuilderWithContext(unittest.TestCase):
                 open(dest, "w+b") as dst,
             ):
                 with self.assertRaises(Error):
-                    builder.sign(
+                    builder.sign_with_context(
                         format="image/jpeg",
                         source=src,
                         dest=dst,
@@ -5710,7 +5710,7 @@ class TestContextIntegration(unittest.TestCase):
                 open(DEFAULT_TEST_FILE, "rb") as src,
                 open(dest, "w+b") as dst,
             ):
-                builder.sign(
+                builder.sign_with_context(
                     format="image/jpeg",
                     source=src,
                     dest=dst,
@@ -5768,7 +5768,7 @@ class TestContextIntegration(unittest.TestCase):
                 open(DEFAULT_TEST_FILE, "rb") as src,
                 open(dest, "w+b") as dst,
             ):
-                mb = builder.sign(
+                mb = builder.sign_with_context(
                     format="image/jpeg",
                     source=src,
                     dest=dst,
@@ -5818,7 +5818,7 @@ class TestBackwardCompat(unittest.TestCase):
     def test_sign_format_source_required(self):
         builder = Builder(_CTX_MANIFEST_DEF)
         signer = _ctx_make_signer()
-        with self.assertRaises(Error):
+        with self.assertRaises(TypeError):
             builder.sign(signer)
         builder.close()
         signer.close()

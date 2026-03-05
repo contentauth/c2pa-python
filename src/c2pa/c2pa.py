@@ -2197,7 +2197,6 @@ class Reader:
             return
 
         if stream is None:
-            # If we don't get a stream as param:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
@@ -2211,157 +2210,116 @@ class Reader:
                     f"Reader does not support {mime_type}")
 
             try:
-                mime_type_str = mime_type.encode('utf-8')
+                format_bytes = mime_type.encode('utf-8')
             except UnicodeError as e:
                 raise C2paError.Encoding(
                     Reader._ERROR_MESSAGES['encoding_error'].format(
                         str(e)))
 
-            file = None
-            try:
-                file = open(path, 'rb')
-                self._own_stream = Stream(file)
+            self._init_from_file(path, format_bytes)
 
-                self._reader = _lib.c2pa_reader_from_stream(
-                    mime_type_str,
-                    self._own_stream._stream
-                )
-
-                if not self._reader:
-                    self._own_stream.close()
-                    self._own_stream = None
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
-                        )
-                    )
-
-                # Store the file to close it later
-                self._backing_file = file
-                self._state = LifecycleState.ACTIVE
-
-            except Exception as e:
-                if self._own_stream:
-                    self._own_stream.close()
-                    self._own_stream = None
-                if file:
-                    file.close()
-                self._backing_file = None
-                raise C2paError.Io(
-                    Reader._ERROR_MESSAGES['io_error'].format(
-                        str(e)))
         elif isinstance(stream, str):
-            # We may have gotten format + a file path
-            # If stream is a string, treat it as a path and try to open it
-
-            # format_or_path is a format
+            # stream is a file path, format_or_path is the format
             format_lower = format_or_path.lower()
             if format_lower not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_or_path}")
 
-            file = None
-            try:
-                file = open(stream, 'rb')
-                self._own_stream = Stream(file)
+            format_bytes = str(format_or_path).encode('utf-8')
+            self._init_from_file(
+                stream, format_bytes, manifest_data)
 
-                format_str = str(format_or_path)
-                format_bytes = format_str.encode('utf-8')
-
-                if manifest_data is None:
-                    self._reader = _lib.c2pa_reader_from_stream(
-                        format_bytes, self._own_stream._stream)
-                else:
-                    if not isinstance(manifest_data, bytes):
-                        raise TypeError(
-                            Reader._ERROR_MESSAGES['manifest_error'])
-                    manifest_array = (
-                        ctypes.c_ubyte *
-                        len(manifest_data))(
-                        *
-                        manifest_data)
-                    self._reader = (
-                        _lib.c2pa_reader_from_manifest_data_and_stream(
-                            format_bytes,
-                            self._own_stream._stream,
-                            manifest_array,
-                            len(manifest_data),
-                        )
-                    )
-
-                if not self._reader:
-                    self._own_stream.close()
-                    self._own_stream = None
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
-                        )
-                    )
-
-                self._backing_file = file
-                self._state = LifecycleState.ACTIVE
-            except Exception as e:
-                if self._own_stream:
-                    self._own_stream.close()
-                    self._own_stream = None
-                if file:
-                    file.close()
-                self._backing_file = None
-                raise C2paError.Io(
-                    Reader._ERROR_MESSAGES['io_error'].format(
-                        str(e)))
         else:
-            # format_or_path is a format string
+            # format_or_path is a format string, stream is a stream object
             format_str = str(format_or_path)
             if format_str.lower() not in Reader.get_supported_mime_types():
                 raise C2paError.NotSupported(
                     f"Reader does not support {format_str}")
 
-            # Use the provided stream
-            self._format_str = format_str.encode('utf-8')
+            format_bytes = format_str.encode('utf-8')
 
             with Stream(stream) as stream_obj:
-                if manifest_data is None:
-                    self._reader = _lib.c2pa_reader_from_stream(
-                        self._format_str, stream_obj._stream)
-                else:
-                    if not isinstance(manifest_data, bytes):
-                        raise TypeError(
-                            Reader._ERROR_MESSAGES['manifest_error'])
-                    manifest_array = (
-                        ctypes.c_ubyte *
-                        len(manifest_data))(
-                        *
-                        manifest_data)
-                    self._reader = (
-                        _lib.c2pa_reader_from_manifest_data_and_stream(
-                            self._format_str,
-                            stream_obj._stream,
-                            manifest_array,
-                            len(manifest_data)
-                        )
-                    )
-
-                if not self._reader:
-                    error = _parse_operation_result_for_error(
-                        _lib.c2pa_error())
-                    if error:
-                        raise C2paError(error)
-                    raise C2paError(
-                        Reader._ERROR_MESSAGES['reader_error'].format(
-                            "Unknown error"
-                        )
-                    )
-
+                self._create_reader(
+                    format_bytes, stream_obj, manifest_data)
                 self._state = LifecycleState.ACTIVE
+
+    def _create_reader(self, format_bytes, stream_obj,
+                       manifest_data=None):
+        """Create a native reader from a Stream.
+
+        Calls the appropriate FFI function and raises on failure.
+
+        Args:
+            format_bytes: UTF-8 encoded format/MIME type
+            stream_obj: A Stream instance
+            manifest_data: Optional manifest bytes
+        """
+        if manifest_data is None:
+            self._reader = _lib.c2pa_reader_from_stream(
+                format_bytes, stream_obj._stream)
+        else:
+            if not isinstance(manifest_data, bytes):
+                raise TypeError(
+                    Reader._ERROR_MESSAGES['manifest_error'])
+            manifest_array = (
+                ctypes.c_ubyte *
+                len(manifest_data))(
+                *manifest_data)
+            self._reader = (
+                _lib.c2pa_reader_from_manifest_data_and_stream(
+                    format_bytes,
+                    stream_obj._stream,
+                    manifest_array,
+                    len(manifest_data),
+                )
+            )
+
+        if not self._reader:
+            error = _parse_operation_result_for_error(
+                _lib.c2pa_error())
+            if error:
+                raise C2paError(error)
+            raise C2paError(
+                Reader._ERROR_MESSAGES['reader_error'].format(
+                    "Unknown error"
+                )
+            )
+
+    def _init_from_file(self, path, format_bytes,
+                        manifest_data=None):
+        """Open a file and create a reader from it.
+
+        Args:
+            path: File path to open
+            format_bytes: UTF-8 encoded format/MIME type
+            manifest_data: Optional manifest bytes
+        """
+        file = None
+        try:
+            file = open(path, 'rb')
+            self._own_stream = Stream(file)
+            self._create_reader(
+                format_bytes, self._own_stream, manifest_data)
+            self._backing_file = file
+            self._state = LifecycleState.ACTIVE
+        except C2paError:
+            if self._own_stream:
+                self._own_stream.close()
+                self._own_stream = None
+            if file:
+                file.close()
+            self._backing_file = None
+            raise
+        except Exception as e:
+            if self._own_stream:
+                self._own_stream.close()
+                self._own_stream = None
+            if file:
+                file.close()
+            self._backing_file = None
+            raise C2paError.Io(
+                Reader._ERROR_MESSAGES['io_error'].format(
+                    str(e)))
 
     def _init_from_context(self, context, format_or_path,
                            stream):
@@ -3951,54 +3909,24 @@ class Builder:
 
         return manifest_bytes
 
-    @overload
-    def sign(
+    def _sign_common(
         self,
-        signer: Signer,
+        signer: Optional[Signer],
         format: str,
         source: Any,
         dest: Any = None,
-    ) -> bytes: ...
-
-    @overload
-    def sign(
-        self,
-        format: str,
-        source: Any,
-        dest: Any = None,
-    ) -> bytes: ...
-
-    def sign(self, *args, **kwargs) -> bytes:
-        """Sign the builder's content.
-
-        Can be called in two ways:
-
-        With an explicit signer::
-
-            builder.sign(signer, "image/jpeg", source, dest)
-
-        With a context signer (builder must have been created
-        with a Context that has a signer)::
-
-            builder.sign("image/jpeg", source, dest)
+    ) -> bytes:
+        """Shared signing logic for sign() and sign_with_context().
 
         Args:
-            signer: The signer to use (optional if context
-                has a signer).
+            signer: The signer to use, or None for context signer.
             format: The MIME type of the content.
             source: The source stream.
             dest: The destination stream (optional).
 
         Returns:
             Manifest bytes
-
-        Raises:
-            C2paError: If there was an error during signing
         """
-        signer, format, source, dest = (
-            self._parse_sign_args(args, kwargs)
-        )
-
         source_stream = Stream(source)
 
         if dest:
@@ -4008,13 +3936,11 @@ class Builder:
             dest_stream = Stream(mem_buffer)
 
         if signer is not None:
-            # Explicit signer always wins
             manifest_bytes = self._sign_internal(
                 signer, format,
                 source_stream, dest_stream,
             )
         elif self._has_context_signer:
-            # Context signer as fallback
             manifest_bytes = self._sign_context_internal(
                 format, source_stream, dest_stream,
             )
@@ -4031,53 +3957,60 @@ class Builder:
 
         return manifest_bytes
 
-    @staticmethod
-    def _parse_sign_args(args, kwargs):
-        """Parse sign() arguments for both overloads.
+    def sign(
+        self,
+        signer: Signer,
+        format: str,
+        source: Any,
+        dest: Any = None,
+    ) -> bytes:
+        """Sign the builder's content with an explicit signer.
 
-        Returns (signer, format, source, dest).
+        Example::
+
+            builder.sign(signer, "image/jpeg", source, dest)
+
+        Args:
+            signer: The signer to use.
+            format: The MIME type of the content.
+            source: The source stream.
+            dest: The destination stream (optional).
+
+        Returns:
+            Manifest bytes
+
+        Raises:
+            C2paError: If there was an error during signing
         """
-        signer = None
-        format = None
-        source = None
-        dest = None
+        return self._sign_common(signer, format, source, dest)
 
-        if args:
-            if isinstance(args[0], Signer):
-                # sign(signer, format, source, dest=None)
-                signer = args[0]
-                if len(args) > 1:
-                    format = args[1]
-                if len(args) > 2:
-                    source = args[2]
-                if len(args) > 3:
-                    dest = args[3]
-            elif isinstance(args[0], str):
-                # sign(format, source, dest=None)
-                format = args[0]
-                if len(args) > 1:
-                    source = args[1]
-                if len(args) > 2:
-                    dest = args[2]
-            else:
-                raise C2paError(
-                    "First argument to sign() must be"
-                    " a Signer or a format string"
-                )
+    def sign_with_context(
+        self,
+        format: str,
+        source: Any,
+        dest: Any = None,
+    ) -> bytes:
+        """Sign using the context's signer.
 
-        # Keyword args override positional
-        signer = kwargs.get('signer', signer)
-        format = kwargs.get('format', format)
-        source = kwargs.get('source', source)
-        dest = kwargs.get('dest', dest)
+        The builder must have been created with a Context
+        that has a signer.
 
-        if format is None or source is None:
-            raise C2paError(
-                "format and source are required"
-                " for sign()"
-            )
+        Example::
 
-        return signer, format, source, dest
+            builder.sign_with_context("image/jpeg", source, dest)
+
+        Args:
+            format: The MIME type of the content.
+            source: The source stream.
+            dest: The destination stream (optional).
+
+        Returns:
+            Manifest bytes
+
+        Raises:
+            C2paError: If there was an error during signing
+        """
+        return self._sign_common(None, format, source, dest)
 
     def _sign_context_internal(
         self,
@@ -4255,8 +4188,10 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
 
     # Convert the result bytes to a Python bytes object
     size = result
-    result_bytes = bytes(result_bytes_ptr[:size])
-    _lib.c2pa_manifest_bytes_free(result_bytes_ptr)
+    try:
+        result_bytes = bytes(result_bytes_ptr[:size])
+    finally:
+        _lib.c2pa_manifest_bytes_free(result_bytes_ptr)
 
     return size, result_bytes
 

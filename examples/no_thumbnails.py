@@ -1,4 +1,4 @@
-# Copyright 2025 Adobe. All rights reserved.
+# Copyright 2026 Adobe. All rights reserved.
 # This file is licensed to you under the Apache License,
 # Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 # or the MIT license (http://opensource.org/licenses/MIT),
@@ -10,11 +10,11 @@
 # specific language governing permissions and limitations under
 # each license.
 
-# This example shows how to use Context and Settings to disable
-# automatic thumbnail addition to the manifest.
+# Shows how to use Context+Settings API to control
+# thumbnails added to the manifest.
 #
-# By default, the SDK adds a thumbnail to the manifest. This example
-# uses Settings to turn off that behavior.
+# This example uses Settings to explicitly turn off
+# thumbnail addition when signing.
 
 import json
 import os
@@ -30,12 +30,11 @@ output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-# Load certificates and private key (here from the test fixtures).
+# Load certificates and private key (here from the unit test fixtures).
 with open(fixtures_dir + "es256_certs.pem", "rb") as cert_file:
     certs = cert_file.read()
 with open(fixtures_dir + "es256_private.key", "rb") as key_file:
     key = key_file.read()
-
 
 # Define a callback signer function.
 def callback_signer_es256(data: bytes) -> bytes:
@@ -51,12 +50,11 @@ def callback_signer_es256(data: bytes) -> bytes:
     )
     return signature
 
-
 # Create a manifest definition.
 manifest_definition = {
     "claim_generator_info": [{
         "name": "python_no_thumbnail_example",
-        "version": "0.0.1",
+        "version": "0.1.0",
     }],
     "format": "image/jpeg",
     "title": "No Thumbnail Example",
@@ -76,15 +74,15 @@ manifest_definition = {
     ]
 }
 
-# Use Settings to disable thumbnail generation.
+# Use Settings to disable thumbnail generation,
+# Settings are JSON matching the C2PA SDK settings schema
 settings = c2pa.Settings.from_dict({
     "builder": {
         "thumbnail": {"enabled": False}
     }
 })
 
-print("Signing image with thumbnails disabled...")
-
+print("Signing image with thumbnails disabled through settings...")
 with c2pa.Context(settings=settings) as context:
     with c2pa.Signer.from_callback(
         callback=callback_signer_es256,
@@ -99,15 +97,14 @@ with c2pa.Context(settings=settings) as context:
                 signer=signer
             )
 
-    # Read back the signed image and verify no thumbnail is present.
-    print("\nReading signed image to verify no thumbnail...")
+    # Read the signed image and verify no thumbnail is present.
     with c2pa.Reader(output_dir + "A_no_thumbnail.jpg", context=context) as reader:
         manifest_store = json.loads(reader.json())
         manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
         if manifest.get("thumbnail") is None:
-            print("Confirmed: No thumbnail in the manifest.")
+            print("No thumbnail in the manifest as per settings.")
         else:
-            print("Unexpected: Thumbnail found in the manifest.")
+            print("Thumbnail found in the manifest.")
 
 print("\nExample completed successfully!")
