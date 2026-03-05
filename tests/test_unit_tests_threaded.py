@@ -2218,7 +2218,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
                     manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
                     expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
                     ctx = Context()
-                    builder = Builder(manifest_def, context=ctx)
+                    builder = Builder(manifest_def, ctx)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, mime_type, file, output)
                     output.seek(0)
@@ -2289,7 +2289,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
                     manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
                     expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
                     ctx = Context()
-                    builder = Builder(manifest_def, context=ctx)
+                    builder = Builder(manifest_def, ctx)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, mime_type, file, output)
                     output.seek(0)
@@ -2335,7 +2335,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         def write_manifest(manifest_def, output_stream, thread_id):
             ctx = Context()
             with open(self.testPath, "rb") as file:
-                builder = Builder(manifest_def, context=ctx)
+                builder = Builder(manifest_def, ctx)
                 builder.sign(self.signer, "image/jpeg", file, output_stream)
                 output_stream.seek(0)
                 read_ctx = Context()
@@ -2422,7 +2422,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
                             thread_execution_order.append((current_count, thread_id))
                     time.sleep(0.01)
                     ctx = Context()
-                    builder = Builder(manifest_def, context=ctx)
+                    builder = Builder(manifest_def, ctx)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, mime_type, file, output)
                     output.seek(0)
@@ -2483,7 +2483,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             try:
                 ctx = Context()
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1, context=ctx)
+                    builder = Builder(self.manifestDefinition_1, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
                     write_complete.set()
@@ -2536,7 +2536,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             try:
                 ctx = Context()
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1, context=ctx)
+                    builder = Builder(self.manifestDefinition_1, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
                     write_complete.set()
@@ -2595,7 +2595,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
 
         ctx = Context()
         with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition_1, context=ctx)
+            builder = Builder(self.manifestDefinition_1, ctx)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
 
@@ -2646,7 +2646,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
 
         ctx = Context()
         with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition_1, context=ctx)
+            builder = Builder(self.manifestDefinition_1, ctx)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
 
@@ -2697,7 +2697,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             try:
                 ctx = Context()
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(manifest_def, context=ctx)
+                    builder = Builder(manifest_def, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output_stream)
                     output_stream.seek(0)
                     read_ctx = Context()
@@ -2760,7 +2760,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             try:
                 ctx = Context()
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1, context=ctx)
+                    builder = Builder(self.manifestDefinition_1, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
                     write_success = True
@@ -2819,7 +2819,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
 
         ctx = Context()
         with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition_1, context=ctx)
+            builder = Builder(self.manifestDefinition_1, ctx)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
 

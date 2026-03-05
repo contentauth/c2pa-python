@@ -5296,7 +5296,7 @@ class TestContext(TestContextAPIs):
 
     def test_context_from_settings(self):
         settings = Settings()
-        context = Context(settings=settings)
+        context = Context(settings)
         self.assertTrue(context.is_valid)
         context.close()
         settings.close()
@@ -5390,7 +5390,7 @@ class TestContextWithSigner(TestContextAPIs):
     def test_context_with_settings_and_signer(self):
         settings = Settings()
         signer = self._ctx_make_signer()
-        context = Context(settings=settings, signer=signer)
+        context = Context(settings, signer)
         self.assertTrue(context.is_valid)
         self.assertTrue(context.has_signer)
         context.close()
@@ -5425,7 +5425,7 @@ class TestContextWithSigner(TestContextAPIs):
         context = Context.from_json(
             '{"builder":{"thumbnail":'
             '{"enabled":false}}}',
-            signer=signer,
+            signer,
         )
         self.assertTrue(context.has_signer)
         self.assertEqual(signer._state, LifecycleState.CLOSED)
@@ -5445,7 +5445,7 @@ class TestReaderWithContext(TestContextAPIs):
 
     def test_reader_with_settings_context(self):
         settings = Settings()
-        context = Context(settings=settings)
+        context = Context(settings)
         with open(DEFAULT_TEST_FILE, "rb") as file_handle:
             reader = Reader("image/jpeg", file_handle, context=context,)
             data = reader.json()
@@ -5497,7 +5497,7 @@ class TestBuilderWithContext(TestContextAPIs):
 
     def test_contextual_builder_with_default_context(self):
         context = Context()
-        builder = Builder(self.test_manifest, context=context)
+        builder = Builder(self.test_manifest, context)
         self.assertIsNotNone(builder)
         builder.close()
         context.close()
@@ -5508,8 +5508,8 @@ class TestBuilderWithContext(TestContextAPIs):
                 "thumbnail": {"enabled": False}
             }
         })
-        context = Context(settings=settings)
-        builder = Builder(self.test_manifest, context=context,)
+        context = Context(settings)
+        builder = Builder(self.test_manifest, context)
         signer = self._ctx_make_signer()
         with tempfile.TemporaryDirectory() as temp_dir:
             dest_path = os.path.join(temp_dir, "out.jpg")
@@ -5532,7 +5532,7 @@ class TestBuilderWithContext(TestContextAPIs):
 
     def test_contextual_builder_from_json_with_context(self):
         context = Context()
-        builder = Builder.from_json(self.test_manifest, context=context)
+        builder = Builder.from_json(self.test_manifest, context)
         self.assertIsNotNone(builder)
         builder.close()
         context.close()
@@ -5550,9 +5550,9 @@ class TestBuilderWithContext(TestContextAPIs):
                 open(dest_path, "w+b") as dest_file,
             ):
                 manifest_bytes = builder.sign_with_context(
-                    format="image/jpeg",
-                    source=source_file,
-                    dest=dest_file,
+                    "image/jpeg",
+                    source_file,
+                    dest_file,
                 )
                 self.assertIsNotNone(manifest_bytes)
                 self.assertGreater(len(manifest_bytes), 0)
@@ -5599,9 +5599,9 @@ class TestBuilderWithContext(TestContextAPIs):
             ):
                 with self.assertRaises(Error):
                     builder.sign_with_context(
-                        format="image/jpeg",
-                        source=source_file,
-                        dest=dest_file,
+                        "image/jpeg",
+                        source_file,
+                        dest_file,
                     )
         builder.close()
         context.close()
@@ -5615,7 +5615,7 @@ class TestContextIntegration(TestContextAPIs):
                 "thumbnail": {"enabled": False}
             }
         })
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5653,9 +5653,9 @@ class TestContextIntegration(TestContextAPIs):
                 open(dest_path, "w+b") as dest_file,
             ):
                 builder.sign_with_context(
-                    format="image/jpeg",
-                    source=source_file,
-                    dest=dest_file,
+                    "image/jpeg",
+                    source_file,
+                    dest_file,
                 )
             reader = Reader(dest_path)
             data = reader.json()
@@ -5670,8 +5670,8 @@ class TestContextIntegration(TestContextAPIs):
         signer1 = self._ctx_make_signer()
         signer2 = self._ctx_make_signer()
 
-        builder1 = Builder(self.test_manifest, context=context)
-        builder2 = Builder(self.test_manifest, context=context)
+        builder1 = Builder(self.test_manifest, context)
+        builder2 = Builder(self.test_manifest, context)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             for index, (builder, signer) in enumerate(
@@ -5704,7 +5704,7 @@ class TestContextIntegration(TestContextAPIs):
             "enabled": False,
         }
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5733,7 +5733,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_shared_trusted_context_multi_builders(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer1 = self._ctx_make_signer()
         signer2 = self._ctx_make_signer()
 
@@ -5785,7 +5785,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_read_validation_trusted_via_context(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         with open(DEFAULT_TEST_FILE, "rb") as f:
             reader = Reader("image/jpeg", f, context=context)
             validation_state = (
@@ -5801,7 +5801,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_sign_es256_trusted_via_context(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5831,7 +5831,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_sign_ed25519_trusted_via_context(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_ed25519_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5861,7 +5861,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_sign_ps256_trusted_via_context(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_ps256_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5891,7 +5891,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_archive_sign_trusted_via_context(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5899,7 +5899,7 @@ class TestContextIntegration(TestContextAPIs):
         archive = io.BytesIO(bytearray())
         builder.to_archive(archive)
         builder = Builder.from_archive(
-            archive, context=context,
+            archive, context,
         )
         with (
             open(DEFAULT_TEST_FILE, "rb") as source,
@@ -5928,7 +5928,7 @@ class TestContextIntegration(TestContextAPIs):
     def test_archive_sign_with_ingredient_trusted_via_context(self):
         trust_dict = load_test_settings_json()
         settings = Settings.from_dict(trust_dict)
-        context = Context(settings=settings)
+        context = Context(settings)
         signer = self._ctx_make_signer()
         builder = Builder(
             self.test_manifest, context=context,
@@ -5936,7 +5936,7 @@ class TestContextIntegration(TestContextAPIs):
         archive = io.BytesIO(bytearray())
         builder.to_archive(archive)
         builder = Builder.from_archive(
-            archive, context=context,
+            archive, context,
         )
         ingredient_json = '{"test": "ingredient"}'
         with open(DEFAULT_TEST_FILE, "rb") as f:
@@ -5980,9 +5980,9 @@ class TestContextIntegration(TestContextAPIs):
                 open(dest_path, "w+b") as dest_file,
             ):
                 manifest_bytes = builder.sign_with_context(
-                    format="image/jpeg",
-                    source=source_file,
-                    dest=dest_file,
+                    "image/jpeg",
+                    source_file,
+                    dest_file,
                 )
                 self.assertGreater(len(manifest_bytes), 0)
             reader = Reader(dest_path)
