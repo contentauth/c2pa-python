@@ -127,6 +127,7 @@ try:
 
             # As an alternative, you can also use file paths directly during signing:
             # builder.sign_file(testFile, testOutputFile, signer)
+    # TODO-TMN: use with context here
     context.close()
 
 except Exception as err:
@@ -155,6 +156,7 @@ try:
         uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
         with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
             reader.resource_to_stream(uri, thumbnail_output)
+    # TODO-TMN: use with context here
     context.close()
 
 except Exception as err:

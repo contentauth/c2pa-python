@@ -106,6 +106,8 @@ with c2pa.Reader(output_dir + "A_no_thumbnail.jpg", context=context) as reader:
         print("No thumbnail in the manifest as per settings.")
     else:
         print("Thumbnail found in the manifest.")
+
+# TODO-TMN: use with context here
 context.close()
 
 print("\nExample completed successfully!")

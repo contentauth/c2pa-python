@@ -112,6 +112,8 @@ with open(output_dir + "A_signed.jpg", "rb") as file:
         # Without loaded trust settings,
         # the manifest validation_state will be "Invalid".
         print(reader.json())
+
+# TODO-TMN: use with context here
 context.close()
 
 print("\nExample completed successfully!")

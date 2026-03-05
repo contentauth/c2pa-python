@@ -31,6 +31,7 @@ def load_trust_anchors():
 def read_c2pa_data(media_path: str):
     print(f"Reading {media_path}")
     try:
+        # TODO-TMN: use with context here
         settings = load_trust_anchors()
         context = c2pa.Context(settings=settings)
         with c2pa.Reader(media_path, context=context) as reader:
