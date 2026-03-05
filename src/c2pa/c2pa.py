@@ -222,22 +222,24 @@ class ManagedResource:
     The native pointer is freed automatically via `_free_native_ptr`.
     """
 
-    _resource_name: str = "Resource"
-    """Display name used in error messages (override per subclass)."""
-
     def __init__(self):
         self._state = LifecycleState.UNINITIALIZED
         self._handle = None
 
+    @staticmethod
+    def _free_native_ptr(ptr):
+        """Free a native pointer by casting it to c_void_p and calling c2pa_free."""
+        _lib.c2pa_free(ctypes.cast(ptr, ctypes.c_void_p))
+
     def _ensure_valid_state(self):
         """Raise if the resource is closed or uninitialized."""
+        name = type(self).__name__
         if self._state == LifecycleState.CLOSED:
-            raise C2paError(f"{self._resource_name} is closed")
+            raise C2paError(f"{name} is closed")
         if self._state != LifecycleState.ACTIVE:
-            raise C2paError(
-                f"{self._resource_name} is not properly initialized")
+            raise C2paError(f"{name} is not properly initialized")
         if not self._handle:
-            raise C2paError(f"{self._resource_name} is closed")
+            raise C2paError(f"{name} is closed")
 
     def _release(self):
         """Override to free class-specific resources (streams, caches, etc.).
@@ -257,11 +259,11 @@ class ManagedResource:
                 self._release()
                 if hasattr(self, '_handle') and self._handle:
                     try:
-                        _free_native_ptr(self._handle)
+                        ManagedResource._free_native_ptr(self._handle)
                     except Exception:
                         logger.error(
-                            f"Failed to free native"
-                            f" {self._resource_name} resources"
+                            "Failed to free native %s resources",
+                            type(self).__name__,
                         )
                     finally:
                         self._handle = None
@@ -276,7 +278,7 @@ class ManagedResource:
         try:
             self._cleanup_resources()
         except Exception as e:
-            logger.error(f"Error during {self._resource_name} close: {e}")
+            logger.error("Error during %s close: %s", type(self).__name__, e)
         finally:
             self._state = LifecycleState.CLOSED
 
@@ -393,11 +395,6 @@ def _clear_error_state():
     if error:
         # Free the error to clear the state
         _lib.c2pa_string_free(error)
-
-
-def _free_native_ptr(ptr):
-    """Free a native pointer by casting it to c_void_p and calling c2pa_free."""
-    _lib.c2pa_free(ctypes.cast(ptr, ctypes.c_void_p))
 
 
 class C2paSignerInfo(ctypes.Structure):
@@ -1340,7 +1337,6 @@ class Settings(ManagedResource):
     apply settings to Reader/Builder operations.
     """
 
-    _resource_name = "Settings"
 
     def __init__(self):
         """Create new Settings with default values."""
@@ -1505,7 +1501,6 @@ class Context(ManagedResource, ContextProvider):
     used directly again after that.
     """
 
-    _resource_name = "Context"
 
     def __init__(
         self,
@@ -1595,7 +1590,7 @@ class Context(ManagedResource, ContextProvider):
                 # Free builder if build was not reached
                 if builder_ptr is not None:
                     try:
-                        _free_native_ptr(builder_ptr)
+                        ManagedResource._free_native_ptr(builder_ptr)
                     except Exception:
                         pass
                 raise
@@ -2075,7 +2070,6 @@ class Reader(ManagedResource):
         Where `output` is either an in-memory stream or an opened file.
     """
 
-    _resource_name = "Reader"
 
     # Supported mimetypes cache
     _supported_mime_types_cache = None
@@ -2305,7 +2299,7 @@ class Reader(ManagedResource):
                 )
             )
 
-        if not self._reader:
+        if not self._handle:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
@@ -2722,7 +2716,6 @@ class Reader(ManagedResource):
 class Signer(ManagedResource):
     """High-level wrapper for C2PA Signer operations."""
 
-    _resource_name = "Signer"
 
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
@@ -2993,7 +2986,6 @@ class Signer(ManagedResource):
 class Builder(ManagedResource):
     """High-level wrapper for C2PA Builder operations."""
 
-    _resource_name = "Builder"
 
     # Supported mimetypes cache
     _supported_mime_types_cache = None
@@ -3110,7 +3102,7 @@ class Builder(ManagedResource):
                 )
             )
 
-            if not builder._builder:
+            if not builder._handle:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)

@@ -2861,7 +2861,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         """Test Builder with multiple ingredients from streams using context APIs"""
         ctx = Context()
         builder = Builder.from_json(self.manifestDefinition, context=ctx)
-        assert builder._builder is not None
+        assert builder._handle is not None
         add_errors = []
         add_lock = threading.Lock()
         completed_threads = 0
@@ -2915,7 +2915,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         """Test Builder with same ingredient added multiple times from different threads using context APIs"""
         ctx = Context()
         builder = Builder.from_json(self.manifestDefinition, context=ctx)
-        assert builder._builder is not None
+        assert builder._handle is not None
         add_errors = []
         add_lock = threading.Lock()
         completed_threads = 0
