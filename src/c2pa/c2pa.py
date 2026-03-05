@@ -308,6 +308,11 @@ def _clear_error_state():
         _lib.c2pa_string_free(error)
 
 
+def _free_native_ptr(ptr):
+    """Free a native pointer by casting it to c_void_p and calling c2pa_free."""
+    _lib.c2pa_free(ctypes.cast(ptr, ctypes.c_void_p))
+
+
 class C2paSignerInfo(ctypes.Structure):
     """Configuration for a Signer."""
     _fields_ = [
@@ -1393,12 +1398,7 @@ class Settings:
                     and self._settings
                 ):
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._settings,
-                                ctypes.c_void_p
-                            )
-                        )
+                        _free_native_ptr(self._settings)
                     except Exception:
                         logger.error(
                             "Failed to free native"
@@ -1573,12 +1573,7 @@ class Context(ContextProvider):
                 # Free builder if build was not reached
                 if builder_ptr is not None:
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                builder_ptr,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(builder_ptr)
                     except Exception:
                         pass
                 raise
@@ -1677,12 +1672,7 @@ class Context(ContextProvider):
                     and self._context
                 ):
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._context,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(self._context)
                     except Exception:
                         logger.error(
                             "Failed to free native"
@@ -2487,12 +2477,7 @@ class Reader:
                 # Clean up reader
                 if hasattr(self, '_reader') and self._reader:
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._reader,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(self._reader)
                     except Exception:
                         # Cleanup failure doesn't raise exceptions
                         logger.error(
@@ -3068,12 +3053,7 @@ class Signer:
                 self._state = LifecycleState.CLOSED
 
                 try:
-                    _lib.c2pa_free(
-                        ctypes.cast(
-                            self._signer,
-                            ctypes.c_void_p,
-                        )
-                    )
+                    _free_native_ptr(self._signer)
                 except Exception:
                     # Log cleanup errors but don't raise exceptions
                     logger.error("Failed to free native Signer resources")
@@ -3243,10 +3223,24 @@ class Builder:
         return cls(manifest_json, context=context)
 
     @classmethod
+    @overload
     def from_archive(
         cls,
         stream: Any,
-        *,
+    ) -> 'Builder': ...
+
+    @classmethod
+    @overload
+    def from_archive(
+        cls,
+        stream: Any,
+        context: 'ContextProvider',
+    ) -> 'Builder': ...
+
+    @classmethod
+    def from_archive(
+        cls,
+        stream: Any,
         context: Optional['ContextProvider'] = None,
     ) -> 'Builder':
         """Create a new Builder from an archive stream.
@@ -3378,7 +3372,6 @@ class Builder:
         new_ptr = _lib.c2pa_builder_with_definition(
             builder_ptr, json_str,
         )
-        # builder_ptr is NOW INVALID
 
         if not new_ptr:
             _parse_operation_result_for_error(
@@ -3434,12 +3427,7 @@ class Builder:
                         self,
                         '_builder') and self._builder and self._builder != 0:
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._builder,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(self._builder)
                     except Exception:
                         # Log cleanup errors but don't raise exceptions
                         logger.error(
@@ -3783,7 +3771,7 @@ class Builder:
             source_stream: The source stream
             dest_stream: The destination stream,
                 opened in w+b (write+read binary) mode.
-            signer: Optional explicit signer. When None the context
+            signer: Signer to use. When None the context
                 signer is used instead.
 
         Returns:
@@ -3833,12 +3821,15 @@ class Builder:
         manifest_bytes = b""
         if manifest_bytes_ptr and result > 0:
             try:
+                # Convert the C pointer to Python bytes
                 temp_buffer = (ctypes.c_ubyte * result)()
                 ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
                 manifest_bytes = bytes(temp_buffer)
             except Exception:
                 manifest_bytes = b""
             finally:
+                # Always free the C-allocated memory,
+                # even if we failed to copy manifest bytes
                 try:
                     _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
                 except Exception:
@@ -3908,10 +3899,6 @@ class Builder:
     ) -> bytes:
         """Sign the builder's content with an explicit signer.
 
-        Example::
-
-            builder.sign(signer, "image/jpeg", source, dest)
-
         Args:
             signer: The signer to use.
             format: The MIME type of the content.
@@ -3936,10 +3923,6 @@ class Builder:
 
         The builder must have been created with a Context
         that has a signer.
-
-        Example::
-
-            builder.sign_with_context("image/jpeg", source, dest)
 
         Args:
             format: The MIME type of the content.
@@ -3994,9 +3977,7 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        mime_type = _get_mime_type_from_path(
-            source_path
-        )
+        mime_type = _get_mime_type_from_path(source_path)
 
         try:
             with (
@@ -4004,15 +3985,9 @@ class Builder:
                 open(dest_path, 'w+b') as dest_file,
             ):
                 if signer is not None:
-                    return self.sign(
-                        signer, mime_type,
-                        source_file, dest_file,
-                    )
-                else:
-                    return self.sign(
-                        mime_type,
-                        source_file, dest_file,
-                    )
+                    return self.sign(signer, mime_type, source_file, dest_file)
+                # else:
+                return self.sign(mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 
