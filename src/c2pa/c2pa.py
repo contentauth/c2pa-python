@@ -1558,9 +1558,7 @@ class Context(ManagedResource, ContextProvider):
                         )
                     )
                     if result != 0:
-                        _parse_operation_result_for_error(
-                            None
-                        )
+                        _parse_operation_result_for_error(None)
 
                 if signer is not None:
                     signer_ptr, callback_cb = (
@@ -1576,9 +1574,7 @@ class Context(ManagedResource, ContextProvider):
                         )
                     )
                     if result != 0:
-                        _parse_operation_result_for_error(
-                            None
-                        )
+                        _parse_operation_result_for_error(None)
                     self._has_signer = True
 
                 # Build consumes builder_ptr
@@ -1587,13 +1583,10 @@ class Context(ManagedResource, ContextProvider):
                         builder_ptr
                     )
                 )
-                # builder_ptr is now invalid
                 builder_ptr = None
 
                 if not ptr:
-                    _parse_operation_result_for_error(
-                        None
-                    )
+                    _parse_operation_result_for_error(None)
                     raise C2paError(
                         "Failed to build Context"
                     )
@@ -2312,9 +2305,8 @@ class Reader(ManagedResource):
                 )
             )
 
-        if not self._handle:
-            error = _parse_operation_result_for_error(
-                _lib.c2pa_error())
+        if not self._reader:
+            error = _parse_operation_result_for_error(_lib.c2pa_error())
             if error:
                 raise C2paError(error)
             raise C2paError(
@@ -2397,9 +2389,7 @@ class Reader(ManagedResource):
                 context.execution_context,
             )
             if not reader_ptr:
-                _parse_operation_result_for_error(
-                    _lib.c2pa_error()
-                )
+                _parse_operation_result_for_error(_lib.c2pa_error())
                 raise C2paError(
                     Reader._ERROR_MESSAGES[
                         'reader_error'
@@ -2412,12 +2402,10 @@ class Reader(ManagedResource):
                 reader_ptr, format_bytes,
                 self._own_stream._stream,
             )
-            # reader_ptr is NOW INVALID
+            # reader_ptr has been invalidated(consumed)
 
             if not new_ptr:
-                _parse_operation_result_for_error(
-                    _lib.c2pa_error()
-                )
+                _parse_operation_result_for_error(_lib.c2pa_error())
                 raise C2paError(
                     Reader._ERROR_MESSAGES[
                         'reader_error'
@@ -3122,10 +3110,8 @@ class Builder(ManagedResource):
                 )
             )
 
-            if not builder._handle:
-                error = _parse_operation_result_for_error(
-                    _lib.c2pa_error()
-                )
+            if not builder._builder:
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError(
@@ -3224,9 +3210,7 @@ class Builder(ManagedResource):
             context.execution_context,
         )
         if not builder_ptr:
-            _parse_operation_result_for_error(
-                _lib.c2pa_error()
-            )
+            _parse_operation_result_for_error(_lib.c2pa_error())
             raise C2paError(
                 Builder._ERROR_MESSAGES[
                     'builder_error'
@@ -3240,9 +3224,7 @@ class Builder(ManagedResource):
         )
 
         if not new_ptr:
-            _parse_operation_result_for_error(
-                _lib.c2pa_error()
-            )
+            _parse_operation_result_for_error(_lib.c2pa_error())
             raise C2paError(
                 Builder._ERROR_MESSAGES[
                     'builder_error'
