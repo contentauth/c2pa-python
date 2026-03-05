@@ -32,9 +32,9 @@ warnings.filterwarnings(
     "ignore", message="load_settings\\(\\) is deprecated"
 )
 
-from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType  # noqa: E501
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable  # noqa: E501
+from c2pa.c2pa import Stream, LifecycleState, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
 
 
 PROJECT_PATH = os.getcwd()
@@ -73,7 +73,7 @@ def load_test_settings_json():
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version.
-        self.assertIn("0.76.2", sdk_version())
+        self.assertIn("0.77.0", sdk_version())
 
 
 class TestReader(unittest.TestCase):
