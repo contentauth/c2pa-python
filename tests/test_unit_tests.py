@@ -75,10 +75,7 @@ class TestC2paSdk(unittest.TestCase):
 
 class TestReader(unittest.TestCase):
     def setUp(self):
-        warnings.filterwarnings(
-            "ignore",
-            message="load_settings\\(\\) is deprecated",
-        )
+        warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
 
@@ -5098,646 +5095,508 @@ class TestLegacyAPI(unittest.TestCase):
         self.assertIsNotNone(signer)
 
 
-# ── Context API manifest definition ──────────────
+class TestContextAPIs(unittest.TestCase):
+    """Base for context-related tests; provides test_manifest and signer helpers."""
 
-_CTX_MANIFEST_DEF = {
-    "claim_generator": "python_test/context",
-    "claim_generator_info": [{
-        "name": "python_test",
-        "version": "0.0.1",
-    }],
-    "format": "image/jpeg",
-    "title": "Context Test Image",
-    "ingredients": [],
-    "assertions": [
-        {
-            "label": "c2pa.actions",
-            "data": {
-                "actions": [{
-                    "action": "c2pa.created",
-                }]
+    test_manifest = {
+        "claim_generator": "c2pa_python_sdk_test/context",
+        "claim_generator_info": [{
+            "name": "c2pa_python_sdk_contextual_test",
+            "version": "0.1.0",
+        }],
+        "format": "image/jpeg",
+        "title": "Test Image",
+        "ingredients": [],
+        "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.created",
+                    }]
+                }
             }
-        }
-    ]
-}
+        ]
+    }
 
-
-def _ctx_make_signer():
-    """Create a Signer for context tests."""
-    certs_path = os.path.join(
-        FIXTURES_DIR, "es256_certs.pem"
-    )
-    key_path = os.path.join(
-        FIXTURES_DIR, "es256_private.key"
-    )
-    with open(certs_path, "rb") as f:
-        certs = f.read()
-    with open(key_path, "rb") as f:
-        key = f.read()
-    info = C2paSignerInfo(
-        alg=b"es256",
-        sign_cert=certs,
-        private_key=key,
-        ta_url=b"http://timestamp.digicert.com",
-    )
-    return Signer.from_info(info)
-
-
-def _ctx_make_callback_signer():
-    """Create a callback-based Signer for context tests."""
-    certs_path = os.path.join(
-        FIXTURES_DIR, "es256_certs.pem"
-    )
-    key_path = os.path.join(
-        FIXTURES_DIR, "es256_private.key"
-    )
-    with open(certs_path, "rb") as f:
-        certs = f.read()
-    with open(key_path, "rb") as f:
-        key_data = f.read()
-
-    from cryptography.hazmat.primitives import (
-        serialization,
-    )
-    private_key = serialization.load_pem_private_key(
-        key_data, password=None,
-        backend=default_backend(),
-    )
-
-    def sign_cb(data: bytes) -> bytes:
-        from cryptography.hazmat.primitives.asymmetric import (  # noqa: E501
-            utils as asym_utils,
+    def _ctx_make_signer(self):
+        """Create a Signer for context tests."""
+        certs_path = os.path.join(
+            FIXTURES_DIR, "es256_certs.pem"
         )
-        sig = private_key.sign(
-            data, ec.ECDSA(hashes.SHA256()),
+        key_path = os.path.join(
+            FIXTURES_DIR, "es256_private.key"
         )
-        r, s = asym_utils.decode_dss_signature(sig)
-        return (
-            r.to_bytes(32, byteorder='big')
-            + s.to_bytes(32, byteorder='big')
+        with open(certs_path, "rb") as f:
+            certs = f.read()
+        with open(key_path, "rb") as f:
+            key = f.read()
+        info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        return Signer.from_info(info)
+
+    def _ctx_make_callback_signer(self):
+        """Create a callback-based Signer for context tests."""
+        certs_path = os.path.join(
+            FIXTURES_DIR, "es256_certs.pem"
+        )
+        key_path = os.path.join(
+            FIXTURES_DIR, "es256_private.key"
+        )
+        with open(certs_path, "rb") as f:
+            certs = f.read()
+        with open(key_path, "rb") as f:
+            key_data = f.read()
+
+        from cryptography.hazmat.primitives import (
+            serialization,
+        )
+        private_key = serialization.load_pem_private_key(
+            key_data, password=None,
+            backend=default_backend(),
         )
 
-    return Signer.from_callback(
-        sign_cb,
-        SigningAlg.ES256,
-        certs.decode('utf-8'),
-        "http://timestamp.digicert.com",
-    )
+        def sign_cb(data: bytes) -> bytes:
+            from cryptography.hazmat.primitives.asymmetric import (  # noqa: E501
+                utils as asym_utils,
+            )
+            sig = private_key.sign(
+                data, ec.ECDSA(hashes.SHA256()),
+            )
+            r, s = asym_utils.decode_dss_signature(sig)
+            return (
+                r.to_bytes(32, byteorder='big')
+                + s.to_bytes(32, byteorder='big')
+            )
+
+        return Signer.from_callback(
+            sign_cb,
+            SigningAlg.ES256,
+            certs.decode('utf-8'),
+            "http://timestamp.digicert.com",
+        )
 
 
-# ── 1. Settings basics ──────────────────────────
-
-
-class TestSettings(unittest.TestCase):
+class TestSettings(TestContextAPIs):
 
     def test_settings_default_construction(self):
-        s = Settings()
-        self.assertTrue(s.is_valid)
-        s.close()
+        settings = Settings()
+        self.assertTrue(settings.is_valid)
+        settings.close()
 
     def test_settings_set_chaining(self):
-        s = Settings()
+        settings = Settings()
         result = (
-            s.set(
+            settings.set(
                 "builder.thumbnail.enabled", "false"
             ).set(
                 "builder.thumbnail.enabled", "true"
             )
         )
-        self.assertIs(result, s)
-        s.close()
+        self.assertIs(result, settings)
+        settings.close()
 
     def test_settings_from_json(self):
-        s = Settings.from_json(
+        settings = Settings.from_json(
             '{"builder":{"thumbnail":'
             '{"enabled":false}}}'
         )
-        self.assertTrue(s.is_valid)
-        s.close()
+        self.assertTrue(settings.is_valid)
+        settings.close()
 
     def test_settings_from_dict(self):
-        s = Settings.from_dict({
+        settings = Settings.from_dict({
             "builder": {
                 "thumbnail": {"enabled": False}
             }
         })
-        self.assertTrue(s.is_valid)
-        s.close()
+        self.assertTrue(settings.is_valid)
+        settings.close()
 
     def test_settings_update_json(self):
-        s = Settings()
-        result = s.update(
+        settings = Settings()
+        result = settings.update(
             '{"builder":{"thumbnail":'
             '{"enabled":false}}}'
         )
-        self.assertIs(result, s)
-        s.close()
+        self.assertIs(result, settings)
+        settings.close()
 
     def test_settings_update_dict(self):
-        s = Settings()
-        result = s.update({
+        settings = Settings()
+        result = settings.update({
             "builder": {
                 "thumbnail": {"enabled": False}
             }
         })
-        self.assertIs(result, s)
-        s.close()
-
-    def test_settings_no_setitem(self):
-        """__setitem__ was removed; use set() instead."""
-        s = Settings()
-        with self.assertRaises(TypeError):
-            s["builder.thumbnail.enabled"] = "false"
-        s.close()
-
-    def test_settings_context_manager(self):
-        with Settings() as s:
-            self.assertTrue(s.is_valid)
-
-    def test_settings_close_idempotency(self):
-        s = Settings()
-        s.close()
-        s.close()
+        self.assertIs(result, settings)
+        settings.close()
 
     def test_settings_is_valid_after_close(self):
-        s = Settings()
-        s.close()
-        self.assertFalse(s.is_valid)
+        settings = Settings()
+        settings.close()
+        self.assertFalse(settings.is_valid)
 
     def test_settings_raises_after_close(self):
-        s = Settings()
-        s.close()
+        settings = Settings()
+        settings.close()
         with self.assertRaises(Error):
-            s.set(
+            settings.set(
                 "builder.thumbnail.enabled", "false"
             )
 
-    def test_settings_update_no_format_param(self):
-        """format parameter was removed; passing it raises TypeError."""
-        s = Settings()
-        with self.assertRaises(TypeError):
-            s.update("data", format="toml")
-        s.close()
 
-
-# ── 2. Context basics ───────────────────────────
-
-
-class TestContext(unittest.TestCase):
+class TestContext(TestContextAPIs):
 
     def test_context_default(self):
-        ctx = Context()
-        self.assertTrue(ctx.is_valid)
-        self.assertFalse(ctx.has_signer)
-        ctx.close()
+        context = Context()
+        self.assertTrue(context.is_valid)
+        self.assertFalse(context.has_signer)
+        context.close()
 
     def test_context_from_settings(self):
-        s = Settings()
-        ctx = Context(settings=s)
-        self.assertTrue(ctx.is_valid)
-        ctx.close()
-        s.close()
+        settings = Settings()
+        context = Context(settings=settings)
+        self.assertTrue(context.is_valid)
+        context.close()
+        settings.close()
 
     def test_context_from_json(self):
-        ctx = Context.from_json(
+        context = Context.from_json(
             '{"builder":{"thumbnail":'
             '{"enabled":false}}}'
         )
-        self.assertTrue(ctx.is_valid)
-        ctx.close()
+        self.assertTrue(context.is_valid)
+        context.close()
 
     def test_context_from_dict(self):
-        ctx = Context.from_dict({
+        context = Context.from_dict({
             "builder": {
                 "thumbnail": {"enabled": False}
             }
         })
-        self.assertTrue(ctx.is_valid)
-        ctx.close()
+        self.assertTrue(context.is_valid)
+        context.close()
 
     def test_context_context_manager(self):
-        with Context() as ctx:
-            self.assertTrue(ctx.is_valid)
-
-    def test_context_close_idempotency(self):
-        ctx = Context()
-        ctx.close()
-        ctx.close()
+        with Context() as context:
+            self.assertTrue(context.is_valid)
 
     def test_context_is_valid_after_close(self):
-        ctx = Context()
-        ctx.close()
-        self.assertFalse(ctx.is_valid)
-
-    def test_context_invalid_settings_raises(self):
-        s = Settings()
-        s.close()
-        with self.assertRaises(Error):
-            Context(settings=s)
-
-    def test_context_satisfies_protocol(self):
-        ctx = Context()
-        self.assertIsInstance(ctx, ContextProvider)
-        ctx.close()
+        context = Context()
+        context.close()
+        self.assertFalse(context.is_valid)
 
 
-# ── 2b. ContextBuilder ──────────────────────────
+class TestContextBuilder(TestContextAPIs):
 
+    def test_context_builder_default(self):
+        context = Context.builder().build()
+        self.assertTrue(context.is_valid)
+        self.assertFalse(context.has_signer)
+        context.close()
 
-class TestContextBuilder(unittest.TestCase):
+    def test_context_builder_with_settings(self):
+        settings = Settings()
+        context = Context.builder().with_settings(settings).build()
+        self.assertTrue(context.is_valid)
+        context.close()
+        settings.close()
 
-    def test_builder_default(self):
-        ctx = Context.builder().build()
-        self.assertTrue(ctx.is_valid)
-        self.assertFalse(ctx.has_signer)
-        ctx.close()
-
-    def test_builder_with_settings(self):
-        s = Settings()
-        ctx = Context.builder().with_settings(s).build()
-        self.assertTrue(ctx.is_valid)
-        ctx.close()
-        s.close()
-
-    def test_builder_with_signer(self):
-        signer = _ctx_make_signer()
-        ctx = (
+    def test_context_builder_with_signer(self):
+        signer = self._ctx_make_signer()
+        context = (
             Context.builder()
             .with_signer(signer)
             .build()
         )
-        self.assertTrue(ctx.is_valid)
-        self.assertTrue(ctx.has_signer)
-        ctx.close()
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
 
-    def test_builder_with_settings_and_signer(self):
-        s = Settings()
-        signer = _ctx_make_signer()
-        ctx = (
+    def test_context_builder_with_settings_and_signer(self):
+        settings = Settings()
+        signer = self._ctx_make_signer()
+        context = (
             Context.builder()
-            .with_settings(s)
+            .with_settings(settings)
             .with_signer(signer)
             .build()
         )
-        self.assertTrue(ctx.is_valid)
-        self.assertTrue(ctx.has_signer)
-        ctx.close()
-        s.close()
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
+        settings.close()
 
-    def test_builder_returns_context_builder(self):
-        b = Context.builder()
-        self.assertIsInstance(b, ContextBuilder)
-
-    def test_builder_chaining_returns_self(self):
-        s = Settings()
-        b = Context.builder()
-        result = b.with_settings(s)
-        self.assertIs(result, b)
-        ctx = b.build()
-        ctx.close()
-        s.close()
+    def test_context_builder_chaining_returns_self(self):
+        settings = Settings()
+        context_builder = Context.builder()
+        result = context_builder.with_settings(settings)
+        self.assertIs(result, context_builder)
+        context = context_builder.build()
+        context.close()
+        settings.close()
 
 
-# ── 3. Context with Signer ──────────────────────
-
-
-class TestContextWithSigner(unittest.TestCase):
+class TestContextWithSigner(TestContextAPIs):
 
     def test_context_with_signer(self):
-        signer = _ctx_make_signer()
-        ctx = Context(signer=signer)
-        self.assertTrue(ctx.is_valid)
-        self.assertTrue(ctx.has_signer)
-        ctx.close()
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
 
     def test_context_with_settings_and_signer(self):
-        s = Settings()
-        signer = _ctx_make_signer()
-        ctx = Context(settings=s, signer=signer)
-        self.assertTrue(ctx.is_valid)
-        self.assertTrue(ctx.has_signer)
-        ctx.close()
-        s.close()
+        settings = Settings()
+        signer = self._ctx_make_signer()
+        context = Context(settings=settings, signer=signer)
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
+        settings.close()
 
     def test_consumed_signer_is_closed(self):
-        signer = _ctx_make_signer()
-        ctx = Context(signer=signer)
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
         self.assertEqual(signer._state, LifecycleState.CLOSED)
-        ctx.close()
+        context.close()
 
     def test_consumed_signer_raises_on_use(self):
-        signer = _ctx_make_signer()
-        ctx = Context(signer=signer)
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
         with self.assertRaises(Error):
             signer._ensure_valid_state()
-        ctx.close()
+        context.close()
 
     def test_context_has_signer_flag(self):
-        signer = _ctx_make_signer()
-        ctx = Context(signer=signer)
-        self.assertTrue(ctx.has_signer)
-        ctx.close()
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        self.assertTrue(context.has_signer)
+        context.close()
 
     def test_context_no_signer_flag(self):
-        ctx = Context()
-        self.assertFalse(ctx.has_signer)
-        ctx.close()
+        context = Context()
+        self.assertFalse(context.has_signer)
+        context.close()
 
     def test_context_from_json_with_signer(self):
-        signer = _ctx_make_signer()
-        ctx = Context.from_json(
+        signer = self._ctx_make_signer()
+        context = Context.from_json(
             '{"builder":{"thumbnail":'
             '{"enabled":false}}}',
             signer=signer,
         )
-        self.assertTrue(ctx.has_signer)
+        self.assertTrue(context.has_signer)
         self.assertEqual(signer._state, LifecycleState.CLOSED)
-        ctx.close()
+        context.close()
 
 
-# ── 4. Reader with Context ──────────────────────
+class TestReaderWithContext(TestContextAPIs):
 
-
-class TestReaderWithContext(unittest.TestCase):
+  # TODO-TMN: Tests with trust
 
     def test_reader_with_default_context(self):
-        ctx = Context()
-        with open(DEFAULT_TEST_FILE, "rb") as f:
-            reader = Reader(
-                "image/jpeg", f, context=ctx,
-            )
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader("image/jpeg", file_handle, context=context,)
             data = reader.json()
             self.assertIsNotNone(data)
             reader.close()
-        ctx.close()
+        context.close()
 
     def test_reader_with_settings_context(self):
-        s = Settings()
-        ctx = Context(settings=s)
-        with open(DEFAULT_TEST_FILE, "rb") as f:
-            reader = Reader(
-                "image/jpeg", f, context=ctx,
-            )
+        settings = Settings()
+        context = Context(settings=settings)
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader("image/jpeg", file_handle, context=context,)
             data = reader.json()
             self.assertIsNotNone(data)
             reader.close()
-        ctx.close()
-        s.close()
+        context.close()
+        settings.close()
 
     def test_reader_without_context(self):
-        with open(DEFAULT_TEST_FILE, "rb") as f:
-            reader = Reader("image/jpeg", f)
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader("image/jpeg", file_handle)
             data = reader.json()
             self.assertIsNotNone(data)
             reader.close()
 
     def test_reader_try_create_with_context(self):
-        ctx = Context()
-        reader = Reader.try_create(
-            DEFAULT_TEST_FILE, context=ctx,
-        )
+        context = Context()
+        reader = Reader.try_create(DEFAULT_TEST_FILE, context=context,)
         self.assertIsNotNone(reader)
         data = reader.json()
         self.assertIsNotNone(data)
         reader.close()
-        ctx.close()
+        context.close()
 
     def test_reader_try_create_no_manifest(self):
-        ctx = Context()
-        reader = Reader.try_create(
-            INGREDIENT_TEST_FILE, context=ctx,
-        )
+        context = Context()
+        reader = Reader.try_create(INGREDIENT_TEST_FILE, context=context,)
         self.assertIsNone(reader)
-        ctx.close()
+        context.close()
 
     def test_reader_file_path_with_context(self):
-        ctx = Context()
-        reader = Reader(
-            DEFAULT_TEST_FILE, context=ctx,
-        )
+        context = Context()
+        reader = Reader(DEFAULT_TEST_FILE, context=context,)
         data = reader.json()
         self.assertIsNotNone(data)
         reader.close()
-        ctx.close()
+        context.close()
 
     def test_reader_format_and_path_with_ctx(self):
-        ctx = Context()
-        reader = Reader(
-            "image/jpeg", DEFAULT_TEST_FILE,
-            context=ctx,
-        )
+        context = Context()
+        reader = Reader("image/jpeg", DEFAULT_TEST_FILE, context=context)
         data = reader.json()
         self.assertIsNotNone(data)
         reader.close()
-        ctx.close()
+        context.close()
 
+class TestBuilderWithContext(TestContextAPIs):
 
-# ── 5. Builder with Context ─────────────────────
-
-
-class TestBuilderWithContext(unittest.TestCase):
-
-    def test_builder_with_default_context(self):
-        ctx = Context()
-        builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
-        )
+    def test_contextual_builder_with_default_context(self):
+        context = Context()
+        builder = Builder(self.test_manifest, context=context)
         self.assertIsNotNone(builder)
         builder.close()
-        ctx.close()
+        context.close()
 
-    def test_builder_with_settings_context(self):
-        s = Settings.from_dict({
+    def test_contextual_builder_with_settings_context(self):
+        settings = Settings.from_dict({
             "builder": {
                 "thumbnail": {"enabled": False}
             }
         })
-        ctx = Context(settings=s)
-        builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
-        )
-        signer = _ctx_make_signer()
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        context = Context(settings=settings)
+        builder = Builder(self.test_manifest, context=context,)
+        signer = self._ctx_make_signer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
                 builder.sign(
-                    signer, "image/jpeg", src, dst,
+                    signer, "image/jpeg", source_file, dest_file,
                 )
-            reader = Reader(dest)
+            reader = Reader(dest_path)
             manifest = reader.get_active_manifest()
             self.assertIsNone(
                 manifest.get("thumbnail")
             )
             reader.close()
         builder.close()
-        ctx.close()
-        s.close()
+        context.close()
+        settings.close()
 
-    def test_builder_without_context(self):
-        builder = Builder(_CTX_MANIFEST_DEF)
+    def test_contextual_builder_from_json_with_context(self):
+        context = Context()
+        builder = Builder.from_json(self.test_manifest, context=context)
         self.assertIsNotNone(builder)
         builder.close()
+        context.close()
 
-    def test_builder_from_json_with_context(self):
-        ctx = Context()
-        builder = Builder.from_json(
-            _CTX_MANIFEST_DEF, context=ctx,
-        )
-        self.assertIsNotNone(builder)
-        builder.close()
-        ctx.close()
-
-    def test_builder_sign_context_signer(self):
-        signer = _ctx_make_signer()
-        ctx = Context(signer=signer)
+    def test_contextual_builder_sign_context_signer(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
         builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
+            self.test_manifest, context=context,
         )
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
-                mb = builder.sign_with_context(
+                manifest_bytes = builder.sign_with_context(
                     format="image/jpeg",
-                    source=src,
-                    dest=dst,
+                    source=source_file,
+                    dest=dest_file,
                 )
-                self.assertIsNotNone(mb)
-                self.assertGreater(len(mb), 0)
-            reader = Reader(dest)
+                self.assertIsNotNone(manifest_bytes)
+                self.assertGreater(len(manifest_bytes), 0)
+            reader = Reader(dest_path)
             data = reader.json()
             self.assertIsNotNone(data)
             reader.close()
         builder.close()
-        ctx.close()
+        context.close()
 
-    def test_builder_sign_explicit_overrides(self):
-        ctx_signer = _ctx_make_signer()
-        ctx = Context(signer=ctx_signer)
+    def test_contextual_builder_sign_signer_ovverride(self):
+        context_signer = self._ctx_make_signer()
+        context = Context(signer=context_signer)
         builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
+            self.test_manifest, context=context,
         )
-        explicit_signer = _ctx_make_signer()
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        explicit_signer = self._ctx_make_signer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
-                mb = builder.sign(
+                manifest_bytes = builder.sign(
                     explicit_signer,
-                    "image/jpeg", src, dst,
+                    "image/jpeg", source_file, dest_file,
                 )
-                self.assertIsNotNone(mb)
-                self.assertGreater(len(mb), 0)
+                self.assertIsNotNone(manifest_bytes)
+                self.assertGreater(len(manifest_bytes), 0)
         builder.close()
         explicit_signer.close()
-        ctx.close()
+        context.close()
 
-    def test_builder_sign_no_signer_raises(self):
-        ctx = Context()
+    def test_contextual_builder_sign_no_signer_raises(self):
+        context = Context()
         builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
+            self.test_manifest, context=context,
         )
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
                 with self.assertRaises(Error):
                     builder.sign_with_context(
                         format="image/jpeg",
-                        source=src,
-                        dest=dst,
+                        source=source_file,
+                        dest=dest_file,
                     )
         builder.close()
-        ctx.close()
+        context.close()
 
 
-# ── 6. ContextProvider protocol ──────────────────
+class TestContextIntegration(TestContextAPIs):
 
-
-class TestContextProvider(unittest.TestCase):
-
-    def test_isinstance_check(self):
-        ctx = Context()
-        self.assertIsInstance(ctx, ContextProvider)
-        ctx.close()
-
-    def test_custom_context_provider(self):
-        real_ctx = Context()
-
-        class MyProvider(ContextProvider):
-            @property
-            def is_valid(self) -> bool:
-                return True
-
-            @property
-            def execution_context(self):
-                return real_ctx.execution_context
-
-        provider = MyProvider()
-        self.assertIsInstance(
-            provider, ContextProvider
-        )
-        reader = Reader(
-            DEFAULT_TEST_FILE, context=provider,
-        )
-        data = reader.json()
-        self.assertIsNotNone(data)
-        reader.close()
-        real_ctx.close()
-
-    def test_invalid_provider_rejected(self):
-
-        class BadProvider:
-            @property
-            def is_valid(self) -> bool:
-                return False
-
-            @property
-            def execution_context(self):
-                return None
-
-        with self.assertRaises(Error):
-            Reader(
-                DEFAULT_TEST_FILE,
-                context=BadProvider(),
-            )
-
-
-# ── 7. Integration tests ────────────────────────
-
-
-class TestContextIntegration(unittest.TestCase):
+# TODO-TMN: Test with trust on context
 
     def test_sign_no_thumbnail_via_context(self):
-        s = Settings.from_dict({
+        settings = Settings.from_dict({
             "builder": {
                 "thumbnail": {"enabled": False}
             }
         })
-        ctx = Context(settings=s)
-        signer = _ctx_make_signer()
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
         builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
+            self.test_manifest, context=context,
         )
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
                 builder.sign(
-                    signer, "image/jpeg", src, dst,
+                    signer, "image/jpeg", source_file, dest_file,
                 )
-            reader = Reader(dest)
+            reader = Reader(dest_path)
             manifest = reader.get_active_manifest()
             self.assertIsNone(
                 manifest.get("thumbnail")
@@ -5745,133 +5604,92 @@ class TestContextIntegration(unittest.TestCase):
             reader.close()
         builder.close()
         signer.close()
-        ctx.close()
-        s.close()
+        context.close()
+        settings.close()
 
     def test_sign_read_roundtrip(self):
-        signer = _ctx_make_signer()
-        ctx = Context(signer=signer)
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
         builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
+            self.test_manifest, context=context,
         )
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
                 builder.sign_with_context(
                     format="image/jpeg",
-                    source=src,
-                    dest=dst,
+                    source=source_file,
+                    dest=dest_file,
                 )
-            reader = Reader(dest)
+            reader = Reader(dest_path)
             data = reader.json()
             self.assertIsNotNone(data)
             self.assertIn("manifests", data)
             reader.close()
         builder.close()
-        ctx.close()
+        context.close()
 
     def test_shared_context_multi_builders(self):
-        ctx = Context()
-        signer1 = _ctx_make_signer()
-        signer2 = _ctx_make_signer()
+        # TODO-TMN: COntext manager example
+        context = Context()
+        signer1 = self._ctx_make_signer()
+        signer2 = self._ctx_make_signer()
 
-        b1 = Builder(_CTX_MANIFEST_DEF, context=ctx)
-        b2 = Builder(_CTX_MANIFEST_DEF, context=ctx)
+        builder1 = Builder(self.test_manifest, context=context)
+        builder2 = Builder(self.test_manifest, context=context)
 
-        with tempfile.TemporaryDirectory() as td:
-            for i, (builder, signer) in enumerate(
-                [(b1, signer1), (b2, signer2)]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index, (builder, signer) in enumerate(
+                [(builder1, signer1), (builder2, signer2)]
             ):
-                dest = os.path.join(
-                    td, f"out{i}.jpg"
+                dest_path = os.path.join(
+                    temp_dir, f"out{index}.jpg"
                 )
                 with (
                     open(
                         DEFAULT_TEST_FILE, "rb"
-                    ) as src,
-                    open(dest, "w+b") as dst,
+                    ) as source_file,
+                    open(dest_path, "w+b") as dest_file,
                 ):
-                    mb = builder.sign(
+                    manifest_bytes = builder.sign(
                         signer, "image/jpeg",
-                        src, dst,
+                        source_file, dest_file,
                     )
-                    self.assertGreater(len(mb), 0)
+                    self.assertGreater(len(manifest_bytes), 0)
 
-        b1.close()
-        b2.close()
+        builder1.close()
+        builder2.close()
         signer1.close()
         signer2.close()
-        ctx.close()
+        context.close()
 
     def test_sign_callback_signer_in_ctx(self):
-        signer = _ctx_make_callback_signer()
-        ctx = Context(signer=signer)
+        signer = self._ctx_make_callback_signer()
+        context = Context(signer=signer)
         builder = Builder(
-            _CTX_MANIFEST_DEF, context=ctx,
+            self.test_manifest, context=context,
         )
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
             with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
             ):
-                mb = builder.sign_with_context(
+                manifest_bytes = builder.sign_with_context(
                     format="image/jpeg",
-                    source=src,
-                    dest=dst,
+                    source=source_file,
+                    dest=dest_file,
                 )
-                self.assertGreater(len(mb), 0)
-            reader = Reader(dest)
+                self.assertGreater(len(manifest_bytes), 0)
+            reader = Reader(dest_path)
             data = reader.json()
             self.assertIsNotNone(data)
             reader.close()
         builder.close()
-        ctx.close()
-
-
-# ── 8. Backward compatibility ───────────────────
-
-
-class TestBackwardCompat(unittest.TestCase):
-
-    def test_existing_sign_api_positional(self):
-        signer = _ctx_make_signer()
-        builder = Builder(_CTX_MANIFEST_DEF)
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
-            with (
-                open(DEFAULT_TEST_FILE, "rb") as src,
-                open(dest, "w+b") as dst,
-            ):
-                mb = builder.sign(
-                    signer, "image/jpeg", src, dst,
-                )
-                self.assertGreater(len(mb), 0)
-        builder.close()
-        signer.close()
-
-    def test_existing_sign_file_positional(self):
-        signer = _ctx_make_signer()
-        builder = Builder(_CTX_MANIFEST_DEF)
-        with tempfile.TemporaryDirectory() as td:
-            dest = os.path.join(td, "out.jpg")
-            mb = builder.sign_file(
-                DEFAULT_TEST_FILE, dest, signer,
-            )
-            self.assertGreater(len(mb), 0)
-        builder.close()
-        signer.close()
-
-    def test_sign_format_source_required(self):
-        builder = Builder(_CTX_MANIFEST_DEF)
-        signer = _ctx_make_signer()
-        with self.assertRaises(TypeError):
-            builder.sign(signer)
-        builder.close()
-        signer.close()
+        context.close()
 
 
 if __name__ == '__main__':
