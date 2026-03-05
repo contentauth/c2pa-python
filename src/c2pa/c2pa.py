@@ -2031,6 +2031,87 @@ class Stream:
         return self._initialized
 
 
+def _get_supported_mime_types(ffi_func, cache):
+    """Shared helper to retrieve supported MIME types from the native library.
+
+    Args:
+        ffi_func: The FFI function to call (e.g. _lib.c2pa_reader_supported_mime_types)
+        cache: The current cache value (frozenset or None)
+
+    Returns:
+        A tuple of (list of MIME type strings, updated cache value)
+    """
+    if cache is not None:
+        return list(cache), cache
+
+    count = ctypes.c_size_t()
+    arr = ffi_func(ctypes.byref(count))
+
+    if not arr:
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
+        if error:
+            raise C2paError(f"Failed to get supported MIME types: {error}")
+        return [], cache
+
+    if count.value <= 0:
+        try:
+            _lib.c2pa_free_string_array(arr, count.value)
+        except Exception:
+            pass
+        return [], cache
+
+    try:
+        result = []
+        for i in range(count.value):
+            try:
+                if arr[i] is None:
+                    continue
+                mime_type = arr[i].decode("utf-8", errors='replace')
+                if mime_type:
+                    result.append(mime_type)
+            except Exception:
+                continue
+    finally:
+        try:
+            _lib.c2pa_free_string_array(arr, count.value)
+        except Exception:
+            pass
+
+    if result:
+        cache = frozenset(result)
+
+    if cache:
+        return list(cache), cache
+    return [], cache
+
+
+def _validate_and_encode_format(
+    format_str: str, supported_types: list[str], class_name: str
+) -> bytes:
+    """Validate a MIME type / format string and encode it to UTF-8 bytes.
+
+    Args:
+        format_str: The MIME type or format string to validate
+        supported_types: List of supported MIME types
+        class_name: Name of the calling class (for error messages)
+
+    Returns:
+        UTF-8 encoded format bytes
+
+    Raises:
+        C2paError.NotSupported: If the format is not supported
+        C2paError.Encoding: If the string contains invalid UTF-8 characters
+    """
+    if format_str.lower() not in supported_types:
+        raise C2paError.NotSupported(
+            f"{class_name} does not support {format_str}")
+    try:
+        return format_str.encode('utf-8')
+    except UnicodeError as e:
+        raise C2paError.Encoding(
+            f"Invalid UTF-8 characters in input: {e}")
+
+
 class Reader:
     """High-level wrapper for C2PA Reader operations.
 
@@ -2070,58 +2151,10 @@ class Reader:
         Raises:
             C2paError: If there was an error retrieving the MIME types
         """
-        if cls._supported_mime_types_cache is not None:
-            return list(cls._supported_mime_types_cache)
-
-        count = ctypes.c_size_t()
-        arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
-
-        # Validate the returned array pointer
-        if not arr:
-            # If no array returned, check for errors
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(f"Failed to get supported MIME types: {error}")
-            # Return empty list if no error but no array
-            return []
-
-        # Validate count value
-        if count.value <= 0:
-            # Free the array even if count is invalid
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                pass
-            return []
-
-        try:
-            result = []
-            for i in range(count.value):
-                try:
-                    # Validate each array element before accessing
-                    if arr[i] is None:
-                        continue
-
-                    mime_type = arr[i].decode("utf-8", errors='replace')
-                    if mime_type:
-                        result.append(mime_type)
-                except Exception:
-                    # Ignore cleanup errors
-                    continue
-        finally:
-            # Always free the native memory, even if string extraction fails
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                # Ignore cleanup errors
-                pass
-
-        if result:
-            cls._supported_mime_types_cache = frozenset(result)
-
-        if cls._supported_mime_types_cache:
-            return list(cls._supported_mime_types_cache)
-        return []
+        result, cls._supported_mime_types_cache = _get_supported_mime_types(
+            _lib.c2pa_reader_supported_mime_types, cls._supported_mime_types_cache
+        )
+        return result
 
     @classmethod
     def _is_mime_type_supported(cls, mime_type: str) -> bool:
@@ -2223,6 +2256,8 @@ class Reader:
             )
             return
 
+        supported = Reader.get_supported_mime_types()
+
         if stream is None:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
@@ -2232,38 +2267,21 @@ class Reader:
                 raise C2paError.NotSupported(
                     f"Could not determine MIME type for file: {path}")
 
-            if mime_type not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    f"Reader does not support {mime_type}")
-
-            try:
-                format_bytes = mime_type.encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES['encoding_error'].format(
-                        str(e)))
-
+            format_bytes = _validate_and_encode_format(
+                mime_type, supported, "Reader")
             self._init_from_file(path, format_bytes)
 
         elif isinstance(stream, str):
             # stream is a file path, format_or_path is the format
-            format_lower = format_or_path.lower()
-            if format_lower not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    f"Reader does not support {format_or_path}")
-
-            format_bytes = str(format_or_path).encode('utf-8')
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
             self._init_from_file(
                 stream, format_bytes, manifest_data)
 
         else:
             # format_or_path is a format string, stream is a stream object
-            format_str = str(format_or_path)
-            if format_str.lower() not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    f"Reader does not support {format_str}")
-
-            format_bytes = format_str.encode('utf-8')
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
 
             with Stream(stream) as stream_obj:
                 self._create_reader(
@@ -2358,72 +2376,26 @@ class Reader:
             raise C2paError("Context is not valid")
 
         # Determine format and open stream
+        supported = Reader.get_supported_mime_types()
+
         if stream is None:
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
             if not mime_type:
                 raise C2paError.NotSupported(
-                    "Could not determine MIME type"
-                    f" for file: {path}"
-                )
-            if mime_type not in (
-                Reader.get_supported_mime_types()
-            ):
-                raise C2paError.NotSupported(
-                    "Reader does not support"
-                    f" {mime_type}"
-                )
-            try:
-                format_bytes = mime_type.encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES[
-                        'encoding_error'
-                    ].format(str(e))
-                )
+                    f"Could not determine MIME type for file: {path}")
+            format_bytes = _validate_and_encode_format(
+                mime_type, supported, "Reader")
             self._backing_file = open(path, 'rb')
-            self._own_stream = Stream(
-                self._backing_file
-            )
+            self._own_stream = Stream(self._backing_file)
         elif isinstance(stream, str):
-            fmt = format_or_path.lower()
-            if fmt not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    "Reader does not support"
-                    f" {format_or_path}"
-                )
-            try:
-                format_bytes = str(
-                    format_or_path
-                ).encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES[
-                        'encoding_error'
-                    ].format(str(e))
-                )
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
             self._backing_file = open(stream, 'rb')
-            self._own_stream = Stream(
-                self._backing_file
-            )
+            self._own_stream = Stream(self._backing_file)
         else:
-            fmt_str = str(format_or_path)
-            if (
-                fmt_str.lower()
-                not in Reader.get_supported_mime_types()
-            ):
-                raise C2paError.NotSupported(
-                    "Reader does not support"
-                    f" {fmt_str}"
-                )
-            try:
-                format_bytes = fmt_str.encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES[
-                        'encoding_error'
-                    ].format(str(e))
-                )
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
             self._own_stream = Stream(stream)
 
         try:
@@ -3244,59 +3216,10 @@ class Builder:
         Raises:
             C2paError: If there was an error retrieving the MIME types
         """
-        if cls._supported_mime_types_cache is not None:
-            return list(cls._supported_mime_types_cache)
-
-        count = ctypes.c_size_t()
-        arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
-
-        # Validate the returned array pointer
-        if not arr:
-            # If no array returned, check for errors
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(f"Failed to get supported MIME types: {error}")
-            # Return empty list if no error but no array
-            return []
-
-        # Validate count value
-        if count.value <= 0:
-            # Free the array even if count is invalid
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                pass
-            return []
-
-        try:
-            result = []
-            for i in range(count.value):
-                try:
-                    # Validate each array element before accessing
-                    if arr[i] is None:
-                        continue
-
-                    mime_type = arr[i].decode("utf-8", errors='replace')
-                    if mime_type:
-                        result.append(mime_type)
-                except Exception:
-                    # Ignore decoding failures
-                    continue
-        finally:
-            # Always free the native memory, even if string extraction fails
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                # Ignore cleanup errors
-                pass
-
-        # Cache as frozenset for O(1) lookups
-        if result:
-            cls._supported_mime_types_cache = frozenset(result)
-
-        if cls._supported_mime_types_cache:
-            return list(cls._supported_mime_types_cache)
-        return []
+        result, cls._supported_mime_types_cache = _get_supported_mime_types(
+            _lib.c2pa_builder_supported_mime_types, cls._supported_mime_types_cache
+        )
+        return result
 
     @classmethod
     def from_json(
