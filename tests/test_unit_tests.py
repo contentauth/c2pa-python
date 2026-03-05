@@ -27,10 +27,7 @@ import toml
 import threading
 
 # Suppress deprecation warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings(
-    "ignore", message="load_settings\\(\\) is deprecated"
-)
+warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
@@ -939,10 +936,6 @@ class TestReader(unittest.TestCase):
 
 class TestBuilderWithSigner(unittest.TestCase):
     def setUp(self):
-        warnings.filterwarnings(
-            "ignore",
-            message="load_settings\\(\\) is deprecated",
-        )
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -5882,4 +5875,4 @@ class TestBackwardCompat(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(warnings='ignore')
