@@ -78,6 +78,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_context_new',
     'c2pa_reader_from_context',
     'c2pa_reader_with_stream',
+    'c2pa_reader_with_context_from_manifest_data_and_stream',
     'c2pa_builder_from_context',
     'c2pa_builder_with_definition',
     'c2pa_free',
@@ -695,6 +696,13 @@ _setup_function(
     [ctypes.POINTER(C2paReader), ctypes.c_char_p,
      ctypes.POINTER(C2paStream)],
     ctypes.POINTER(C2paReader)
+)
+_setup_function(
+    _lib.c2pa_reader_with_context_from_manifest_data_and_stream,
+    [ctypes.POINTER(C2paContext), ctypes.c_char_p,
+     ctypes.POINTER(C2paStream),
+     ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t],
+    ctypes.POINTER(C2paReader),
 )
 _setup_function(
     _lib.c2pa_builder_from_context,
@@ -2233,6 +2241,7 @@ class Reader(ManagedResource):
         if context is not None:
             self._init_from_context(
                 context, format_or_path, stream,
+                manifest_data,
             )
             return
 
@@ -2346,10 +2355,12 @@ class Reader(ManagedResource):
                     str(e)))
 
     def _init_from_context(self, context, format_or_path,
-                           stream):
+                           stream, manifest_data=None):
         """Initialize Reader from a ContextProvider.
 
-        Uses c2pa_reader_from_context + c2pa_reader_with_stream.
+        Uses c2pa_reader_from_context + c2pa_reader_with_stream,
+        or c2pa_reader_with_context_from_manifest_data_and_stream
+        when manifest_data is provided.
         """
         if not context.is_valid:
             raise C2paError("Context is not valid")
@@ -2378,33 +2389,62 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Create base reader from context
-            reader_ptr = _lib.c2pa_reader_from_context(
-                context.execution_context,
-            )
-            if not reader_ptr:
-                _parse_operation_result_for_error(_lib.c2pa_error())
-                raise C2paError(
-                    Reader._ERROR_MESSAGES[
-                        'reader_error'
-                    ].format("Unknown error")
+            if manifest_data is not None:
+                if not isinstance(manifest_data, bytes):
+                    raise TypeError(
+                        Reader._ERROR_MESSAGES[
+                            'manifest_error'])
+                manifest_array = (
+                    ctypes.c_ubyte *
+                    len(manifest_data))(
+                    *manifest_data)
+                new_ptr = (
+                    _lib.c2pa_reader_with_context_from_manifest_data_and_stream(
+                        context.execution_context,
+                        format_bytes,
+                        self._own_stream._stream,
+                        manifest_array,
+                        len(manifest_data),
+                    )
                 )
-
-            # Consume-and-return: reader_ptr is consumed,
-            # new_ptr is the valid pointer going forward
-            new_ptr = _lib.c2pa_reader_with_stream(
-                reader_ptr, format_bytes,
-                self._own_stream._stream,
-            )
-            # reader_ptr has been invalidated(consumed)
-
-            if not new_ptr:
-                _parse_operation_result_for_error(_lib.c2pa_error())
-                raise C2paError(
-                    Reader._ERROR_MESSAGES[
-                        'reader_error'
-                    ].format("Unknown error")
+                if not new_ptr:
+                    _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES[
+                            'reader_error'
+                        ].format("Unknown error")
+                    )
+            else:
+                # Two-step: from_context + with_stream
+                reader_ptr = _lib.c2pa_reader_from_context(
+                    context.execution_context,
                 )
+                if not reader_ptr:
+                    _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES[
+                            'reader_error'
+                        ].format("Unknown error")
+                    )
+
+                # Consume-and-return: reader_ptr is
+                # consumed, new_ptr is valid going forward
+                new_ptr = _lib.c2pa_reader_with_stream(
+                    reader_ptr, format_bytes,
+                    self._own_stream._stream,
+                )
+                # reader_ptr has been invalidated(consumed)
+
+                if not new_ptr:
+                    _parse_operation_result_for_error(
+                        _lib.c2pa_error())
+                    raise C2paError(
+                        Reader._ERROR_MESSAGES[
+                            'reader_error'
+                        ].format("Unknown error")
+                    )
 
             self._handle = new_ptr
             self._state = LifecycleState.ACTIVE

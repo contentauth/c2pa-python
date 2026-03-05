@@ -5967,6 +5967,42 @@ class TestContextIntegration(TestContextAPIs):
         context.close()
         settings.close()
 
+    def test_remote_sign_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        builder.set_no_embed()
+        with open(DEFAULT_TEST_FILE, "rb") as source:
+            with io.BytesIO() as output_buffer:
+                manifest_data = builder.sign(
+                    signer, "image/jpeg",
+                    source, output_buffer,
+                )
+                output_buffer.seek(0)
+                read_buffer = io.BytesIO(
+                    output_buffer.getvalue()
+                )
+                reader = Reader(
+                    "image/jpeg", read_buffer,
+                    manifest_data, context=context,
+                )
+                validation_state = (
+                    reader.get_validation_state()
+                )
+                self.assertEqual(
+                    validation_state, "Trusted",
+                )
+                reader.close()
+                read_buffer.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
     def test_sign_callback_signer_in_ctx(self):
         signer = self._ctx_make_callback_signer()
         context = Context(signer=signer)
