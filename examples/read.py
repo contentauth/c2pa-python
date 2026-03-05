@@ -10,7 +10,7 @@ import urllib.request
 TRUST_ANCHORS_URL = "https://contentcredentials.org/trust/anchors.pem"
 
 
-def load_trust_settings():
+def load_trust_anchors():
     """Load trust anchors and return a Settings object configured for trust validation."""
     try:
         with urllib.request.urlopen(TRUST_ANCHORS_URL) as response:
@@ -31,7 +31,7 @@ def load_trust_settings():
 def read_c2pa_data(media_path: str):
     print(f"Reading {media_path}")
     try:
-        settings = load_trust_settings()
+        settings = load_trust_anchors()
         context = c2pa.Context(settings=settings)
         with c2pa.Reader(media_path, context=context) as reader:
             print(reader.detailed_json())
