@@ -34,9 +34,10 @@ def read_c2pa_data(media_path: str):
     print(f"Reading {media_path}")
     try:
         settings = load_trust_settings()
-        with c2pa.Context(settings=settings) as context:
-            with c2pa.Reader(media_path, context=context) as reader:
-                print(reader.detailed_json())
+        context = c2pa.Context(settings=settings)
+        with c2pa.Reader(media_path, context=context) as reader:
+            print(reader.detailed_json())
+        context.close()
     except Exception as e:
         print(f"Error reading C2PA data from {media_path}: {e}")
         sys.exit(1)

@@ -90,27 +90,28 @@ manifest_definition = {
 print("\nSigning the image file...")
 
 # Use default Context and Settings.
-with c2pa.Context() as context:
-    with c2pa.Signer.from_callback(
-        callback=callback_signer_es256,
-        alg=c2pa.C2paSigningAlg.ES256,
-        certs=certs.decode('utf-8'),
-        tsa_url="http://timestamp.digicert.com"
-    ) as signer:
-        with c2pa.Builder(manifest_definition, context=context) as builder:
-            builder.sign_file(
-                source_path=fixtures_dir + "A.jpg",
-                dest_path=output_dir + "A_signed.jpg",
-                signer=signer
-            )
+context = c2pa.Context()
+with c2pa.Signer.from_callback(
+    callback=callback_signer_es256,
+    alg=c2pa.C2paSigningAlg.ES256,
+    certs=certs.decode('utf-8'),
+    tsa_url="http://timestamp.digicert.com"
+) as signer:
+    with c2pa.Builder(manifest_definition, context=context) as builder:
+        builder.sign_file(
+            source_path=fixtures_dir + "A.jpg",
+            dest_path=output_dir + "A_signed.jpg",
+            signer=signer
+        )
 
-    # Re-Read the signed image to verify
-    print("\nReading signed image metadata:")
-    with open(output_dir + "A_signed.jpg", "rb") as file:
-        with c2pa.Reader("image/jpeg", file, context=context) as reader:
-            # The validation state will depend on loaded trust settings.
-            # Without loaded trust settings,
-            # the manifest validation_state will be "Invalid".
-            print(reader.json())
+# Re-Read the signed image to verify
+print("\nReading signed image metadata:")
+with open(output_dir + "A_signed.jpg", "rb") as file:
+    with c2pa.Reader("image/jpeg", file, context=context) as reader:
+        # The validation state will depend on loaded trust settings.
+        # Without loaded trust settings,
+        # the manifest validation_state will be "Invalid".
+        print(reader.json())
+context.close()
 
 print("\nExample completed successfully!")

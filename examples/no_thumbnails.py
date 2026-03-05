@@ -83,28 +83,29 @@ settings = c2pa.Settings.from_dict({
 })
 
 print("Signing image with thumbnails disabled through settings...")
-with c2pa.Context(settings=settings) as context:
-    with c2pa.Signer.from_callback(
-        callback=callback_signer_es256,
-        alg=c2pa.C2paSigningAlg.ES256,
-        certs=certs.decode('utf-8'),
-        tsa_url="http://timestamp.digicert.com"
-    ) as signer:
-        with c2pa.Builder(manifest_definition, context=context) as builder:
-            builder.sign_file(
-                source_path=fixtures_dir + "A.jpg",
-                dest_path=output_dir + "A_no_thumbnail.jpg",
-                signer=signer
-            )
+context = c2pa.Context(settings=settings)
+with c2pa.Signer.from_callback(
+    callback=callback_signer_es256,
+    alg=c2pa.C2paSigningAlg.ES256,
+    certs=certs.decode('utf-8'),
+    tsa_url="http://timestamp.digicert.com"
+) as signer:
+    with c2pa.Builder(manifest_definition, context=context) as builder:
+        builder.sign_file(
+            source_path=fixtures_dir + "A.jpg",
+            dest_path=output_dir + "A_no_thumbnail.jpg",
+            signer=signer
+        )
 
-    # Read the signed image and verify no thumbnail is present.
-    with c2pa.Reader(output_dir + "A_no_thumbnail.jpg", context=context) as reader:
-        manifest_store = json.loads(reader.json())
-        manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+# Read the signed image and verify no thumbnail is present.
+with c2pa.Reader(output_dir + "A_no_thumbnail.jpg", context=context) as reader:
+    manifest_store = json.loads(reader.json())
+    manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
-        if manifest.get("thumbnail") is None:
-            print("No thumbnail in the manifest as per settings.")
-        else:
-            print("Thumbnail found in the manifest.")
+    if manifest.get("thumbnail") is None:
+        print("No thumbnail in the manifest as per settings.")
+    else:
+        print("Thumbnail found in the manifest.")
+context.close()
 
 print("\nExample completed successfully!")
