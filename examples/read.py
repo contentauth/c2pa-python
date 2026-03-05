@@ -6,8 +6,6 @@ import urllib.request
 # This example shows how to read a C2PA manifest embedded in a media file, and validate
 # that it is trusted according to the official trust anchor certificate list.
 # The output is printed as prettified JSON.
-#
-# This example uses Context with custom Settings for trust anchor configuration.
 
 TRUST_ANCHORS_URL = "https://contentcredentials.org/trust/anchors.pem"
 

@@ -5180,6 +5180,42 @@ class TestContextAPIs(unittest.TestCase):
             "http://timestamp.digicert.com",
         )
 
+    def _ctx_make_ed25519_signer(self):
+        """Create an ED25519 Signer for context tests."""
+        with open(
+            os.path.join(FIXTURES_DIR, "ed25519.pub"), "rb"
+        ) as f:
+            certs = f.read()
+        with open(
+            os.path.join(FIXTURES_DIR, "ed25519.pem"), "rb"
+        ) as f:
+            key = f.read()
+        info = C2paSignerInfo(
+            alg=b"ed25519",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        return Signer.from_info(info)
+
+    def _ctx_make_ps256_signer(self):
+        """Create a PS256 Signer for context tests."""
+        with open(
+            os.path.join(FIXTURES_DIR, "ps256.pub"), "rb"
+        ) as f:
+            certs = f.read()
+        with open(
+            os.path.join(FIXTURES_DIR, "ps256.pem"), "rb"
+        ) as f:
+            key = f.read()
+        info = C2paSignerInfo(
+            alg=b"ps256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        return Signer.from_info(info)
+
 
 class TestSettings(TestContextAPIs):
 
@@ -5455,6 +5491,7 @@ class TestReaderWithContext(TestContextAPIs):
         self.assertIsNotNone(data)
         reader.close()
         context.close()
+
 
 class TestBuilderWithContext(TestContextAPIs):
 
@@ -5742,6 +5779,191 @@ class TestContextIntegration(TestContextAPIs):
         builder2.close()
         signer1.close()
         signer2.close()
+        context.close()
+        settings.close()
+
+    def test_read_validation_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            reader = Reader("image/jpeg", f, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        context.close()
+        settings.close()
+
+    def test_sign_es256_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source,
+                open(dest_path, "w+b") as dest,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source, dest,
+                )
+            reader = Reader(dest_path, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_sign_ed25519_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_ed25519_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source,
+                open(dest_path, "w+b") as dest,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source, dest,
+                )
+            reader = Reader(dest_path, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_sign_ps256_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_ps256_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source,
+                open(dest_path, "w+b") as dest,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source, dest,
+                )
+            reader = Reader(dest_path, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_archive_sign_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+        builder = Builder.from_archive(
+            archive, context=context,
+        )
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=context,
+            )
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        archive.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_archive_sign_with_ingredient_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+        builder = Builder.from_archive(
+            archive, context=context,
+        )
+        ingredient_json = '{"test": "ingredient"}'
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            builder.add_ingredient(
+                ingredient_json, "image/jpeg", f,
+            )
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=context,
+            )
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        archive.close()
+        builder.close()
+        signer.close()
         context.close()
         settings.close()
 
