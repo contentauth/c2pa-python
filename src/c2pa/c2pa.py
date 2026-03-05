@@ -308,6 +308,11 @@ def _clear_error_state():
         _lib.c2pa_string_free(error)
 
 
+def _free_native_ptr(ptr):
+    """Free a native pointer by casting it to c_void_p and calling c2pa_free."""
+    _lib.c2pa_free(ctypes.cast(ptr, ctypes.c_void_p))
+
+
 class C2paSignerInfo(ctypes.Structure):
     """Configuration for a Signer."""
     _fields_ = [
@@ -648,8 +653,8 @@ class C2paError(Exception):
 
 
 # Define typed exception subclasses that inherit from C2paError
-# These are attached to C2paError as class attributes
-# (eg., C2paError.ManifestNotFound), and also to ensure inheritance hierarchy
+# These are attached to C2paError as class attributes for backward compatibility
+# (eg., C2paError.ManifestNotFound), and also to ensure properly inheritance hierarchy
 
 class _C2paAssertion(C2paError):
     """Exception raised for assertion errors."""
@@ -731,7 +736,7 @@ class _C2paVerify(C2paError):
 
 
 # Attach exception subclasses to C2paError for backward compatibility
-# Preserves behavior for exception catching,
+# Preserves behavior for exception catching like except C2paError.ManifestNotFound,
 # also reduces imports (think of it as an alias of sorts)
 C2paError.Assertion = _C2paAssertion
 C2paError.AssertionNotFound = _C2paAssertionNotFound
@@ -1393,12 +1398,7 @@ class Settings:
                     and self._settings
                 ):
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._settings,
-                                ctypes.c_void_p
-                            )
-                        )
+                        _free_native_ptr(self._settings)
                     except Exception:
                         logger.error(
                             "Failed to free native"
@@ -1573,12 +1573,7 @@ class Context(ContextProvider):
                 # Free builder if build was not reached
                 if builder_ptr is not None:
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                builder_ptr,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(builder_ptr)
                     except Exception:
                         pass
                 raise
@@ -1677,12 +1672,7 @@ class Context(ContextProvider):
                     and self._context
                 ):
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._context,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(self._context)
                     except Exception:
                         logger.error(
                             "Failed to free native"
@@ -2031,6 +2021,87 @@ class Stream:
         return self._initialized
 
 
+def _get_supported_mime_types(ffi_func, cache):
+    """Shared helper to retrieve supported MIME types from the native library.
+
+    Args:
+        ffi_func: The FFI function to call (e.g. _lib.c2pa_reader_supported_mime_types)
+        cache: The current cache value (frozenset or None)
+
+    Returns:
+        A tuple of (list of MIME type strings, updated cache value)
+    """
+    if cache is not None:
+        return list(cache), cache
+
+    count = ctypes.c_size_t()
+    arr = ffi_func(ctypes.byref(count))
+
+    if not arr:
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
+        if error:
+            raise C2paError(f"Failed to get supported MIME types: {error}")
+        return [], cache
+
+    if count.value <= 0:
+        try:
+            _lib.c2pa_free_string_array(arr, count.value)
+        except Exception:
+            pass
+        return [], cache
+
+    try:
+        result = []
+        for i in range(count.value):
+            try:
+                if arr[i] is None:
+                    continue
+                mime_type = arr[i].decode("utf-8", errors='replace')
+                if mime_type:
+                    result.append(mime_type)
+            except Exception:
+                continue
+    finally:
+        try:
+            _lib.c2pa_free_string_array(arr, count.value)
+        except Exception:
+            pass
+
+    if result:
+        cache = frozenset(result)
+
+    if cache:
+        return list(cache), cache
+    return [], cache
+
+
+def _validate_and_encode_format(
+    format_str: str, supported_types: list[str], class_name: str
+) -> bytes:
+    """Validate a MIME type / format string and encode it to UTF-8 bytes.
+
+    Args:
+        format_str: The MIME type or format string to validate
+        supported_types: List of supported MIME types
+        class_name: Name of the calling class (for error messages)
+
+    Returns:
+        UTF-8 encoded format bytes
+
+    Raises:
+        C2paError.NotSupported: If the format is not supported
+        C2paError.Encoding: If the string contains invalid UTF-8 characters
+    """
+    if format_str.lower() not in supported_types:
+        raise C2paError.NotSupported(
+            f"{class_name} does not support {format_str}")
+    try:
+        return format_str.encode('utf-8')
+    except UnicodeError as e:
+        raise C2paError.Encoding(
+            f"Invalid UTF-8 characters in input: {e}")
+
+
 class Reader:
     """High-level wrapper for C2PA Reader operations.
 
@@ -2070,58 +2141,10 @@ class Reader:
         Raises:
             C2paError: If there was an error retrieving the MIME types
         """
-        if cls._supported_mime_types_cache is not None:
-            return list(cls._supported_mime_types_cache)
-
-        count = ctypes.c_size_t()
-        arr = _lib.c2pa_reader_supported_mime_types(ctypes.byref(count))
-
-        # Validate the returned array pointer
-        if not arr:
-            # If no array returned, check for errors
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(f"Failed to get supported MIME types: {error}")
-            # Return empty list if no error but no array
-            return []
-
-        # Validate count value
-        if count.value <= 0:
-            # Free the array even if count is invalid
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                pass
-            return []
-
-        try:
-            result = []
-            for i in range(count.value):
-                try:
-                    # Validate each array element before accessing
-                    if arr[i] is None:
-                        continue
-
-                    mime_type = arr[i].decode("utf-8", errors='replace')
-                    if mime_type:
-                        result.append(mime_type)
-                except Exception:
-                    # Ignore cleanup errors
-                    continue
-        finally:
-            # Always free the native memory, even if string extraction fails
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                # Ignore cleanup errors
-                pass
-
-        if result:
-            cls._supported_mime_types_cache = frozenset(result)
-
-        if cls._supported_mime_types_cache:
-            return list(cls._supported_mime_types_cache)
-        return []
+        result, cls._supported_mime_types_cache = _get_supported_mime_types(
+            _lib.c2pa_reader_supported_mime_types, cls._supported_mime_types_cache
+        )
+        return result
 
     @classmethod
     def _is_mime_type_supported(cls, mime_type: str) -> bool:
@@ -2138,12 +2161,30 @@ class Reader:
         return mime_type in cls._supported_mime_types_cache
 
     @classmethod
+    @overload
     def try_create(
         cls,
         format_or_path: Union[str, Path],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
-        *,
+    ) -> Optional["Reader"]: ...
+
+    @classmethod
+    @overload
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any],
+        manifest_data: Optional[Any],
+        context: 'ContextProvider',
+    ) -> Optional["Reader"]: ...
+
+    @classmethod
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any] = None,
+        manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
     ) -> Optional["Reader"]:
         """This is a factory method to create a new Reader,
@@ -2176,12 +2217,28 @@ class Reader:
         except C2paError.ManifestNotFound:
             return None
 
+    @overload
     def __init__(
         self,
         format_or_path: Union[str, Path],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
-        *,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any],
+        manifest_data: Optional[Any],
+        context: 'ContextProvider',
+    ) -> None: ...
+
+    def __init__(
+        self,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any] = None,
+        manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
     ):
         """Create a new Reader.
@@ -2223,6 +2280,8 @@ class Reader:
             )
             return
 
+        supported = Reader.get_supported_mime_types()
+
         if stream is None:
             # Create a stream from the file path in format_or_path
             path = str(format_or_path)
@@ -2232,38 +2291,21 @@ class Reader:
                 raise C2paError.NotSupported(
                     f"Could not determine MIME type for file: {path}")
 
-            if mime_type not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    f"Reader does not support {mime_type}")
-
-            try:
-                format_bytes = mime_type.encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES['encoding_error'].format(
-                        str(e)))
-
+            format_bytes = _validate_and_encode_format(
+                mime_type, supported, "Reader")
             self._init_from_file(path, format_bytes)
 
         elif isinstance(stream, str):
             # stream is a file path, format_or_path is the format
-            format_lower = format_or_path.lower()
-            if format_lower not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    f"Reader does not support {format_or_path}")
-
-            format_bytes = str(format_or_path).encode('utf-8')
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
             self._init_from_file(
                 stream, format_bytes, manifest_data)
 
         else:
             # format_or_path is a format string, stream is a stream object
-            format_str = str(format_or_path)
-            if format_str.lower() not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    f"Reader does not support {format_str}")
-
-            format_bytes = format_str.encode('utf-8')
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
 
             with Stream(stream) as stream_obj:
                 self._create_reader(
@@ -2358,72 +2400,26 @@ class Reader:
             raise C2paError("Context is not valid")
 
         # Determine format and open stream
+        supported = Reader.get_supported_mime_types()
+
         if stream is None:
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
             if not mime_type:
                 raise C2paError.NotSupported(
-                    "Could not determine MIME type"
-                    f" for file: {path}"
-                )
-            if mime_type not in (
-                Reader.get_supported_mime_types()
-            ):
-                raise C2paError.NotSupported(
-                    "Reader does not support"
-                    f" {mime_type}"
-                )
-            try:
-                format_bytes = mime_type.encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES[
-                        'encoding_error'
-                    ].format(str(e))
-                )
+                    f"Could not determine MIME type for file: {path}")
+            format_bytes = _validate_and_encode_format(
+                mime_type, supported, "Reader")
             self._backing_file = open(path, 'rb')
-            self._own_stream = Stream(
-                self._backing_file
-            )
+            self._own_stream = Stream(self._backing_file)
         elif isinstance(stream, str):
-            fmt = format_or_path.lower()
-            if fmt not in Reader.get_supported_mime_types():
-                raise C2paError.NotSupported(
-                    "Reader does not support"
-                    f" {format_or_path}"
-                )
-            try:
-                format_bytes = str(
-                    format_or_path
-                ).encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES[
-                        'encoding_error'
-                    ].format(str(e))
-                )
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
             self._backing_file = open(stream, 'rb')
-            self._own_stream = Stream(
-                self._backing_file
-            )
+            self._own_stream = Stream(self._backing_file)
         else:
-            fmt_str = str(format_or_path)
-            if (
-                fmt_str.lower()
-                not in Reader.get_supported_mime_types()
-            ):
-                raise C2paError.NotSupported(
-                    "Reader does not support"
-                    f" {fmt_str}"
-                )
-            try:
-                format_bytes = fmt_str.encode('utf-8')
-            except UnicodeError as e:
-                raise C2paError.Encoding(
-                    Reader._ERROR_MESSAGES[
-                        'encoding_error'
-                    ].format(str(e))
-                )
+            format_bytes = _validate_and_encode_format(
+                str(format_or_path), supported, "Reader")
             self._own_stream = Stream(stream)
 
         try:
@@ -2515,12 +2511,7 @@ class Reader:
                 # Clean up reader
                 if hasattr(self, '_reader') and self._reader:
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._reader,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(self._reader)
                     except Exception:
                         # Cleanup failure doesn't raise exceptions
                         logger.error(
@@ -3096,12 +3087,7 @@ class Signer:
                 self._state = LifecycleState.CLOSED
 
                 try:
-                    _lib.c2pa_free(
-                        ctypes.cast(
-                            self._signer,
-                            ctypes.c_void_p,
-                        )
-                    )
+                    _free_native_ptr(self._signer)
                 except Exception:
                     # Log cleanup errors but don't raise exceptions
                     logger.error("Failed to free native Signer resources")
@@ -3244,65 +3230,30 @@ class Builder:
         Raises:
             C2paError: If there was an error retrieving the MIME types
         """
-        if cls._supported_mime_types_cache is not None:
-            return list(cls._supported_mime_types_cache)
+        result, cls._supported_mime_types_cache = _get_supported_mime_types(
+            _lib.c2pa_builder_supported_mime_types, cls._supported_mime_types_cache
+        )
+        return result
 
-        count = ctypes.c_size_t()
-        arr = _lib.c2pa_builder_supported_mime_types(ctypes.byref(count))
+    @classmethod
+    @overload
+    def from_json(
+        cls,
+        manifest_json: Any,
+    ) -> 'Builder': ...
 
-        # Validate the returned array pointer
-        if not arr:
-            # If no array returned, check for errors
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(f"Failed to get supported MIME types: {error}")
-            # Return empty list if no error but no array
-            return []
-
-        # Validate count value
-        if count.value <= 0:
-            # Free the array even if count is invalid
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                pass
-            return []
-
-        try:
-            result = []
-            for i in range(count.value):
-                try:
-                    # Validate each array element before accessing
-                    if arr[i] is None:
-                        continue
-
-                    mime_type = arr[i].decode("utf-8", errors='replace')
-                    if mime_type:
-                        result.append(mime_type)
-                except Exception:
-                    # Ignore decoding failures
-                    continue
-        finally:
-            # Always free the native memory, even if string extraction fails
-            try:
-                _lib.c2pa_free_string_array(arr, count.value)
-            except Exception:
-                # Ignore cleanup errors
-                pass
-
-        # Cache as frozenset for O(1) lookups
-        if result:
-            cls._supported_mime_types_cache = frozenset(result)
-
-        if cls._supported_mime_types_cache:
-            return list(cls._supported_mime_types_cache)
-        return []
+    @classmethod
+    @overload
+    def from_json(
+        cls,
+        manifest_json: Any,
+        context: 'ContextProvider',
+    ) -> 'Builder': ...
 
     @classmethod
     def from_json(
         cls,
         manifest_json: Any,
-        *,
         context: Optional['ContextProvider'] = None,
     ) -> 'Builder':
         """Create a new Builder from a JSON manifest.
@@ -3320,10 +3271,24 @@ class Builder:
         return cls(manifest_json, context=context)
 
     @classmethod
+    @overload
     def from_archive(
         cls,
         stream: Any,
-        *,
+    ) -> 'Builder': ...
+
+    @classmethod
+    @overload
+    def from_archive(
+        cls,
+        stream: Any,
+        context: 'ContextProvider',
+    ) -> 'Builder': ...
+
+    @classmethod
+    def from_archive(
+        cls,
+        stream: Any,
         context: Optional['ContextProvider'] = None,
     ) -> 'Builder':
         """Create a new Builder from an archive stream.
@@ -3364,10 +3329,22 @@ class Builder:
         finally:
             stream_obj.close()
 
+    @overload
     def __init__(
         self,
         manifest_json: Any,
-        *,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        manifest_json: Any,
+        context: 'ContextProvider',
+    ) -> None: ...
+
+    def __init__(
+        self,
+        manifest_json: Any,
         context: Optional['ContextProvider'] = None,
     ):
         """Initialize a new Builder instance.
@@ -3455,7 +3432,6 @@ class Builder:
         new_ptr = _lib.c2pa_builder_with_definition(
             builder_ptr, json_str,
         )
-        # builder_ptr is NOW INVALID
 
         if not new_ptr:
             _parse_operation_result_for_error(
@@ -3511,12 +3487,7 @@ class Builder:
                         self,
                         '_builder') and self._builder and self._builder != 0:
                     try:
-                        _lib.c2pa_free(
-                            ctypes.cast(
-                                self._builder,
-                                ctypes.c_void_p,
-                            )
-                        )
+                        _free_native_ptr(self._builder)
                     except Exception:
                         # Log cleanup errors but don't raise exceptions
                         logger.error(
@@ -3844,19 +3815,24 @@ class Builder:
 
     def _sign_internal(
             self,
-            signer: Signer,
             format: str,
             source_stream: Stream,
-            dest_stream: Stream) -> bytes:
-        """Internal signing logic shared between sign() and sign_file() methods
-        to use same native calls but expose different API surface.
+            dest_stream: Stream,
+            signer: Optional[Signer] = None) -> bytes:
+        """Internal signing implementation used by both explicit-signer and
+        context-signer code paths.
+
+        When ``signer`` is provided, calls ``c2pa_builder_sign`` (explicit
+        signer).  When ``signer`` is ``None``, calls
+        ``c2pa_builder_sign_context`` (context-based signer).
 
         Args:
-            signer: The signer to use
             format: The MIME type or extension of the content
             source_stream: The source stream
             dest_stream: The destination stream,
-            opened in w+b (write+read binary) mode.
+                opened in w+b (write+read binary) mode.
+            signer: Signer to use. When None the context
+                signer is used instead.
 
         Returns:
             Manifest bytes
@@ -3866,31 +3842,34 @@ class Builder:
         """
         self._ensure_valid_state()
 
-        # Validate signer pointer before use
-        if not signer or not hasattr(signer, '_signer') or not signer._signer:
-            raise C2paError("Invalid or closed signer")
+        if signer is not None:
+            if not hasattr(signer, '_signer') or not signer._signer:
+                raise C2paError("Invalid or closed signer")
 
-        format_lower = format.lower()
-        if format_lower not in Builder.get_supported_mime_types():
-            raise C2paError.NotSupported(
-                f"Builder does not support {format}")
-
-        format_str = format.encode('utf-8')
+        format_bytes = _validate_and_encode_format(
+            format, Builder.get_supported_mime_types(), "Builder")
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
-        # c2pa_builder_sign uses streams
         try:
-            result = _lib.c2pa_builder_sign(
-                self._builder,
-                format_str,
-                source_stream._stream,
-                dest_stream._stream,
-                signer._signer,
-                ctypes.byref(manifest_bytes_ptr)
-            )
+            if signer is not None:
+                result = _lib.c2pa_builder_sign(
+                    self._builder,
+                    format_bytes,
+                    source_stream._stream,
+                    dest_stream._stream,
+                    signer._signer,
+                    ctypes.byref(manifest_bytes_ptr)
+                )
+            else:
+                result = _lib.c2pa_builder_sign_context(
+                    self._builder,
+                    format_bytes,
+                    source_stream._stream,
+                    dest_stream._stream,
+                    ctypes.byref(manifest_bytes_ptr),
+                )
         except Exception as e:
-            # Handle errors during the C function call
-            raise C2paError(f"Error calling c2pa_builder_sign: {str(e)}")
+            raise C2paError(f"Error during signing: {e}")
 
         if result < 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3917,7 +3896,6 @@ class Builder:
                     logger.error(
                         "Failed to release native manifest bytes memory"
                     )
-                    pass
 
         return manifest_bytes
 
@@ -3940,32 +3918,35 @@ class Builder:
             Manifest bytes
         """
         source_stream = Stream(source)
+        try:
+            if dest:
+                dest_stream = Stream(dest)
+            else:
+                mem_buffer = io.BytesIO()
+                dest_stream = Stream(mem_buffer)
 
-        if dest:
-            dest_stream = Stream(dest)
-        else:
-            mem_buffer = io.BytesIO()
-            dest_stream = Stream(mem_buffer)
-
-        if signer is not None:
-            manifest_bytes = self._sign_internal(
-                signer, format,
-                source_stream, dest_stream,
-            )
-        elif self._has_context_signer:
-            manifest_bytes = self._sign_context_internal(
-                format, source_stream, dest_stream,
-            )
-        else:
-            raise C2paError(
-                "No signer provided. Either pass a"
-                " signer parameter or create the"
-                " Builder with a Context that has"
-                " a signer."
-            )
-
-        if not dest:
-            dest_stream.close()
+            try:
+                if signer is not None:
+                    manifest_bytes = self._sign_internal(
+                        format, source_stream, dest_stream,
+                        signer=signer,
+                    )
+                elif self._has_context_signer:
+                    manifest_bytes = self._sign_internal(
+                        format, source_stream, dest_stream,
+                    )
+                else:
+                    raise C2paError(
+                        "No signer provided. Either pass a"
+                        " signer parameter or create the"
+                        " Builder with a Context that has"
+                        " a signer."
+                    )
+            finally:
+                if not dest:
+                    dest_stream.close()
+        finally:
+            source_stream.close()
 
         return manifest_bytes
 
@@ -3977,10 +3958,6 @@ class Builder:
         dest: Any = None,
     ) -> bytes:
         """Sign the builder's content with an explicit signer.
-
-        Example::
-
-            builder.sign(signer, "image/jpeg", source, dest)
 
         Args:
             signer: The signer to use.
@@ -4007,10 +3984,6 @@ class Builder:
         The builder must have been created with a Context
         that has a signer.
 
-        Example::
-
-            builder.sign_with_context("image/jpeg", source, dest)
-
         Args:
             format: The MIME type of the content.
             source: The source stream.
@@ -4023,85 +3996,6 @@ class Builder:
             C2paError: If there was an error during signing
         """
         return self._sign_common(None, format, source, dest)
-
-    def _sign_context_internal(
-        self,
-        format: str,
-        source_stream: 'Stream',
-        dest_stream: 'Stream',
-    ) -> bytes:
-        """Sign using the signer stored in the context.
-
-        Uses c2pa_builder_sign_context instead of
-        c2pa_builder_sign.
-        """
-        self._ensure_valid_state()
-
-        format_lower = format.lower()
-        if (
-            format_lower
-            not in Builder.get_supported_mime_types()
-        ):
-            raise C2paError.NotSupported(
-                "Builder does not support"
-                f" {format}"
-            )
-
-        format_str = format.encode('utf-8')
-        manifest_bytes_ptr = (
-            ctypes.POINTER(ctypes.c_ubyte)()
-        )
-
-        try:
-            result = _lib.c2pa_builder_sign_context(
-                self._builder,
-                format_str,
-                source_stream._stream,
-                dest_stream._stream,
-                ctypes.byref(manifest_bytes_ptr),
-            )
-        except Exception as e:
-            raise C2paError(
-                "Error calling"
-                f" c2pa_builder_sign_context: {e}"
-            )
-
-        if result < 0:
-            error = _parse_operation_result_for_error(
-                _lib.c2pa_error()
-            )
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                "Error during context-based signing"
-            )
-
-        manifest_bytes = b""
-        if manifest_bytes_ptr and result > 0:
-            try:
-                temp_buffer = (
-                    ctypes.c_ubyte * result
-                )()
-                ctypes.memmove(
-                    temp_buffer,
-                    manifest_bytes_ptr,
-                    result,
-                )
-                manifest_bytes = bytes(temp_buffer)
-            except Exception:
-                manifest_bytes = b""
-            finally:
-                try:
-                    _lib.c2pa_manifest_bytes_free(
-                        manifest_bytes_ptr
-                    )
-                except Exception:
-                    logger.error(
-                        "Failed to release native"
-                        " manifest bytes memory"
-                    )
-
-        return manifest_bytes
 
     @overload
     def sign_file(
@@ -4143,9 +4037,7 @@ class Builder:
         Raises:
             C2paError: If there was an error during signing
         """
-        mime_type = _get_mime_type_from_path(
-            source_path
-        )
+        mime_type = _get_mime_type_from_path(source_path)
 
         try:
             with (
@@ -4153,15 +4045,9 @@ class Builder:
                 open(dest_path, 'w+b') as dest_file,
             ):
                 if signer is not None:
-                    return self.sign(
-                        signer, mime_type,
-                        source_file, dest_file,
-                    )
-                else:
-                    return self.sign(
-                        mime_type,
-                        source_file, dest_file,
-                    )
+                    return self.sign(signer, mime_type, source_file, dest_file)
+                # else:
+                return self.sign(mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 
