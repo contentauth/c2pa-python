@@ -207,6 +207,93 @@ class LifecycleState(enum.IntEnum):
     CLOSED = 2
 
 
+class ManagedResource:
+    """Base class for objects that hold a native (FFI) resource.
+    This is an internal base class that provides lifecycle management
+    for native resources (pointers).
+
+    Subclasses must:
+      - Set `self._handle` to the native pointer after creation.
+      - Set `self._state = LifecycleState.ACTIVE` once initialized.
+      - Override `_release()` to free class-specific resources
+        (streams, caches, callbacks, etc.) — called *before* the
+        native pointer is freed.
+
+    The native pointer is freed automatically via `_free_native_ptr`.
+    """
+
+    _resource_name: str = "Resource"
+    """Display name used in error messages (override per subclass)."""
+
+    def __init__(self):
+        self._state = LifecycleState.UNINITIALIZED
+        self._handle = None
+
+    def _ensure_valid_state(self):
+        """Raise if the resource is closed or uninitialized."""
+        if self._state == LifecycleState.CLOSED:
+            raise C2paError(f"{self._resource_name} is closed")
+        if self._state != LifecycleState.ACTIVE:
+            raise C2paError(
+                f"{self._resource_name} is not properly initialized")
+        if not self._handle:
+            raise C2paError(f"{self._resource_name} is closed")
+
+    def _release(self):
+        """Override to free class-specific resources (streams, caches, etc.).
+
+        Called during cleanup before the native handle is freed.
+        The default implementation does nothing.
+        """
+
+    def _cleanup_resources(self):
+        """Release native resources idempotently."""
+        try:
+            if (
+                hasattr(self, '_state')
+                and self._state != LifecycleState.CLOSED
+            ):
+                self._state = LifecycleState.CLOSED
+                self._release()
+                if hasattr(self, '_handle') and self._handle:
+                    try:
+                        _free_native_ptr(self._handle)
+                    except Exception:
+                        logger.error(
+                            f"Failed to free native"
+                            f" {self._resource_name} resources"
+                        )
+                    finally:
+                        self._handle = None
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Release the resource (idempotent, never raises
+        because we don't want to error on clean-up fail)."""
+        if self._state == LifecycleState.CLOSED:
+            return
+        try:
+            self._cleanup_resources()
+        except Exception as e:
+            logger.error(f"Error during {self._resource_name} close: {e}")
+        finally:
+            self._state = LifecycleState.CLOSED
+
+    def __enter__(self):
+        """For classes with context manager (with) pattern"""
+        self._ensure_valid_state()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """For classes with context manager (with) pattern"""
+        self.close()
+
+    def __del__(self):
+        """For classes with context manager (with) pattern"""
+        self._cleanup_resources()
+
+
 # Mapping from C2paSigningAlg enum to string representation,
 # as the enum value currently maps by default to an integer value.
 _ALG_TO_STRING_BYTES_MAPPING = {
@@ -1246,25 +1333,26 @@ class ContextProvider(ABC):
     def execution_context(self): ...
 
 
-class Settings:
+class Settings(ManagedResource):
     """Per-instance configuration for C2PA operations.
 
     Settings configure SDK behavior. Use with Context class to
     apply settings to Reader/Builder operations.
     """
 
+    _resource_name = "Settings"
+
     def __init__(self):
         """Create new Settings with default values."""
+        super().__init__()
         _clear_error_state()
-        self._state = LifecycleState.UNINITIALIZED
-        self._settings = None
 
         ptr = _lib.c2pa_settings_new()
         if not ptr:
             _parse_operation_result_for_error(None)
             raise C2paError("Failed to create Settings")
 
-        self._settings = ptr
+        self._handle = ptr
         self._state = LifecycleState.ACTIVE
 
     @classmethod
@@ -1316,7 +1404,7 @@ class Settings:
             ) from e
 
         result = _lib.c2pa_settings_set_value(
-            self._settings, path_bytes, value_bytes
+            self._handle, path_bytes, value_bytes
         )
         if result != 0:
             _parse_operation_result_for_error(None)
@@ -1349,7 +1437,7 @@ class Settings:
             ) from e
 
         result = _lib.c2pa_settings_update_from_string(
-            self._settings, data_bytes, b"json"
+            self._handle, data_bytes, b"json"
         )
         if result != 0:
             _parse_operation_result_for_error(None)
@@ -1360,75 +1448,15 @@ class Settings:
     def _c_settings(self):
         """Expose the raw pointer for Context to consume."""
         self._ensure_valid_state()
-        return self._settings
+        return self._handle
 
     @property
     def is_valid(self) -> bool:
         """Check if the Settings is in a valid state."""
         return (
             self._state == LifecycleState.ACTIVE
-            and self._settings is not None
+            and self._handle is not None
         )
-
-    def _ensure_valid_state(self):
-        """Ensure the settings are in a valid state.
-
-        Raises:
-            C2paError: If the settings are closed or invalid.
-        """
-        if self._state == LifecycleState.CLOSED:
-            raise C2paError("Settings is closed")
-        if self._state != LifecycleState.ACTIVE:
-            raise C2paError(
-                "Settings is not properly initialized"
-            )
-        if not self._settings:
-            raise C2paError("Settings is closed")
-
-    def _cleanup_resources(self):
-        """Release native resources safely."""
-        try:
-            if (
-                hasattr(self, '_state')
-                and self._state != LifecycleState.CLOSED
-            ):
-                self._state = LifecycleState.CLOSED
-                if (
-                    hasattr(self, '_settings')
-                    and self._settings
-                ):
-                    try:
-                        _free_native_ptr(self._settings)
-                    except Exception:
-                        logger.error(
-                            "Failed to free native"
-                            " Settings resources"
-                        )
-                    finally:
-                        self._settings = None
-        except Exception:
-            pass
-
-    def close(self) -> None:
-        """Release the Settings resources."""
-        if self._state == LifecycleState.CLOSED:
-            return
-        try:
-            self._cleanup_resources()
-        except Exception as e:
-            logger.error(
-                f"Error during Settings close: {e}"
-            )
-
-    def __enter__(self) -> 'Settings':
-        self._ensure_valid_state()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def __del__(self):
-        self._cleanup_resources()
 
 
 class ContextBuilder:
@@ -1464,7 +1492,7 @@ class ContextBuilder:
         )
 
 
-class Context(ContextProvider):
+class Context(ManagedResource, ContextProvider):
     """Per-instance context for C2PA operations.
 
     A Context may carry Settings and a  Signer,
@@ -1476,6 +1504,8 @@ class Context(ContextProvider):
     as it becomes included into the Context, and must not be
     used directly again after that.
     """
+
+    _resource_name = "Context"
 
     def __init__(
         self,
@@ -1496,9 +1526,8 @@ class Context(ContextProvider):
                 provided but the library does not support
                 signer-on-context.
         """
+        super().__init__()
         _clear_error_state()
-        self._state = LifecycleState.UNINITIALIZED
-        self._context = None
         self._has_signer = False
         self._signer_callback_cb = None
 
@@ -1510,7 +1539,7 @@ class Context(ContextProvider):
                 raise C2paError(
                     "Failed to create Context"
                 )
-            self._context = ptr
+            self._handle = ptr
         else:
             # Use ContextBuilder for settings/signer
             builder_ptr = _lib.c2pa_context_builder_new()
@@ -1535,7 +1564,7 @@ class Context(ContextProvider):
 
                 if signer is not None:
                     signer_ptr, callback_cb = (
-                        signer._release()
+                        signer._transfer_ownership()
                     )
                     self._signer_callback_cb = (
                         callback_cb
@@ -1568,7 +1597,7 @@ class Context(ContextProvider):
                     raise C2paError(
                         "Failed to build Context"
                     )
-                self._context = ptr
+                self._handle = ptr
             except Exception:
                 # Free builder if build was not reached
                 if builder_ptr is not None:
@@ -1634,75 +1663,15 @@ class Context(ContextProvider):
     def execution_context(self):
         """Return the raw C2paContext pointer."""
         self._ensure_valid_state()
-        return self._context
+        return self._handle
 
     @property
     def is_valid(self) -> bool:
         """Check if the Context is in a valid state."""
         return (
             self._state == LifecycleState.ACTIVE
-            and self._context is not None
+            and self._handle is not None
         )
-
-    def _ensure_valid_state(self):
-        """Ensure the context is in a valid state.
-
-        Raises:
-            C2paError: If the context is closed or invalid.
-        """
-        if self._state == LifecycleState.CLOSED:
-            raise C2paError("Context is closed")
-        if self._state != LifecycleState.ACTIVE:
-            raise C2paError(
-                "Context is not properly initialized"
-            )
-        if not self._context:
-            raise C2paError("Context is closed")
-
-    def _cleanup_resources(self):
-        """Release native resources safely."""
-        try:
-            if (
-                hasattr(self, '_state')
-                and self._state != LifecycleState.CLOSED
-            ):
-                self._state = LifecycleState.CLOSED
-                if (
-                    hasattr(self, '_context')
-                    and self._context
-                ):
-                    try:
-                        _free_native_ptr(self._context)
-                    except Exception:
-                        logger.error(
-                            "Failed to free native"
-                            " Context resources"
-                        )
-                    finally:
-                        self._context = None
-        except Exception:
-            pass
-
-    def close(self) -> None:
-        """Release the Context resources."""
-        if self._state == LifecycleState.CLOSED:
-            return
-        try:
-            self._cleanup_resources()
-        except Exception as e:
-            logger.error(
-                f"Error during Context close: {e}"
-            )
-
-    def __enter__(self) -> 'Context':
-        self._ensure_valid_state()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def __del__(self):
-        self._cleanup_resources()
 
 
 class Stream:
@@ -2102,7 +2071,7 @@ def _validate_and_encode_format(
             f"Invalid UTF-8 characters in input: {e}")
 
 
-class Reader:
+class Reader(ManagedResource):
     """High-level wrapper for C2PA Reader operations.
 
     Example:
@@ -2112,6 +2081,8 @@ class Reader:
         ```
         Where `output` is either an in-memory stream or an opened file.
     """
+
+    _resource_name = "Reader"
 
     # Supported mimetypes cache
     _supported_mime_types_cache = None
@@ -2256,11 +2227,9 @@ class Reader:
         """
         # Native libs plumbing:
         # Clear any stale error state from previous operations
+        super().__init__()
         _clear_error_state()
 
-        self._state = LifecycleState.UNINITIALIZED
-
-        self._reader = None
         self._own_stream = None
 
         # This is used to keep track of a file
@@ -2324,7 +2293,7 @@ class Reader:
             manifest_data: Optional manifest bytes
         """
         if manifest_data is None:
-            self._reader = _lib.c2pa_reader_from_stream(
+            self._handle = _lib.c2pa_reader_from_stream(
                 format_bytes, stream_obj._stream)
         else:
             if not isinstance(manifest_data, bytes):
@@ -2334,7 +2303,7 @@ class Reader:
                 ctypes.c_ubyte *
                 len(manifest_data))(
                 *manifest_data)
-            self._reader = (
+            self._handle = (
                 _lib.c2pa_reader_from_manifest_data_and_stream(
                     format_bytes,
                     stream_obj._stream,
@@ -2343,7 +2312,7 @@ class Reader:
                 )
             )
 
-        if not self._reader:
+        if not self._handle:
             error = _parse_operation_result_for_error(
                 _lib.c2pa_error())
             if error:
@@ -2455,7 +2424,7 @@ class Reader:
                     ].format("Unknown error")
                 )
 
-            self._reader = new_ptr
+            self._handle = new_ptr
             self._state = LifecycleState.ACTIVE
         except Exception:
             if self._own_stream:
@@ -2466,86 +2435,23 @@ class Reader:
                 self._backing_file = None
             raise
 
-    def __enter__(self):
-        self._ensure_valid_state()
-        return self
+    def _release(self):
+        """Release Reader-specific resources (stream, backing file)."""
+        if hasattr(self, '_own_stream') and self._own_stream:
+            try:
+                self._own_stream.close()
+            except Exception:
+                logger.error("Failed to close Reader stream")
+            finally:
+                self._own_stream = None
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called.
-
-        This destructor handles cleanup without causing double frees.
-        It only cleans up if the object hasn't been explicitly closed.
-        """
-        self._cleanup_resources()
-
-    def _ensure_valid_state(self):
-        """Ensure the reader is in a valid state for operations.
-
-        Raises:
-            C2paError: If the reader is closed, not initialized, or invalid
-        """
-        if self._state == LifecycleState.CLOSED:
-            raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
-        if self._state != LifecycleState.ACTIVE:
-            raise C2paError("Reader is not properly initialized")
-        if not self._reader:
-            raise C2paError(Reader._ERROR_MESSAGES['closed_error'])
-
-    def _cleanup_resources(self):
-        """Internal cleanup method that releases native resources.
-
-        This method handles the actual cleanup logic and can be called
-        from both close() and __del__ without causing double frees.
-        """
-        try:
-            # Only cleanup if not already closed and we have a valid reader
-            if (
-                hasattr(self, '_state')
-                and self._state != LifecycleState.CLOSED
-            ):
-                self._state = LifecycleState.CLOSED
-
-                # Clean up reader
-                if hasattr(self, '_reader') and self._reader:
-                    try:
-                        _free_native_ptr(self._reader)
-                    except Exception:
-                        # Cleanup failure doesn't raise exceptions
-                        logger.error(
-                            "Failed to free native Reader resources"
-                        )
-                        pass
-                    finally:
-                        self._reader = None
-
-                # Clean up stream
-                if hasattr(self, '_own_stream') and self._own_stream:
-                    try:
-                        self._own_stream.close()
-                    except Exception:
-                        # Cleanup failure doesn't raise exceptions
-                        logger.error("Failed to close Reader stream")
-                        pass
-                    finally:
-                        self._own_stream = None
-
-                # Clean up backing file (if needed)
-                if self._backing_file:
-                    try:
-                        self._backing_file.close()
-                    except Exception:
-                        # Cleanup failure doesn't raise exceptions
-                        logger.warning("Failed to close Reader backing file")
-                        pass
-                    finally:
-                        self._backing_file = None
-
-        except Exception:
-            # Ensure we don't raise exceptions during cleanup
-            pass
+        if self._backing_file:
+            try:
+                self._backing_file.close()
+            except Exception:
+                logger.warning("Failed to close Reader backing file")
+            finally:
+                self._backing_file = None
 
     def _get_cached_manifest_data(self) -> Optional[dict]:
         """Get the cached manifest data, fetching and parsing if not cached.
@@ -2575,29 +2481,10 @@ class Reader:
         return self._manifest_data_cache
 
     def close(self):
-        """Release the reader resources.
-
-        This method ensures all resources are properly cleaned up,
-        even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup.
-        Multiple calls to close() are handled gracefully.
-        """
-        if self._state == LifecycleState.CLOSED:
-            return
-
-        try:
-            # Use the internal cleanup method
-            self._cleanup_resources()
-        except Exception as e:
-            # Log any unexpected errors during close
-            logger.error(
-                Reader._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)))
-        finally:
-            # Clear the cache when closing
-            self._manifest_json_str_cache = None
-            self._manifest_data_cache = None
-            self._state = LifecycleState.CLOSED
+        """Release the reader resources."""
+        self._manifest_json_str_cache = None
+        self._manifest_data_cache = None
+        super().close()
 
     def json(self) -> str:
         """Get the manifest store as a JSON string.
@@ -2615,7 +2502,7 @@ class Reader:
         if self._manifest_json_str_cache is not None:
             return self._manifest_json_str_cache
 
-        result = _lib.c2pa_reader_json(self._reader)
+        result = _lib.c2pa_reader_json(self._handle)
 
         if result is None:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -2645,7 +2532,7 @@ class Reader:
 
         self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_detailed_json(self._reader)
+        result = _lib.c2pa_reader_detailed_json(self._handle)
 
         if result is None:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -2792,7 +2679,7 @@ class Reader:
         uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
-                self._reader, uri_str, stream_obj._stream)
+                self._handle, uri_str, stream_obj._stream)
 
             if result < 0:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -2816,7 +2703,7 @@ class Reader:
         """
         self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_is_embedded(self._reader)
+        result = _lib.c2pa_reader_is_embedded(self._handle)
 
         return bool(result)
 
@@ -2833,7 +2720,7 @@ class Reader:
         """
         self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_remote_url(self._reader)
+        result = _lib.c2pa_reader_remote_url(self._handle)
 
         if result is None:
             # No remote URL set (manifest is embedded)
@@ -2844,8 +2731,10 @@ class Reader:
         return url_str
 
 
-class Signer:
+class Signer(ManagedResource):
     """High-level wrapper for C2PA Signer operations."""
+
+    _resource_name = "Signer"
 
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
@@ -3046,74 +2935,24 @@ class Signer:
         Raises:
             C2paError: If the signer pointer is invalid
         """
-        # Native libs plumbing:
-        # Clear any stale error state from previous operations
+        super().__init__()
         _clear_error_state()
 
-        # Validate pointer before assignment
         if not signer_ptr:
             raise C2paError("Invalid signer pointer: pointer is null")
 
-        self._signer = signer_ptr
+        self._handle = signer_ptr
         self._state = LifecycleState.ACTIVE
 
         # Set only for signers which are callback signers
         self._callback_cb = None
 
-    def __enter__(self):
-        """Context manager entry."""
-        self._ensure_valid_state()
-
-        if not self._signer:
-            raise C2paError("Invalid signer pointer: pointer is null")
-
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
-
-    def _cleanup_resources(self):
-        """Internal cleanup method that releases native resources.
-
-        This method handles the actual cleanup logic and can be called
-        from both close() and __del__ without causing double frees.
-        """
-        try:
-            if (
-                self._state != LifecycleState.CLOSED
-                and self._signer
-            ):
-                self._state = LifecycleState.CLOSED
-
-                try:
-                    _free_native_ptr(self._signer)
-                except Exception:
-                    # Log cleanup errors but don't raise exceptions
-                    logger.error("Failed to free native Signer resources")
-                finally:
-                    self._signer = None
-
-                # Clean up callback reference
-                if self._callback_cb:
-                    self._callback_cb = None
-
-        except Exception:
-            # Ensure we don't raise exceptions during cleanup
-            pass
-
-    def _ensure_valid_state(self):
-        """Ensure the signer is in a valid state for operations.
-
-        Raises:
-            C2paError: If the signer is closed or invalid
-        """
-        if self._state == LifecycleState.CLOSED:
-            raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
-        if not self._signer:
-            raise C2paError(Signer._ERROR_MESSAGES['closed_error'])
-
     def _release(self):
+        """Release Signer-specific resources (callback reference)."""
+        if self._callback_cb:
+            self._callback_cb = None
+
+    def _transfer_ownership(self):
         """Release ownership of the native signer pointer.
 
         After this call the Signer is marked closed and must
@@ -3131,48 +2970,15 @@ class Signer:
         """
         self._ensure_valid_state()
 
-        ptr = self._signer
+        ptr = self._handle
         callback_cb = self._callback_cb
 
         # Detach pointer without freeing — caller now owns it
-        self._signer = None
+        self._handle = None
         self._callback_cb = None
         self._state = LifecycleState.CLOSED
 
         return ptr, callback_cb
-
-    def close(self):
-        """Release the signer resources.
-
-        This method ensures all resources are properly cleaned up,
-        even if errors occur during cleanup.
-
-        Note:
-            Multiple calls to close() are handled gracefully.
-            Errors during cleanup are logged but not raised
-            to ensure cleanup.
-        """
-        if self._state == LifecycleState.CLOSED:
-            return
-
-        try:
-            # Validate pointer before cleanup if it exists
-            if self._signer and self._signer != 0:
-                # Use the internal cleanup method
-                self._cleanup_resources()
-            else:
-                # Make sure to release the callback
-                if self._callback_cb:
-                    self._callback_cb = None
-
-        except Exception as e:
-            # Log any unexpected errors during close
-            logger.error(
-                Signer._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)))
-        finally:
-            # Always mark as closed, regardless of cleanup success
-            self._state = LifecycleState.CLOSED
 
     def reserve_size(self) -> int:
         """Get the size to reserve for signatures from this signer.
@@ -3185,7 +2991,7 @@ class Signer:
         """
         self._ensure_valid_state()
 
-        result = _lib.c2pa_signer_reserve_size(self._signer)
+        result = _lib.c2pa_signer_reserve_size(self._handle)
 
         if result < 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3196,8 +3002,10 @@ class Signer:
         return result
 
 
-class Builder:
+class Builder(ManagedResource):
     """High-level wrapper for C2PA Builder operations."""
+
+    _resource_name = "Builder"
 
     # Supported mimetypes cache
     _supported_mime_types_cache = None
@@ -3308,13 +3116,13 @@ class Builder:
         stream_obj = Stream(stream)
 
         try:
-            builder._builder = (
+            builder._handle = (
                 _lib.c2pa_builder_from_archive(
                     stream_obj._stream
                 )
             )
 
-            if not builder._builder:
+            if not builder._handle:
                 error = _parse_operation_result_for_error(
                     _lib.c2pa_error()
                 )
@@ -3360,10 +3168,8 @@ class Builder:
         """
         # Native libs plumbing:
         # Clear any stale error state from previous operations
+        super().__init__()
         _clear_error_state()
-
-        self._state = LifecycleState.UNINITIALIZED
-        self._builder = None
 
         # Keep context reference alive
         self._context = context
@@ -3391,9 +3197,9 @@ class Builder:
         if context is not None:
             self._init_from_context(context, json_str)
         else:
-            self._builder = _lib.c2pa_builder_from_json(json_str)
+            self._handle = _lib.c2pa_builder_from_json(json_str)
 
-            if not self._builder:
+            if not self._handle:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
@@ -3443,85 +3249,7 @@ class Builder:
                 ].format("Unknown error")
             )
 
-        self._builder = new_ptr
-
-    def __del__(self):
-        """Ensure resources are cleaned up if close() wasn't called."""
-        self._cleanup_resources()
-
-    def __enter__(self):
-        self._ensure_valid_state()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def _ensure_valid_state(self):
-        """Ensure the builder is in a valid state for operations.
-
-        Raises:
-            C2paError: If the builder is closed, not initialized, or invalid
-        """
-        if self._state == LifecycleState.CLOSED:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-        if self._state != LifecycleState.ACTIVE:
-            raise C2paError("Builder is not properly initialized")
-        if not self._builder:
-            raise C2paError(Builder._ERROR_MESSAGES['closed_error'])
-
-    def _cleanup_resources(self):
-        """Internal cleanup method that releases native resources.
-
-        This method handles the actual cleanup logic and can be called
-        from both close() and __del__ without causing double frees.
-        """
-        try:
-            # Only cleanup if not already closed and we have a valid builder
-            if (
-                hasattr(self, '_state')
-                and self._state != LifecycleState.CLOSED
-            ):
-                self._state = LifecycleState.CLOSED
-
-                if hasattr(
-                        self,
-                        '_builder') and self._builder and self._builder != 0:
-                    try:
-                        _free_native_ptr(self._builder)
-                    except Exception:
-                        # Log cleanup errors but don't raise exceptions
-                        logger.error(
-                            "Failed to release native Builder resources"
-                        )
-                        pass
-                    finally:
-                        self._builder = None
-
-        except Exception:
-            # Ensure we don't raise exceptions during cleanup
-            pass
-
-    def close(self):
-        """Release the builder resources.
-
-        This method ensures all resources are properly cleaned up,
-        even if errors occur during cleanup.
-        Errors during cleanup are logged but not raised to ensure cleanup.
-        Multiple calls to close() are handled gracefully.
-        """
-        if self._state == LifecycleState.CLOSED:
-            return
-
-        try:
-            # Use the internal cleanup method
-            self._cleanup_resources()
-        except Exception as e:
-            # Log any unexpected errors during close
-            logger.error(
-                Builder._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)))
-        finally:
-            self._state = LifecycleState.CLOSED
+        self._handle = new_ptr
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -3531,7 +3259,7 @@ class Builder:
         This is useful when creating cloud or sidecar manifests.
         """
         self._ensure_valid_state()
-        _lib.c2pa_builder_set_no_embed(self._builder)
+        _lib.c2pa_builder_set_no_embed(self._handle)
 
     def set_remote_url(self, remote_url: str):
         """Set the remote URL.
@@ -3548,7 +3276,7 @@ class Builder:
         self._ensure_valid_state()
 
         url_str = remote_url.encode('utf-8')
-        result = _lib.c2pa_builder_set_remote_url(self._builder, url_str)
+        result = _lib.c2pa_builder_set_remote_url(self._handle, url_str)
 
         if result != 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3586,7 +3314,7 @@ class Builder:
         self._ensure_valid_state()
 
         result = _lib.c2pa_builder_set_intent(
-            self._builder,
+            self._handle,
             ctypes.c_uint(intent),
             ctypes.c_uint(digital_source_type),
         )
@@ -3613,7 +3341,7 @@ class Builder:
         uri_str = uri.encode('utf-8')
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_add_resource(
-                self._builder, uri_str, stream_obj._stream)
+                self._handle, uri_str, stream_obj._stream)
 
             if result != 0:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3688,7 +3416,7 @@ class Builder:
         with Stream(source) as source_stream:
             result = (
                 _lib.c2pa_builder_add_ingredient_from_stream(
-                    self._builder,
+                    self._handle,
                     ingredient_str,
                     format_str,
                     source_stream._stream
@@ -3775,7 +3503,7 @@ class Builder:
                 Builder._ERROR_MESSAGES['encoding_error'].format(str(e))
             )
 
-        result = _lib.c2pa_builder_add_action(self._builder, action_str)
+        result = _lib.c2pa_builder_add_action(self._handle, action_str)
 
         if result != 0:
             error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3801,7 +3529,7 @@ class Builder:
 
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_to_archive(
-                self._builder, stream_obj._stream)
+                self._handle, stream_obj._stream)
 
             if result != 0:
                 error = _parse_operation_result_for_error(_lib.c2pa_error())
@@ -3822,9 +3550,9 @@ class Builder:
         """Internal signing implementation used by both explicit-signer and
         context-signer code paths.
 
-        When ``signer`` is provided, calls ``c2pa_builder_sign`` (explicit
-        signer).  When ``signer`` is ``None``, calls
-        ``c2pa_builder_sign_context`` (context-based signer).
+        When `signer` is provided, calls `c2pa_builder_sign` (explicit
+        signer).  When `signer` is `None`, calls
+        `c2pa_builder_sign_context` (context-based signer).
 
         Args:
             format: The MIME type or extension of the content
@@ -3843,7 +3571,7 @@ class Builder:
         self._ensure_valid_state()
 
         if signer is not None:
-            if not hasattr(signer, '_signer') or not signer._signer:
+            if not hasattr(signer, '_handle') or not signer._handle:
                 raise C2paError("Invalid or closed signer")
 
         format_bytes = _validate_and_encode_format(
@@ -3853,16 +3581,16 @@ class Builder:
         try:
             if signer is not None:
                 result = _lib.c2pa_builder_sign(
-                    self._builder,
+                    self._handle,
                     format_bytes,
                     source_stream._stream,
                     dest_stream._stream,
-                    signer._signer,
+                    signer._handle,
                     ctypes.byref(manifest_bytes_ptr)
                 )
             else:
                 result = _lib.c2pa_builder_sign_context(
-                    self._builder,
+                    self._handle,
                     format_bytes,
                     source_stream._stream,
                     dest_stream._stream,
@@ -4106,7 +3834,7 @@ def create_signer(
         This function is deprecated and will be removed in a future version.
         Please use the Signer class method instead.
         Example:
-            ```python
+            ```
             signer = Signer.from_callback(callback, alg, certs, tsa_url)
             ```
 
@@ -4141,7 +3869,7 @@ def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
         This function is deprecated and will be removed in a future version.
         Please use the Signer class method instead.
         Example:
-            ```python
+            ```
             signer = Signer.from_info(signer_info)
             ```
 
