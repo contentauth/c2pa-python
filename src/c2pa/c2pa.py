@@ -20,9 +20,7 @@ import os
 import warnings
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import (
-    Optional, Union, Callable, Any, overload,
-)
+from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library
 import mimetypes
@@ -650,8 +648,8 @@ class C2paError(Exception):
 
 
 # Define typed exception subclasses that inherit from C2paError
-# These are attached to C2paError as class attributes for backward compatibility
-# (eg., C2paError.ManifestNotFound), and also to ensure properly inheritance hierarchy
+# These are attached to C2paError as class attributes
+# (eg., C2paError.ManifestNotFound), and also to ensure inheritance hierarchy
 
 class _C2paAssertion(C2paError):
     """Exception raised for assertion errors."""
@@ -733,7 +731,7 @@ class _C2paVerify(C2paError):
 
 
 # Attach exception subclasses to C2paError for backward compatibility
-# Preserves behavior for exception catching like except C2paError.ManifestNotFound,
+# Preserves behavior for exception catching,
 # also reduces imports (think of it as an alias of sorts)
 C2paError.Assertion = _C2paAssertion
 C2paError.AssertionNotFound = _C2paAssertionNotFound
@@ -817,7 +815,7 @@ def _raise_typed_c2pa_error(error_str: str) -> None:
     Raises:
         C2paError subclass: The appropriate typed exception based on error_str
     """
-    # Error format from native library is "ErrorType: message" or "ErrorType message"
+    # Error format from lib is "ErrorType: message" or "ErrorType message"
     # Try splitting on ": " first (colon-space), then fall back to space only
     if ': ' in error_str:
         parts = error_str.split(': ', 1)
@@ -879,7 +877,7 @@ def _parse_operation_result_for_error(
         None if no error occurred
 
     Raises:
-        C2paError subclass: The appropriate typed exception if an error occurred
+        C2paError subclass: typed exception if an error occurred
     """
     if not result:  # pragma: no cover
         if check_error:
@@ -948,12 +946,11 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
 
     Args:
         settings: The settings string or dict to load
-        format: The format of the settings string
-                (default: "json").
+        format: The format of the settings string (default: "json").
                 Ignored when settings is a dict.
 
     Raises:
-        C2paError: If there was an error loading settings
+        C2paError: If there was an error loading the settings
     """
     warnings.warn(
         "load_settings() is deprecated. Use Settings"
@@ -1231,7 +1228,7 @@ def sign_file(
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
 
-    Subclass this to implement a custom context provider.
+    Subclass to implement a custom context provider.
     The built-in Context class is the standard implementation.
     """
 
@@ -1247,8 +1244,7 @@ class ContextProvider(ABC):
 class Settings:
     """Per-instance configuration for C2PA operations.
 
-    Settings control behavior such as thumbnail generation and
-    trust lists configurations. Use with Context to
+    Settings configure SDK behavior. Use with Context class to
     apply settings to Reader/Builder operations.
     """
 
@@ -2120,7 +2116,6 @@ class Reader:
                 # Ignore cleanup errors
                 pass
 
-        # Cache as frozenset for O(1) lookups
         if result:
             cls._supported_mime_types_cache = frozenset(result)
 
@@ -2152,30 +2147,26 @@ class Reader:
         context: Optional['ContextProvider'] = None,
     ) -> Optional["Reader"]:
         """This is a factory method to create a new Reader,
-        returning None if no manifest/c2pa data/JUMBF data
-        could be read (instead of raising a ManifestNotFound
-        exception).
+        returning None if no manifest/c2pa data/JUMBF data could be read
+        (instead of raising a ManifestNotFound: no JUMBF data found exception).
 
-        Returns None instead of raising
-        C2paError.ManifestNotFound if no C2PA manifest data
-        is found in the asset. This is useful when you want
-        to check if an asset contains C2PA data without
-        handling exceptions for the expected case of no
-        manifest.
+        Returns None instead of raising C2paError.ManifestNotFound if no
+        C2PA manifest data is found in the asset. This is useful when you
+        want to check if an asset contains C2PA data without handling
+        exceptions for the expected case of no manifest.
 
         Args:
             format_or_path: The format or path to read from
-            stream: Optional stream to read from
+            stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional ContextProvider for settings
 
         Returns:
             Reader instance if the asset contains C2PA data,
-            None if no manifest found
+            None if no manifest found (ManifestNotFound: no JUMBF data found)
 
         Raises:
-            C2paError: If there was an error other than
-                ManifestNotFound
+            C2paError: If there was an error other than ManifestNotFound
         """
         try:
             return cls(
@@ -2197,13 +2188,12 @@ class Reader:
 
         Args:
             format_or_path: The format or path to read from
-            stream: Optional stream to read from
+            stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional ContextProvider for settings
 
         Raises:
-            C2paError: If there was an error creating
-                the reader
+            C2paError: If there was an error creating the reader
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
@@ -2217,15 +2207,14 @@ class Reader:
         self._own_stream = None
 
         # This is used to keep track of a file
-        # we may have opened ourselves,
-        # and that we need to close later
+        # we may have opened ourselves, and that we need to close later
         self._backing_file = None
 
         # Caches for manifest JSON string and parsed data
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
 
-        # Keep context reference alive for lifetime
+        # Keep context reference alive
         self._context = context
 
         if context is not None:
@@ -3326,8 +3315,7 @@ class Builder:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating
-                the builder
+            C2paError: If there was an error creating the builder
         """
         return cls(manifest_json, context=context)
 
@@ -3349,8 +3337,7 @@ class Builder:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating
-                the builder from archive
+            C2paError: If there was an error creating the builder from archive
         """
         builder = cls({}, context=context)
         stream_obj = Stream(stream)
@@ -3386,26 +3373,22 @@ class Builder:
         """Initialize a new Builder instance.
 
         Args:
-            manifest_json: The manifest JSON definition
-                (string or dict)
+            manifest_json: The manifest JSON definition (string or dict)
             context: Optional ContextProvider for settings
 
         Raises:
-            C2paError: If there was an error creating
-                the builder
-            C2paError.Encoding: If manifest JSON contains
-                invalid UTF-8 chars
-            C2paError.Json: If the manifest JSON cannot
-                be serialized
+            C2paError: If there was an error creating the builder
+            C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
+            C2paError.Json: If the manifest JSON cannot be serialized
         """
         # Native libs plumbing:
-        # Clear any stale error state from previous ops
+        # Clear any stale error state from previous operations
         _clear_error_state()
 
         self._state = LifecycleState.UNINITIALIZED
         self._builder = None
 
-        # Keep context reference alive for lifetime
+        # Keep context reference alive
         self._context = context
         self._has_context_signer = (
             context is not None
@@ -3418,38 +3401,29 @@ class Builder:
                 manifest_json = json.dumps(manifest_json)
             except (TypeError, ValueError) as e:
                 raise C2paError.Json(
-                    Builder._ERROR_MESSAGES[
-                        'json_error'
-                    ].format(str(e))
-                )
+                    Builder._ERROR_MESSAGES['json_error'].format(
+                        str(e)))
 
         try:
             json_str = manifest_json.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES[
-                    'encoding_error'
-                ].format(str(e))
-            )
+                Builder._ERROR_MESSAGES['encoding_error'].format(
+                    str(e)))
 
         if context is not None:
             self._init_from_context(context, json_str)
         else:
-            self._builder = (
-                _lib.c2pa_builder_from_json(json_str)
-            )
+            self._builder = _lib.c2pa_builder_from_json(json_str)
+
             if not self._builder:
-                error = (
-                    _parse_operation_result_for_error(
-                        _lib.c2pa_error()
-                    )
-                )
+                error = _parse_operation_result_for_error(_lib.c2pa_error())
                 if error:
                     raise C2paError(error)
                 raise C2paError(
-                    Builder._ERROR_MESSAGES[
-                        'builder_error'
-                    ].format("Unknown error")
+                    Builder._ERROR_MESSAGES['builder_error'].format(
+                        "Unknown error"
+                    )
                 )
 
         self._state = LifecycleState.ACTIVE
@@ -4376,7 +4350,6 @@ __all__ = [
     'C2paDigitalSourceType',
     'C2paSignerInfo',
     'C2paBuilderIntent',
-    'LifecycleState',
     'ContextProvider',
     'Settings',
     'Context',
