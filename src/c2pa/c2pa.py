@@ -2161,12 +2161,30 @@ class Reader:
         return mime_type in cls._supported_mime_types_cache
 
     @classmethod
+    @overload
     def try_create(
         cls,
         format_or_path: Union[str, Path],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
-        *,
+    ) -> Optional["Reader"]: ...
+
+    @classmethod
+    @overload
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any],
+        manifest_data: Optional[Any],
+        context: 'ContextProvider',
+    ) -> Optional["Reader"]: ...
+
+    @classmethod
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any] = None,
+        manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
     ) -> Optional["Reader"]:
         """This is a factory method to create a new Reader,
@@ -2199,12 +2217,28 @@ class Reader:
         except C2paError.ManifestNotFound:
             return None
 
+    @overload
     def __init__(
         self,
         format_or_path: Union[str, Path],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
-        *,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any],
+        manifest_data: Optional[Any],
+        context: 'ContextProvider',
+    ) -> None: ...
+
+    def __init__(
+        self,
+        format_or_path: Union[str, Path],
+        stream: Optional[Any] = None,
+        manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
     ):
         """Create a new Reader.
@@ -3202,10 +3236,24 @@ class Builder:
         return result
 
     @classmethod
+    @overload
     def from_json(
         cls,
         manifest_json: Any,
-        *,
+    ) -> 'Builder': ...
+
+    @classmethod
+    @overload
+    def from_json(
+        cls,
+        manifest_json: Any,
+        context: 'ContextProvider',
+    ) -> 'Builder': ...
+
+    @classmethod
+    def from_json(
+        cls,
+        manifest_json: Any,
         context: Optional['ContextProvider'] = None,
     ) -> 'Builder':
         """Create a new Builder from a JSON manifest.
@@ -3281,10 +3329,22 @@ class Builder:
         finally:
             stream_obj.close()
 
+    @overload
     def __init__(
         self,
         manifest_json: Any,
-        *,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        manifest_json: Any,
+        context: 'ContextProvider',
+    ) -> None: ...
+
+    def __init__(
+        self,
+        manifest_json: Any,
         context: Optional['ContextProvider'] = None,
     ):
         """Initialize a new Builder instance.
