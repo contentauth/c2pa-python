@@ -33,7 +33,7 @@ warnings.filterwarnings(
 )
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType  # noqa: E501
-from c2pa import Settings, Context, ContextProvider
+from c2pa import Settings, Context, ContextBuilder, ContextProvider
 from c2pa.c2pa import Stream, LifecycleState, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable  # noqa: E501
 
 
@@ -5346,6 +5346,63 @@ class TestContext(unittest.TestCase):
         ctx = Context()
         self.assertIsInstance(ctx, ContextProvider)
         ctx.close()
+
+
+# ── 2b. ContextBuilder ──────────────────────────
+
+
+class TestContextBuilder(unittest.TestCase):
+
+    def test_builder_default(self):
+        ctx = Context.builder().build()
+        self.assertTrue(ctx.is_valid)
+        self.assertFalse(ctx.has_signer)
+        ctx.close()
+
+    def test_builder_with_settings(self):
+        s = Settings()
+        ctx = Context.builder().with_settings(s).build()
+        self.assertTrue(ctx.is_valid)
+        ctx.close()
+        s.close()
+
+    def test_builder_with_signer(self):
+        signer = _ctx_make_signer()
+        ctx = (
+            Context.builder()
+            .with_signer(signer)
+            .build()
+        )
+        self.assertTrue(ctx.is_valid)
+        self.assertTrue(ctx.has_signer)
+        ctx.close()
+
+    def test_builder_with_settings_and_signer(self):
+        s = Settings()
+        signer = _ctx_make_signer()
+        ctx = (
+            Context.builder()
+            .with_settings(s)
+            .with_signer(signer)
+            .build()
+        )
+        self.assertTrue(ctx.is_valid)
+        self.assertTrue(ctx.has_signer)
+        ctx.close()
+        s.close()
+
+    def test_builder_returns_context_builder(self):
+        b = Context.builder()
+        self.assertIsInstance(b, ContextBuilder)
+
+    def test_builder_chaining_returns_self(self):
+        s = Settings()
+        b = Context.builder()
+        result = b.with_settings(s)
+        self.assertIs(result, b)
+        ctx = b.build()
+        ctx.close()
+        s.close()
 
 
 # ── 3. Context with Signer ──────────────────────

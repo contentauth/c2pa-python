@@ -10,7 +10,7 @@ Import the objects needed from the API:
 
 ```py
 from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
-from c2pa import Settings, Context, ContextProvider
+from c2pa import Settings, Context, ContextBuilder, ContextProvider
 ```
 
 You can use both `Builder`, `Reader` and `Signer` classes with context managers by using a `with` statement.
@@ -122,6 +122,62 @@ except Exception as e:
 
 The `Settings` and `Context` classes provide **per-instance configuration** for Reader and Builder operations. This replaces the global `load_settings()` function, which is now deprecated.
 
+```mermaid
+classDiagram
+    class ContextProvider {
+        <<abstract>>
+        +is_valid bool
+        +execution_context
+    }
+
+    class Settings {
+        +set(path, value) Settings
+        +update(data) Settings
+        +from_json(json_str)$ Settings
+        +from_dict(config)$ Settings
+        +close()
+    }
+
+    class Context {
+        +has_signer bool
+        +builder()$ ContextBuilder
+        +from_json(json_str, signer)$ Context
+        +from_dict(config, signer)$ Context
+        +close()
+    }
+
+    class ContextBuilder {
+        +with_settings(settings) ContextBuilder
+        +with_signer(signer) ContextBuilder
+        +build() Context
+    }
+
+    class Signer {
+        +from_info(signer_info)$ Signer
+        +from_callback(callback, alg, certs, tsa_url)$ Signer
+        +close()
+    }
+
+    class Reader {
+        +json() str
+        +resource_to_stream(uri, stream)
+        +close()
+    }
+
+    class Builder {
+        +add_ingredient(json, format, stream)
+        +sign(signer, format, source, dest) bytes
+        +close()
+    }
+
+    ContextProvider <|-- Context
+    ContextBuilder --> Context : builds
+    Context o-- Settings : optional
+    Context o-- Signer : optional, consumed
+    Reader ..> ContextProvider : uses
+    Builder ..> ContextProvider : uses
+```
+
 ### Settings
 
 `Settings` controls behavior such as thumbnail generation, trust lists, and verification flags.
@@ -174,6 +230,28 @@ reader = Reader("path/to/media_file.jpg", context=ctx)
 
 # Use with Builder
 builder = Builder(manifest_json, context=ctx)
+```
+
+### ContextBuilder (fluent API)
+
+`ContextBuilder` provides a fluent interface for constructing a `Context`, matching the c2pa-rs `ContextBuilder` pattern. Use `Context.builder()` to get started.
+
+```py
+from c2pa import Context, ContextBuilder, Settings, Signer
+
+# Fluent construction with settings and signer
+ctx = (
+    Context.builder()
+    .with_settings(settings)
+    .with_signer(signer)
+    .build()
+)
+
+# Settings only
+ctx = Context.builder().with_settings(settings).build()
+
+# Default context (equivalent to Context())
+ctx = Context.builder().build()
 ```
 
 ### Context with a Signer

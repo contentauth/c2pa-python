@@ -1435,6 +1435,39 @@ class Settings:
         self._cleanup_resources()
 
 
+class ContextBuilder:
+    """Fluent builder for Context.
+
+    Matches the c2pa-rs ContextBuilder pattern.
+    Use Context.builder() to create an instance.
+    """
+
+    def __init__(self):
+        self._settings = None
+        self._signer = None
+
+    def with_settings(
+        self, settings: 'Settings',
+    ) -> 'ContextBuilder':
+        """Attach Settings to the context being built."""
+        self._settings = settings
+        return self
+
+    def with_signer(
+        self, signer: 'Signer',
+    ) -> 'ContextBuilder':
+        """Attach a Signer (will be consumed on build)."""
+        self._signer = signer
+        return self
+
+    def build(self) -> 'Context':
+        """Build and return a configured Context."""
+        return Context(
+            settings=self._settings,
+            signer=self._signer,
+        )
+
+
 class Context(ContextProvider):
     """Per-instance context for C2PA operations.
 
@@ -1555,6 +1588,11 @@ class Context(ContextProvider):
                 raise
 
         self._state = LifecycleState.ACTIVE
+
+    @classmethod
+    def builder(cls) -> 'ContextBuilder':
+        """Return a fluent ContextBuilder."""
+        return ContextBuilder()
 
     @classmethod
     def from_json(
