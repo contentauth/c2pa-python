@@ -648,8 +648,8 @@ class C2paError(Exception):
 
 
 # Define typed exception subclasses that inherit from C2paError
-# These are attached to C2paError as class attributes
-# (eg., C2paError.ManifestNotFound), and also to ensure inheritance hierarchy
+# These are attached to C2paError as class attributes for backward compatibility
+# (eg., C2paError.ManifestNotFound), and also to ensure properly inheritance hierarchy
 
 class _C2paAssertion(C2paError):
     """Exception raised for assertion errors."""
@@ -731,7 +731,7 @@ class _C2paVerify(C2paError):
 
 
 # Attach exception subclasses to C2paError for backward compatibility
-# Preserves behavior for exception catching,
+# Preserves behavior for exception catching like except C2paError.ManifestNotFound,
 # also reduces imports (think of it as an alias of sorts)
 C2paError.Assertion = _C2paAssertion
 C2paError.AssertionNotFound = _C2paAssertionNotFound
