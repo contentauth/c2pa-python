@@ -3492,16 +3492,15 @@ class Builder(ManagedResource):
                 )
 
     def with_archive(self, stream: Any) -> 'Builder':
-        """Load an archive into this builder, replacing its definition.
-
-        This preserves the builder's context and settings while
-        replacing the manifest definition with the archived state.
-        Use this instead of from_archive() when you need to
-        preserve context settings.
+        """Load an archive into this builder, replacing its
+        manifest definition. The archive carries only the
+        definition, not settings — settings come from this
+        builder's context, which is preserved across the call.
+        Use this instead of from_archive() when you need
+        context-based settings.
 
         Args:
             stream: The stream containing the archive
-                (any Python stream-like object)
 
         Returns:
             This builder instance, for method chaining.

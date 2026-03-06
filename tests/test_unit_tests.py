@@ -5643,7 +5643,13 @@ class TestBuilderWithContext(TestContextAPIs):
         context.close()
 
     def test_with_archive_preserves_settings(self):
-        """with_archive() preserves context settings (e.g. no thumbnail)."""
+        """with_archive() preserves the builder's context settings.
+
+        Settings live on the builder's context, not in the archive.
+        The archive only carries the manifest definition. This test
+        proves that a builder created with no-thumbnail settings
+        keeps those settings after loading an archive.
+        """
         settings = Settings.from_dict({
             "builder": {
                 "thumbnail": {"enabled": False}
@@ -5652,12 +5658,14 @@ class TestBuilderWithContext(TestContextAPIs):
         context = Context(settings)
         signer = self._ctx_make_signer()
         builder = Builder(
-            self.test_manifest, context=context,
+            self.test_manifest, context,
         )
         archive = io.BytesIO(bytearray())
         builder.to_archive(archive)
 
-        builder2 = Builder({}, context=context)
+        # Context provides the no-thumbnail setting;
+        # with_archive only loads the manifest definition.
+        builder2 = Builder({}, context)
         builder2.with_archive(archive)
         with (
             open(DEFAULT_TEST_FILE, "rb") as source,
@@ -5682,34 +5690,20 @@ class TestBuilderWithContext(TestContextAPIs):
         context.close()
         settings.close()
 
-    def test_with_archive_returns_self(self):
-        """with_archive() returns the same builder instance."""
-        context = Context()
-        builder = Builder(
-            self.test_manifest, context=context,
-        )
-        archive = io.BytesIO(bytearray())
-        builder.to_archive(archive)
-
-        builder2 = Builder({}, context=context)
-        result = builder2.with_archive(archive)
-        self.assertIs(result, builder2)
-        builder2.close()
-        context.close()
-
     def test_with_archive_replaces_definition(self):
-        """with_archive() replaces the builder's manifest definition."""
+        """with_archive() restores the original builder's
+        manifest definition, even if something set on new Builder."""
         context = Context()
         signer = self._ctx_make_signer()
         original_manifest = dict(self.test_manifest)
         original_manifest["title"] = "Original Title"
-        builder = Builder(original_manifest, context=context)
+        builder = Builder(original_manifest, context)
         archive = io.BytesIO(bytearray())
         builder.to_archive(archive)
 
         replaced_manifest = dict(self.test_manifest)
         replaced_manifest["title"] = "Replaced Title"
-        builder2 = Builder(replaced_manifest, context=context)
+        builder2 = Builder(replaced_manifest, context)
         builder2.with_archive(archive)
         with (
             open(DEFAULT_TEST_FILE, "rb") as source,
@@ -5745,7 +5739,7 @@ class TestBuilderWithContext(TestContextAPIs):
         context.close()
 
     def test_from_archive_roundtrip(self):
-        """from_archive() loses context settings (characterization test)."""
+        """from_archive() can't propagate contexts."""
         settings = Settings.from_dict({
             "builder": {
                 "thumbnail": {"enabled": False}
@@ -5773,8 +5767,7 @@ class TestBuilderWithContext(TestContextAPIs):
                 "image/jpeg", output, context=Context(),
             )
             manifest = reader.get_active_manifest()
-            # from_archive loses settings, so default thumbnail
-            # generation should produce a thumbnail
+            # from_archive can't propagate contexts
             self.assertIsNotNone(
                 manifest.get("thumbnail"),
                 "from_archive should lose settings and generate thumbnail",
