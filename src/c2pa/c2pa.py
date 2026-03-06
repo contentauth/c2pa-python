@@ -78,6 +78,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_with_stream',
     'c2pa_builder_from_context',
     'c2pa_builder_with_definition',
+    'c2pa_builder_with_archive',
     'c2pa_free',
 ]
 
@@ -559,6 +560,10 @@ _setup_function(
 _setup_function(_lib.c2pa_builder_from_archive,
                 [ctypes.POINTER(C2paStream)],
                 ctypes.POINTER(C2paBuilder))
+_setup_function(
+    _lib.c2pa_builder_with_archive,
+    [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
+    ctypes.POINTER(C2paBuilder))
 _setup_function(_lib.c2pa_builder_set_no_embed, [
                 ctypes.POINTER(C2paBuilder)], None)
 _setup_function(
@@ -3042,40 +3047,28 @@ class Builder(ManagedResource):
         return cls(manifest_json, context=context)
 
     @classmethod
-    @overload
     def from_archive(
         cls,
         stream: Any,
-    ) -> 'Builder': ...
-
-    @classmethod
-    @overload
-    def from_archive(
-        cls,
-        stream: Any,
-        context: 'ContextProvider',
-    ) -> 'Builder': ...
-
-    @classmethod
-    def from_archive(
-        cls,
-        stream: Any,
-        context: Optional['ContextProvider'] = None,
     ) -> 'Builder':
         """Create a new Builder from an archive stream.
+
+        This creates a context-free builder. To preserve context
+        settings, create a Builder with a context first, then call
+        with_archive() on it.
 
         Args:
             stream: The stream containing the archive
                 (any Python stream-like object)
-            context: Optional ContextProvider for settings
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating the builder from archive
+            C2paError: If there was an error creating the builder
+                from archive
         """
-        builder = cls({}, context=context)
+        builder = cls({})
         stream_obj = Stream(stream)
 
         try:
@@ -3497,6 +3490,44 @@ class Builder(ManagedResource):
                         "Unknown error"
                     )
                 )
+
+    def with_archive(self, stream: Any) -> 'Builder':
+        """Load an archive into this builder, replacing its
+        manifest definition. The archive carries only the
+        definition, not settings — settings come from this
+        builder's context, which is preserved across the call.
+        Use this instead of from_archive() when you need
+        context-based settings.
+
+        Args:
+            stream: The stream containing the archive
+
+        Returns:
+            This builder instance, for method chaining.
+
+        Raises:
+            C2paError: If there was an error loading the archive
+        """
+        self._ensure_valid_state()
+
+        with Stream(stream) as stream_obj:
+            new_ptr = _lib.c2pa_builder_with_archive(
+                self._handle, stream_obj._stream,
+            )
+            # self._handle has been consumed by the FFI call
+            if not new_ptr:
+                self._handle = None
+                error = _parse_operation_result_for_error(
+                    _lib.c2pa_error()
+                )
+                if error:
+                    raise C2paError(error)
+                raise C2paError(
+                    "Failed to load archive into builder"
+                )
+            self._handle = new_ptr
+
+        return self
 
     def _sign_internal(
             self,

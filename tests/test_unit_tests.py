@@ -5642,6 +5642,143 @@ class TestBuilderWithContext(TestContextAPIs):
         builder.close()
         context.close()
 
+    def test_with_archive_preserves_settings(self):
+        """with_archive() preserves the builder's context settings.
+
+        Settings live on the builder's context, not in the archive.
+        The archive only carries the manifest definition. This test
+        proves that a builder created with no-thumbnail settings
+        keeps those settings after loading an archive.
+        """
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+
+        # Context provides the no-thumbnail setting;
+        # with_archive only loads the manifest definition.
+        builder2 = Builder({}, context)
+        builder2.with_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder2.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=Context(),
+            )
+            manifest = reader.get_active_manifest()
+            self.assertIsNone(
+                manifest.get("thumbnail"),
+                "with_archive should preserve no-thumbnail setting",
+            )
+            reader.close()
+        archive.close()
+        builder2.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_with_archive_replaces_definition(self):
+        """with_archive() restores the original builder's
+        manifest definition, even if something set on new Builder."""
+        context = Context()
+        signer = self._ctx_make_signer()
+        original_manifest = dict(self.test_manifest)
+        original_manifest["title"] = "Original Title"
+        builder = Builder(original_manifest, context)
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+
+        replaced_manifest = dict(self.test_manifest)
+        replaced_manifest["title"] = "Replaced Title"
+        builder2 = Builder(replaced_manifest, context)
+        builder2.with_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder2.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=Context(),
+            )
+            json_data = reader.json()
+            self.assertIn("Original Title", json_data)
+            self.assertNotIn("Replaced Title", json_data)
+            reader.close()
+        archive.close()
+        builder2.close()
+        signer.close()
+        context.close()
+
+    def test_with_archive_on_closed_builder_raises(self):
+        """with_archive() on a closed builder raises C2paError."""
+        context = Context()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+        builder.close()
+        with self.assertRaises(Error):
+            builder.with_archive(archive)
+        context.close()
+
+    def test_from_archive_roundtrip(self):
+        """from_archive() can't propagate contexts."""
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+
+        # from_archive creates a context-free builder
+        builder2 = Builder.from_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder2.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=Context(),
+            )
+            manifest = reader.get_active_manifest()
+            # from_archive can't propagate contexts
+            self.assertIsNotNone(
+                manifest.get("thumbnail"),
+                "from_archive should lose settings and generate thumbnail",
+            )
+            reader.close()
+        archive.close()
+        builder2.close()
+        signer.close()
+        context.close()
+        settings.close()
+
 
 class TestContextIntegration(TestContextAPIs):
 
@@ -5934,9 +6071,8 @@ class TestContextIntegration(TestContextAPIs):
         )
         archive = io.BytesIO(bytearray())
         builder.to_archive(archive)
-        builder = Builder.from_archive(
-            archive, context,
-        )
+        builder = Builder({}, context=context)
+        builder.with_archive(archive)
         with (
             open(DEFAULT_TEST_FILE, "rb") as source,
             io.BytesIO(bytearray()) as output,
@@ -5971,9 +6107,8 @@ class TestContextIntegration(TestContextAPIs):
         )
         archive = io.BytesIO(bytearray())
         builder.to_archive(archive)
-        builder = Builder.from_archive(
-            archive, context,
-        )
+        builder = Builder({}, context=context)
+        builder.with_archive(archive)
         ingredient_json = '{"test": "ingredient"}'
         with open(DEFAULT_TEST_FILE, "rb") as f:
             builder.add_ingredient(
