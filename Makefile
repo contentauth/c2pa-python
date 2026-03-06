@@ -5,7 +5,7 @@ C2PA_VERSION := $(shell cat c2pa-native-version.txt)
 
 # Start from clean env: Delete `.venv`, then `python3 -m venv .venv`
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
-# Run Pytest tests in virtualenv: .venv/bin/pytest tests/test_unit_tests.py -v
+# Run tests in virtualenv: .venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
 
 # Removes build artifacts, distribution files, and other generated content
 clean:
@@ -39,8 +39,7 @@ run-examples:
 # Runs the examples, then the unit tests
 test:
 	make run-examples
-	python3 ./tests/test_unit_tests.py
-	python3 ./tests/test_unit_tests_threaded.py
+	python3 -m unittest discover -s tests -p "test_*.py"
 
 # Runs benchmarks in the venv
 benchmark:

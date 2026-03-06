@@ -116,7 +116,7 @@ jobs:
           python3 -c "from c2pa import C2paError; print('C2paError imported successfully')"
 
       - name: Run tests
-        run: python3 ./tests/test_unit_tests.py
+        run: python3 -m unittest discover -s tests -p "test_*.py" -v
 
   tests-windows:
     name: Unit tests for developer setup (Windows)
@@ -182,7 +182,7 @@ jobs:
           python -c "from c2pa import C2paError; print('C2paError imported successfully')"
 
       - name: Run tests
-        run: python .\tests\test_unit_tests.py
+        run: python -m unittest discover -s tests -p "test_*.py" -v
 
   build-linux-wheel:
     name: Build Linux wheel
@@ -254,20 +254,10 @@ jobs:
           source venv/bin/activate
           pip install dist/c2pa_python-*.whl
 
-      - name: Run unittest tests on installed wheel
+      - name: Run tests on installed wheel
         run: |
           source venv/bin/activate
-          python ./tests/test_unit_tests.py
-
-      - name: Install pytest (in venv)
-        run: |
-          source venv/bin/activate
-          pip install pytest
-
-      - name: Run tests with pytest (venv)
-        run: |
-          source venv/bin/activate
-          venv/bin/pytest tests/test_unit_tests.py -v
+          python -m unittest discover -s tests -p "test_*.py" -v
 
   build-windows-wheel:
     name: Build Windows wheel
@@ -333,20 +323,10 @@ jobs:
           if (-not $wheel) { Write-Error "No wheel file found in dist directory"; exit 1 }
           pip install $wheel.FullName
 
-      - name: Run unittest tests on installed wheel
+      - name: Run tests on installed wheel
         run: |
           .\venv\Scripts\activate
-          python .\tests\test_unit_tests.py
-
-      - name: Install pytest (in venv)
-        run: |
-          .\venv\Scripts\activate
-          pip install pytest
-
-      - name: Run tests with pytest (venv)
-        run: |
-          .\venv\Scripts\activate
-          .\venv\Scripts\pytest .\tests\test_unit_tests.py -v
+          python -m unittest discover -s tests -p "test_*.py" -v
 
   build-macos-wheel:
     name: Build macOS wheels
@@ -422,20 +402,10 @@ jobs:
           source venv/bin/activate
           pip install dist/c2pa_python-*.whl
 
-      - name: Run unittest tests on installed wheel
+      - name: Run tests on installed wheel
         run: |
           source venv/bin/activate
-          python ./tests/test_unit_tests.py
-
-      - name: Install pytest (in venv)
-        run: |
-          source venv/bin/activate
-          pip install pytest
-
-      - name: Run tests with pytest (venv)
-        run: |
-          source venv/bin/activate
-          venv/bin/pytest tests/test_unit_tests.py -v
+          python -m unittest discover -s tests -p "test_*.py" -v
 
   sdist:
     runs-on: ubuntu-latest

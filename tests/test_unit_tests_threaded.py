@@ -15,11 +15,14 @@ import os
 import io
 import json
 import unittest
+import warnings
 import threading
 import concurrent.futures
 import time
 import asyncio
 import random
+
+warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
