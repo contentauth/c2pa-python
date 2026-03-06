@@ -162,8 +162,7 @@ class TestReaderWithThreads(unittest.TestCase):
                         errors.append(error)
                 except Exception as e:
                     errors.append(
-                        f"Unexpected error processing {filename}: {
-                            str(e)}")
+                        f"Unexpected error processing {filename}: {str(e)}")
 
         # If any errors occurred, fail the test with all error messages
         if errors:
@@ -697,8 +696,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
                     # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{
-                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
                     self.assertEqual(
                         active_manifest["claim_generator"],
                         expected_claim_generator)
@@ -716,8 +714,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         # Create a thread pool with 6 workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
@@ -741,8 +738,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if error:
                         errors.append(error)
                 except Exception as e:
-                    errors.append(f"Unexpected error processing {
-                                  filename} in thread {thread_id}: {str(e)}")
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
 
         # If any errors occurred, fail the test with all error messages
         if errors:
@@ -812,8 +808,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
                     # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{
-                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
                     self.assertEqual(
                         active_manifest["claim_generator"],
                         expected_claim_generator)
@@ -831,8 +826,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         async def run_async_tests():
             # Get all files from both directories
@@ -896,8 +890,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(
-                            author_name, f"Tester {
-                                'One' if thread_id == 1 else 'Two'}")
+                            author_name, f"Tester {'One' if thread_id == 1 else 'Two'}")
                         break
 
                 return active_manifest
@@ -1040,8 +1033,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if thread_id % 3 == 0:
                         expected_claim_generator = "python_test/0.0.1"
                     else:
-                        expected_claim_generator = f"python_test_{
-                            expected_thread}/0.0.1"
+                        expected_claim_generator = f"python_test_{expected_thread}/0.0.1"
 
                     self.assertEqual(
                         active_manifest["claim_generator"],
@@ -1060,8 +1052,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         # Create a thread pool with 3 workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -1085,8 +1076,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if error:
                         errors.append(error)
                 except Exception as e:
-                    errors.append(f"Unexpected error processing {
-                                  filename} in thread {thread_id}: {str(e)}")
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
 
         # Verify thread interleaving
         # Check that we don't have long sequences of the same thread
@@ -1099,8 +1089,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             if thread_execution_order[i][1] == current_thread:
                 current_sequence += 1
                 if current_sequence > max_same_thread_sequence:
-                    self.fail(f"Thread {current_thread} executed {
-                              current_sequence} times in sequence, indicating poor interleaving")
+                    self.fail(f"Thread {current_thread} executed {current_sequence} times in sequence, indicating poor interleaving")
             else:
                 current_sequence = 1
                 current_thread = thread_execution_order[i][1]

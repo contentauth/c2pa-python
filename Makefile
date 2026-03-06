@@ -40,6 +40,7 @@ run-examples:
 test:
 	make run-examples
 	python3 -m unittest discover -s tests -p "test_*.py"
+	python3 -m unittest tests.threaded_test
 
 # Runs benchmarks in the venv
 benchmark:
