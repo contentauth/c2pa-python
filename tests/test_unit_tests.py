@@ -256,7 +256,7 @@ class TestReader(unittest.TestCase):
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["claim"]["dc:title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
-    def test_stream_read_string_stream(self):
+    def test_stream_read_string_stream_path_only(self):
         with Reader(self.testPath) as reader:
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
@@ -4670,7 +4670,7 @@ class TestLegacyAPI(unittest.TestCase):
 
             builder.close()
 
-    def test_builder_add_ingredient_from_file_path(self):
+    def test_builder_add_ingredient_from_file_path_not_found(self):
         """Test Builder class add_ingredient_from_file_path method."""
 
         # Suppress the specific deprecation warning for this test, as this is a legacy method
@@ -4875,56 +4875,6 @@ class TestLegacyAPI(unittest.TestCase):
                     dest_path=output_path,
                     signer=signer
                 )
-
-        finally:
-            shutil.rmtree(temp_dir)
-
-    def test_sign_file_callback_signer(self):
-        """Test signing a file using the sign_file method."""
-
-        temp_dir = tempfile.mkdtemp()
-
-        try:
-            output_path = os.path.join(temp_dir, "signed_output.jpg")
-
-            # Use the sign_file method
-            builder = Builder(self.manifestDefinition)
-
-            # Create signer with callback using create_signer function
-            signer = create_signer(
-                callback=self.callback_signer_es256,
-                alg=SigningAlg.ES256,
-                certs=self.certs.decode('utf-8'),
-                tsa_url="http://timestamp.digicert.com"
-            )
-
-            manifest_bytes = builder.sign_file(
-                source_path=self.testPath,
-                dest_path=output_path,
-                signer=signer
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path))
-
-            # Verify results
-            self.assertIsInstance(manifest_bytes, bytes)
-            self.assertGreater(len(manifest_bytes), 0)
-
-            # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
-                json_data = reader.json()
-                # Needs trust configuration to be set up to validate as Trusted
-                # self.assertNotIn("validation_status", json_data)
-
-                # Parse the JSON and verify the signature algorithm
-                manifest_data = json.loads(json_data)
-                active_manifest_id = manifest_data["active_manifest"]
-                active_manifest = manifest_data["manifests"][active_manifest_id]
-
-                self.assertIn("signature_info", active_manifest)
-                signature_info = active_manifest["signature_info"]
-                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
 
         finally:
             shutil.rmtree(temp_dir)
@@ -5489,6 +5439,42 @@ class TestReaderWithContext(TestContextAPIs):
         reader = Reader("image/jpeg", DEFAULT_TEST_FILE, context=context)
         data = reader.json()
         self.assertIsNotNone(data)
+        reader.close()
+        context.close()
+
+    def test_with_fragment_on_closed_reader_raises(self):
+        context = Context()
+        reader = Reader(DEFAULT_TEST_FILE, context=context)
+        reader.close()
+        with self.assertRaises(Error):
+            reader.with_fragment(
+                "video/mp4",
+                io.BytesIO(b"\x00" * 100),
+                io.BytesIO(b"\x00" * 100),
+            )
+        context.close()
+
+    def test_with_fragment_unsupported_format_raises(self):
+        context = Context()
+        reader = Reader(DEFAULT_TEST_FILE, context=context)
+        with self.assertRaises(Error):
+            reader.with_fragment(
+                "text/plain",
+                io.BytesIO(b"\x00" * 100),
+                io.BytesIO(b"\x00" * 100),
+            )
+        reader.close()
+        context.close()
+
+    def test_with_fragment_with_dash_fixtures(self):
+        context = Context()
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        with open(init_path, "rb") as init_fragment:
+            reader = Reader("video/mp4", init_fragment, context=context)
+        frag_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init_fragment, \
+             open(frag_path, "rb") as next_fragment:
+            reader.with_fragment("video/mp4", init_fragment, next_fragment)
         reader.close()
         context.close()
 
