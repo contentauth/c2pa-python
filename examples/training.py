@@ -90,7 +90,7 @@ ingredient_json = {
     }
 }
 
-# V2 signing API example using default Context and Settings.
+# Signing API example (v2 claims)
 try:
     # Read the private key and certificate files
     with open(keyFile, "rb") as key_file:
