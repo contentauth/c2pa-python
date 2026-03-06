@@ -55,8 +55,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_sign',
     'c2pa_builder_sign_context',
     'c2pa_manifest_bytes_free',
-    'c2pa_builder_data_hashed_placeholder',
-    'c2pa_builder_sign_data_hashed_embeddable',
     'c2pa_format_embeddable',
     'c2pa_signer_create',
     'c2pa_signer_from_info',
@@ -596,21 +594,6 @@ _setup_function(
     _lib.c2pa_manifest_bytes_free, [
         ctypes.POINTER(
             ctypes.c_ubyte)], None)
-_setup_function(
-    _lib.c2pa_builder_data_hashed_placeholder, [
-        ctypes.POINTER(C2paBuilder), ctypes.c_size_t, ctypes.c_char_p,
-        ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))
-    ],
-    ctypes.c_int64,
-)
-_setup_function(_lib.c2pa_builder_sign_data_hashed_embeddable,
-                [ctypes.POINTER(C2paBuilder),
-                 ctypes.POINTER(C2paSigner),
-                 ctypes.c_char_p,
-                 ctypes.c_char_p,
-                 ctypes.POINTER(C2paStream),
-                 ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
-                ctypes.c_int64)
 _setup_function(
     _lib.c2pa_format_embeddable, [
         ctypes.c_char_p, ctypes.POINTER(
@@ -3645,8 +3628,7 @@ class Builder(ManagedResource):
                         " a signer."
                     )
             finally:
-                if not dest:
-                    dest_stream.close()
+                dest_stream.close()
         finally:
             source_stream.close()
 
@@ -3938,6 +3920,7 @@ __all__ = [
     'C2paDigitalSourceType',
     'C2paSignerInfo',
     'C2paBuilderIntent',
+    'ContextBuilder',
     'ContextProvider',
     'Settings',
     'Context',
