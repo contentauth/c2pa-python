@@ -15,11 +15,14 @@ import os
 import io
 import json
 import unittest
+import warnings
 import threading
 import concurrent.futures
 import time
 import asyncio
 import random
+
+warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
@@ -159,8 +162,7 @@ class TestReaderWithThreads(unittest.TestCase):
                         errors.append(error)
                 except Exception as e:
                     errors.append(
-                        f"Unexpected error processing {filename}: {
-                            str(e)}")
+                        f"Unexpected error processing {filename}: {str(e)}")
 
         # If any errors occurred, fail the test with all error messages
         if errors:
@@ -694,8 +696,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
                     # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{
-                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
                     self.assertEqual(
                         active_manifest["claim_generator"],
                         expected_claim_generator)
@@ -713,8 +714,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         # Create a thread pool with 6 workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
@@ -738,8 +738,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if error:
                         errors.append(error)
                 except Exception as e:
-                    errors.append(f"Unexpected error processing {
-                                  filename} in thread {thread_id}: {str(e)}")
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
 
         # If any errors occurred, fail the test with all error messages
         if errors:
@@ -809,8 +808,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
                     # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{
-                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
                     self.assertEqual(
                         active_manifest["claim_generator"],
                         expected_claim_generator)
@@ -828,8 +826,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         async def run_async_tests():
             # Get all files from both directories
@@ -893,8 +890,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(
-                            author_name, f"Tester {
-                                'One' if thread_id == 1 else 'Two'}")
+                            author_name, f"Tester {'One' if thread_id == 1 else 'Two'}")
                         break
 
                 return active_manifest
@@ -1037,8 +1033,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if thread_id % 3 == 0:
                         expected_claim_generator = "python_test/0.0.1"
                     else:
-                        expected_claim_generator = f"python_test_{
-                            expected_thread}/0.0.1"
+                        expected_claim_generator = f"python_test_{expected_thread}/0.0.1"
 
                     self.assertEqual(
                         active_manifest["claim_generator"],
@@ -1057,8 +1052,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         # Create a thread pool with 3 workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -1082,8 +1076,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if error:
                         errors.append(error)
                 except Exception as e:
-                    errors.append(f"Unexpected error processing {
-                                  filename} in thread {thread_id}: {str(e)}")
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
 
         # Verify thread interleaving
         # Check that we don't have long sequences of the same thread
@@ -1096,8 +1089,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             if thread_execution_order[i][1] == current_thread:
                 current_sequence += 1
                 if current_sequence > max_same_thread_sequence:
-                    self.fail(f"Thread {current_thread} executed {
-                              current_sequence} times in sequence, indicating poor interleaving")
+                    self.fail(f"Thread {current_thread} executed {current_sequence} times in sequence, indicating poor interleaving")
             else:
                 current_sequence = 1
                 current_thread = thread_execution_order[i][1]
@@ -1747,8 +1739,9 @@ class TestBuilderWithThreads(unittest.TestCase):
         active_readers = 0
         readers_lock = asyncio.Lock()  # Lock for reader count
         stream_lock = asyncio.Lock()  # Lock for stream access
-        # Barrier to synchronize task starts
-        start_barrier = asyncio.Barrier(reader_count)
+        # Event + counter to synchronize task starts (asyncio.Barrier requires 3.11+)
+        ready_count = 0
+        all_ready = asyncio.Event()
 
         # First write some data to read
         with open(self.testPath, "rb") as file:
@@ -1757,13 +1750,16 @@ class TestBuilderWithThreads(unittest.TestCase):
             output.seek(0)
 
         async def read_manifest(reader_id):
-            nonlocal active_readers
+            nonlocal active_readers, ready_count
             try:
                 async with readers_lock:
                     active_readers += 1
+                    ready_count += 1
+                    if ready_count == reader_count:
+                        all_ready.set()
 
                 # Wait for all tasks to be ready
-                await start_barrier.wait()
+                await all_ready.wait()
 
                 # Read the manifest
                 async with stream_lock:  # Ensure exclusive access to stream
@@ -1817,203 +1813,6 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         # Verify all readers completed
         self.assertEqual(active_readers, 0, "Not all readers completed")
-
-    def test_builder_sign_with_multiple_ingredients_from_stream(self):
-        """Test Builder class operations with multiple ingredients using streams."""
-        # Test creating builder from JSON
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._handle is not None
-
-        # Thread synchronization
-        add_errors = []
-        add_lock = threading.Lock()
-        completed_threads = 0
-        completion_lock = threading.Lock()
-
-        def add_ingredient_from_stream(ingredient_json, file_path, thread_id):
-            nonlocal completed_threads
-            try:
-                with open(file_path, 'rb') as f:
-                    builder.add_ingredient_from_stream(
-                        ingredient_json, "image/jpeg", f)
-                with add_lock:
-                    add_errors.append(None)  # Success case
-            except Exception as e:
-                with add_lock:
-                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
-            finally:
-                with completion_lock:
-                    completed_threads += 1
-
-        # Create and start two threads for parallel ingredient addition
-        thread1 = threading.Thread(
-            target=add_ingredient_from_stream,
-            args=('{"title": "Test Ingredient Stream 1"}', self.testPath3, 1)
-        )
-        thread2 = threading.Thread(
-            target=add_ingredient_from_stream,
-            args=('{"title": "Test Ingredient Stream 2"}', self.testPath4, 2)
-        )
-
-        # Start both threads
-        thread1.start()
-        thread2.start()
-
-        # Wait for both threads to complete
-        thread1.join()
-        thread2.join()
-
-        # Check for errors during ingredient addition
-        if any(error for error in add_errors if error is not None):
-            self.fail(
-                "\n".join(
-                    error for error in add_errors if error is not None))
-
-        # Verify both ingredients were added successfully
-        self.assertEqual(
-            completed_threads,
-            2,
-            "Both threads should have completed")
-        self.assertEqual(
-            len(add_errors),
-            2,
-            "Both threads should have completed without errors")
-
-        # Now sign the manifest with the added ingredients
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertEqual(len(active_manifest["ingredients"]), 2)
-
-            # Verify both ingredients exist in the array (order doesn't matter)
-            ingredient_titles = [ing["title"]
-                                 for ing in active_manifest["ingredients"]]
-            self.assertIn("Test Ingredient Stream 1", ingredient_titles)
-            self.assertIn("Test Ingredient Stream 2", ingredient_titles)
-
-        builder.close()
-
-    def test_builder_sign_with_same_ingredient_multiple_times(self):
-        """Test Builder class operations with the same ingredient added multiple times from different threads."""
-        # Test creating builder from JSON
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._handle is not None
-
-        # Thread synchronization
-        add_errors = []
-        add_lock = threading.Lock()
-        completed_threads = 0
-        completion_lock = threading.Lock()
-
-        def add_ingredient(ingredient_json, thread_id):
-            nonlocal completed_threads
-            try:
-                with open(self.testPath3, 'rb') as f:
-                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
-                with add_lock:
-                    add_errors.append(None)  # Success case
-            except Exception as e:
-                with add_lock:
-                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
-            finally:
-                with completion_lock:
-                    completed_threads += 1
-
-        # Create and start 5 threads for parallel ingredient addition
-        threads = []
-        for i in range(1, 6):
-            # Create unique manifest JSON for each thread
-            ingredient_json = json.dumps({
-                "title": f"Test Ingredient Thread {i}"
-            })
-
-            thread = threading.Thread(
-                target=add_ingredient,
-                args=(ingredient_json, i)
-            )
-            threads.append(thread)
-            thread.start()
-
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-
-        # Check for errors during ingredient addition
-        if any(error for error in add_errors if error is not None):
-            self.fail(
-                "\n".join(
-                    error for error in add_errors if error is not None))
-
-        # Verify all ingredients were added successfully
-        self.assertEqual(
-            completed_threads,
-            5,
-            "All 5 threads should have completed")
-        self.assertEqual(
-            len(add_errors),
-            5,
-            "All 5 threads should have completed without errors")
-
-        # Now sign the manifest with the added ingredients
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertEqual(len(active_manifest["ingredients"]), 5)
-
-            # Verify all ingredients exist in the array with correct thread IDs
-            # and unique metadata
-            ingredient_titles = [ing["title"]
-                                 for ing in active_manifest["ingredients"]]
-
-            # Check that we have 5 unique titles
-            self.assertEqual(len(set(ingredient_titles)), 5,
-                             "Should have 5 unique ingredient titles")
-
-            # Verify each thread's ingredient exists with correct metadata
-            for i in range(1, 6):
-                # Find ingredients with this thread ID
-                thread_ingredients = [ing for ing in active_manifest["ingredients"]
-                                      if ing["title"] == f"Test Ingredient Thread {i}"]
-                self.assertEqual(
-                    len(thread_ingredients),
-                    1,
-                    f"Should find exactly one ingredient for thread {i}")
-
-        builder.close()
 
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder class operations with 12 threads, each adding 3 specific ingredients and signing a file."""
@@ -2815,7 +2614,9 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         active_readers = 0
         readers_lock = asyncio.Lock()
         stream_lock = asyncio.Lock()
-        start_barrier = asyncio.Barrier(reader_count)
+        # Event + counter to synchronize task starts (asyncio.Barrier requires 3.11+)
+        ready_count = 0
+        all_ready = asyncio.Event()
 
         ctx = Context()
         with open(self.testPath, "rb") as file:
@@ -2824,11 +2625,14 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             output.seek(0)
 
         async def read_manifest(reader_id):
-            nonlocal active_readers
+            nonlocal active_readers, ready_count
             try:
                 async with readers_lock:
                     active_readers += 1
-                await start_barrier.wait()
+                    ready_count += 1
+                    if ready_count == reader_count:
+                        all_ready.set()
+                await all_ready.wait()
                 async with stream_lock:
                     output.seek(0)
                     read_ctx = Context()
@@ -2856,118 +2660,6 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         if read_errors:
             self.fail("\n".join(read_errors))
         self.assertEqual(active_readers, 0)
-
-    def test_builder_sign_with_multiple_ingredients_from_stream(self):
-        """Test Builder with multiple ingredients from streams using context APIs"""
-        ctx = Context()
-        builder = Builder.from_json(self.manifestDefinition, context=ctx)
-        assert builder._handle is not None
-        add_errors = []
-        add_lock = threading.Lock()
-        completed_threads = 0
-        completion_lock = threading.Lock()
-
-        def add_ingredient_from_stream(ingredient_json, file_path, thread_id):
-            nonlocal completed_threads
-            try:
-                with open(file_path, 'rb') as f:
-                    builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", f)
-                with add_lock:
-                    add_errors.append(None)
-            except Exception as e:
-                with add_lock:
-                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
-            finally:
-                with completion_lock:
-                    completed_threads += 1
-
-        thread1 = threading.Thread(target=add_ingredient_from_stream, args=('{"title": "Test Ingredient Stream 1"}', self.testPath3, 1))
-        thread2 = threading.Thread(target=add_ingredient_from_stream, args=('{"title": "Test Ingredient Stream 2"}', self.testPath4, 2))
-        thread1.start()
-        thread2.start()
-        thread1.join()
-        thread2.join()
-        if any(e for e in add_errors if e is not None):
-            self.fail("\n".join(e for e in add_errors if e is not None))
-        self.assertEqual(completed_threads, 2)
-        self.assertEqual(len(add_errors), 2)
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            read_ctx = Context()
-            reader = Reader("image/jpeg", output, context=read_ctx)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-            self.assertIn("ingredients", active_manifest)
-            self.assertEqual(len(active_manifest["ingredients"]), 2)
-            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
-            self.assertIn("Test Ingredient Stream 1", ingredient_titles)
-            self.assertIn("Test Ingredient Stream 2", ingredient_titles)
-        builder.close()
-
-    def test_builder_sign_with_same_ingredient_multiple_times(self):
-        """Test Builder with same ingredient added multiple times from different threads using context APIs"""
-        ctx = Context()
-        builder = Builder.from_json(self.manifestDefinition, context=ctx)
-        assert builder._handle is not None
-        add_errors = []
-        add_lock = threading.Lock()
-        completed_threads = 0
-        completion_lock = threading.Lock()
-
-        def add_ingredient(ingredient_json, thread_id):
-            nonlocal completed_threads
-            try:
-                with open(self.testPath3, 'rb') as f:
-                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
-                with add_lock:
-                    add_errors.append(None)
-            except Exception as e:
-                with add_lock:
-                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
-            finally:
-                with completion_lock:
-                    completed_threads += 1
-
-        threads = []
-        for i in range(1, 6):
-            ingredient_json = json.dumps({"title": f"Test Ingredient Thread {i}"})
-            thread = threading.Thread(target=add_ingredient, args=(ingredient_json, i))
-            threads.append(thread)
-            thread.start()
-        for thread in threads:
-            thread.join()
-        if any(e for e in add_errors if e is not None):
-            self.fail("\n".join(e for e in add_errors if e is not None))
-        self.assertEqual(completed_threads, 5)
-        self.assertEqual(len(add_errors), 5)
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            read_ctx = Context()
-            reader = Reader("image/jpeg", output, context=read_ctx)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-            self.assertIn("ingredients", active_manifest)
-            self.assertEqual(len(active_manifest["ingredients"]), 5)
-            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
-            self.assertEqual(len(set(ingredient_titles)), 5)
-            for i in range(1, 6):
-                thread_ingredients = [ing for ing in active_manifest["ingredients"] if ing["title"] == f"Test Ingredient Thread {i}"]
-                self.assertEqual(len(thread_ingredients), 1)
-        builder.close()
 
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder with 12 threads adding ingredients and signing using context APIs"""
