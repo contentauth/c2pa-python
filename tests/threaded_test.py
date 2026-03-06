@@ -1739,8 +1739,9 @@ class TestBuilderWithThreads(unittest.TestCase):
         active_readers = 0
         readers_lock = asyncio.Lock()  # Lock for reader count
         stream_lock = asyncio.Lock()  # Lock for stream access
-        # Barrier to synchronize task starts
-        start_barrier = asyncio.Barrier(reader_count)
+        # Event + counter to synchronize task starts (asyncio.Barrier requires 3.11+)
+        ready_count = 0
+        all_ready = asyncio.Event()
 
         # First write some data to read
         with open(self.testPath, "rb") as file:
@@ -1749,13 +1750,16 @@ class TestBuilderWithThreads(unittest.TestCase):
             output.seek(0)
 
         async def read_manifest(reader_id):
-            nonlocal active_readers
+            nonlocal active_readers, ready_count
             try:
                 async with readers_lock:
                     active_readers += 1
+                    ready_count += 1
+                    if ready_count == reader_count:
+                        all_ready.set()
 
                 # Wait for all tasks to be ready
-                await start_barrier.wait()
+                await all_ready.wait()
 
                 # Read the manifest
                 async with stream_lock:  # Ensure exclusive access to stream
@@ -2807,7 +2811,9 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         active_readers = 0
         readers_lock = asyncio.Lock()
         stream_lock = asyncio.Lock()
-        start_barrier = asyncio.Barrier(reader_count)
+        # Event + counter to synchronize task starts (asyncio.Barrier requires 3.11+)
+        ready_count = 0
+        all_ready = asyncio.Event()
 
         ctx = Context()
         with open(self.testPath, "rb") as file:
@@ -2816,11 +2822,14 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             output.seek(0)
 
         async def read_manifest(reader_id):
-            nonlocal active_readers
+            nonlocal active_readers, ready_count
             try:
                 async with readers_lock:
                     active_readers += 1
-                await start_barrier.wait()
+                    ready_count += 1
+                    if ready_count == reader_count:
+                        all_ready.set()
+                await all_ready.wait()
                 async with stream_lock:
                     output.seek(0)
                     read_ctx = Context()
