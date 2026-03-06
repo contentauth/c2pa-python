@@ -3749,7 +3749,7 @@ class Builder(ManagedResource):
                 if signer is not None:
                     return self.sign(signer, mime_type, source_file, dest_file)
                 # else:
-                return self.sign(mime_type, source_file, dest_file)
+                return self.sign_with_context(mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 

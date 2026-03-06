@@ -5606,6 +5606,42 @@ class TestBuilderWithContext(TestContextAPIs):
         builder.close()
         context.close()
 
+    def test_sign_file_with_context_signer_no_explicit_signer(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            manifest_bytes = builder.sign_file(
+                source_path=DEFAULT_TEST_FILE,
+                dest_path=dest_path,
+            )
+            self.assertIsNotNone(manifest_bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+            reader = Reader(dest_path)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+        builder.close()
+        context.close()
+
+    def test_sign_file_no_signer_raises(self):
+        context = Context()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with self.assertRaises(Error):
+                builder.sign_file(
+                    source_path=DEFAULT_TEST_FILE,
+                    dest_path=dest_path,
+                )
+        builder.close()
+        context.close()
+
 
 class TestContextIntegration(TestContextAPIs):
 
