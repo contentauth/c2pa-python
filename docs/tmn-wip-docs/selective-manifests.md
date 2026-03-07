@@ -70,6 +70,9 @@ with open("thumbnail.jpg", "wb") as f:
 
 ## Filtering into a new Builder
 
+> [!NOTE]
+> All `Builder` examples on this page also work with a `Context` for custom settings (thumbnails, claim generator, intent). A context can be passed to the constructor with `Builder(manifest_json, context=ctx)`. For signing with a context-provided signer, `builder.sign_with_context()` can be used instead of `builder.sign()`. See [Context](../context.md) for details.
+
 Each example below creates a **new `Builder`** from filtered data. The original asset and its manifest store are never modified.
 
 When transferring ingredients from a `Reader` to a new `Builder`, you must transfer both the JSON metadata and the associated binary resources (thumbnails, manifest data). The JSON contains identifiers that reference those resources; the same identifiers must be used when calling `builder.add_resource()`.
@@ -454,6 +457,7 @@ flowchart TD
         A2["Archive: graphics.c2pa (ingredients from design assets)"]
         A3["Archive: audio.c2pa (ingredients from audio tracks)"]
     end
+    CTX["Context (optional)"]
     subgraph Build["Final Builder"]
         direction TB
         SEL["Pick and choose ingredients from any archive in the catalog"]
@@ -462,11 +466,13 @@ flowchart TD
     A1 -->|"select photo_1, photo_3"| SEL
     A2 -->|"select logo"| SEL
     A3 -. "skip (not needed)" .-> X((not used))
+    CTX -.->|"settings"| FB
     SEL --> FB
     FB -->|sign| OUT[Signed Output Asset]
 
     style A3 fill:#eee,stroke:#999
     style X fill:#f99,stroke:#c00
+    style CTX fill:#e8f4fd,stroke:#4a90d9
 ```
 
 
@@ -492,6 +498,38 @@ with Reader("application/c2pa", archive_stream) as reader:
 
         with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
             new_builder.sign(signer, "image/jpeg", source, dest)
+```
+
+#### With context
+
+The same workflow can use a `Context` for custom settings. The context controls thumbnail generation, claim generator info, and other Builder settings. When a signer is configured in the context, `sign_with_context()` can be used instead of passing a signer explicitly.
+
+```py
+ctx = Context.from_dict({
+    "builder": {
+        "thumbnail": {"enabled": False},
+        "claim_generator_info": {"name": "My App", "version": "1.0"}
+    }
+})
+
+archive_stream.seek(0)
+with Reader("application/c2pa", archive_stream) as reader:
+    manifest_store = json.loads(reader.json())
+    active = manifest_store["manifests"][manifest_store["active_manifest"]]
+
+    selected = [
+        ing for ing in active["ingredients"]
+        if ing["title"] in {"photo_1.jpg", "logo.png"}
+    ]
+
+    with Builder({
+        "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
+        "ingredients": selected,
+    }, context=ctx) as new_builder:
+        transfer_ingredient_resources(reader, new_builder, selected)
+
+        with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
+            new_builder.sign_with_context("image/jpeg", source, dest)
 ```
 
 ### Overriding ingredient properties
@@ -586,10 +624,14 @@ flowchart TD
         AR -->|"Reader(application/c2pa)"| RD[JSON + resources]
         RD -->|"pick ingredients"| SEL[Selected ingredients]
     end
+    CTX["Context (optional)"]
     subgraph Step3["Step 3: Reuse in a new Builder"]
         SEL -->|"new Builder + add_resource()"| B2[New Builder]
+        CTX -.->|"settings"| B2
         B2 -->|sign| OUT[Signed Output]
     end
+
+    style CTX fill:#e8f4fd,stroke:#4a90d9
 ```
 
 
@@ -620,6 +662,9 @@ with Builder({
     builder.to_archive(archive_stream)
 ```
 
+> [!NOTE]
+> When restoring from an archive, `with_archive()` preserves context settings while `from_archive()` does not. See [Working with archives](../working-stores.md#working-with-archives) for the full comparison.
+
 **Step 2:** Read the archive and extract ingredients:
 
 ```py
@@ -646,9 +691,36 @@ with Reader("application/c2pa", archive_stream) as reader:
             new_builder.sign(signer, "image/jpeg", source, dest)
 ```
 
+#### Step 3 with context
+
+When context settings need to be applied (such as thumbnail configuration or claim generator info), the builder can be created with a `Context`. If the archive was previously saved with `to_archive()`, it can be loaded with `with_archive()` to preserve those settings.
+
+```py
+    ctx = Context.from_dict({
+        "builder": {
+            "thumbnail": {"enabled": False},
+            "claim_generator_info": {"name": "My App", "version": "1.0"}
+        }
+    })
+
+    selected = [ing for ing in ingredients if ing["title"] == "A.jpg"]
+
+    with Builder({
+        "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
+        "ingredients": selected,
+    }, context=ctx) as new_builder:
+        transfer_ingredient_resources(reader, new_builder, selected)
+
+        with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
+            new_builder.sign_with_context("image/jpeg", source, dest)
+```
+
 ### Merging multiple working stores
 
-In some cases you may need to merge ingredients from multiple working stores (builder archives) into a single `Builder`. This should be a **fallback strategy**—the recommended practice is to maintain a single active working store and add ingredients incrementally (archived ingredient catalogs help with this). Merging is available when multiple working stores must be consolidated.
+> [!NOTE]
+> The `Builder` construction and signing in the merge workflow also support `Context`. The caller can pass `context=ctx` to `Builder()` and use `sign_with_context()` instead of `sign()`. See [Context](../context.md) for details.
+
+In some cases it is necessary to merge ingredients from multiple working stores (builder archives) into a single `Builder`. This should be a **fallback strategy**. The recommended practice is to maintain a single active working store and add ingredients incrementally (archived ingredient catalogs help with this). Merging is available when multiple working stores must be consolidated.
 
 When merging from multiple sources, resource identifier URIs can collide. Rename identifiers with a unique suffix when needed. Use two passes: (1) collect ingredients with collision handling, build the manifest, create the builder; (2) re-read each archive and transfer resources (use original ID for `resource_to_stream()`, renamed ID for `add_resource()` when collisions occurred).
 
