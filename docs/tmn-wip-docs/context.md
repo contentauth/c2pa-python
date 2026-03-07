@@ -459,7 +459,7 @@ Archives (`.c2pa` files) store only the manifest definition — they do **not** 
 Use `with_archive()` when your workflow depends on specific settings (thumbnails, claim generator, intent, and so on). Use `from_archive()` only for quick prototyping where SDK defaults are acceptable.
 
 ```py
-# Recommended: with_archive preserves context settings
+# Recommended: with_archive propagates context settings
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": False},
@@ -471,9 +471,6 @@ with open("manifest.c2pa", "rb") as archive:
     builder = Builder({}, ctx)
     builder.with_archive(archive)
     # builder now has the archived definition + context settings
-
-# NOT recommended when settings matter:
-# builder = Builder.from_archive(archive)  # context-free, SDK defaults apply
 ```
 
 For more details on archive workflows, see [Working with archives](working-stores.md#working-with-archives).
@@ -509,7 +506,7 @@ no_thumbnails_ctx = Context.from_dict({
     }
 })
 
-# Or customize thumbnail size and quality for mobile
+# Or customize thumbnail size and quality e.g. for mobile
 mobile_ctx = Context.from_dict({
     "builder": {
         "claim_generator_info": {"name": "Mobile App"},
@@ -523,7 +520,7 @@ mobile_ctx = Context.from_dict({
 })
 ```
 
-## Configuring a signer
+## Configuring a Signer
 
 ### Signing concepts
 
@@ -534,14 +531,14 @@ C2PA uses a certificate-based trust model to prove who signed an asset. When cre
 
 ### Signer creation patterns
 
-You can configure a signer in two ways:
+A Signer can be configured two ways:
 
-- [From Settings (signer-on-context)](#from-settings)
-- [Explicit signer passed to sign()](#explicit-signer)
+- [From Settings (signer-on-context)](#from-settings) — pass the signer when creating the `Context`.
+- [Explicit signer passed to sign()](#explicit-programmatic-signer) — pass the signer directly at signing time.
 
 ### From Settings
 
-Create a `Signer` and pass it to the `Context`. The signer is **consumed** — the `Signer` object becomes invalid after this call and must not be reused. The `Context` takes ownership of the underlying native signer.
+Create a `Signer` and pass it to the `Context`. The signer is **consumed**: the `Signer` object becomes invalid after this call and must not be reused directly after that point. The `Context` takes ownership of the underlying native signer.
 
 ```py
 from c2pa import Context, Settings, Builder, Signer, C2paSignerInfo, C2paSigningAlg
@@ -557,18 +554,15 @@ signer = Signer.from_info(signer_info)
 
 # Create context with signer (signer is consumed)
 ctx = Context(settings, signer)
-# signer is now invalid and must not be used again
+# signer is now invalid and must not be used directly again
 
-# Build and sign — no signer argument needed
+# Build and sign, no signer argument needed since a Signer is in the Context
 builder = Builder(manifest_json, ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign_with_context("image/jpeg", src, dst)
 ```
 
-> [!NOTE]
-> Signer-on-context requires a compatible version of the native c2pa-c library. If the library does not support this feature, a `C2paError` is raised when passing a `Signer` to `Context`.
-
-### Explicit signer
+### Explicit (programmatic) signer
 
 For full programmatic control, create a `Signer` and pass it directly to `Builder.sign()`:
 
@@ -580,6 +574,14 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
 ```
 
+You can also use the fluent `ContextBuilder` API to attach a signer programmatically via `with_signer`:
+
+```py
+ctx = Context.builder().with_settings(settings).with_signer(signer).build()
+```
+
+### Precedence rules for Signer configuration
+
 If both an explicit signer and a context signer are available, the explicit signer always takes precedence:
 
 ```py
@@ -589,7 +591,7 @@ builder.sign(explicit_signer, "image/jpeg", source, dest)
 
 ## Context lifetime and usage
 
-### Context as a context manager
+### `with` statement
 
 `Context` supports the `with` statement for automatic resource cleanup:
 
@@ -607,7 +609,7 @@ You can reuse the same `Context` to create multiple readers and builders:
 ```py
 ctx = Context(settings)
 
-# All three use the same configuration
+# All three use the same configuration through usage of the same context
 builder1 = Builder(manifest1, ctx)
 builder2 = Builder(manifest2, ctx)
 reader = Reader("image.jpg", context=ctx)
@@ -617,7 +619,7 @@ reader = Reader("image.jpg", context=ctx)
 
 ### Multiple contexts for different purposes
 
-Use different `Context` objects when you need different settings; for example, for development vs. production, or different trust configurations:
+Use different `Context` objects when you need different settings. Ror example, for development vs. production, or different trust configurations:
 
 ```py
 dev_ctx = Context(dev_settings)
@@ -630,7 +632,7 @@ prod_builder = Builder(manifest, prod_ctx)
 
 ### ContextProvider abstract base class
 
-`ContextProvider` is an abstract base class (ABC) that enables custom context provider implementations. Subclass it and implement the `is_valid` and `execution_context` abstract properties to create a provider that can be passed to `Reader` or `Builder` as `context`.
+`ContextProvider` is an abstract base class (ABC) that enables context provider implementations. Subclass it and implement the `is_valid` and `execution_context` abstract properties to create a provider that can be passed to `Reader` or `Builder` as `Context`.
 
 ```py
 from c2pa import ContextProvider, Context
@@ -642,7 +644,7 @@ assert isinstance(ctx, ContextProvider)  # True
 
 ## Migrating from load_settings
 
-The `load_settings()` function is deprecated. Replace it with `Settings` and `Context`:
+The `load_settings()` function is deprecated. Replace it with `Settings` and `Context` APIs instead:
 
 | Aspect | load_settings (legacy) | Context |
 |--------|------------------------|---------|
