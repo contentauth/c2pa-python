@@ -22,14 +22,11 @@ Create and configure settings:
 | `Settings.from_dict(config)` | Create settings from a Python dictionary. |
 | `set(path, value)` | Set a single value by dot-separated path (e.g. `"verify.verify_after_sign"`). Value must be a string. Returns `self` for chaining. Use this for programmatic configuration. |
 | `update(data)` | Merge JSON configuration into existing settings. `data` can be a JSON string or a dict. Later keys override earlier ones. Use this to apply configuration files or JSON strings. |
-| `is_valid` | Property that returns `True` if the object holds valid resources (not closed). |
-| `close()` | Release native resources. Called automatically when used as a context manager. |
 
 **Important notes:**
 
-- The `set()` and `update()` methods can be chained for sequential configuration.
-- When using multiple configuration methods, later calls override earlier ones (last wins).
-- Use the `with` statement for automatic resource cleanup.
+- The `set()` and `update()` methods can be chained for incremental configuration.
+- When using multiple configuration methods, later calls override earlier ones (last call wins when same setting is set multiple times).
 
 ```py
 from c2pa import Settings
@@ -72,7 +69,7 @@ The Settings JSON has this top-level structure:
 
 ### Settings format
 
-Settings are provided in **JSON** only. Pass JSON strings to `Settings.from_json()` or dictionaries to `Settings.from_dict()`.
+Settings are provided in **JSON** format only. Pass JSON strings (serialized JSON stings) to `Settings.from_json()` or dictionaries to `Settings.from_dict()`. `from_dict` will convert the dictionary in a format compatible with what the udnerlying native libraries expect.
 
 ```py
 # From JSON string
@@ -99,7 +96,7 @@ with open("config/settings.json", "r") as f:
 
 ## Default configuration
 
-The settings JSON schema — including the complete default configuration with all properties and their default values — is shared with all languages in the SDK:
+The settings JSON schema — including the complete default configuration with all properties and their default values — is shared by all languages in the SDK:
 
 ```json
 {
@@ -397,7 +394,7 @@ camera_ctx = Context.from_dict({
 })
 ```
 
-Or for editing existing content:
+Or another example for editing existing content:
 
 ```py
 editor_ctx = Context.from_dict({
@@ -412,8 +409,7 @@ editor_ctx = Context.from_dict({
 
 The [`signer` properties](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/#signersettings) configure the primary C2PA signer configuration. Set it to `null` if you provide the signer at runtime, or configure as either a **local** or **remote** signer in settings.
 
-> [!NOTE]
-> The typical approach in Python is to create a `Signer` object with `Signer.from_info()` and pass it directly to `Builder.sign()`. Alternatively, pass a `Signer` to `Context` for the signer-on-context pattern. See [Configuring a signer](context.md#configuring-a-signer) for details.
+See [Configuring a signer](context.md#configuring-a-signer) for details on how to configure a Signer.
 
 #### Local signer
 
