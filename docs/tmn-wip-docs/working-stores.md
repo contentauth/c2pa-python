@@ -23,7 +23,7 @@ graph TD
 
     A[Working Store<br/>Builder object] -->|sign| MS
     A -->|to_archive| C[C2PA Archive<br/>.c2pa file]
-    C -->|from_archive| A
+    C -->|from_archive or with_archive| A
 ```
 
 ## Key entities
