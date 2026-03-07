@@ -38,7 +38,10 @@ The fundamental workflow is:
 
 Use `Reader` to extract the manifest store JSON and any binary resources (thumbnails, manifest data). The source asset is never modified.
 
+`Reader` also accepts an optional `context` parameter. This is especially important for trust configuration, which controls which certificates are trusted when validating signatures. Without a context, `Reader` uses SDK defaults. See [Configuring Reader](../context.md#configuring-reader) and [Trust configuration](../context.md#trust-configuration) for details.
+
 ```py
+# Without context (SDK default trust settings)
 with open("signed_asset.jpg", "rb") as source:
     with Reader("image/jpeg", source) as reader:
         # Get the full manifest store as JSON
@@ -52,6 +55,27 @@ with open("signed_asset.jpg", "rb") as source:
         ingredients = manifest["ingredients"]
         assertions = manifest["assertions"]
         thumbnail_id = manifest["thumbnail"]["identifier"]
+```
+
+### With context (trust configuration)
+
+To control which certificates are trusted during validation, pass a `Context` with trust settings to `Reader`:
+
+```py
+ctx = Context.from_dict({
+    "trust": {
+        "user_anchors": "-----BEGIN CERTIFICATE-----\nMIICEzCCA...\n-----END CERTIFICATE-----",
+    },
+    "verify": {
+        "verify_trust": True
+    }
+})
+
+with open("signed_asset.jpg", "rb") as source:
+    with Reader("image/jpeg", source, context=ctx) as reader:
+        manifest_store = json.loads(reader.json())
+        active_label = manifest_store["active_manifest"]
+        manifest = manifest_store["manifests"][active_label]
 ```
 
 ### Extracting binary resources
@@ -71,7 +95,7 @@ with open("thumbnail.jpg", "wb") as f:
 ## Filtering into a new Builder
 
 > [!NOTE]
-> All `Builder` examples on this page also work with a `Context` for custom settings (thumbnails, claim generator, intent). A context can be passed to the constructor with `Builder(manifest_json, context=ctx)`. For signing with a context-provided signer, `builder.sign_with_context()` can be used instead of `builder.sign()`. See [Context](../context.md) for details.
+> All `Builder` and `Reader` examples on this page also work with a `Context`. For `Reader`, a context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, a context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. For signing with a context-provided signer, `builder.sign_with_context()` can be used instead of `builder.sign()`. See [Context](../context.md) for details.
 
 Each example below creates a **new `Builder`** from filtered data. The original asset and its manifest store are never modified.
 
@@ -440,7 +464,7 @@ There are two distinct types of archives, sharing the same binary format but bei
 
 ### Builder archives vs. ingredient archives
 
-A **builder archive** (also called a working store archive) is a serialized snapshot of a `Builder`. It contains the manifest definition, all resources, and any ingredients that were added. It is created by `builder.to_archive()` and restored with `Builder.from_archive()`.
+A **builder archive** (also called a working store archive) is a serialized snapshot of a `Builder`. It contains the manifest definition, all resources, and any ingredients that were added. It is created by `builder.to_archive()` and restored with `Builder.from_archive()` to create a new builder instance from an archive, or `builder.with_archive()` to load a working store from a builder archive into an existing builder instance.
 
 An **ingredient archive** contains the manifest store from an asset that was added as an ingredient.
 
@@ -457,7 +481,7 @@ flowchart TD
         A2["Archive: graphics.c2pa (ingredients from design assets)"]
         A3["Archive: audio.c2pa (ingredients from audio tracks)"]
     end
-    CTX["Context (optional)"]
+    CTX["Context (to propagate settings and configuration)"]
     subgraph Build["Final Builder"]
         direction TB
         SEL["Pick and choose ingredients from any archive in the catalog"]
