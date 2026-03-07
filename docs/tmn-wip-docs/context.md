@@ -147,8 +147,8 @@ classDiagram
     C2paSignerInfo --> Signer : creates via from_info
     C2paSigningAlg --> C2paSignerInfo : alg field
     C2paSigningAlg --> Signer : from_callback alg
-    Context --> Reader : optional context=
-    Context --> Builder : optional context=
+    Context --> Reader : context=
+    Context --> Builder : context=
     Signer --> Builder : sign(signer)
     C2paBuilderIntent --> Builder : set_intent
     C2paDigitalSourceType --> Builder : set_intent
@@ -166,9 +166,11 @@ The SDK supports two main workflows. `Settings` and `Context` are optional in bo
 
 Read and inspect C2PA data already embedded in (or attached to) an asset:
 
-```text
-Asset file ──► Reader ──► Manifest JSON     (reader.json())
-                     └──► Binary resources  (reader.resource_to_stream())
+```mermaid
+flowchart LR
+    A[Asset file] --> B[Reader]
+    B --> C["Manifest JSON (reader.json())"]
+    B --> D["Binary resources (reader.resource_to_stream())"]
 ```
 
 ```py
@@ -182,12 +184,14 @@ print(reader.json())  # Manifest store as JSON
 
 Create new C2PA provenance data and sign it into an asset:
 
-```text
-Settings ──► Context ──► Builder ──► sign() ──► Signed asset
-(optional)   (optional)    │           ▲
-                           │           │
-                    add assertions   Signer
-                    add ingredients
+```mermaid
+flowchart LR
+    A["Settings (optional)"] --> B["Context (optional)"]
+    B --> C[Builder]
+    C --> D["sign()"]
+    D --> E[Signed asset]
+    F[Signer] --> D
+    G[add assertions\nadd ingredients] --> C
 ```
 
 ```py
