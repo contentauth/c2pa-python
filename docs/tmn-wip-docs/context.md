@@ -18,7 +18,7 @@ Context encapsulates SDK configuration:
 - **Enables multiple configurations**: Run different configurations simultaneously. For example, one for development with test certificates, another for production with strict validation.
 - **Eliminates global state**: Each `Reader` and `Builder` gets its configuration from the `Context` you pass, avoiding subtle bugs from shared state.
 - **Simplifies testing**: Create isolated configurations for tests without worrying about cleanup or interference between them.
-- **Improves code clarity**: Reading `Builder(manifest_json, context=ctx)` immediately shows that configuration is being used.
+- **Improves code clarity**: Reading `Builder(manifest_json, ctx)` immediately shows that configuration is being used.
 
 ### Class diagram
 
@@ -160,7 +160,7 @@ classDiagram
 
 ## Workflow overview
 
-The SDK supports two main workflows. `Settings` and `Context` are optional in both; `Reader` and `Builder` can be used directly with SDK defaults.
+The SDK supports two main workflows. `Settings` and `Context` are currently optional in both (but recommended). `Reader` and `Builder` can still be used directly with SDK defaults.
 
 ### Reading provenance
 
@@ -168,7 +168,7 @@ Read and inspect C2PA data already embedded in (or attached to) an asset:
 
 ```mermaid
 flowchart LR
-    A[Asset file] --> B[Reader]
+    A[Asset file] --> B["Reader (with Context containing Settings)"]
     B --> C["Manifest JSON (reader.json())"]
     B --> D["Binary resources (reader.resource_to_stream())"]
 ```
@@ -186,7 +186,7 @@ Create new C2PA provenance data and sign it into an asset:
 
 ```mermaid
 flowchart LR
-    A["Settings (optional)"] --> B["Context (optional)"]
+    A["Settings"] --> B["Context"]
     B --> C[Builder]
     C --> D["sign()"]
     D --> E[Signed asset]
@@ -203,7 +203,7 @@ with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
 ```
 
-`Settings` and `Context` are needed only to customize behavior (trust configuration, thumbnail settings, claim generator info, and so on). Without them, the SDK uses sensible defaults.
+`Settings` and `Context` enable to customize behavior (trust configuration, thumbnail settings, claim generator info, and so on).
 
 ## Creating a Context
 
@@ -218,7 +218,7 @@ There are several ways to create a `Context`, depending on your needs:
 
 The simplest approach is using [SDK default settings](settings.md#default-configuration).
 
-**When to use:** For quick prototyping, or when you're happy with default behavior (verification enabled, thumbnails enabled at 1024px, and so on).
+**When to use:** For quick prototyping, or when you're happy with SDK default behavior (verification enabled, thumbnails enabled at 1024px, and so on).
 
 ```py
 from c2pa import Context
@@ -276,7 +276,7 @@ settings.update({
     }
 })
 
-ctx = Context(settings=settings)
+ctx = Context(settings)
 ```
 
 ## Common configuration patterns
@@ -322,7 +322,7 @@ if env == "production":
 else:
     settings.update({"verify": {"remote_manifest_fetch": False}})
 
-ctx = Context(settings=settings)
+ctx = Context(settings)
 ```
 
 ### Layered configuration
@@ -341,7 +341,7 @@ settings = Settings.from_dict(base_config)
 # Apply environment-specific overrides
 settings.update({"builder": {"claim_generator_info": {"version": app_version}}})
 
-ctx = Context(settings=settings)
+ctx = Context(settings)
 ```
 
 For the full list of settings and defaults, see [Using settings](settings.md).
@@ -355,7 +355,7 @@ Use `Context` to control how `Reader` validates manifests and handles remote res
 - [**Network access**](#offline-operation): Whether to fetch remote manifests or OCSP responses.
 
 > [!IMPORTANT]
-> `Context` is used only at construction. `Reader` copies the configuration it needs internally, so the `Context` object does not need to outlive the `Reader`.
+> `Context` is used only at construction. `Reader` copies the configuration it needs internally, so the `Context` object does not need to outlive the `Reader`. A `Context` object can also be reused for multiple `Reader` object instances.
 
 ```py
 ctx = Context.from_dict({"verify": {"remote_manifest_fetch": False}})
@@ -447,14 +447,14 @@ For more information, see [Settings - Offline or air-gapped environments](settin
 - **Signer configuration** (optional): Credentials can be stored in the context for reuse.
 
 > [!IMPORTANT]
-> The `Context` is used only when constructing the `Builder`. The `Builder` copies the configuration it needs internally, so the `Context` object does not need to outlive the `Builder`.
+> The `Context` is used only when constructing the `Builder`. The `Builder` copies the configuration it needs internally, so the `Context` object does not need to outlive the `Builder`. A `Context` object can also be reused for multiple `Builder` object instances.
 
 ### Context and archives
 
 Archives (`.c2pa` files) store only the manifest definition — they do **not** store settings or context. This means:
 
 - **`Builder.from_archive(stream)`** creates a context-free builder. All settings revert to SDK defaults regardless of what context the original builder had.
-- **`Builder({}, context=ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved.
+- **`Builder({}, ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved and propagated to this Builder instance.
 
 Use `with_archive()` when your workflow depends on specific settings (thumbnails, claim generator, intent, and so on). Use `from_archive()` only for quick prototyping where SDK defaults are acceptable.
 
@@ -468,7 +468,7 @@ ctx = Context.from_dict({
 })
 
 with open("manifest.c2pa", "rb") as archive:
-    builder = Builder({}, context=ctx)
+    builder = Builder({}, ctx)
     builder.with_archive(archive)
     # builder now has the archived definition + context settings
 
@@ -491,7 +491,7 @@ ctx = Context.from_dict({
     }
 })
 
-builder = Builder(manifest_json, context=ctx)
+builder = Builder(manifest_json, ctx)
 
 # Pass signer explicitly at signing time
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
@@ -556,11 +556,11 @@ signer_info = C2paSignerInfo(
 signer = Signer.from_info(signer_info)
 
 # Create context with signer (signer is consumed)
-ctx = Context(settings=settings, signer=signer)
+ctx = Context(settings, signer)
 # signer is now invalid and must not be used again
 
 # Build and sign — no signer argument needed
-builder = Builder(manifest_json, context=ctx)
+builder = Builder(manifest_json, ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign_with_context("image/jpeg", src, dst)
 ```
@@ -574,7 +574,7 @@ For full programmatic control, create a `Signer` and pass it directly to `Builde
 
 ```py
 signer = Signer.from_info(signer_info)
-builder = Builder(manifest_json, context=ctx)
+builder = Builder(manifest_json, ctx)
 
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
@@ -605,11 +605,11 @@ with Context() as ctx:
 You can reuse the same `Context` to create multiple readers and builders:
 
 ```py
-ctx = Context(settings=settings)
+ctx = Context(settings)
 
 # All three use the same configuration
-builder1 = Builder(manifest1, context=ctx)
-builder2 = Builder(manifest2, context=ctx)
+builder1 = Builder(manifest1, ctx)
+builder2 = Builder(manifest2, ctx)
 reader = Reader("image.jpg", context=ctx)
 
 # Context can be closed after construction; readers/builders still work
@@ -620,12 +620,12 @@ reader = Reader("image.jpg", context=ctx)
 Use different `Context` objects when you need different settings; for example, for development vs. production, or different trust configurations:
 
 ```py
-dev_ctx = Context(settings=dev_settings)
-prod_ctx = Context(settings=prod_settings)
+dev_ctx = Context(dev_settings)
+prod_ctx = Context(prod_settings)
 
 # Different builders with different configurations
-dev_builder = Builder(manifest, context=dev_ctx)
-prod_builder = Builder(manifest, context=prod_ctx)
+dev_builder = Builder(manifest, dev_ctx)
+prod_builder = Builder(manifest, prod_ctx)
 ```
 
 ### ContextProvider abstract base class
@@ -665,7 +665,7 @@ reader = Reader("image.jpg")  # uses global settings
 from c2pa import Settings, Context, Reader
 
 settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
-ctx = Context(settings=settings)
+ctx = Context(settings)
 reader = Reader("image.jpg", context=ctx)
 ```
 
