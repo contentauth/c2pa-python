@@ -39,7 +39,7 @@ with Builder({}) as builder:
         builder.sign(signer, "image/jpeg", source, dest)
 ```
 
-Both ways of writing the code produce the same signed manifest. With intents the Builder validates the setup and fills in the spec-required structure.
+Both ways of writing the code produce the same signed manifest. With intents, the Builder validates the setup and fills in the spec-required structure.
 
 ## Setting the intent
 
@@ -47,7 +47,7 @@ There are three ways to set the intent on a `Builder` object instance. The inten
 
 ### Using Context
 
-Pass the intent through a `Context` object when creating the `Builder`. This is the an approach that keeps intent configuration alongside other builder settings such as `claim_generator_info` and `thumbnail`. Note that the context is created from settings, so you can modulate the settings for each context.
+Pass the intent through a `Context` object when creating the `Builder`. This is an approach that keeps intent configuration alongside other builder settings such as `claim_generator_info` and `thumbnail`. Note that the context is created from settings, so you can modulate the settings for each context.
 
 ```py
 from c2pa import Context, Builder
@@ -93,16 +93,14 @@ with Builder({}) as builder:
         builder.sign(signer, "image/jpeg", source, dest)
 ```
 
-If both a `Context` intent and a `set_intent` call are present, the `set_intent` call takes precedence.
-
 ### Using `load_settings` (deprecated)
 
-The global `load_settings` function can configure the intent for all subsequent `Builder` instances. This approach is deprecated in favor of context-based APIs:
+The legacy `load_settings` function can configure the intent for all subsequent `Builder` instances (thread-local configuration). This approach is deprecated in favor of context-based APIs:
 
 ```py
 from c2pa import load_settings, Builder
 
-# Deprecated: sets intent globally
+# Deprecated: sets intent settings per thread
 load_settings({"builder": {"intent": "edit"}})
 
 with Builder({}) as builder:
@@ -112,7 +110,7 @@ with Builder({}) as builder:
 
 ### Intent setting precedence
 
-When an intent is configured in multiple places, the most specific setting wins:
+When an intent is configured in multiple places , the most specific setting wins:
 
 ```mermaid
 flowchart TD
@@ -131,9 +129,11 @@ flowchart TD
     manually in manifest JSON."]
 ```
 
+Notably, if a `set_intent` call is present on the Builder, the `set_intent` call takes precedence.
+
 ## How intents relate to the source stream
 
-The intent **operates on the source stream** passed to `sign()`. It does not target a specific ingredient added via `add_ingredient`: it targets the source asset itself (and ONLY the source).
+The intent **operates on the source** passed to `sign()`. It does not target a specific ingredient added via `add_ingredient`: it targets the source asset itself (and ONLY the source).
 
 The following diagram shows what happens at sign time for each intent:
 
@@ -207,15 +207,10 @@ flowchart TD
 
 ## Import
 
+Intents and digital source types are provided as enums by two imports.
+
 ```py
 from c2pa import (
-    Builder,
-    Reader,
-    Signer,
-    Context,
-    Settings,
-    C2paSignerInfo,
-    C2paSigningAlg,
     C2paBuilderIntent,
     C2paDigitalSourceType,
 )
@@ -301,7 +296,7 @@ with Builder({}, context=ctx) as builder:
 ctx = Context.from_dict({
     "builder": {
         "intent": {"Create": "digitalCapture"},
-        "claim_generator_info": {"name": "my_app", "version": "1.0.0"},
+        "claim_generator_info": {"name": "an_app", "version": "0.1.0"},
     }
 })
 
@@ -462,15 +457,13 @@ with Builder({}) as builder:
 
 ## Intent values in settings
 
-When configuring the intent settings, the intent is specified as a string or object in the `builder.intent` field:
+When configuring the intent settings, the intent is specified as a string or object in the `builder.intent` field, matching the C2PA SDK settings JSON schema:
 
 | Intent | Settings value | With digital source type |
 |--------|---------------|--------------------------|
 | Create | `{"Create": "<sourceType>"}` | Required. E.g., `{"Create": "digitalCapture"}` |
 | Edit   | `"edit"` | Not applicable |
 | Update | `"update"` | Not applicable |
-
-Available digital source type values for Create: `"digitalCapture"`, `"digitalCreation"`, `"trainedAlgorithmicMedia"`, `"compositeSynthetic"`, `"screenCapture"`, `"algorithmicMedia"`, and others.
 
 ## API reference
 
