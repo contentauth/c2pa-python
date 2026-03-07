@@ -21,8 +21,7 @@ Create and configure settings:
 | `Settings.from_json(json_str)` | Create settings from a JSON string. Raises `C2paError` on parse error. |
 | `Settings.from_dict(config)` | Create settings from a Python dictionary. |
 | `set(path, value)` | Set a single value by dot-separated path (e.g. `"verify.verify_after_sign"`). Value must be a string. Returns `self` for chaining. Use this for programmatic configuration. |
-| `update(data, format="json")` | Merge JSON configuration into existing settings. `data` can be a JSON string or a dict. Later keys override earlier ones. Use this to apply configuration files or JSON strings. Only `"json"` format is supported. |
-| `settings["path"] = "value"` | Dict-like setter. Equivalent to `set(path, value)`. |
+| `update(data)` | Merge JSON configuration into existing settings. `data` can be a JSON string or a dict. Later keys override earlier ones. Use this to apply configuration files or JSON strings. |
 | `is_valid` | Property that returns `True` if the object holds valid resources (not closed). |
 | `close()` | Release native resources. Called automatically when used as a context manager. |
 
@@ -31,7 +30,6 @@ Create and configure settings:
 - The `set()` and `update()` methods can be chained for sequential configuration.
 - When using multiple configuration methods, later calls override earlier ones (last wins).
 - Use the `with` statement for automatic resource cleanup.
-- Only JSON format is supported for settings in the Python SDK.
 
 ```py
 from c2pa import Settings
@@ -44,9 +42,6 @@ settings.set("builder.thumbnail.enabled", "false")
 
 # Method chaining
 settings.set("builder.thumbnail.enabled", "false").set("verify.verify_after_sign", "true")
-
-# Dict-like access
-settings["builder.thumbnail.enabled"] = "false"
 
 # Create from JSON string
 settings = Settings.from_json('{"builder": {"thumbnail": {"enabled": false}}}')

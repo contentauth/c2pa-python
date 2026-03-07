@@ -32,14 +32,15 @@ classDiagram
         +from_json(json_str) Settings$
         +from_dict(config) Settings$
         +set(path, value) Settings
-        +update(data, format) Settings
+        +update(data) Settings
         +close()
         +is_valid bool
     }
 
     class ContextProvider {
-        <<protocol>>
-        +is_valid bool
+        <<abstract>>
+        +is_valid bool*
+        +execution_context*
     }
 
     class Context {
@@ -67,7 +68,7 @@ classDiagram
 
     class Builder {
         +from_json(manifest_json, context) Builder$
-        +from_archive(stream, context) Builder$
+        +from_archive(stream) Builder$
         +get_supported_mime_types() list~str~$
         +set_no_embed()
         +set_remote_url(url)
@@ -76,7 +77,9 @@ classDiagram
         +add_ingredient(json, format, source)
         +add_action(action_json)
         +to_archive(stream)
+        +with_archive(stream) Builder
         +sign(signer, format, source, dest) bytes
+        +sign_with_context(format, source, dest) bytes
         +sign_file(source_path, dest_path, signer) bytes
         +close()
     }
@@ -138,7 +141,7 @@ classDiagram
         ...
     }
 
-    ContextProvider <|.. Context : satisfies
+    ContextProvider <|-- Context : extends
     Settings --> Context : optional input
     Signer --> Context : optional, consumed
     C2paSignerInfo --> Signer : creates via from_info
@@ -154,6 +157,49 @@ classDiagram
 
 > [!NOTE]
 > The deprecated `load_settings()` function still works for backward compatibility but you are encouraged to migrate your code to use `Context`. See [Migrating from load_settings](#migrating-from-load_settings).
+
+## Workflow overview
+
+The SDK supports two main workflows. `Settings` and `Context` are optional in both; `Reader` and `Builder` can be used directly with SDK defaults.
+
+### Reading provenance
+
+Read and inspect C2PA data already embedded in (or attached to) an asset:
+
+```text
+Asset file ──► Reader ──► Manifest JSON     (reader.json())
+                     └──► Binary resources  (reader.resource_to_stream())
+```
+
+```py
+from c2pa import Reader
+
+reader = Reader("signed_image.jpg")
+print(reader.json())  # Manifest store as JSON
+```
+
+### Signing content
+
+Create new C2PA provenance data and sign it into an asset:
+
+```text
+Settings ──► Context ──► Builder ──► sign() ──► Signed asset
+(optional)   (optional)    │           ▲
+                           │           │
+                    add assertions   Signer
+                    add ingredients
+```
+
+```py
+from c2pa import Builder, Signer, C2paSignerInfo, C2paSigningAlg
+
+builder = Builder(manifest_json)
+# ... add assertions, ingredients, resources ...
+with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+`Settings` and `Context` are needed only to customize behavior (trust configuration, thumbnail settings, claim generator info, and so on). Without them, the SDK uses sensible defaults.
 
 ## Creating a Context
 
@@ -399,6 +445,35 @@ For more information, see [Settings - Offline or air-gapped environments](settin
 > [!IMPORTANT]
 > The `Context` is used only when constructing the `Builder`. The `Builder` copies the configuration it needs internally, so the `Context` object does not need to outlive the `Builder`.
 
+### Context and archives
+
+Archives (`.c2pa` files) store only the manifest definition — they do **not** store settings or context. This means:
+
+- **`Builder.from_archive(stream)`** creates a context-free builder. All settings revert to SDK defaults regardless of what context the original builder had.
+- **`Builder({}, context=ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved.
+
+Use `with_archive()` when your workflow depends on specific settings (thumbnails, claim generator, intent, and so on). Use `from_archive()` only for quick prototyping where SDK defaults are acceptable.
+
+```py
+# Recommended: with_archive preserves context settings
+ctx = Context.from_dict({
+    "builder": {
+        "thumbnail": {"enabled": False},
+        "claim_generator_info": {"name": "My App", "version": "1.0"}
+    }
+})
+
+with open("manifest.c2pa", "rb") as archive:
+    builder = Builder({}, context=ctx)
+    builder.with_archive(archive)
+    # builder now has the archived definition + context settings
+
+# NOT recommended when settings matter:
+# builder = Builder.from_archive(archive)  # context-free, SDK defaults apply
+```
+
+For more details on archive workflows, see [Working with archives](working-stores.md#working-with-archives).
+
 ### Basic use
 
 ```py
@@ -446,6 +521,15 @@ mobile_ctx = Context.from_dict({
 
 ## Configuring a signer
 
+### Signing concepts
+
+C2PA uses a certificate-based trust model to prove who signed an asset. When creating a `Signer`, the following parameters are required:
+
+- **Certificate chain** (`sign_cert`): An X.509 certificate chain in PEM format. The first certificate identifies the signer; subsequent certificates form a chain up to a trusted root (trust anchor). Verifiers use this chain to confirm that the signature comes from a trusted source.
+- **Timestamp authority URL** (`ta_url`): An optional [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) timestamp server URL. When provided, the SDK requests a trusted timestamp during signing. This proves _when_ the signature was made. Timestamping matters because signatures remain verifiable even after the signing certificate expires, as long as the certificate was valid at the time of signing.
+
+### Signer creation patterns
+
 You can configure a signer in two ways:
 
 - [From Settings (signer-on-context)](#from-settings)
@@ -474,7 +558,7 @@ ctx = Context(settings=settings, signer=signer)
 # Build and sign — no signer argument needed
 builder = Builder(manifest_json, context=ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
-    builder.sign(format="image/jpeg", source=src, dest=dst)
+    builder.sign_with_context("image/jpeg", src, dst)
 ```
 
 > [!NOTE]
@@ -540,14 +624,14 @@ dev_builder = Builder(manifest, context=dev_ctx)
 prod_builder = Builder(manifest, context=prod_ctx)
 ```
 
-### ContextProvider protocol
+### ContextProvider abstract base class
 
-The `ContextProvider` protocol allows third-party implementations of custom context providers. Any class that implements `is_valid` and `_c_context` properties satisfies the protocol and can be passed to `Reader` or `Builder` as `context`.
+`ContextProvider` is an abstract base class (ABC) that enables custom context provider implementations. Subclass it and implement the `is_valid` and `execution_context` abstract properties to create a provider that can be passed to `Reader` or `Builder` as `context`.
 
 ```py
 from c2pa import ContextProvider, Context
 
-# The built-in Context satisfies ContextProvider
+# The built-in Context inherits from ContextProvider
 ctx = Context()
 assert isinstance(ctx, ContextProvider)  # True
 ```
