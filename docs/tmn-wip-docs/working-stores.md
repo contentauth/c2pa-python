@@ -83,42 +83,43 @@ Use the `Reader` class to read manifest stores from signed assets.
 from c2pa import Reader
 
 try:
-    # Create a Reader from a signed asset file
+    # Without Context
     reader = Reader("signed_image.jpg")
-
-    # Get the manifest store as JSON
     manifest_store_json = reader.json()
 except Exception as e:
     print(f"C2PA Error: {e}")
 ```
 
-### Reading from a stream
-
-```py
-with open("signed_image.jpg", "rb") as stream:
-    # Create Reader from stream with MIME type
-    reader = Reader("image/jpeg", stream)
-    manifest_json = reader.json()
-```
-
-### Using Context for configuration
-
-For more control over validation and trust settings, use a `Context`:
-
 ```py
 from c2pa import Context, Reader
 
-# Create context with custom validation settings
+# With Context (custom validation and trust settings)
 ctx = Context.from_dict({
     "verify": {
         "verify_after_sign": True
     }
 })
-
-# Use context when creating Reader
 reader = Reader("signed_image.jpg", context=ctx)
-manifest_json = reader.json()
+manifest_store_json = reader.json()
 ```
+
+### Reading from a stream
+
+```py
+# Without Context
+with open("signed_image.jpg", "rb") as stream:
+    reader = Reader("image/jpeg", stream)
+    manifest_json = reader.json()
+```
+
+```py
+# With Context
+with open("signed_image.jpg", "rb") as stream:
+    reader = Reader("image/jpeg", stream, context=ctx)
+    manifest_json = reader.json()
+```
+
+For full details on `Context` and `Settings`, see [Using Context to configure the SDK](../context.md).
 
 ### Understanding Reader output
 
@@ -177,9 +178,9 @@ A **working store** is represented by a `Builder` object. It contains "live" man
 
 ```py
 import json
-from c2pa import Builder, Context
+from c2pa import Builder
 
-# Create a working store with a manifest definition
+# Without Context
 manifest_json = json.dumps({
     "claim_generator_info": [{
         "name": "example-app",
@@ -190,8 +191,12 @@ manifest_json = json.dumps({
 })
 
 builder = Builder(manifest_json)
+```
 
-# Or with custom context
+```py
+from c2pa import Builder, Context
+
+# With Context (custom settings applied)
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": True}
@@ -262,10 +267,12 @@ manifest_store_json = reader.json()
 ### Creating a Builder (working store)
 
 ```py
-# Create with manifest definition
+# Without Context
 builder = Builder(manifest_json)
+```
 
-# Or with custom context
+```py
+# With Context
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": True}
@@ -302,13 +309,22 @@ signer = Signer.from_info(signer_info)
 ### Signing an asset
 
 ```py
+# Without Context (explicit signer)
 try:
-    # Sign using streams
     with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
         manifest_bytes = builder.sign(signer, "image/jpeg", src, dst)
-
     print("Signed successfully!")
+except Exception as e:
+    print(f"Signing failed: {e}")
+```
 
+```py
+# With Context (signer configured in context)
+# The Builder must have been created with a Context that has a signer.
+try:
+    with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+        manifest_bytes = builder.sign_with_context("image/jpeg", src, dst)
+    print("Signed successfully!")
 except Exception as e:
     print(f"Signing failed: {e}")
 ```
@@ -318,10 +334,13 @@ except Exception as e:
 You can also sign using file paths directly:
 
 ```py
-# Sign using file paths (uses native Rust file I/O for better performance)
-manifest_bytes = builder.sign_file(
-    "source.jpg", "signed.jpg", signer
-)
+# Without Context (explicit signer)
+manifest_bytes = builder.sign_file("source.jpg", "signed.jpg", signer)
+```
+
+```py
+# With Context (uses the context's signer when no signer argument is passed)
+manifest_bytes = builder.sign_file("source.jpg", "signed.jpg")
 ```
 
 ### Complete example
@@ -364,6 +383,54 @@ try:
 
     # 5. Read back the manifest store
     reader = Reader("signed.jpg")
+    print(reader.json())
+
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+### Complete example with Context
+
+```py
+import json
+from c2pa import Builder, Reader, Context, Signer, C2paSignerInfo, C2paSigningAlg
+
+try:
+    # 1. Define manifest
+    manifest_json = json.dumps({
+        "claim_generator_info": [{"name": "demo-app", "version": "0.1.0"}],
+        "title": "Signed image",
+        "assertions": []
+    })
+
+    # 2. Load credentials and create signer
+    with open("certs.pem", "rb") as f:
+        certs = f.read()
+    with open("private_key.pem", "rb") as f:
+        private_key = f.read()
+
+    signer_info = C2paSignerInfo(
+        alg=C2paSigningAlg.ES256,
+        sign_cert=certs,
+        private_key=private_key,
+        ta_url=b"http://timestamp.digicert.com"
+    )
+    signer = Signer.from_info(signer_info)
+
+    # 3. Create context with settings and signer
+    ctx = Context.from_dict({
+        "builder": {"thumbnail": {"enabled": True}}
+    }, signer=signer)
+
+    # 4. Create Builder with context and sign
+    builder = Builder(manifest_json, context=ctx)
+    with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+        builder.sign_with_context("image/jpeg", src, dst)
+
+    print("Asset signed with context settings")
+
+    # 5. Read back the manifest store
+    reader = Reader("signed.jpg", context=ctx)
     print(reader.json())
 
 except Exception as e:
@@ -630,6 +697,23 @@ with open("artwork.jpg", "rb") as src, open("signed_artwork.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
 
 print("Asset signed with manifest store")
+```
+
+#### Phase 2 alternative: Sign with context
+
+```py
+# Restore the working store with context settings preserved
+ctx = Context.from_dict({
+    "builder": {"thumbnail": {"enabled": False}}
+}, signer=signer)
+
+with open("artwork_manifest.c2pa", "rb") as archive:
+    builder = Builder({}, context=ctx)
+    builder.with_archive(archive)
+
+# Sign using the context's signer
+with open("artwork.jpg", "rb") as src, open("signed_artwork.jpg", "w+b") as dst:
+    builder.sign_with_context("image/jpeg", src, dst)
 ```
 
 ## Embedded vs external manifests
