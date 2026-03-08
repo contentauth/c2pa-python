@@ -339,7 +339,7 @@ ctx = Context(settings=settings, signer=signer)
 # Build and sign without passing a signer, since the signer is in the context
 builder = Builder(manifest_json, ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
-    manifest_bytes = builder.sign_with_context(format="image/jpeg", source=src, dest=dst)
+    manifest_bytes = builder.sign(format="image/jpeg", source=src, dest=dst)
 ```
 
 If both an explicit signer and a context signer are available, the explicit signer takes precedence:
