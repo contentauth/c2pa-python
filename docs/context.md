@@ -187,11 +187,14 @@ Create new C2PA provenance data and sign it into an asset:
 ```mermaid
 flowchart LR
     A["Settings"] --> B["Context"]
+    F[Signer] --> B
     B --> C[Builder]
-    C --> D["sign()"]
+    G["add assertions<br>add ingredients"] --> C
+    C --> D["sign_with_context()"]
     D --> E[Signed asset]
-    F[Signer] --> D
-    G[add assertions\nadd ingredients] --> C
+    F2[Signer] -.-> D2["sign()"]
+    C --> D2
+    D2 --> E
 ```
 
 ```py
@@ -216,7 +219,7 @@ There are several ways to create a `Context`, depending on your needs:
 
 ### Using SDK default settings
 
-The simplest approach is using [SDK default settings](settings.md#default-configuration).
+Without additional parameters, a default context is using [SDK default settings](settings.md#default-configuration).
 
 **When to use:** For quick prototyping, or when you're happy with SDK default behavior (verification enabled, thumbnails enabled at 1024px, and so on).
 
@@ -451,7 +454,7 @@ For more information, see [Settings - Offline or air-gapped environments](settin
 
 ### Context and archives
 
-Archives (`.c2pa` files) store only the manifest definition — they do **not** store settings or context. This means:
+Archives (`.c2pa` files) store only the manifest definition. They do **not** store settings or context. This means:
 
 - **`Builder.from_archive(stream)`** creates a context-free builder. All settings revert to SDK defaults regardless of what context the original builder had.
 - **`Builder({}, ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved and propagated to this Builder instance.
@@ -533,8 +536,8 @@ C2PA uses a certificate-based trust model to prove who signed an asset. When cre
 
 A Signer can be configured two ways:
 
-- [From Settings (signer-on-context)](#from-settings) — pass the signer when creating the `Context`.
-- [Explicit signer passed to sign()](#explicit-programmatic-signer) — pass the signer directly at signing time.
+- [From Settings (signer-on-context)](#from-settings): pass the signer when creating the `Context`.
+- [Explicit signer passed to sign()](#explicit-programmatic-signer): pass the signer directly at signing time.
 
 ### From Settings
 
@@ -545,10 +548,7 @@ from c2pa import Context, Settings, Builder, Signer, C2paSignerInfo, C2paSigning
 
 # Create a signer
 signer_info = C2paSignerInfo(
-    alg=C2paSigningAlg.ES256,
-    sign_cert=cert_data,
-    private_key=key_data,
-    ta_url=b"http://timestamp.digicert.com"
+    C2paSigningAlg.ES256, cert_data, key_data, b"http://timestamp.digicert.com"
 )
 signer = Signer.from_info(signer_info)
 
@@ -617,6 +617,16 @@ reader = Reader("image.jpg", context=ctx)
 # Context can be closed after construction; readers/builders still work
 ```
 
+Using the `with` statement for automatic cleanup:
+
+```py
+with Context(settings) as ctx:
+    builder1 = Builder(manifest1, ctx)
+    builder2 = Builder(manifest2, ctx)
+    reader = Reader("image.jpg", context=ctx)
+# Resources are automatically released
+```
+
 ### Multiple contexts for different purposes
 
 Use different `Context` objects when you need different settings. Ror example, for development vs. production, or different trust configurations:
@@ -673,6 +683,6 @@ reader = Reader("image.jpg", context=ctx)
 
 ## See also
 
-- [Using settings](settings.md) — schema, property reference, and examples.
-- [Usage](usage.md) — reading and signing with Reader and Builder.
+- [Using settings](settings.md): schema, property reference, and examples.
+- [Usage](usage.md): reading and signing with Reader and Builder.
 - [CAI settings schema](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema/): full schema reference.
