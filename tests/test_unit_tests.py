@@ -3333,13 +3333,9 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath, "rb") as file:
             manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
 
-        # State should still be valid after signing
-        self.assertEqual(builder._state, LifecycleState.ACTIVE)
-        self.assertIsNotNone(builder._handle)
-
-        # Should be able to sign again
-        with open(self.testPath, "rb") as file:
-            manifest_bytes2 = builder.sign(self.signer, "image/jpeg", file)
+        # Builder is consumed by sign — pointer ownership transferred to Rust
+        self.assertEqual(builder._state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_state_after_archive_operations(self):
         """Test Builder state after archive operations."""
@@ -5054,10 +5050,12 @@ class TestLegacyAPI(unittest.TestCase):
                 self.assertIsInstance(manifest_bytes_1, bytes)
                 self.assertGreater(len(manifest_bytes_1), 0)
 
-                # Second signing operation with the same signer
-                # This is to verify we don't free the signer or the callback too early
+                # Second signing operation with a new builder but same signer
+                # Builder is consumed by sign, so we need a fresh one.
+                # This verifies we don't free the signer or the callback too early.
+                builder2 = Builder(self.manifestDefinition)
                 output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
-                manifest_bytes_2 = builder.sign_file(
+                manifest_bytes_2 = builder2.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path_2,
                     signer=signer
@@ -5549,7 +5547,7 @@ class TestBuilderWithContext(TestContextAPIs):
                 open(DEFAULT_TEST_FILE, "rb") as source_file,
                 open(dest_path, "w+b") as dest_file,
             ):
-                manifest_bytes = builder.sign_with_context(
+                manifest_bytes = builder.sign(
                     "image/jpeg",
                     source_file,
                     dest_file,
@@ -5598,7 +5596,7 @@ class TestBuilderWithContext(TestContextAPIs):
                 open(dest_path, "w+b") as dest_file,
             ):
                 with self.assertRaises(Error):
-                    builder.sign_with_context(
+                    builder.sign(
                         "image/jpeg",
                         source_file,
                         dest_file,
@@ -5825,7 +5823,7 @@ class TestContextIntegration(TestContextAPIs):
                 open(DEFAULT_TEST_FILE, "rb") as source_file,
                 open(dest_path, "w+b") as dest_file,
             ):
-                builder.sign_with_context(
+                builder.sign(
                     "image/jpeg",
                     source_file,
                     dest_file,
@@ -6150,7 +6148,7 @@ class TestContextIntegration(TestContextAPIs):
                 open(DEFAULT_TEST_FILE, "rb") as source_file,
                 open(dest_path, "w+b") as dest_file,
             ):
-                manifest_bytes = builder.sign_with_context(
+                manifest_bytes = builder.sign(
                     "image/jpeg",
                     source_file,
                     dest_file,

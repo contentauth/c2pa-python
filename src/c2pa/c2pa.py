@@ -247,6 +247,15 @@ class ManagedResource:
         The default implementation does nothing.
         """
 
+    def _mark_consumed(self):
+        """Mark as consumed by an FFI call that took ownership
+        of native resources e.g. pointers. This means we should not
+        call clean-up here anymore, and leave it to the new owner.
+        """
+
+        self._handle = None
+        self._state = LifecycleState.CLOSED
+
     def _cleanup_resources(self):
         """Release native resources idempotently."""
         try:
@@ -3584,7 +3593,10 @@ class Builder(ManagedResource):
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
                 )
+            # Builder pointer consumed by Rust FFI — prevent double-free
+            self._mark_consumed()
         except Exception as e:
+            self._mark_consumed()
             raise C2paError(f"Error during signing: {e}")
 
         if result < 0:
@@ -3622,7 +3634,7 @@ class Builder(ManagedResource):
         source: Any,
         dest: Any = None,
     ) -> bytes:
-        """Shared signing logic for sign() and sign_with_context().
+        """Shared signing logic for sign().
 
         Args:
             signer: The signer to use, or None for context signer.
@@ -3665,41 +3677,40 @@ class Builder(ManagedResource):
 
         return manifest_bytes
 
+    @overload
     def sign(
         self,
         signer: Signer,
         format: str,
         source: Any,
         dest: Any = None,
-    ) -> bytes:
-        """Sign the builder's content with an explicit signer.
+    ) -> bytes: ...
 
-        Args:
-            signer: The signer to use.
-            format: The MIME type of the content.
-            source: The source stream.
-            dest: The destination stream (optional).
-
-        Returns:
-            Manifest bytes
-
-        Raises:
-            C2paError: If there was an error during signing
-        """
-        return self._sign_common(signer, format, source, dest)
-
-    def sign_with_context(
+    @overload
+    def sign(
         self,
         format: str,
         source: Any,
         dest: Any = None,
-    ) -> bytes:
-        """Sign using the context's signer.
+    ) -> bytes: ...
 
-        The builder must have been created with a Context
-        that has a signer.
+    def sign(
+        self,
+        signer_or_format: Union[Signer, str],
+        format_or_source: Any = None,
+        source_or_dest: Any = None,
+        dest: Any = None,
+    ) -> bytes:
+        """Sign the builder's content.
+
+        Can be called with or without an explicit signer.
+        If no signer is provided, the context's signer is
+        used (builder must have been created with a Context
+        that has a signer).
 
         Args:
+            signer: The signer to use. If not provided, the
+                context's signer is used.
             format: The MIME type of the content.
             source: The source stream.
             dest: The destination stream (optional).
@@ -3710,7 +3721,14 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error during signing
         """
-        return self._sign_common(None, format, source, dest)
+        if isinstance(signer_or_format, Signer):
+            return self._sign_common(signer_or_format, format_or_source, source_or_dest, dest)
+        elif isinstance(signer_or_format, str):
+            return self._sign_common(None, signer_or_format, format_or_source, source_or_dest)
+        else:
+            raise C2paError(
+                "First argument must be a Signer or a format string (MIME type)."
+            )
 
     @overload
     def sign_file(
@@ -3762,7 +3780,7 @@ class Builder(ManagedResource):
                 if signer is not None:
                     return self.sign(signer, mime_type, source_file, dest_file)
                 # else:
-                return self.sign_with_context(mime_type, source_file, dest_file)
+                return self.sign(mime_type, source_file, dest_file)
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 
