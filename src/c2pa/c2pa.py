@@ -77,6 +77,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_from_context',
     'c2pa_reader_with_stream',
     'c2pa_reader_with_manifest_data_and_stream',
+    'c2pa_reader_with_fragment',
     'c2pa_builder_from_context',
     'c2pa_builder_with_definition',
     'c2pa_builder_with_archive',
@@ -701,6 +702,12 @@ _setup_function(
      ctypes.POINTER(C2paStream),
      ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t],
     ctypes.POINTER(C2paReader),
+)
+_setup_function(
+    _lib.c2pa_reader_with_fragment,
+    [ctypes.POINTER(C2paReader), ctypes.c_char_p,
+     ctypes.POINTER(C2paStream), ctypes.POINTER(C2paStream)],
+    ctypes.POINTER(C2paReader)
 )
 _setup_function(
     _lib.c2pa_builder_from_context,
@@ -2100,7 +2107,8 @@ class Reader(ManagedResource):
         'file_error': "Error cleaning up file: {}",
         'reader_cleanup_error': "Error cleaning up reader: {}",
         'encoding_error': "Invalid UTF-8 characters in input: {}",
-        'closed_error': "Reader is closed"
+        'closed_error': "Reader is closed",
+        'fragment_error': "Failed to process fragment: {}"
     }
 
     @classmethod
@@ -2498,6 +2506,58 @@ class Reader(ManagedResource):
                 return None
 
         return self._manifest_data_cache
+
+    def with_fragment(self, format: str, stream,
+                      fragment_stream) -> "Reader":
+        """Process a BMFF fragment stream with this reader.
+
+        Used for fragmented BMFF media (DASH/HLS streaming) where
+        content is split into init segments and fragment files.
+
+        Args:
+            format: MIME type of the media (e.g., "video/mp4")
+            stream: Stream-like object with the main/init segment data
+            fragment_stream: Stream-like object with the fragment data
+
+        Returns:
+            This reader instance, for method chaining.
+
+        Raises:
+            C2paError: If there was an error processing the fragment
+        """
+        self._ensure_valid_state()
+
+        supported = Reader.get_supported_mime_types()
+        format_bytes = _validate_and_encode_format(
+            format, supported, "Reader"
+        )
+
+        with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
+            new_ptr = _lib.c2pa_reader_with_fragment(
+                self._handle,
+                format_bytes,
+                main_obj._stream,
+                frag_obj._stream,
+            )
+
+            if not new_ptr:
+                self._handle = None
+                error = _parse_operation_result_for_error(
+                    _lib.c2pa_error()
+                )
+                if error:
+                    raise C2paError(error)
+                raise C2paError(
+                    Reader._ERROR_MESSAGES[
+                        'fragment_error'
+                    ].format("Unknown error"))
+            self._handle = new_ptr
+
+        # Invalidate caches: fragment may change manifest data
+        self._manifest_json_str_cache = None
+        self._manifest_data_cache = None
+
+        return self
 
     def close(self):
         """Release the reader resources."""
