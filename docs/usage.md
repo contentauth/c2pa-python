@@ -6,7 +6,7 @@ For complete working examples, see the [examples folder](https://github.com/cont
 
 ## Import
 
-Import the classes needed from the API:
+Import the objects needed from the API:
 
 ```py
 from c2pa import Builder, Reader, Signer, C2paSignerInfo, C2paSigningAlg
