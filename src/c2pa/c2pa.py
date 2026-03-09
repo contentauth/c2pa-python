@@ -2202,7 +2202,7 @@ class Reader(ManagedResource):
             format_or_path: The format or path to read from
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Optional ContextProvider for settings
+            context: Optional context implementing ContextProvider with settings
 
         Raises:
             C2paError: If there was an error creating the reader
@@ -2224,7 +2224,6 @@ class Reader(ManagedResource):
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
 
-        # Keep context reference alive
         self._context = context
 
         if context is not None:
@@ -2268,8 +2267,6 @@ class Reader(ManagedResource):
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
         """Create a native reader from a Stream.
-
-        Calls the appropriate FFI function and raises on failure.
 
         Args:
             format_bytes: UTF-8 encoded format/MIME type
@@ -2344,9 +2341,8 @@ class Reader(ManagedResource):
 
     def _init_from_context(self, context, format_or_path,
                            stream):
-        """Initialize Reader from a ContextProvider.
-
-        Uses c2pa_reader_from_context + c2pa_reader_with_stream.
+        """Initialize Reader from a context object implementing
+        the ContextProvider interface/abstract base class.
         """
         if not context.is_valid:
             raise C2paError("Context is not valid")
@@ -2941,7 +2937,7 @@ class Signer(ManagedResource):
             Tuple of (signer_ptr, callback_cb):
               signer_ptr: The native C2paSigner pointer.
               callback_cb: The callback reference (if any).
-                The caller must store this to prevent GC.
+                The caller must store this to prevent garbage collection.
 
         Raises:
             C2paError: If the signer is already closed.
@@ -2951,7 +2947,7 @@ class Signer(ManagedResource):
         ptr = self._handle
         callback_cb = self._callback_cb
 
-        # Detach pointer without freeing — caller now owns it
+        # Detach pointer without freeing, caller now owns it
         self._handle = None
         self._callback_cb = None
         self._state = LifecycleState.CLOSED
@@ -3134,7 +3130,6 @@ class Builder(ManagedResource):
         super().__init__()
         _clear_error_state()
 
-        # Keep context reference alive
         self._context = context
         self._has_context_signer = (
             context is not None
