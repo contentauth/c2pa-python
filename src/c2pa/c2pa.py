@@ -214,7 +214,7 @@ class ManagedResource:
 
     Subclasses must:
       - Set `self._handle` to the native pointer after creation.
-      - Set `self._state = LifecycleState.ACTIVE` once initialized.
+      - Set `self._lifecycle_state = LifecycleState.ACTIVE` once initialized.
       - Override `_release()` to free class-specific resources
         (streams, caches, callbacks, etc.) — called *before* the
         native pointer is freed.
@@ -223,8 +223,9 @@ class ManagedResource:
     """
 
     def __init__(self):
-        self._state = LifecycleState.UNINITIALIZED
+        self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
+        _clear_error_state()
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -234,9 +235,9 @@ class ManagedResource:
     def _ensure_valid_state(self):
         """Raise if the resource is closed or uninitialized."""
         name = type(self).__name__
-        if self._state == LifecycleState.CLOSED:
+        if self._lifecycle_state == LifecycleState.CLOSED:
             raise C2paError(f"{name} is closed")
-        if self._state != LifecycleState.ACTIVE:
+        if self._lifecycle_state != LifecycleState.ACTIVE:
             raise C2paError(f"{name} is not properly initialized")
         if not self._handle:
             raise C2paError(f"{name} has an invalid internal state (active but no handle)")
@@ -256,16 +257,16 @@ class ManagedResource:
         """
 
         self._handle = None
-        self._state = LifecycleState.CLOSED
+        self._lifecycle_state = LifecycleState.CLOSED
 
     def _cleanup_resources(self):
         """Release native resources idempotently."""
         try:
             if (
-                hasattr(self, '_state')
-                and self._state != LifecycleState.CLOSED
+                hasattr(self, '_lifecycle_state')
+                and self._lifecycle_state != LifecycleState.CLOSED
             ):
-                self._state = LifecycleState.CLOSED
+                self._lifecycle_state = LifecycleState.CLOSED
                 self._release()
                 if hasattr(self, '_handle') and self._handle:
                     try:
@@ -279,6 +280,14 @@ class ManagedResource:
                         self._handle = None
         except Exception:
             pass
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if the resource is in a valid (active) state."""
+        return (
+            self._lifecycle_state == LifecycleState.ACTIVE
+            and self._handle is not None
+        )
 
     def close(self) -> None:
         """Release the resource (idempotent, never raises)."""
@@ -982,6 +991,58 @@ def _parse_operation_result_for_error(
     return None
 
 
+def _check_ffi_operation_result(result, fallback_msg, *, check=lambda r: not r):
+    """Check an FFI native call result and raise C2paError if it indicates failure.
+
+    Args:
+        result: The return value from the FFI call
+        fallback_msg: Error message if the native library has no error details
+        check: Predicate that returns True when the result indicates failure.
+            Defaults to `not r` (for pointer-returning calls).
+            Use `lambda r: r != 0` for status-code-returning calls.
+            Use `lambda r: r < 0` for signed-result calls.
+
+    Returns:
+        The result unchanged, if the check passed.
+
+    Raises:
+        C2paError: If the check indicates failure
+    """
+    if check(result):
+        error = _parse_operation_result_for_error(_lib.c2pa_error())
+        if error:
+            raise C2paError(error)
+        raise C2paError(fallback_msg)
+    return result
+
+
+def _to_utf8_bytes(data, error_context="input") -> bytes:
+    """Convert a string or dict to UTF-8 bytes.
+
+    If data is a dict, it is serialized to JSON first.
+
+    Args:
+        data: String or dict to encode
+        error_context: Description for error messages
+
+    Returns:
+        UTF-8 encoded bytes
+
+    Raises:
+        C2paError.Json: If dict serialization fails
+        C2paError.Encoding: If UTF-8 encoding fails
+    """
+    if isinstance(data, dict):
+        try:
+            data = json.dumps(data)
+        except (TypeError, ValueError) as e:
+            raise C2paError.Json(f"Failed to serialize {error_context}: {e}")
+    try:
+        return data.encode('utf-8')
+    except (UnicodeError, AttributeError) as e:
+        raise C2paError.Encoding(f"Invalid UTF-8 in {error_context}: {e}")
+
+
 def sdk_version() -> str:
     """
     Returns the underlying c2pa-rs/c2pa-c-ffi version string
@@ -1063,11 +1124,7 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         raise C2paError(f"Failed to encode settings to UTF-8: {e}")
 
     result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
-    if result != 0:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(error)
-        raise C2paError("Error loading settings")
+    _check_ffi_operation_result(result, "Error loading settings", check=lambda r: r != 0)
 
     return result
 
@@ -1140,13 +1197,7 @@ def read_ingredient_file(
     result = _lib.c2pa_read_ingredient_file(
         container._path_str, container._data_dir_str)
 
-    if result is None:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(error)
-        raise C2paError(
-            "Error reading ingredient file {}".format(path)
-        )
+    _check_ffi_operation_result(result, "Error reading ingredient file {}".format(path))
 
     return _convert_to_py_string(result)
 
@@ -1185,13 +1236,7 @@ def read_file(path: Union[str, Path],
     container._data_dir_str = str(data_dir).encode('utf-8')
 
     result = _lib.c2pa_read_file(container._path_str, container._data_dir_str)
-    if result is None:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error is not None:
-            raise C2paError(error)
-        raise C2paError.Other(
-            "Error during read of manifest from file {}".format(path)
-        )
+    _check_ffi_operation_result(result, "Error during read of manifest from file {}".format(path))
 
     return _convert_to_py_string(result)
 
@@ -1338,15 +1383,12 @@ class Settings(ManagedResource):
     def __init__(self):
         """Create new Settings with default values."""
         super().__init__()
-        _clear_error_state()
 
         ptr = _lib.c2pa_settings_new()
-        if not ptr:
-            _parse_operation_result_for_error(None)
-            raise C2paError("Failed to create Settings")
+        _check_ffi_operation_result(ptr, "Failed to create Settings")
 
         self._handle = ptr
-        self._state = LifecycleState.ACTIVE
+        self._lifecycle_state = LifecycleState.ACTIVE
 
     @classmethod
     def from_json(cls, json_str: str) -> 'Settings':
@@ -1387,13 +1429,8 @@ class Settings(ManagedResource):
         """
         self._ensure_valid_state()
 
-        try:
-            path_bytes = path.encode('utf-8')
-            value_bytes = value.encode('utf-8')
-        except (UnicodeEncodeError, AttributeError) as e:
-            raise C2paError.Encoding(
-                f"Encoding: {str(e)}"
-            ) from e
+        path_bytes = _to_utf8_bytes(path, "settings path")
+        value_bytes = _to_utf8_bytes(value, "settings value")
 
         result = _lib.c2pa_settings_set_value(
             self._handle, path_bytes, value_bytes
@@ -1417,15 +1454,7 @@ class Settings(ManagedResource):
         """
         self._ensure_valid_state()
 
-        if isinstance(data, dict):
-            data = json.dumps(data)
-
-        try:
-            data_bytes = data.encode('utf-8')
-        except (UnicodeEncodeError, AttributeError) as e:
-            raise C2paError.Encoding(
-                f"Encoding: {str(e)}"
-            ) from e
+        data_bytes = _to_utf8_bytes(data, "settings data")
 
         result = _lib.c2pa_settings_update_from_string(
             self._handle, data_bytes, b"json"
@@ -1441,13 +1470,6 @@ class Settings(ManagedResource):
         self._ensure_valid_state()
         return self._handle
 
-    @property
-    def is_valid(self) -> bool:
-        """Check if the Settings is in a valid state."""
-        return (
-            self._state == LifecycleState.ACTIVE
-            and self._handle is not None
-        )
 
 
 class ContextBuilder:
@@ -1517,27 +1539,22 @@ class Context(ManagedResource, ContextProvider):
                 signer-on-context.
         """
         super().__init__()
-        _clear_error_state()
         self._has_signer = False
         self._signer_callback_cb = None
 
         if settings is None and signer is None:
             # Simple default context
             ptr = _lib.c2pa_context_new()
-            if not ptr:
-                _parse_operation_result_for_error(None)
-                raise C2paError(
-                    "Failed to create Context"
-                )
+            _check_ffi_operation_result(
+                ptr, "Failed to create Context"
+            )
             self._handle = ptr
         else:
             # Use ContextBuilder for settings/signer
             builder_ptr = _lib.c2pa_context_builder_new()
-            if not builder_ptr:
-                _parse_operation_result_for_error(None)
-                raise C2paError(
-                    "Failed to create ContextBuilder"
-                )
+            _check_ffi_operation_result(
+                builder_ptr, "Failed to create ContextBuilder"
+            )
 
             try:
                 if settings is not None:
@@ -1569,14 +1586,12 @@ class Context(ManagedResource, ContextProvider):
                 )
                 builder_ptr = None
 
-                if not ptr:
-                    _parse_operation_result_for_error(None)
-                    raise C2paError(
-                        "Failed to build Context"
-                    )
+                _check_ffi_operation_result(
+                    ptr, "Failed to build Context"
+                )
                 self._handle = ptr
 
-                # Build succeeded — consume the signer.
+                # Build succeeded, consume the Signer.
                 # Keep its callback ref alive on this Context,
                 # then mark it so it won't double-free the
                 # native pointer the Context now owns.
@@ -1595,7 +1610,7 @@ class Context(ManagedResource, ContextProvider):
                         pass
                 raise
 
-        self._state = LifecycleState.ACTIVE
+        self._lifecycle_state = LifecycleState.ACTIVE
 
     def _release(self):
         """Release Context-specific resources."""
@@ -1657,13 +1672,6 @@ class Context(ManagedResource, ContextProvider):
         self._ensure_valid_state()
         return self._handle
 
-    @property
-    def is_valid(self) -> bool:
-        """Check if the Context is in a valid state."""
-        return (
-            self._state == LifecycleState.ACTIVE
-            and self._handle is not None
-        )
 
 
 class Stream:
@@ -2221,10 +2229,6 @@ class Reader(ManagedResource):
         """
         super().__init__()
 
-        # Native libs plumbing:
-        # Clear any stale error state from previous operations
-        _clear_error_state()
-
         self._own_stream = None
 
         # This is used to keep track of a file
@@ -2273,7 +2277,7 @@ class Reader(ManagedResource):
             with Stream(stream) as stream_obj:
                 self._create_reader(
                     format_bytes, stream_obj, manifest_data)
-                self._state = LifecycleState.ACTIVE
+                self._lifecycle_state = LifecycleState.ACTIVE
 
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
@@ -2304,15 +2308,11 @@ class Reader(ManagedResource):
                 )
             )
 
-        if not self._handle:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Reader._ERROR_MESSAGES['reader_error'].format(
-                    "Unknown error"
-                )
+        _check_ffi_operation_result(self._handle,
+            Reader._ERROR_MESSAGES['reader_error'].format(
+                "Unknown error"
             )
+        )
 
     def _init_from_file(self, path, format_bytes,
                         manifest_data=None):
@@ -2323,29 +2323,17 @@ class Reader(ManagedResource):
             format_bytes: UTF-8 encoded format/MIME type
             manifest_data: Optional manifest bytes
         """
-        file = None
         try:
-            file = open(path, 'rb')
-            self._own_stream = Stream(file)
+            self._backing_file = open(path, 'rb')
+            self._own_stream = Stream(self._backing_file)
             self._create_reader(
                 format_bytes, self._own_stream, manifest_data)
-            self._backing_file = file
-            self._state = LifecycleState.ACTIVE
+            self._lifecycle_state = LifecycleState.ACTIVE
         except C2paError:
-            if self._own_stream:
-                self._own_stream.close()
-                self._own_stream = None
-            if file:
-                file.close()
-            self._backing_file = None
+            self._close_streams()
             raise
         except Exception as e:
-            if self._own_stream:
-                self._own_stream.close()
-                self._own_stream = None
-            if file:
-                file.close()
-            self._backing_file = None
+            self._close_streams()
             raise C2paError.Io(
                 Reader._ERROR_MESSAGES['io_error'].format(
                     str(e)))
@@ -2386,13 +2374,11 @@ class Reader(ManagedResource):
             reader_ptr = _lib.c2pa_reader_from_context(
                 context.execution_context,
             )
-            if not reader_ptr:
-                _parse_operation_result_for_error(_lib.c2pa_error())
-                raise C2paError(
-                    Reader._ERROR_MESSAGES[
-                        'reader_error'
-                    ].format("Unknown error")
-                )
+            _check_ffi_operation_result(reader_ptr,
+                Reader._ERROR_MESSAGES[
+                    'reader_error'
+                ].format("Unknown error")
+            )
 
             # Consume-and-return: reader_ptr is consumed,
             # new_ptr is the valid pointer going forward
@@ -2402,42 +2388,38 @@ class Reader(ManagedResource):
             )
             # reader_ptr has been invalidated(consumed)
 
-            if not new_ptr:
-                _parse_operation_result_for_error(_lib.c2pa_error())
-                raise C2paError(
-                    Reader._ERROR_MESSAGES[
-                        'reader_error'
-                    ].format("Unknown error")
-                )
+            _check_ffi_operation_result(new_ptr,
+                Reader._ERROR_MESSAGES[
+                    'reader_error'
+                ].format("Unknown error")
+            )
 
             self._handle = new_ptr
-            self._state = LifecycleState.ACTIVE
+            self._lifecycle_state = LifecycleState.ACTIVE
         except Exception:
-            if self._own_stream:
-                self._own_stream.close()
-                self._own_stream = None
-            if self._backing_file:
-                self._backing_file.close()
-                self._backing_file = None
+            self._close_streams()
             raise
 
-    def _release(self):
-        """Release Reader-specific resources (stream, backing file)."""
-        if hasattr(self, '_own_stream') and self._own_stream:
+    def _close_streams(self):
+        """Close owned stream and backing file if present."""
+        if getattr(self, '_own_stream', None):
             try:
                 self._own_stream.close()
             except Exception:
                 logger.error("Failed to close Reader stream")
             finally:
                 self._own_stream = None
-
-        if self._backing_file:
+        if getattr(self, '_backing_file', None):
             try:
                 self._backing_file.close()
             except Exception:
                 logger.warning("Failed to close Reader backing file")
             finally:
                 self._backing_file = None
+
+    def _release(self):
+        """Release Reader-specific resources (stream, backing file)."""
+        self._close_streams()
 
     def _get_cached_manifest_data(self) -> Optional[dict]:
         """Get the cached manifest data, fetching and parsing if not cached.
@@ -2501,15 +2483,10 @@ class Reader(ManagedResource):
 
             if not new_ptr:
                 self._handle = None
-                error = _parse_operation_result_for_error(
-                    _lib.c2pa_error()
-                )
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    Reader._ERROR_MESSAGES[
-                        'fragment_error'
-                    ].format("Unknown error"))
+            _check_ffi_operation_result(new_ptr,
+                Reader._ERROR_MESSAGES[
+                    'fragment_error'
+                ].format("Unknown error"))
             self._handle = new_ptr
 
         # Invalidate caches: fragment may change manifest data
@@ -2541,12 +2518,8 @@ class Reader(ManagedResource):
             return self._manifest_json_str_cache
 
         result = _lib.c2pa_reader_json(self._handle)
-
-        if result is None:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Error during manifest parsing in Reader")
+        _check_ffi_operation_result(result,
+            "Error during manifest parsing in Reader")
 
         # Cache the result and return it
         self._manifest_json_str_cache = _convert_to_py_string(result)
@@ -2571,14 +2544,29 @@ class Reader(ManagedResource):
         self._ensure_valid_state()
 
         result = _lib.c2pa_reader_detailed_json(self._handle)
-
-        if result is None:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Error during detailed manifest parsing in Reader")
+        _check_ffi_operation_result(result,
+            "Error during detailed manifest parsing in Reader")
 
         return _convert_to_py_string(result)
+
+    def _get_manifest_field(self, extractor):
+        """Extract a field from cached manifest data, or None if unavailable.
+
+        Args:
+            extractor: A callable that takes the parsed manifest dict
+                and returns the desired field value.
+
+        Returns:
+            The extracted field value, or None if no manifest data
+            is available.
+        """
+        try:
+            data = self._get_cached_manifest_data()
+            if data is None:
+                return None
+            return extractor(data)
+        except C2paError.ManifestNotFound:
+            return None
 
     def get_active_manifest(self) -> Optional[dict]:
         """Get the active manifest from the manifest store.
@@ -2594,30 +2582,18 @@ class Reader(ManagedResource):
         Raises:
             KeyError: If the active_manifest key is missing from the JSON
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                # raise C2paError("Failed to parse manifest JSON")
-                return None
-
-            # Get the active manfiest id/label
-            if "active_manifest" not in manifest_data:
+        def _extract(data):
+            if "active_manifest" not in data:
                 raise KeyError("No 'active_manifest' key found")
-
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Retrieve the active manifest data using manifest id/label
-            if "manifests" not in manifest_data:
+            active_manifest_id = data["active_manifest"]
+            if "manifests" not in data:
                 raise KeyError("No 'manifests' key found in manifest data")
-
-            manifests = manifest_data["manifests"]
+            manifests = data["manifests"]
             if active_manifest_id not in manifests:
                 raise KeyError("Active manifest not found in manifest store")
-
             return manifests[active_manifest_id]
-        except C2paError.ManifestNotFound:
-            return None
+
+        return self._get_manifest_field(_extract)
 
     def get_manifest(self, label: str) -> Optional[dict]:
         """Get a specific manifest from the manifest store by its label.
@@ -2636,23 +2612,15 @@ class Reader(ManagedResource):
         Raises:
             KeyError: If the manifests key is missing from the JSON
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                # raise C2paError("Failed to parse manifest JSON")
-                return None
-
-            if "manifests" not in manifest_data:
+        def _extract(data):
+            if "manifests" not in data:
                 raise KeyError("No 'manifests' key found in manifest data")
-
-            manifests = manifest_data["manifests"]
+            manifests = data["manifests"]
             if label not in manifests:
                 raise KeyError(f"Manifest {label} not found in manifest store")
-
             return manifests[label]
-        except C2paError.ManifestNotFound:
-            return None
+
+        return self._get_manifest_field(_extract)
 
     def get_validation_state(self) -> Optional[str]:
         """Get the validation state of the manifest store.
@@ -2666,15 +2634,8 @@ class Reader(ManagedResource):
             or None if the validation_state field is not present or if no
             manifest is found or if there was an error parsing the JSON.
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                return None
-
-            return manifest_data.get("validation_state")
-        except C2paError.ManifestNotFound:
-            return None
+        return self._get_manifest_field(
+            lambda d: d.get("validation_state"))
 
     def get_validation_results(self) -> Optional[dict]:
         """Get the validation results of the manifest store.
@@ -2689,15 +2650,8 @@ class Reader(ManagedResource):
             field is not present or if no manifest is found or if
             there was an error parsing the JSON.
         """
-        try:
-            # Get cached manifest data
-            manifest_data = self._get_cached_manifest_data()
-            if manifest_data is None:
-                return None
-
-            return manifest_data.get("validation_results")
-        except C2paError.ManifestNotFound:
-            return None
+        return self._get_manifest_field(
+            lambda d: d.get("validation_results"))
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
@@ -2719,13 +2673,9 @@ class Reader(ManagedResource):
             result = _lib.c2pa_reader_resource_to_stream(
                 self._handle, uri_str, stream_obj._stream)
 
-            if result < 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError.Other(
-                    "Error during resource {} to stream conversion".format(uri)
-                )
+            _check_ffi_operation_result(result,
+                "Error during resource {} to stream conversion".format(uri),
+                check=lambda r: r < 0)
 
             return result
 
@@ -2805,13 +2755,8 @@ class Signer(ManagedResource):
 
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
-        if not signer_ptr:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                # More detailed error message when possible
-                raise C2paError(error)
-            raise C2paError(
-                "Failed to create signer from configured signer_info")
+        _check_ffi_operation_result(signer_ptr,
+            "Failed to create signer from configured signer_info")
 
         return cls(signer_ptr)
 
@@ -2944,11 +2889,8 @@ class Signer(ManagedResource):
             tsa_url_bytes
         )
 
-        if not signer_ptr:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Failed to create signer")
+        _check_ffi_operation_result(signer_ptr,
+            "Failed to create signer")
 
         # Create and return the signer instance with the callback
         signer_instance = cls(signer_ptr)
@@ -2973,7 +2915,6 @@ class Signer(ManagedResource):
             C2paError: If the signer pointer is invalid
         """
         super().__init__()
-        _clear_error_state()
 
         self._callback_cb = None
 
@@ -2981,7 +2922,7 @@ class Signer(ManagedResource):
             raise C2paError("Invalid signer pointer: pointer is null")
 
         self._handle = signer_ptr
-        self._state = LifecycleState.ACTIVE
+        self._lifecycle_state = LifecycleState.ACTIVE
 
     def _release(self):
         """Release Signer-specific resources (callback reference)."""
@@ -3001,11 +2942,8 @@ class Signer(ManagedResource):
 
         result = _lib.c2pa_signer_reserve_size(self._handle)
 
-        if result < 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Failed to get reserve size")
+        _check_ffi_operation_result(result,
+            "Failed to get reserve size", check=lambda r: r < 0)
 
         return result
 
@@ -3117,13 +3055,8 @@ class Builder(ManagedResource):
                 )
             )
 
-            if not builder._handle:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    "Failed to create builder from archive"
-                )
+            _check_ffi_operation_result(builder._handle,
+                "Failed to create builder from archive")
 
             builder._state = LifecycleState.ACTIVE
             return builder
@@ -3161,10 +3094,6 @@ class Builder(ManagedResource):
         """
         super().__init__()
 
-        # Native libs plumbing:
-        # Clear any stale error state from previous operations
-        _clear_error_state()
-
         self._context = context
         self._has_context_signer = (
             context is not None
@@ -3172,37 +3101,20 @@ class Builder(ManagedResource):
             and context.has_signer
         )
 
-        if not isinstance(manifest_json, str):
-            try:
-                manifest_json = json.dumps(manifest_json)
-            except (TypeError, ValueError) as e:
-                raise C2paError.Json(
-                    Builder._ERROR_MESSAGES['json_error'].format(
-                        str(e)))
-
-        try:
-            json_str = manifest_json.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
+        json_str = _to_utf8_bytes(manifest_json, "manifest JSON")
 
         if context is not None:
             self._init_from_context(context, json_str)
         else:
             self._handle = _lib.c2pa_builder_from_json(json_str)
 
-            if not self._handle:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    Builder._ERROR_MESSAGES['builder_error'].format(
-                        "Unknown error"
-                    )
+            _check_ffi_operation_result(self._handle,
+                Builder._ERROR_MESSAGES['builder_error'].format(
+                    "Unknown error"
                 )
+            )
 
-        self._state = LifecycleState.ACTIVE
+        self._lifecycle_state = LifecycleState.ACTIVE
 
     def _init_from_context(self, context, json_str):
         """Initialize Builder from a ContextProvider.
@@ -3216,13 +3128,11 @@ class Builder(ManagedResource):
         builder_ptr = _lib.c2pa_builder_from_context(
             context.execution_context,
         )
-        if not builder_ptr:
-            _parse_operation_result_for_error(_lib.c2pa_error())
-            raise C2paError(
-                Builder._ERROR_MESSAGES[
-                    'builder_error'
-                ].format("Unknown error")
-            )
+        _check_ffi_operation_result(builder_ptr,
+            Builder._ERROR_MESSAGES[
+                'builder_error'
+            ].format("Unknown error")
+        )
 
         # Consume-and-return: builder_ptr is consumed,
         # new_ptr is the valid pointer going forward
@@ -3230,10 +3140,8 @@ class Builder(ManagedResource):
             builder_ptr, json_str,
         )
 
-        if not new_ptr:
-            _parse_operation_result_for_error(_lib.c2pa_error())
-            raise C2paError(
-                Builder._ERROR_MESSAGES[
+        _check_ffi_operation_result(new_ptr,
+            Builder._ERROR_MESSAGES[
                     'builder_error'
                 ].format("Unknown error")
             )
@@ -3264,15 +3172,12 @@ class Builder(ManagedResource):
         """
         self._ensure_valid_state()
 
-        url_str = remote_url.encode('utf-8')
-        result = _lib.c2pa_builder_set_remote_url(self._handle, url_str)
+        url_bytes = _to_utf8_bytes(remote_url, "remote URL")
+        result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
 
-        if result != 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['url_error'].format("Unknown error"))
+        _check_ffi_operation_result(result,
+            Builder._ERROR_MESSAGES['url_error'].format("Unknown error"),
+            check=lambda r: r != 0)
 
     def set_intent(
         self,
@@ -3308,11 +3213,9 @@ class Builder(ManagedResource):
             ctypes.c_uint(digital_source_type),
         )
 
-        if result != 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Error setting intent for Builder: Unknown error")
+        _check_ffi_operation_result(result,
+            "Error setting intent for Builder: Unknown error",
+            check=lambda r: r != 0)
 
     def add_resource(self, uri: str, stream: Any):
         """Add a resource to the builder.
@@ -3327,20 +3230,16 @@ class Builder(ManagedResource):
         """
         self._ensure_valid_state()
 
-        uri_str = uri.encode('utf-8')
+        uri_bytes = _to_utf8_bytes(uri, "resource URI")
         with Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_add_resource(
-                self._handle, uri_str, stream_obj._stream)
+                self._handle, uri_bytes, stream_obj._stream)
 
-            if result != 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    Builder._ERROR_MESSAGES['resource_error'].format(
-                        "Unknown error"
-                    )
-                )
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES['resource_error'].format(
+                    "Unknown error"
+                ),
+                check=lambda r: r != 0)
 
     def add_ingredient(
         self, ingredient_json: Union[str, dict], format: str, source: Any
@@ -3391,16 +3290,8 @@ class Builder(ManagedResource):
         """
         self._ensure_valid_state()
 
-        if isinstance(ingredient_json, dict):
-            ingredient_json = json.dumps(ingredient_json)
-
-        try:
-            ingredient_str = ingredient_json.encode('utf-8')
-            format_str = format.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(
-                    str(e)))
+        ingredient_str = _to_utf8_bytes(ingredient_json, "ingredient JSON")
+        format_str = _to_utf8_bytes(format, "ingredient format")
 
         with Stream(source) as source_stream:
             result = (
@@ -3412,15 +3303,11 @@ class Builder(ManagedResource):
                 )
             )
 
-            if result != 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    Builder._ERROR_MESSAGES['ingredient_error'].format(
-                        "Unknown error"
-                    )
-                )
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES['ingredient_error'].format(
+                    "Unknown error"
+                ),
+                check=lambda r: r != 0)
 
     def add_ingredient_from_file_path(
             self,
@@ -3482,27 +3369,15 @@ class Builder(ManagedResource):
         """
         self._ensure_valid_state()
 
-        if isinstance(action_json, dict):
-            action_json = json.dumps(action_json)
-
-        try:
-            action_str = action_json.encode('utf-8')
-        except UnicodeError as e:
-            raise C2paError.Encoding(
-                Builder._ERROR_MESSAGES['encoding_error'].format(str(e))
-            )
+        action_str = _to_utf8_bytes(action_json, "action JSON")
 
         result = _lib.c2pa_builder_add_action(self._handle, action_str)
 
-        if result != 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError(
-                Builder._ERROR_MESSAGES['action_error'].format(
-                    "Unknown error"
-                )
-            )
+        _check_ffi_operation_result(result,
+            Builder._ERROR_MESSAGES['action_error'].format(
+                "Unknown error"
+            ),
+            check=lambda r: r != 0)
 
     def to_archive(self, stream: Any) -> None:
         """Write an archive of the builder to a stream.
@@ -3520,15 +3395,11 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_to_archive(
                 self._handle, stream_obj._stream)
 
-            if result != 0:
-                error = _parse_operation_result_for_error(_lib.c2pa_error())
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    Builder._ERROR_MESSAGES["archive_error"].format(
-                        "Unknown error"
-                    )
-                )
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES["archive_error"].format(
+                    "Unknown error"
+                ),
+                check=lambda r: r != 0)
 
     def with_archive(self, stream: Any) -> 'Builder':
         """Load an archive into this builder, replacing its
@@ -3556,14 +3427,8 @@ class Builder(ManagedResource):
             # self._handle has been consumed by the FFI call
             if not new_ptr:
                 self._handle = None
-                error = _parse_operation_result_for_error(
-                    _lib.c2pa_error()
-                )
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    "Failed to load archive into builder"
-                )
+            _check_ffi_operation_result(new_ptr,
+                "Failed to load archive into builder")
             self._handle = new_ptr
 
         return self
@@ -3629,11 +3494,8 @@ class Builder(ManagedResource):
             self._mark_consumed()
             raise C2paError(f"Error during signing: {e}")
 
-        if result < 0:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Error during signing")
+        _check_ffi_operation_result(result,
+            "Error during signing", check=lambda r: r < 0)
 
         # Capture the manifest bytes if available
         manifest_bytes = b""
@@ -3841,11 +3703,8 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
         ctypes.byref(result_bytes_ptr)
     )
 
-    if result < 0:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(error)
-        raise C2paError("Failed to format embeddable manifest")
+    _check_ffi_operation_result(result,
+        "Failed to format embeddable manifest", check=lambda r: r < 0)
 
     # Convert the result bytes to a Python bytes object
     size = result
@@ -3976,11 +3835,8 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
             key_bytes
         )
 
-        if not signature_ptr:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            if error:
-                raise C2paError(error)
-            raise C2paError("Failed to sign data with Ed25519")
+        _check_ffi_operation_result(signature_ptr,
+            "Failed to sign data with Ed25519")
 
         try:
             # Ed25519 signatures are always 64 bytes
