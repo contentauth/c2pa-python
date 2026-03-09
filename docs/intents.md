@@ -93,21 +93,6 @@ with Builder({}) as builder:
         builder.sign(signer, "image/jpeg", source, dest)
 ```
 
-### Using `load_settings` (deprecated)
-
-The legacy `load_settings` function can configure the intent for all subsequent `Builder` instances (thread-local configuration). This approach is deprecated in favor of context-based APIs:
-
-```py
-from c2pa import load_settings, Builder
-
-# Deprecated: sets intent settings per thread
-load_settings({"builder": {"intent": "edit"}})
-
-with Builder({}) as builder:
-    with open("original.jpg", "rb") as source, open("edited.jpg", "wb") as dest:
-        builder.sign(signer, "image/jpeg", source, dest)
-```
-
 ### Intent setting precedence
 
 When an intent is configured in multiple places , the most specific setting wins:

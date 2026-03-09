@@ -36,30 +36,7 @@ The fundamental workflow is:
 
 ## Reading an existing manifest
 
-Use `Reader` to extract the manifest store JSON and any binary resources (thumbnails, manifest data). The source asset is never modified.
-
-`Reader` also accepts an optional `context` parameter. This is especially important for trust configuration, which controls which certificates are trusted when validating signatures. Without a context, `Reader` uses SDK defaults. See [Configuring Reader](../context.md#configuring-reader) and [Trust configuration](../context.md#trust-configuration) for details.
-
-```py
-# Without context (SDK default trust settings)
-with open("signed_asset.jpg", "rb") as source:
-    with Reader("image/jpeg", source) as reader:
-        # Get the full manifest store as JSON
-        manifest_store = json.loads(reader.json())
-
-        # Identify the active manifest, which is the current/latest manifest
-        active_label = manifest_store["active_manifest"]
-        manifest = manifest_store["manifests"][active_label]
-
-        # Access specific parts
-        ingredients = manifest["ingredients"]
-        assertions = manifest["assertions"]
-        thumbnail_id = manifest["thumbnail"]["identifier"]
-```
-
-### With context (trust configuration)
-
-To control which certificates are trusted during validation, pass a `Context` with trust settings to `Reader`:
+Use `Reader` with a `Context` to extract the manifest store JSON and any binary resources (thumbnails, manifest data). The source asset is never modified. The context is used for trust configuration (which certificates are trusted when validating signatures) and verification settings. See [Configuring Reader](../context.md#configuring-reader) and [Trust configuration](../context.md#trust-configuration) for details.
 
 ```py
 ctx = Context.from_dict({
@@ -95,7 +72,7 @@ with open("thumbnail.jpg", "wb") as f:
 ## Filtering into a new Builder
 
 > [!NOTE]
-> All `Builder` and `Reader` examples on this page also work with a `Context`. For `Reader`, a context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, a context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. When a signer is configured in the context, `builder.sign()` can be called without an signer instance as argument. See [Context](../context.md) for details.
+> All examples on this page use `Context` with `Reader` and `Builder`. For `Reader`, the context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, the context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. When a signer is configured in the context, `builder.sign()` is called without a signer instance. See [Context](../context.md) for details.
 
 Each example below creates a **new `Builder`** from filtered data. The original asset and its manifest store are never modified.
 
@@ -123,8 +100,13 @@ This function is used throughout the examples below.
 ### Keep only specific ingredients
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 with open("signed_asset.jpg", "rb") as source:
-    with Reader("image/jpeg", source) as reader:
+    with Reader("image/jpeg", source, context=ctx) as reader:
         manifest_store = json.loads(reader.json())
         active = manifest_store["manifests"][manifest_store["active_manifest"]]
 
@@ -138,20 +120,27 @@ with open("signed_asset.jpg", "rb") as source:
         with Builder({
             "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
             "ingredients": kept,
-        }) as new_builder:
+        }, context=ctx) as new_builder:
             transfer_ingredient_resources(reader, new_builder, kept)
 
-            # Sign the new Builder into an output asset
             source.seek(0)
             with open("output.jpg", "wb") as dest:
-                new_builder.sign(signer, "image/jpeg", source, dest)
+                # In this example, the Signer is on the context.
+                # A Signer can also be passed as first argument to
+                # configure a dedicated Signer explicitly.
+                new_builder.sign("image/jpeg", source, dest)
 ```
 
 ### Keep only specific assertions
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 with open("signed_asset.jpg", "rb") as source:
-    with Reader("image/jpeg", source) as reader:
+    with Reader("image/jpeg", source, context=ctx) as reader:
         manifest_store = json.loads(reader.json())
         active = manifest_store["manifests"][manifest_store["active_manifest"]]
 
@@ -164,10 +153,13 @@ with open("signed_asset.jpg", "rb") as source:
         with Builder({
             "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
             "assertions": kept,
-        }) as new_builder:
+        }, context=ctx) as new_builder:
             source.seek(0)
             with open("output.jpg", "wb") as dest:
-                new_builder.sign(signer, "image/jpeg", source, dest)
+                # In this example, the Signer is on the context.
+                # A Signer can also be passed as first argument to
+                # configure a dedicated Signer explicitly.
+                new_builder.sign("image/jpeg", source, dest)
 ```
 
 ### Start fresh and preserve provenance
@@ -200,10 +192,15 @@ flowchart TD
 
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 with Builder({
     "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [],
-}) as new_builder:
+}, context=ctx) as new_builder:
     # Add the original as an ingredient to preserve provenance chain.
     # add_ingredient() stores the original's manifest as binary data inside
     # the ingredient, but does NOT copy the original's assertions.
@@ -215,7 +212,10 @@ with Builder({
         )
 
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-        new_builder.sign(signer, "image/jpeg", source, dest)
+        # In this example, the Signer is on the context.
+        # A Signer can also be passed as first argument to
+        # configure a Signer explicitly.
+        new_builder.sign("image/jpeg", source, dest)
 ```
 
 ## Adding actions to a working store
@@ -262,6 +262,11 @@ The SDK matches each value in `ingredientIds` against ingredients using this pri
 The `label` field on an ingredient is the **primary** linking key. Set a `label` on the ingredient and reference it in the action's `ingredientIds`. The label can be any string: it acts as a linking key between the ingredient and the action.
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 manifest_json = {
     "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
@@ -285,7 +290,7 @@ manifest_json = {
     ],
 }
 
-with Builder(manifest_json) as builder:
+with Builder(manifest_json, context=ctx) as builder:
     # The label on the ingredient matches the value in ingredientIds
     with open("photo.jpg", "rb") as photo:
         builder.add_ingredient(
@@ -300,7 +305,10 @@ with Builder(manifest_json) as builder:
         )
 
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-        builder.sign(signer, "image/jpeg", source, dest)
+        # In this example, the Signer is on the context.
+        # A Signer can also be passed as first argument to
+        # configure a dedicated Signer explicitly.
+        builder.sign("image/jpeg", source, dest)
 ```
 
 ##### Linking multiple ingredients
@@ -311,6 +319,11 @@ When linking multiple ingredients, each ingredient needs a unique label.
 > The labels used for linking in the working store may not be the exact labels that appear in the signed manifest. They are indicators for the SDK to know which ingredient to link with which action. The SDK assigns final labels during signing.
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 manifest_json = {
     "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
@@ -337,7 +350,7 @@ manifest_json = {
     ],
 }
 
-with Builder(manifest_json) as builder:
+with Builder(manifest_json, context=ctx) as builder:
     # parentOf ingredient linked to c2pa.opened
     with open("original.jpg", "rb") as original:
         builder.add_ingredient(
@@ -365,7 +378,10 @@ with Builder(manifest_json) as builder:
         )
 
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-        builder.sign(signer, "image/jpeg", source, dest)
+        # In this example, the Signer is on the context.
+        # A Signer can also be passed as first argument to
+        # configure a dedicated Signer explicitly.
+        builder.sign("image/jpeg", source, dest)
 ```
 
 #### Linking with `instance_id`
@@ -373,6 +389,11 @@ with Builder(manifest_json) as builder:
 When no `label` is set on an ingredient, the SDK matches `ingredientIds` against `instance_id`.
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 # instance_id is used as the linking identifier and must be unique
 instance_id = "xmp:iid:939a4c48-0dff-44ec-8f95-61f52b11618f"
 
@@ -395,7 +416,7 @@ manifest_json = {
     ],
 }
 
-with Builder(manifest_json) as builder:
+with Builder(manifest_json, context=ctx) as builder:
     # No label set: instance_id is used as the linking key
     with open("source_photo.jpg", "rb") as photo:
         builder.add_ingredient(
@@ -409,7 +430,10 @@ with Builder(manifest_json) as builder:
         )
 
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-        builder.sign(signer, "image/jpeg", source, dest)
+        # In this example, the Signer is on the context.
+        # A Signer can also be passed as first argument to
+        # configure a dedicated Signer explicitly.
+        builder.sign("image/jpeg", source, dest)
 ```
 
 > [!NOTE]
@@ -420,8 +444,10 @@ with Builder(manifest_json) as builder:
 After signing, `ingredientIds` is gone. The action's `parameters.ingredients[]` contains hashed JUMBF URIs pointing to ingredient assertions. To match an action to its ingredient, extract the label from the URL:
 
 ```py
+ctx = Context.from_dict({"verify": {"verify_trust": True}})
+
 with open("signed_asset.jpg", "rb") as signed:
-    with Reader("image/jpeg", signed) as reader:
+    with Reader("image/jpeg", signed, context=ctx) as reader:
         manifest_store = json.loads(reader.json())
         active_label = manifest_store["active_manifest"]
         manifest = manifest_store["manifests"][active_label]
@@ -502,42 +528,16 @@ flowchart TD
 
 
 ```py
-# Read from a catalog of archived ingredients
-archive_stream.seek(0)
-with Reader("application/c2pa", archive_stream) as reader:
-    manifest_store = json.loads(reader.json())
-    active = manifest_store["manifests"][manifest_store["active_manifest"]]
-
-    # Pick only the needed ingredients
-    selected = [
-        ing for ing in active["ingredients"]
-        if ing["title"] in {"photo_1.jpg", "logo.png"}
-    ]
-
-    with Builder({
-        "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
-        "ingredients": selected,
-    }) as new_builder:
-        transfer_ingredient_resources(reader, new_builder, selected)
-
-        with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-            new_builder.sign(signer, "image/jpeg", source, dest)
-```
-
-#### With context
-
-The same workflow can use a `Context` for custom settings. The context controls thumbnail generation, claim generator info, and other Builder settings. When a signer is configured in the context, `sign()` can be called without an explicit signer instance passed in as argument.
-
-```py
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": False},
         "claim_generator_info": {"name": "an-application", "version": "0.1.0"}
-    }
+    },
+    "signer": signer,
 })
 
 archive_stream.seek(0)
-with Reader("application/c2pa", archive_stream) as reader:
+with Reader("application/c2pa", archive_stream, context=ctx) as reader:
     manifest_store = json.loads(reader.json())
     active = manifest_store["manifests"][manifest_store["active_manifest"]]
 
@@ -553,6 +553,9 @@ with Reader("application/c2pa", archive_stream) as reader:
         transfer_ingredient_resources(reader, new_builder, selected)
 
         with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
+            # In this example, the Signer is on the context.
+            # A Signer can also be passed as first argument to
+            # configure a dedicated Signer explicitly.
             new_builder.sign("image/jpeg", source, dest)
 ```
 
@@ -663,9 +666,13 @@ flowchart TD
 **Step 1:** Build a working store and archive it:
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+})
+
 with Builder({
     "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
-}) as builder:
+}, context=ctx) as builder:
     # Add ingredients to the working store
     with open("A.jpg", "rb") as ing_a:
         builder.add_ingredient(
@@ -693,7 +700,7 @@ with Builder({
 
 ```py
 archive_stream.seek(0)
-with Reader("application/c2pa", archive_stream) as reader:
+with Reader("application/c2pa", archive_stream, context=ctx) as reader:
     manifest_store = json.loads(reader.json())
     active = manifest_store["manifests"][manifest_store["active_manifest"]]
     ingredients = active["ingredients"]
@@ -702,29 +709,12 @@ with Reader("application/c2pa", archive_stream) as reader:
 **Step 3:** Create a new Builder with the extracted ingredients:
 
 ```py
-    # Pick the desired ingredients
-    selected = [ing for ing in ingredients if ing["title"] == "A.jpg"]
-
-    with Builder({
-        "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
-        "ingredients": selected,
-    }) as new_builder:
-        transfer_ingredient_resources(reader, new_builder, selected)
-
-        with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-            new_builder.sign(signer, "image/jpeg", source, dest)
-```
-
-#### Step 3 with context
-
-When context settings need to be applied (such as thumbnail configuration or claim generator info), the builder can be created with a `Context`. If the archive was previously saved with `to_archive()`, it can be loaded with `with_archive()` to preserve those settings.
-
-```py
-    ctx = Context.from_dict({
+    sign_ctx = Context.from_dict({
         "builder": {
             "thumbnail": {"enabled": False},
             "claim_generator_info": {"name": "an-application", "version": "0.1.0"}
-        }
+        },
+        "signer": signer,
     })
 
     selected = [ing for ing in ingredients if ing["title"] == "A.jpg"]
@@ -732,10 +722,13 @@ When context settings need to be applied (such as thumbnail configuration or cla
     with Builder({
         "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
         "ingredients": selected,
-    }, context=ctx) as new_builder:
+    }, context=sign_ctx) as new_builder:
         transfer_ingredient_resources(reader, new_builder, selected)
 
         with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
+            # In this example, the Signer is on the context.
+            # A Signer can also be passed as first argument to
+            # configure a dedicated Signer explicitly.
             new_builder.sign("image/jpeg", source, dest)
 ```
 
@@ -749,6 +742,11 @@ In some cases it is necessary to merge ingredients from multiple working stores 
 When merging from multiple sources, resource identifier URIs can collide. Rename identifiers with a unique suffix when needed. Use two passes: (1) collect ingredients with collision handling, build the manifest, create the builder; (2) re-read each archive and transfer resources (use original ID for `resource_to_stream()`, renamed ID for `add_resource()` when collisions occurred).
 
 ```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
 used_ids: set[str] = set()
 suffix_counter = 0
 all_ingredients = []
@@ -757,7 +755,7 @@ archive_ingredient_counts = []
 # Pass 1: Collect ingredients, renaming IDs on collision
 for archive_stream in archives:
     archive_stream.seek(0)
-    with Reader("application/c2pa", archive_stream) as reader:
+    with Reader("application/c2pa", archive_stream, context=ctx) as reader:
         manifest_store = json.loads(reader.json())
         active = manifest_store["manifests"][manifest_store["active_manifest"]]
         ingredients = active["ingredients"]
@@ -778,12 +776,12 @@ for archive_stream in archives:
 with Builder({
     "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "ingredients": all_ingredients,
-}) as builder:
+}, context=ctx) as builder:
     # Pass 2: Transfer resources (match by ingredient index)
     offset = 0
     for archive_stream, count in zip(archives, archive_ingredient_counts):
         archive_stream.seek(0)
-        with Reader("application/c2pa", archive_stream) as reader:
+        with Reader("application/c2pa", archive_stream, context=ctx) as reader:
             manifest_store = json.loads(reader.json())
             active = manifest_store["manifests"][manifest_store["active_manifest"]]
             originals = active["ingredients"]
@@ -800,5 +798,8 @@ with Builder({
             offset += count
 
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-        builder.sign(signer, "image/jpeg", source, dest)
+        # In this example, the Signer is on the context.
+        # A Signer can also be passed as first argument to
+        # configure a dedicated Signer explicitly.
+        builder.sign("image/jpeg", source, dest)
 ```
