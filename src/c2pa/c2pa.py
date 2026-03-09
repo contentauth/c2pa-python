@@ -239,6 +239,7 @@ class ManagedResource:
             raise C2paError(f"{name} is not properly initialized")
         if not self._handle:
             raise C2paError(f"{name} is closed")
+        _clear_error_state()
 
     def _release(self):
         """Override to free class-specific resources (streams, caches, etc.).
@@ -1386,7 +1387,6 @@ class Settings(ManagedResource):
             self, for method chaining.
         """
         self._ensure_valid_state()
-        _clear_error_state()
 
         try:
             path_bytes = path.encode('utf-8')
@@ -1417,7 +1417,6 @@ class Settings(ManagedResource):
             self, for method chaining.
         """
         self._ensure_valid_state()
-        _clear_error_state()
 
         if isinstance(data, dict):
             data = json.dumps(data)
@@ -1867,6 +1866,7 @@ class Stream:
         self._flush_cb = FlushCallback(flush_callback)
 
         # Create the stream
+        _clear_error_state()
         self._stream = _lib.c2pa_create_stream(
             None,
             self._read_cb,
@@ -1997,6 +1997,7 @@ def _get_supported_mime_types(ffi_func, cache):
     if cache is not None:
         return list(cache), cache
 
+    _clear_error_state()
     count = ctypes.c_size_t()
     arr = ffi_func(ctypes.byref(count))
 
