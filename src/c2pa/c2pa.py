@@ -18,8 +18,8 @@ import logging
 import sys
 import os
 import warnings
-from pathlib import Path
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library
