@@ -2399,7 +2399,7 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Step 1: create reader from context
+            # Create reader from context
             reader_ptr = _lib.c2pa_reader_from_context(
                 context.execution_context,
             )
@@ -2421,7 +2421,7 @@ class Reader(ManagedResource):
                     ctypes.c_ubyte *
                     len(manifest_data))(
                     *manifest_data)
-                # Step 2: consume current reader,
+                # Consume current reader,
                 # with manifest data and stream (C FFI pattern),
                 # to create a new one (switch out)
                 new_ptr = (
@@ -2435,7 +2435,7 @@ class Reader(ManagedResource):
                 )
                 # reader_ptr has been invalidated(consumed)
             else:
-                # Step 2: consume reader with stream
+                # Consume reader with stream
                 new_ptr = _lib.c2pa_reader_with_stream(
                     reader_ptr, format_bytes,
                     self._own_stream._stream,
