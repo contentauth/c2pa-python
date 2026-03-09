@@ -208,9 +208,9 @@ class LifecycleState(enum.IntEnum):
 
 
 class ManagedResource:
-    """Base class for objects that hold a native (FFI) resource.
+    """Base class for objects that hold a native (C FFI) resource.
     This is an internal base class that provides lifecycle management
-    for native resources (pointers).
+    for native resources (e.g. pointers).
 
     Subclasses must:
       - Set `self._handle` to the native pointer after creation.
@@ -239,7 +239,7 @@ class ManagedResource:
         if self._state != LifecycleState.ACTIVE:
             raise C2paError(f"{name} is not properly initialized")
         if not self._handle:
-            raise C2paError(f"{name} is closed")
+            raise C2paError(f"{name} has an invalid internal state (active but no handle)")
         _clear_error_state()
 
     def _release(self):
@@ -281,16 +281,8 @@ class ManagedResource:
             pass
 
     def close(self) -> None:
-        """Release the resource (idempotent, never raises
-        because we don't want to error on clean-up fail)."""
-        if self._state == LifecycleState.CLOSED:
-            return
-        try:
-            self._cleanup_resources()
-        except Exception as e:
-            logger.error("Error during %s close: %s", type(self).__name__, e)
-        finally:
-            self._state = LifecycleState.CLOSED
+        """Release the resource (idempotent, never raises)."""
+        self._cleanup_resources()
 
     def __enter__(self):
         """For classes with context manager (with) pattern"""
@@ -302,7 +294,7 @@ class ManagedResource:
         self.close()
 
     def __del__(self):
-        """For classes with context manager (with) pattern"""
+        """Free native resources if close() was not called."""
         self._cleanup_resources()
 
 
@@ -2983,14 +2975,13 @@ class Signer(ManagedResource):
         super().__init__()
         _clear_error_state()
 
+        self._callback_cb = None
+
         if not signer_ptr:
             raise C2paError("Invalid signer pointer: pointer is null")
 
         self._handle = signer_ptr
         self._state = LifecycleState.ACTIVE
-
-        # Set only for signers which are callback signers
-        self._callback_cb = None
 
     def _release(self):
         """Release Signer-specific resources (callback reference)."""
@@ -3860,6 +3851,10 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     size = result
     try:
         result_bytes = bytes(result_bytes_ptr[:size])
+    except Exception as e:
+        raise C2paError(
+            f"Failed to convert embeddable manifest bytes: {e}"
+        ) from e
     finally:
         _lib.c2pa_manifest_bytes_free(result_bytes_ptr)
 
