@@ -10,9 +10,6 @@ Features:
 - Create and sign C2PA manifests using various signing algorithms.
 - Verify C2PA manifests and extract metadata.
 - Add assertions and ingredients to assets.
-- Per-instance configuration via `Settings` and `Context` (replaces global `load_settings`).
-- Embed a `Signer` in a `Context` for simplified signing workflows.
-- `ContextProvider` protocol for custom third-party context implementations.
 - Examples and unit tests to demonstrate usage.
 
 ## Prerequisites

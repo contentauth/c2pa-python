@@ -18,8 +18,8 @@ import logging
 import sys
 import os
 import warnings
-from pathlib import Path
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library
@@ -55,8 +55,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_sign',
     'c2pa_builder_sign_context',
     'c2pa_manifest_bytes_free',
-    'c2pa_builder_data_hashed_placeholder',
-    'c2pa_builder_sign_data_hashed_embeddable',
     'c2pa_format_embeddable',
     'c2pa_signer_create',
     'c2pa_signer_from_info',
@@ -81,6 +79,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_with_context_from_manifest_data_and_stream',
     'c2pa_builder_from_context',
     'c2pa_builder_with_definition',
+    'c2pa_builder_with_archive',
     'c2pa_free',
 ]
 
@@ -241,6 +240,7 @@ class ManagedResource:
             raise C2paError(f"{name} is not properly initialized")
         if not self._handle:
             raise C2paError(f"{name} is closed")
+        _clear_error_state()
 
     def _release(self):
         """Override to free class-specific resources (streams, caches, etc.).
@@ -248,6 +248,15 @@ class ManagedResource:
         Called during cleanup before the native handle is freed.
         The default implementation does nothing.
         """
+
+    def _mark_consumed(self):
+        """Mark as consumed by an FFI call that took ownership
+        of native resources e.g. pointers. This means we should not
+        call clean-up here anymore, and leave it to the new owner.
+        """
+
+        self._handle = None
+        self._state = LifecycleState.CLOSED
 
     def _cleanup_resources(self):
         """Release native resources idempotently."""
@@ -562,6 +571,10 @@ _setup_function(
 _setup_function(_lib.c2pa_builder_from_archive,
                 [ctypes.POINTER(C2paStream)],
                 ctypes.POINTER(C2paBuilder))
+_setup_function(
+    _lib.c2pa_builder_with_archive,
+    [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
+    ctypes.POINTER(C2paBuilder))
 _setup_function(_lib.c2pa_builder_set_no_embed, [
                 ctypes.POINTER(C2paBuilder)], None)
 _setup_function(
@@ -597,21 +610,6 @@ _setup_function(
     _lib.c2pa_manifest_bytes_free, [
         ctypes.POINTER(
             ctypes.c_ubyte)], None)
-_setup_function(
-    _lib.c2pa_builder_data_hashed_placeholder, [
-        ctypes.POINTER(C2paBuilder), ctypes.c_size_t, ctypes.c_char_p,
-        ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))
-    ],
-    ctypes.c_int64,
-)
-_setup_function(_lib.c2pa_builder_sign_data_hashed_embeddable,
-                [ctypes.POINTER(C2paBuilder),
-                 ctypes.POINTER(C2paSigner),
-                 ctypes.c_char_p,
-                 ctypes.c_char_p,
-                 ctypes.POINTER(C2paStream),
-                 ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
-                ctypes.c_int64)
 _setup_function(
     _lib.c2pa_format_embeddable, [
         ctypes.c_char_p, ctypes.POINTER(
@@ -1397,7 +1395,6 @@ class Settings(ManagedResource):
             self, for method chaining.
         """
         self._ensure_valid_state()
-        _clear_error_state()
 
         try:
             path_bytes = path.encode('utf-8')
@@ -1428,7 +1425,6 @@ class Settings(ManagedResource):
             self, for method chaining.
         """
         self._ensure_valid_state()
-        _clear_error_state()
 
         if isinstance(data, dict):
             data = json.dumps(data)
@@ -1564,21 +1560,15 @@ class Context(ManagedResource, ContextProvider):
                         _parse_operation_result_for_error(None)
 
                 if signer is not None:
-                    signer_ptr, callback_cb = (
-                        signer._transfer_ownership()
-                    )
-                    self._signer_callback_cb = (
-                        callback_cb
-                    )
+                    signer._ensure_valid_state()
                     result = (
                         _lib
                         .c2pa_context_builder_set_signer(
-                            builder_ptr, signer_ptr,
+                            builder_ptr, signer._handle,
                         )
                     )
                     if result != 0:
                         _parse_operation_result_for_error(None)
-                    self._has_signer = True
 
                 # Build consumes builder_ptr
                 ptr = (
@@ -1594,6 +1584,17 @@ class Context(ManagedResource, ContextProvider):
                         "Failed to build Context"
                     )
                 self._handle = ptr
+
+                # Build succeeded — consume the signer.
+                # Keep its callback ref alive on this Context,
+                # then mark it so it won't double-free the
+                # native pointer the Context now owns.
+                if signer is not None:
+                    self._signer_callback_cb = (
+                        signer._callback_cb
+                    )
+                    signer._mark_consumed()
+                    self._has_signer = True
             except Exception:
                 # Free builder if build was not reached
                 if builder_ptr is not None:
@@ -1604,6 +1605,10 @@ class Context(ManagedResource, ContextProvider):
                 raise
 
         self._state = LifecycleState.ACTIVE
+
+    def _release(self):
+        """Release Context-specific resources."""
+        self._signer_callback_cb = None
 
     @classmethod
     def builder(cls) -> 'ContextBuilder':
@@ -1869,6 +1874,7 @@ class Stream:
         self._flush_cb = FlushCallback(flush_callback)
 
         # Create the stream
+        _clear_error_state()
         self._stream = _lib.c2pa_create_stream(
             None,
             self._read_cb,
@@ -1999,6 +2005,7 @@ def _get_supported_mime_types(ffi_func, cache):
     if cache is not None:
         return list(cache), cache
 
+    _clear_error_state()
     count = ctypes.c_size_t()
     arr = ffi_func(ctypes.byref(count))
 
@@ -2213,16 +2220,17 @@ class Reader(ManagedResource):
             format_or_path: The format or path to read from
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Optional ContextProvider for settings
+            context: Optional context implementing ContextProvider with settings
 
         Raises:
             C2paError: If there was an error creating the reader
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
+        super().__init__()
+
         # Native libs plumbing:
         # Clear any stale error state from previous operations
-        super().__init__()
         _clear_error_state()
 
         self._own_stream = None
@@ -2235,7 +2243,6 @@ class Reader(ManagedResource):
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
 
-        # Keep context reference alive
         self._context = context
 
         if context is not None:
@@ -2280,8 +2287,6 @@ class Reader(ManagedResource):
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
         """Create a native reader from a Stream.
-
-        Calls the appropriate FFI function and raises on failure.
 
         Args:
             format_bytes: UTF-8 encoded format/MIME type
@@ -2355,12 +2360,9 @@ class Reader(ManagedResource):
                     str(e)))
 
     def _init_from_context(self, context, format_or_path,
-                           stream, manifest_data=None):
-        """Initialize Reader from a ContextProvider.
-
-        Uses c2pa_reader_from_context + c2pa_reader_with_stream,
-        or c2pa_reader_with_context_from_manifest_data_and_stream
-        when manifest_data is provided.
+                           stream):
+        """Initialize Reader from a context object implementing
+        the ContextProvider interface/abstract base class.
         """
         if not context.is_valid:
             raise C2paError("Context is not valid")
@@ -2973,34 +2975,6 @@ class Signer(ManagedResource):
         if self._callback_cb:
             self._callback_cb = None
 
-    def _transfer_ownership(self):
-        """Release ownership of the native signer pointer.
-
-        After this call the Signer is marked closed and must
-        not be used. The caller takes ownership of the
-        returned pointer and is responsible for its lifetime.
-
-        Returns:
-            Tuple of (signer_ptr, callback_cb):
-              signer_ptr: The native C2paSigner pointer.
-              callback_cb: The callback reference (if any).
-                The caller must store this to prevent GC.
-
-        Raises:
-            C2paError: If the signer is already closed.
-        """
-        self._ensure_valid_state()
-
-        ptr = self._handle
-        callback_cb = self._callback_cb
-
-        # Detach pointer without freeing — caller now owns it
-        self._handle = None
-        self._callback_cb = None
-        self._state = LifecycleState.CLOSED
-
-        return ptr, callback_cb
-
     def reserve_size(self) -> int:
         """Get the size to reserve for signatures from this signer.
 
@@ -3099,40 +3073,28 @@ class Builder(ManagedResource):
         return cls(manifest_json, context=context)
 
     @classmethod
-    @overload
     def from_archive(
         cls,
         stream: Any,
-    ) -> 'Builder': ...
-
-    @classmethod
-    @overload
-    def from_archive(
-        cls,
-        stream: Any,
-        context: 'ContextProvider',
-    ) -> 'Builder': ...
-
-    @classmethod
-    def from_archive(
-        cls,
-        stream: Any,
-        context: Optional['ContextProvider'] = None,
     ) -> 'Builder':
         """Create a new Builder from an archive stream.
+
+        This creates a context-free builder. To preserve context
+        settings, create a Builder with a context first, then call
+        with_archive() on it.
 
         Args:
             stream: The stream containing the archive
                 (any Python stream-like object)
-            context: Optional ContextProvider for settings
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating the builder from archive
+            C2paError: If there was an error creating the builder
+                from archive
         """
-        builder = cls({}, context=context)
+        builder = cls({})
         stream_obj = Stream(stream)
 
         try:
@@ -3184,12 +3146,12 @@ class Builder(ManagedResource):
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
+        super().__init__()
+
         # Native libs plumbing:
         # Clear any stale error state from previous operations
-        super().__init__()
         _clear_error_state()
 
-        # Keep context reference alive
         self._context = context
         self._has_context_signer = (
             context is not None
@@ -3555,6 +3517,44 @@ class Builder(ManagedResource):
                     )
                 )
 
+    def with_archive(self, stream: Any) -> 'Builder':
+        """Load an archive into this builder, replacing its
+        manifest definition. The archive carries only the
+        definition, not settings — settings come from this
+        builder's context, which is preserved across the call.
+        Use this instead of from_archive() when you need
+        context-based settings.
+
+        Args:
+            stream: The stream containing the archive
+
+        Returns:
+            This builder instance, for method chaining.
+
+        Raises:
+            C2paError: If there was an error loading the archive
+        """
+        self._ensure_valid_state()
+
+        with Stream(stream) as stream_obj:
+            new_ptr = _lib.c2pa_builder_with_archive(
+                self._handle, stream_obj._stream,
+            )
+            # self._handle has been consumed by the FFI call
+            if not new_ptr:
+                self._handle = None
+                error = _parse_operation_result_for_error(
+                    _lib.c2pa_error()
+                )
+                if error:
+                    raise C2paError(error)
+                raise C2paError(
+                    "Failed to load archive into builder"
+                )
+            self._handle = new_ptr
+
+        return self
+
     def _sign_internal(
             self,
             format: str,
@@ -3610,7 +3610,10 @@ class Builder(ManagedResource):
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
                 )
+            # Builder pointer consumed by Rust FFI — prevent double-free
+            self._mark_consumed()
         except Exception as e:
+            self._mark_consumed()
             raise C2paError(f"Error during signing: {e}")
 
         if result < 0:
@@ -3648,7 +3651,7 @@ class Builder(ManagedResource):
         source: Any,
         dest: Any = None,
     ) -> bytes:
-        """Shared signing logic for sign() and sign_with_context().
+        """Shared signing logic for sign().
 
         Args:
             signer: The signer to use, or None for context signer.
@@ -3685,48 +3688,46 @@ class Builder(ManagedResource):
                         " a signer."
                     )
             finally:
-                if not dest:
-                    dest_stream.close()
+                dest_stream.close()
         finally:
             source_stream.close()
 
         return manifest_bytes
 
+    @overload
     def sign(
         self,
         signer: Signer,
         format: str,
         source: Any,
         dest: Any = None,
-    ) -> bytes:
-        """Sign the builder's content with an explicit signer.
+    ) -> bytes: ...
 
-        Args:
-            signer: The signer to use.
-            format: The MIME type of the content.
-            source: The source stream.
-            dest: The destination stream (optional).
-
-        Returns:
-            Manifest bytes
-
-        Raises:
-            C2paError: If there was an error during signing
-        """
-        return self._sign_common(signer, format, source, dest)
-
-    def sign_with_context(
+    @overload
+    def sign(
         self,
         format: str,
         source: Any,
         dest: Any = None,
-    ) -> bytes:
-        """Sign using the context's signer.
+    ) -> bytes: ...
 
-        The builder must have been created with a Context
-        that has a signer.
+    def sign(
+        self,
+        signer_or_format: Union[Signer, str],
+        format_or_source: Any = None,
+        source_or_dest: Any = None,
+        dest: Any = None,
+    ) -> bytes:
+        """Sign the builder's content.
+
+        Can be called with or without an explicit signer.
+        If no signer is provided, the context's signer is
+        used (builder must have been created with a Context
+        that has a signer).
 
         Args:
+            signer: The signer to use. If not provided, the
+                context's signer is used.
             format: The MIME type of the content.
             source: The source stream.
             dest: The destination stream (optional).
@@ -3737,7 +3738,14 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error during signing
         """
-        return self._sign_common(None, format, source, dest)
+        if isinstance(signer_or_format, Signer):
+            return self._sign_common(signer_or_format, format_or_source, source_or_dest, dest)
+        elif isinstance(signer_or_format, str):
+            return self._sign_common(None, signer_or_format, format_or_source, source_or_dest)
+        else:
+            raise C2paError(
+                "First argument must be a Signer or a format string (MIME type)."
+            )
 
     @overload
     def sign_file(
@@ -3978,6 +3986,7 @@ __all__ = [
     'C2paDigitalSourceType',
     'C2paSignerInfo',
     'C2paBuilderIntent',
+    'ContextBuilder',
     'ContextProvider',
     'Settings',
     'Context',

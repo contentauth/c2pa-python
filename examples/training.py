@@ -90,7 +90,7 @@ ingredient_json = {
     }
 }
 
-# V2 signing API example using default Context and Settings.
+# Signing API example (v2 claims)
 try:
     # Read the private key and certificate files
     with open(keyFile, "rb") as key_file:
@@ -106,29 +106,29 @@ try:
         ta_url=b"http://timestamp.digicert.com"
     )
 
-    context = c2pa.Context()
-    with c2pa.Signer.from_info(signer_info) as signer:
-        with c2pa.Builder(manifest_json, context=context) as builder:
-            # Add the thumbnail resource using a stream
-            with open(fixtures_dir + "A_thumbnail.jpg", "rb") as thumbnail_file:
-                builder.add_resource("thumbnail", thumbnail_file)
+    with (
+        c2pa.Context() as context,
+        c2pa.Signer.from_info(signer_info) as signer,
+        c2pa.Builder(manifest_json, context) as builder,
+    ):
+        # Add the thumbnail resource using a stream
+        with open(fixtures_dir + "A_thumbnail.jpg", "rb") as thumbnail_file:
+            builder.add_resource("thumbnail", thumbnail_file)
 
-            # Add the ingredient using the correct method
-            with open(fixtures_dir + "A_thumbnail.jpg", "rb") as ingredient_file:
-                builder.add_ingredient(json.dumps(ingredient_json), "image/jpeg", ingredient_file)
+        # Add the ingredient to the working store (Builder)
+        with open(fixtures_dir + "A_thumbnail.jpg", "rb") as ingredient_file:
+            builder.add_ingredient(json.dumps(ingredient_json), "image/jpeg", ingredient_file)
 
-            if os.path.exists(testOutputFile):
-                os.remove(testOutputFile)
+        if os.path.exists(testOutputFile):
+            os.remove(testOutputFile)
 
-            # Sign the file using the stream-based sign method
-            with open(testFile, "rb") as source_file:
-                with open(testOutputFile, "w+b") as dest_file:
-                    result = builder.sign(signer, "image/jpeg", source_file, dest_file)
+        # Sign the file using the stream-based sign method
+        with open(testFile, "rb") as source_file:
+            with open(testOutputFile, "w+b") as dest_file:
+                result = builder.sign(signer, "image/jpeg", source_file, dest_file)
 
-            # As an alternative, you can also use file paths directly during signing:
-            # builder.sign_file(testFile, testOutputFile, signer)
-    # TODO-TMN: use with context here
-    context.close()
+        # As an alternative, you can also use file paths directly during signing:
+        # builder.sign_file(testFile, testOutputFile, signer)
 
 except Exception as err:
     print(f"Exception during signing: {err}")
@@ -140,8 +140,10 @@ print(f"\nSuccessfully added do not train manifest to file {testOutputFile}")
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
     # Create reader using the Reader API with default Context
-    context = c2pa.Context()
-    with c2pa.Reader(testOutputFile, context=context) as reader:
+    with (
+        c2pa.Context() as context,
+        c2pa.Reader(testOutputFile, context=context) as reader,
+    ):
         # Retrieve the manifest store
         manifest_store = json.loads(reader.json())
 
@@ -156,8 +158,6 @@ try:
         uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
         with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
             reader.resource_to_stream(uri, thumbnail_output)
-    # TODO-TMN: use with context here
-    context.close()
 
 except Exception as err:
     print(f"Exception during assertions reading: {err}")

@@ -19,9 +19,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 
-# Note: Builder, Reader, and Signer support being used as context managers
-# (with 'with' statements), but this example shows manual usage which requires
-# explicitly calling the close() function to clean up resources.
+# Note: Builder, Reader, Signer, and Context support being used as context managers
+# (with 'with' statements) to automatically clean up resources.
 
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
@@ -90,30 +89,27 @@ manifest_definition = {
 print("\nSigning the image file...")
 
 # Use default Context and Settings.
-context = c2pa.Context()
-with c2pa.Signer.from_callback(
-    callback=callback_signer_es256,
-    alg=c2pa.C2paSigningAlg.ES256,
-    certs=certs.decode('utf-8'),
-    tsa_url="http://timestamp.digicert.com"
-) as signer:
-    with c2pa.Builder(manifest_definition, context=context) as builder:
-        builder.sign_file(
-            source_path=fixtures_dir + "A.jpg",
-            dest_path=output_dir + "A_signed.jpg",
-            signer=signer
-        )
+with c2pa.Context() as context:
+    with c2pa.Signer.from_callback(
+        callback_signer_es256,
+        c2pa.C2paSigningAlg.ES256,
+        certs.decode('utf-8'),
+        "http://timestamp.digicert.com"
+    ) as signer:
+        with c2pa.Builder(manifest_definition, context) as builder:
+            builder.sign_file(
+                fixtures_dir + "A.jpg",
+                output_dir + "A_signed.jpg",
+                signer
+            )
 
-# Re-Read the signed image to verify
-print("\nReading signed image metadata:")
-with open(output_dir + "A_signed.jpg", "rb") as file:
-    with c2pa.Reader("image/jpeg", file, context=context) as reader:
-        # The validation state will depend on loaded trust settings.
-        # Without loaded trust settings,
-        # the manifest validation_state will be "Invalid".
-        print(reader.json())
-
-# TODO-TMN: use with context here
-context.close()
+    # Re-Read the signed image to verify
+    print("\nReading signed image metadata:")
+    with open(output_dir + "A_signed.jpg", "rb") as file:
+        with c2pa.Reader("image/jpeg", file, context=context) as reader:
+            # The validation state will depend on loaded trust settings.
+            # Without loaded trust settings,
+            # the manifest validation_state will be "Invalid".
+            print(reader.json())
 
 print("\nExample completed successfully!")
