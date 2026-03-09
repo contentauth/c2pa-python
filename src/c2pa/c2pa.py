@@ -1553,21 +1553,15 @@ class Context(ManagedResource, ContextProvider):
                         _parse_operation_result_for_error(None)
 
                 if signer is not None:
-                    signer_ptr, callback_cb = (
-                        signer._transfer_ownership()
-                    )
-                    self._signer_callback_cb = (
-                        callback_cb
-                    )
+                    signer._ensure_valid_state()
                     result = (
                         _lib
                         .c2pa_context_builder_set_signer(
-                            builder_ptr, signer_ptr,
+                            builder_ptr, signer._handle,
                         )
                     )
                     if result != 0:
                         _parse_operation_result_for_error(None)
-                    self._has_signer = True
 
                 # Build consumes builder_ptr
                 ptr = (
@@ -1583,6 +1577,17 @@ class Context(ManagedResource, ContextProvider):
                         "Failed to build Context"
                     )
                 self._handle = ptr
+
+                # Build succeeded — consume the signer.
+                # Keep its callback ref alive on this Context,
+                # then mark it so it won't double-free the
+                # native pointer the Context now owns.
+                if signer is not None:
+                    self._signer_callback_cb = (
+                        signer._callback_cb
+                    )
+                    signer._mark_consumed()
+                    self._has_signer = True
             except Exception:
                 # Free builder if build was not reached
                 if builder_ptr is not None:
@@ -1593,6 +1598,10 @@ class Context(ManagedResource, ContextProvider):
                 raise
 
         self._state = LifecycleState.ACTIVE
+
+    def _release(self):
+        """Release Context-specific resources."""
+        self._signer_callback_cb = None
 
     @classmethod
     def builder(cls) -> 'ContextBuilder':
@@ -2209,9 +2218,10 @@ class Reader(ManagedResource):
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
+        super().__init__()
+
         # Native libs plumbing:
         # Clear any stale error state from previous operations
-        super().__init__()
         _clear_error_state()
 
         self._own_stream = None
@@ -2926,34 +2936,6 @@ class Signer(ManagedResource):
         if self._callback_cb:
             self._callback_cb = None
 
-    def _transfer_ownership(self):
-        """Release ownership of the native signer pointer.
-
-        After this call the Signer is marked closed and must
-        not be used. The caller takes ownership of the
-        returned pointer and is responsible for its lifetime.
-
-        Returns:
-            Tuple of (signer_ptr, callback_cb):
-              signer_ptr: The native C2paSigner pointer.
-              callback_cb: The callback reference (if any).
-                The caller must store this to prevent garbage collection.
-
-        Raises:
-            C2paError: If the signer is already closed.
-        """
-        self._ensure_valid_state()
-
-        ptr = self._handle
-        callback_cb = self._callback_cb
-
-        # Detach pointer without freeing, caller now owns it
-        self._handle = None
-        self._callback_cb = None
-        self._state = LifecycleState.CLOSED
-
-        return ptr, callback_cb
-
     def reserve_size(self) -> int:
         """Get the size to reserve for signatures from this signer.
 
@@ -3125,9 +3107,10 @@ class Builder(ManagedResource):
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
+        super().__init__()
+
         # Native libs plumbing:
         # Clear any stale error state from previous operations
-        super().__init__()
         _clear_error_state()
 
         self._context = context
