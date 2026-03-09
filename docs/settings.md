@@ -389,7 +389,7 @@ For example, for original digital capture (photos from camera):
 camera_ctx = Context.from_dict({
     "builder": {
         "intent": {"Create": "digitalCapture"},
-        "claim_generator_info": {"name": "Camera App", "version": "1.0"}
+        "claim_generator_info": {"name": "Camera App", "version": "0.1.0"}
     }
 })
 ```
@@ -400,7 +400,7 @@ Or another example for editing existing content:
 editor_ctx = Context.from_dict({
     "builder": {
         "intent": {"Edit": None},
-        "claim_generator_info": {"name": "Photo Editor", "version": "2.0"}
+        "claim_generator_info": {"name": "Photo Editor", "version": "0.2.0"}
     }
 })
 ```

@@ -131,7 +131,7 @@ For full details on `Context` and `Settings`, see [Using Context to configure th
   "manifests": {
     "urn:uuid:...": {
       "claim_generator": "MyApp/1.0",
-      "claim_generator_info": [{"name": "MyApp", "version": "1.0"}],
+      "claim_generator_info": [{"name": "MyApp", "version": "0.1.0"}],
       "title": "signed_image.jpg",
       "assertions": [
         {"label": "c2pa.actions", "data": {"actions": [...]}},
@@ -323,7 +323,7 @@ except Exception as e:
 # The Builder must have been created with a Context that has a signer.
 try:
     with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
-        manifest_bytes = builder.sign_with_context("image/jpeg", src, dst)
+        manifest_bytes = builder.sign("image/jpeg", src, dst)
     print("Signed successfully!")
 except Exception as e:
     print(f"Signing failed: {e}")
@@ -381,7 +381,7 @@ try:
     # 4. Create Builder with context and sign
     builder = Builder(manifest_json, context=ctx)
     with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
-        builder.sign_with_context("image/jpeg", src, dst)
+        builder.sign("image/jpeg", src, dst)
 
     print("Asset signed with context settings")
 
@@ -612,7 +612,7 @@ Use `with_archive()` when you need the restored builder to use specific settings
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": False},
-        "claim_generator_info": {"name": "My App", "version": "1.0"}
+        "claim_generator_info": {"name": "My App", "version": "0.1.0"}
     }
 })
 
@@ -716,7 +716,7 @@ with open("artwork_manifest.c2pa", "rb") as archive:
 
 # Sign using the context's signer
 with open("artwork.jpg", "rb") as src, open("signed_artwork.jpg", "w+b") as dst:
-    builder.sign_with_context("image/jpeg", src, dst)
+    builder.sign("image/jpeg", src, dst)
 ```
 
 ## Embedded vs external manifests

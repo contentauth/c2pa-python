@@ -79,7 +79,7 @@ classDiagram
         +to_archive(stream)
         +with_archive(stream) Builder
         +sign(signer, format, source, dest) bytes
-        +sign_with_context(format, source, dest) bytes
+        +sign(format, source, dest) bytes
         +sign_file(source_path, dest_path, signer) bytes
         +close()
     }
@@ -190,11 +190,9 @@ flowchart LR
     F[Signer] --> B
     B --> C[Builder]
     G["add assertions<br>add ingredients"] --> C
-    C --> D["sign_with_context()"]
+    C --> D["sign()"]
     D --> E[Signed asset]
-    F2[Signer] -.-> D2["sign()"]
-    C --> D2
-    D2 --> E
+    F2[Signer] -.-> D
 ```
 
 ```py
@@ -466,7 +464,7 @@ Use `with_archive()` when your workflow depends on specific settings (thumbnails
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": False},
-        "claim_generator_info": {"name": "My App", "version": "1.0"}
+        "claim_generator_info": {"name": "My App", "version": "0.1.0"}
     }
 })
 
@@ -559,7 +557,7 @@ ctx = Context(settings, signer)
 # Build and sign, no signer argument needed since a Signer is in the Context
 builder = Builder(manifest_json, ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
-    builder.sign_with_context("image/jpeg", src, dst)
+    builder.sign("image/jpeg", src, dst)
 ```
 
 ### Explicit (programmatic) signer

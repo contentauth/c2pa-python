@@ -95,7 +95,7 @@ with open("thumbnail.jpg", "wb") as f:
 ## Filtering into a new Builder
 
 > [!NOTE]
-> All `Builder` and `Reader` examples on this page also work with a `Context`. For `Reader`, a context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, a context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. For signing with a context-provided signer, `builder.sign_with_context()` can be used instead of `builder.sign()`. See [Context](../context.md) for details.
+> All `Builder` and `Reader` examples on this page also work with a `Context`. For `Reader`, a context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, a context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. When a signer is configured in the context, `builder.sign()` can be called without an signer instance as argument. See [Context](../context.md) for details.
 
 Each example below creates a **new `Builder`** from filtered data. The original asset and its manifest store are never modified.
 
@@ -263,7 +263,7 @@ The `label` field on an ingredient is the **primary** linking key. Set a `label`
 
 ```py
 manifest_json = {
-    "claim_generator_info": [{"name": "an-application", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
         {
             "label": "c2pa.actions.v2",
@@ -312,7 +312,7 @@ When linking multiple ingredients, each ingredient needs a unique label.
 
 ```py
 manifest_json = {
-    "claim_generator_info": [{"name": "an-application", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
         {
             "label": "c2pa.actions.v2",
@@ -377,7 +377,7 @@ When no `label` is set on an ingredient, the SDK matches `ingredientIds` against
 instance_id = "xmp:iid:939a4c48-0dff-44ec-8f95-61f52b11618f"
 
 manifest_json = {
-    "claim_generator_info": [{"name": "an-application", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
         {
             "label": "c2pa.actions",
@@ -526,13 +526,13 @@ with Reader("application/c2pa", archive_stream) as reader:
 
 #### With context
 
-The same workflow can use a `Context` for custom settings. The context controls thumbnail generation, claim generator info, and other Builder settings. When a signer is configured in the context, `sign_with_context()` can be used instead of passing a signer explicitly.
+The same workflow can use a `Context` for custom settings. The context controls thumbnail generation, claim generator info, and other Builder settings. When a signer is configured in the context, `sign()` can be called without an explicit signer instance passed in as argument.
 
 ```py
 ctx = Context.from_dict({
     "builder": {
         "thumbnail": {"enabled": False},
-        "claim_generator_info": {"name": "My App", "version": "1.0"}
+        "claim_generator_info": {"name": "an-application", "version": "0.1.0"}
     }
 })
 
@@ -553,7 +553,7 @@ with Reader("application/c2pa", archive_stream) as reader:
         transfer_ingredient_resources(reader, new_builder, selected)
 
         with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-            new_builder.sign_with_context("image/jpeg", source, dest)
+            new_builder.sign("image/jpeg", source, dest)
 ```
 
 ### Overriding ingredient properties
@@ -581,7 +581,7 @@ The C2PA specification allows **vendor-namespaced parameters** on actions using 
 
 ```py
 manifest_json = {
-    "claim_generator_info": [{"name": "an-application", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
         {
             "label": "c2pa.actions.v2",
@@ -723,7 +723,7 @@ When context settings need to be applied (such as thumbnail configuration or cla
     ctx = Context.from_dict({
         "builder": {
             "thumbnail": {"enabled": False},
-            "claim_generator_info": {"name": "My App", "version": "1.0"}
+            "claim_generator_info": {"name": "an-application", "version": "0.1.0"}
         }
     })
 
@@ -736,13 +736,13 @@ When context settings need to be applied (such as thumbnail configuration or cla
         transfer_ingredient_resources(reader, new_builder, selected)
 
         with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
-            new_builder.sign_with_context("image/jpeg", source, dest)
+            new_builder.sign("image/jpeg", source, dest)
 ```
 
 ### Merging multiple working stores
 
 > [!NOTE]
-> The `Builder` construction and signing in the merge workflow also support `Context`. The caller can pass `context=ctx` to `Builder()` and use `sign_with_context()` instead of `sign()`. See [Context](../context.md) for details.
+> The `Builder` construction and signing in the merge workflow also support `Context`. The caller can pass `context=ctx` to `Builder()` and call `sign()` without a signer argument when the context has one. See [Context](../context.md) for details.
 
 In some cases it is necessary to merge ingredients from multiple working stores (builder archives) into a single `Builder`. This should be a **fallback strategy**. The recommended practice is to maintain a single active working store and add ingredients incrementally (archived ingredient catalogs help with this). Merging is available when multiple working stores must be consolidated.
 

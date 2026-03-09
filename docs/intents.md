@@ -4,7 +4,7 @@ Intents enable validation, add required default actions, and help prevent invali
 
 ## Why use intents?
 
-Without intents, the caller must manually construct the correct manifest structure to be compliant with the specification: adding the required actions (`c2pa.created` or `c2pa.opened` as first action as per specification), setting digital source types, managing  ingredients, and linking actions to ingredients. Getting any of this wrong produces a manifest that does not comply with the C2PA specification.
+Without intents, the caller must manually construct the correct manifest structure: adding the required actions (`c2pa.created` or `c2pa.opened` as the first action per the specification), setting digital source types, managing ingredients, and linking actions to ingredients. Getting any of this wrong produces a non-compliant manifest.
 
 With intents, the caller declares *what is being done* and the Builder handles the rest:
 
@@ -43,11 +43,11 @@ Both ways of writing the code produce the same signed manifest. With intents, th
 
 ## Setting the intent
 
-There are three ways to set the intent on a `Builder` object instance. The intent determines which actions the Builder auto-generates at sign time.
+There are three ways to set the intent on a `Builder` object instance.
 
 ### Using Context
 
-Pass the intent through a `Context` object when creating the `Builder`. This is an approach that keeps intent configuration alongside other builder settings such as `claim_generator_info` and `thumbnail`. Note that the context is created from settings, so you can modulate the settings for each context.
+Pass the intent through a `Context` object when creating the `Builder`. This keeps intent configuration alongside other builder settings such as `claim_generator_info` and `thumbnail`.
 
 ```py
 from c2pa import Context, Builder
@@ -55,7 +55,7 @@ from c2pa import Context, Builder
 ctx = Context.from_dict({
     "builder": {
         "intent": {"Create": "digitalCapture"},
-        "claim_generator_info": {"name": "My App", "version": "1.0.0"},
+        "claim_generator_info": {"name": "My App", "version": "0.1.0"},
     }
 })
 
@@ -129,11 +129,11 @@ flowchart TD
     manually in manifest JSON."]
 ```
 
-Notably, if a `set_intent` call is present on the Builder, the `set_intent` call takes precedence.
+If a `set_intent` call is present on the Builder, it takes precedence over all other sources.
 
 ## How intents relate to the source stream
 
-The intent **operates on the source** passed to `sign()`. It does not target a specific ingredient added via `add_ingredient`: it targets the source asset itself (and ONLY the source).
+The intent operates on the source passed to `sign()`, not on any ingredient added via `add_ingredient`.
 
 The following diagram shows what happens at sign time for each intent:
 
@@ -176,7 +176,7 @@ For **EDIT** and **UPDATE**, the Builder looks at the source stream, and if no `
 
 ### How intent relates to `add_ingredient`
 
-The intent and manually-added ingredients serve different roles. **The intent controls what the Builder does with the source stream** at sign time. The `add_ingredient` method **adds other ingredients explicitly**.
+The intent controls what the Builder does with the source stream at sign time. The `add_ingredient` method adds other ingredients explicitly. These are separate concerns.
 
 ```mermaid
 flowchart TD
@@ -244,10 +244,10 @@ flowchart TD
 
 ## CREATE intent
 
-Use `CREATE` when the asset is a brand-new creation with no prior history. In this case, a `C2paDigitalSourceType` is required (by the specification) to describe how the asset was produced. The Builder will:
+Use `CREATE` when the asset has no prior history. A `C2paDigitalSourceType` is required to describe how the asset was produced. The Builder will:
 
 - Add a `c2pa.created` action with the specified digital source type.
-- Reject the operation if a `parentOf` ingredient exists (new creations cannot have parents).
+- Reject the operation if a `parentOf` ingredient exists.
 
 ### Example: New digital creation
 
@@ -290,7 +290,7 @@ with Builder({}, context=ctx) as builder:
 
 ### Example: CREATE with additional manifest metadata
 
-`Context` and a manifest definition can be combined. The context handles the intent, while the manifest definition provides additional metadata and assertions:
+A `Context` and a manifest definition can be combined. The context handles the intent; the manifest definition provides additional metadata and assertions:
 
 ```py
 ctx = Context.from_dict({
@@ -324,14 +324,12 @@ with Builder(manifest_def, context=ctx) as builder:
 
 Use `EDIT` when modifying an existing asset. The Builder will:
 
-1. Check if a `parentOf` ingredient has already been added. If not, it **automatically creates one from the source stream** passed to `sign()`.
+1. Check if a `parentOf` ingredient has already been added. If not, it automatically creates one from the source stream passed to `sign()`.
 2. Add a `c2pa.opened` action linked to the parent ingredient.
 
 No `digital_source_type` parameter is needed.
 
 ### Example: Editing an asset
-
-In this case, the source stream becomes the parent ingredient.
 
 Using `Context`:
 
@@ -355,16 +353,11 @@ with Builder({}) as builder:
         builder.sign(signer, "image/jpeg", source, dest)
 ```
 
-The resulting manifest contains:
-
-- One ingredient with `relationship: "parentOf"` pointing to `original.jpg`.
-- A `c2pa.opened` action referencing that ingredient.
-
-If the source file already has a C2PA manifest, the ingredient preserves the full provenance chain.
+The resulting manifest contains one ingredient with `relationship: "parentOf"` pointing to `original.jpg` and a `c2pa.opened` action referencing that ingredient. If the source file already has a C2PA manifest, the ingredient preserves the full provenance chain.
 
 ### Example: Editing with a manually-added parent
 
-To control some the parent ingredient's metadata (for example, to set a title or use a different source), add it explicitly. The Builder will then use that ingredient:
+To control the parent ingredient's metadata (for example, to set a title or use a different source), add it explicitly:
 
 ```py
 ctx = Context.from_dict({"builder": {"intent": "edit"}})
@@ -383,7 +376,7 @@ with Builder({}, context=ctx) as builder:
 
 ### Example: Editing with additional component ingredients
 
-A parent ingredient can be combined with component or input ingredients. The intent creates the `c2pa.opened` action for the parent, and additional actions can be added as components (componentOf)/input (inputTo):
+A parent ingredient can be combined with component or input ingredients. The intent creates the `c2pa.opened` action for the parent; additional actions can reference components (`componentOf`) or inputs (`inputTo`):
 
 ```py
 ctx = Context.from_dict({"builder": {"intent": "edit"}})
@@ -425,13 +418,13 @@ with Builder({
 
 ## UPDATE intent
 
-Use `UPDATE` for non-editorial changes where the asset content itself is not modified, for example adding or changing metadata. This is a limited form of `EDIT`:
+Use `UPDATE` for metadata-only changes where the asset content itself is not modified. This is a restricted form of `EDIT`:
 
 - Allows exactly one ingredient (only the parent).
 - Does not allow changes to the parent's hashed content.
 - Produces a more compact manifest than `EDIT`.
 
-Like for the `EDIT` intent, the Builder auto-creates a parent ingredient from the source stream if one is not provided.
+As with `EDIT`, the Builder auto-creates a parent ingredient from the source stream if one is not provided.
 
 ### Example: Adding metadata to a signed asset
 
@@ -457,7 +450,7 @@ with Builder({}) as builder:
 
 ## Intent values in settings
 
-When configuring the intent settings, the intent is specified as a string or object in the `builder.intent` field, matching the C2PA SDK settings JSON schema:
+When configuring settings, the intent is specified as a string or object in the `builder.intent` field:
 
 | Intent | Settings value | With digital source type |
 |--------|---------------|--------------------------|
@@ -469,11 +462,9 @@ When configuring the intent settings, the intent is specified as a string or obj
 
 ### `Builder.set_intent(intent, digital_source_type=C2paDigitalSourceType.EMPTY)`
 
-**Parameters:**
-
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `intent` | `C2paBuilderIntent` | The intent: `CREATE`, `EDIT`, or `UPDATE`. |
 | `digital_source_type` | `C2paDigitalSourceType` | Required for `CREATE`. Describes how the asset was made. Defaults to `EMPTY`. |
 
-**Raises:** `C2paError` if the intent cannot be set (e.g., a `parentOf` ingredient exists with `CREATE`, or no parent can be found for `EDIT`/`UPDATE`).
+Raises `C2paError` if the intent cannot be set (for example, a `parentOf` ingredient exists with `CREATE`).
