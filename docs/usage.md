@@ -9,7 +9,7 @@ For complete working examples, see the [examples folder](https://github.com/cont
 Import the objects needed from the API:
 
 ```py
-from c2pa import Builder, Reader, Signer, C2paSignerInfo, C2paSigningAlg
+from c2pa import Builder, Reader, Signer, C2paSigningAlg, C2paSignerInfo
 ```
 
 If you want to use per-instance configuration with `Context` and `Settings`:
@@ -46,11 +46,13 @@ manifest_json = json.dumps({
  })
 ```
 
-## File-based operations
+## File-based operation
 
 ### Read and validate C2PA data
 
-Use the `Reader` to read C2PA data from a file. The Reader examines the file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.
+Use the `Reader` to read C2PA data from the specified asset file.
+
+This examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.
 
 An asset file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map. The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream` using the associated `identifier` field values and a `uri`.
 
@@ -60,16 +62,16 @@ NOTE: For a comprehensive reference to the JSON manifest structure, see the [Man
 
 ```py
 try:
-    # Create a reader from a file path
+    # Create a Reader from a file path.
     with Reader("path/to/media_file.jpg") as reader:
-        # Print manifest store as JSON
+        # Print manifest store as JSON.
         print("Manifest store:", reader.json())
 
-        # Get the active manifest
+        # Get the active manifest.
         manifest = json.loads(reader.json())
         active_manifest = manifest["manifests"][manifest["active_manifest"]]
         if active_manifest:
-            # Get the uri to the manifest's thumbnail and write it to a file
+            # Get the uri to the manifest's thumbnail and write it to a file.
             uri = active_manifest["thumbnail"]["identifier"]
             with open("thumbnail.jpg", "wb") as f:
                 reader.resource_to_stream(uri, f)
@@ -99,7 +101,7 @@ except Exception as err:
 
 ### Add a signed manifest
 
-**WARNING**: These examples access the private key and security certificate directly from the local file system. This is fine during development, but doing so in production may be insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
+**WARNING**: This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production may be insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
 #### Signing without Context
 
@@ -120,7 +122,7 @@ try:
             ta_url=b"http://timestamp.digicert.com"
         )
 
-        # Create signer from the signer info
+        # Create signer using the defined SignerInfo
         signer = Signer.from_info(signer_info)
 
         # Create builder with manifest and add ingredients
@@ -133,7 +135,7 @@ try:
             with open("path/to/source.jpg", "rb") as source, open("path/to/output.jpg", "w+b") as dest:
                 builder.sign(signer, "image/jpeg", source, dest)
 
-        # Verify the signed file
+        # Verify the signed file by reading data from the signed output file
         with Reader("path/to/output.jpg") as reader:
             manifest_store = json.loads(reader.json())
             active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -167,7 +169,7 @@ try:
                         ingredient_json = json.dumps({"title": "Ingredient Image"})
                         builder.add_ingredient(ingredient_json, "image/jpeg", ingredient_file)
 
-                    # Sign using file paths (convenience method)
+                    # Sign using file paths
                     builder.sign_file("path/to/source.jpg", "path/to/output.jpg", signer)
 
             # Verify the signed file with the same context
@@ -364,7 +366,7 @@ assert isinstance(ctx, ContextProvider)
 ### Migrating from load_settings
 
 The `load_settings()` function that set settings in a thread-local fashion is deprecated.
-Replace it with `Settings` and `Context` usage to propagate configurations:
+Replace it with `Settings` and `Context` usage to propagate configurations (do not mix legacy and new APIs):
 
 ```py
 # Before:
@@ -383,7 +385,7 @@ reader = Reader("file.jpg", context=ctx)
 
 ## Stream-based operations
 
-Instead of working with files, you can read, validate, and add a signed manifest to streamed data.
+Instead of working with files, you can read, validate, and add a signed manifest to streamed data. This example is similar to what the file-based example does.
 
 ### Read and validate C2PA data using streams
 
