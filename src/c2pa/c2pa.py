@@ -1089,9 +1089,7 @@ def load_settings(settings: dict) -> None:
 
 
 def load_settings(settings: Union[str, dict], format: str = "json") -> None:
-    """Load C2PA settings from a string or dict.
-    Settings will be set thread-local and apply to
-    all C2PA operations in the current thread.
+    """Load C2PA settings into thread-local storage from a string or dict.
 
     .. deprecated::
         Use :class:`Settings` and :class:`Context` for
@@ -2280,7 +2278,7 @@ class Reader(ManagedResource):
 
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
-        """Create a native reader from a Stream.
+        """Create a Reader from a Stream.
 
         Args:
             format_bytes: UTF-8 encoded format/MIME type
@@ -2292,8 +2290,7 @@ class Reader(ManagedResource):
                 format_bytes, stream_obj._stream)
         else:
             if not isinstance(manifest_data, bytes):
-                raise TypeError(
-                    Reader._ERROR_MESSAGES['manifest_error'])
+                raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
             manifest_array = (
                 ctypes.c_ubyte *
                 len(manifest_data))(
@@ -2308,9 +2305,7 @@ class Reader(ManagedResource):
             )
 
         _check_ffi_operation_result(self._handle,
-            Reader._ERROR_MESSAGES['reader_error'].format(
-                "Unknown error"
-            )
+            Reader._ERROR_MESSAGES['reader_error'].format("Unknown error")
         )
 
     def _init_from_file(self, path, format_bytes,
@@ -2325,8 +2320,7 @@ class Reader(ManagedResource):
         try:
             self._backing_file = open(path, 'rb')
             self._own_stream = Stream(self._backing_file)
-            self._create_reader(
-                format_bytes, self._own_stream, manifest_data)
+            self._create_reader(format_bytes, self._own_stream, manifest_data)
             self._lifecycle_state = LifecycleState.ACTIVE
         except C2paError:
             self._close_streams()
@@ -2334,8 +2328,7 @@ class Reader(ManagedResource):
         except Exception as e:
             self._close_streams()
             raise C2paError.Io(
-                Reader._ERROR_MESSAGES['io_error'].format(
-                    str(e)))
+                Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
     def _init_from_context(self, context, format_or_path,
                            stream):
