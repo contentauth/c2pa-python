@@ -3403,14 +3403,16 @@ class Builder(ManagedResource):
         self._ensure_valid_state()
 
         with Stream(stream) as stream_obj:
-            new_ptr = _lib.c2pa_builder_with_archive(
-                self._handle, stream_obj._stream,
-            )
-            # self._handle has been consumed by the FFI call
-            if not new_ptr:
-                self._handle = None
-            _check_ffi_operation_result(new_ptr,
-                "Failed to load archive into builder")
+            try:
+                new_ptr = _lib.c2pa_builder_with_archive(self._handle, stream_obj._stream)
+            except Exception as e:
+                self._mark_consumed()
+                raise C2paError(
+                    f"Error loading archive: {e}"
+                )
+            # Old handle consumed by FFI
+            self._handle = None
+            _check_ffi_operation_result(new_ptr, "Failed to load archive into builder")
             self._handle = new_ptr
 
         return self
@@ -3532,9 +3534,7 @@ class Builder(ManagedResource):
                         signer=signer,
                     )
                 elif self._has_context_signer:
-                    manifest_bytes = self._sign_internal(
-                        format, source_stream, dest_stream,
-                    )
+                    manifest_bytes = self._sign_internal(format, source_stream, dest_stream)
                 else:
                     raise C2paError(
                         "No signer provided. Either pass a"
@@ -3594,9 +3594,19 @@ class Builder(ManagedResource):
             C2paError: If there was an error during signing
         """
         if isinstance(signer_or_format, Signer):
-            return self._sign_common(signer_or_format, format_or_source, source_or_dest, dest)
+            return self._sign_common(
+                signer_or_format,
+                format_or_source,
+                source_or_dest,
+                dest,
+            )
         elif isinstance(signer_or_format, str):
-            return self._sign_common(None, signer_or_format, format_or_source, source_or_dest)
+            return self._sign_common(
+                None,
+                signer_or_format,
+                format_or_source,
+                source_or_dest,
+            )
         else:
             raise C2paError(
                 "First argument must be a Signer or a format string (MIME type)."
