@@ -152,7 +152,8 @@ A `Reader` wraps a stream (or opens a file), passes it to the native library, an
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> ACTIVE : Reader("image.jpg")
+    [*] --> UNINITIALIZED : __init__()
+    UNINITIALIZED --> ACTIVE : Reader("image.jpg")
     ACTIVE --> CLOSED : close() / exit with block
     CLOSED --> [*]
 ```
@@ -168,7 +169,8 @@ A `Builder` follows the same pattern as Reader, with one difference: **signing c
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> ACTIVE : Builder.from_json(manifest)
+    [*] --> UNINITIALIZED : __init__()
+    UNINITIALIZED --> ACTIVE : Builder.from_json(manifest)
     ACTIVE --> CLOSED : .sign() or close()
     CLOSED --> [*]
 
