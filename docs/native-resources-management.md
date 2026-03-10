@@ -198,9 +198,11 @@ There are two cases where this is relevant:
 
 ## Consume-and-return
 
-`_mark_consumed()` closes an object permanently. A different pattern exists where a FFI call consumes the current pointer and returns a new one (pointer swap), and the same Python object keeps working with the replacement pointer.
+`_mark_consumed()` closes an object permanently. A different pattern is needed when the native library must replace an object's internal state without discarding the Python-side object. This happens with fragmented media: `Reader.with_fragment()` feeds a new BMFF fragment (used in DASH/HLS streaming) into an existing Reader, and the native library must rebuild its internal representation to account for the new data. The native API does this by consuming the old pointer and returning a new one. Creating a fresh `Reader` from scratch would not work because the native library needs the accumulated state from prior fragments.
 
-`Reader.with_fragment()` and `Builder.with_archive()` both do this:
+`Builder.with_archive()` follows the same pattern: it loads an archive into an existing Builder, replacing the manifest definition while preserving the Builder's context and settings.
+
+In both cases the FFI call consumes the current pointer and returns a replacement:
 
 ```mermaid
 stateDiagram-v2
@@ -221,7 +223,7 @@ new_ptr = _lib.c2pa_reader_with_fragment(self._handle, ...)
 self._handle = new_ptr
 ```
 
-The object stays `ACTIVE` throughout. This is different from `_mark_consumed()`, where the object transitions to `CLOSED`. The old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call.
+The object stays `ACTIVE` throughout because the Python-side object is still valid: it has a live native pointer, its public methods still work, and callers may continue using it (e.g. reading the updated manifest or feeding in another fragment). The lifecycle state does not change because from `ManagedResource`'s perspective nothing has closed. Only the underlying native pointer has been swapped. This is different from `_mark_consumed()`, where the object transitions to `CLOSED` and becomes unusable. The old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call.
 
 ## Subclass-specific cleanup with `_release()`
 
