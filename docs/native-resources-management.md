@@ -1,5 +1,18 @@
 # Native resource management (ManagedResource class)
 
+`ManagedResource` is the internal base class used by the C2PA Python SDK to wrap native (Rust/FFI) pointers. When adding new wrappers around native resources `ManagedResource` should be subclassed and follow the documented lifecycle rules.
+
+## Why `ManagedResource`?
+
+`ManagedResource` is the internal base class responsible for managing native pointers owned by the C2PA Python SDK. It guarantees:
+
+- Native memory is freed exactly once.
+- Resources are cleaned up deterministically via context managers or explicit `close()`.
+- Ownership transfers** (e.g. signer to context) are handled safely so the same pointer is never freed twice.
+- Cleanup never raises or masks real exceptions.
+
+Developers wrapping new native resources must inherit from `ManagedResource` and follow the documented lifecycle rules.
+
 ## Why is native resources management needed?
 
 ### Native pointers in a Python wrapper
@@ -45,6 +58,19 @@ classDiagram
 ```
 
 `Context` and `Settings` inherit from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance). `ContextProvider` is an ABC that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` and `Settings` satisfy the `ContextProvider` contract without duplicating the property.
+
+## Guarantees provided by ManagedResource
+
+`ManagedResource` provides the following guarantees. Subclasses and callers can rely on them. These guarantees invariants must be maintained when subclassing the `ManagedResource` class in new implementation/new native resources handlers.
+
+| Guarantee | Description |
+| --------- | ----------- |
+| **Pointer freed exactly once** | Each native pointer is passed to `c2pa_free` at most once. No leak (zero frees) and no double-free. |
+| **Cleanup is idempotent** | Calling `close()` (or exiting a `with` block) multiple times is safe; after the first successful cleanup, further calls do nothing. |
+| **Cleanup never raises** | The cleanup path (including `_release()` and `c2pa_free`) is wrapped so that exceptions are caught and logged, never re-raised. The original exception from the `with` block (if any) is never masked. |
+| **State transitions are one-way** | Lifecycle moves only from UNINITIALIZED → ACTIVE → CLOSED. A closed resource cannot be reactivated. |
+| **Ownership transfer is safe** | When a pointer is transferred elsewhere (e.g. via `_mark_consumed()`), the object stops managing it and does not call `c2pa_free` on it. |
+| **Public methods validate lifecycle state** | Every public API calls `_ensure_valid_state()` before use; closed or invalid state yields `C2paError` instead of undefined behavior or crashes. |
 
 ## Preventing garbage collection of live references
 
@@ -232,7 +258,7 @@ Each subclass can override `_release()` to clean up its own resources before the
 Examples from the codebase:
 
 | Class | What `_release()` cleans up |
-|---|---|
+| --- | --- |
 | Reader | Closes owned file handles and stream wrappers |
 | Context | Drops the reference to the signer callback |
 | Signer | Drops the reference to the signing callback |
