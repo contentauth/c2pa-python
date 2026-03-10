@@ -2,11 +2,19 @@
 
 ## Why is native resources management needed?
 
+### Native pointers in a Python wrapper
+
 The C2PA Python SDK is a wrapper around a native Rust library that exposes a C FFI. When the SDK creates a `Reader`, `Builder`, `Signer`, `Context`, or `Settings` object, that object holds a **pointer** to memory allocated on the native side.
+
+### How Python's garbage collector works
 
 Python manages its own objects' memory automatically through garbage collection. In CPython (the standard interpreter), this works primarily through reference counting: each object has a counter tracking how many references point to it, and when that counter reaches zero the object is deallocated. A secondary cycle-detecting collector handles the case where objects reference each other in a loop and their counts never reach zero on their own.
 
+### Why garbage collection is not enough for native memory
+
 This system works well for pure Python objects, but native memory sits outside of it entirely. The garbage collector sees the Python wrapper object (e.g. a `Reader` instance) and tracks references to it, but it has no visibility into the native memory that the wrapper's `_handle` attribute points to. It does not know the size of that native allocation, cannot tell when it is no longer needed, and will not call the native library's `c2pa_free` function to release it. If the Python wrapper is collected without first calling `c2pa_free`, the native memory leaks. If `c2pa_free` is called twice on the same pointer, the process crashes.
+
+### Why `__del__` is not reliable enough
 
 Python does offer `__del__` as a hook that runs when an object is collected, and `ManagedResource` uses it as a fallback. But `__del__` cannot be relied on as the primary cleanup mechanism: its timing is unpredictable, it may not run at all during interpreter shutdown, and other Python implementations (PyPy, GraalPy) that do not use reference counting make its behavior even less deterministic.
 
@@ -36,7 +44,7 @@ classDiagram
     ContextProvider <|-- Settings
 ```
 
-`ContextProvider`, by contrast, is an ABC. It defines two abstract properties (`is_valid` and `execution_context`) that subclasses must implement. `Context` and `Settings` both inherit from it. Since Python supports multiple inheritance, `Context` gets lifecycle management from `ManagedResource` and the context-provider interface from `ContextProvider`. The `is_valid` property required by `ContextProvider` is implemented once, on `ManagedResource`, and inherited by both.
+`Context` and `Settings` inherit from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance). `ContextProvider` is an ABC that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` and `Settings` satisfy the `ContextProvider` contract without duplicating the property.
 
 ## Preventing garbage collection of live references
 
@@ -135,7 +143,7 @@ with open("photo.jpg", "rb") as file:
         manifest = reader.json()
 ```
 
-The order matters. The Reader depends on the file, so the Reader must be closed before the file handle. Python's `with` statement guarantees this: resources listed later (or nested deeper) are torn down first. If the file were closed while the Reader still held a pointer into it, the native library could read freed memory.
+The order matters because resources often depend on each other. In the example above, the `Reader` holds a native pointer that references the file's data through a `Stream` wrapper. If the file handle were closed first, the native library would still hold a pointer into the stream's read callbacks, and any subsequent access (including cleanup) could read freed memory or trigger a segfault. By closing the Reader first, the native pointer is freed while the underlying file is still open and valid. Python's `with` statement guarantees this ordering: resources listed later (or nested deeper) are torn down first.
 
 ## Reader lifecycle
 
@@ -143,17 +151,13 @@ A `Reader` wraps a stream (or opens a file), passes it to the native library, an
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> ACTIVE : Reader("image.jpg")
-    ACTIVE --> ACTIVE : .json(), .detailed_json(), etc.
     ACTIVE --> CLOSED : close() / exit with block
-    CLOSED --> CLOSED : close() (no-op)
     CLOSED --> [*]
-
-    note right of CLOSED
-        Any method call raises
-        C2paError("Reader is closed")
-    end note
 ```
+
+While `ACTIVE`, callers can use `.json()`, `.detailed_json()`, etc. repeatedly without changing state. Calling `.close()` on an already-closed Reader is a no-op. Any other method call on a closed Reader raises `C2paError`.
 
 When the Reader is closed, it first releases its own resources (open file handles, stream wrappers) via `_release()`, then frees the native pointer via `c2pa_free`.
 
@@ -163,17 +167,15 @@ A `Builder` follows the same pattern as Reader, with one difference: **signing c
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> ACTIVE : Builder.from_json(manifest)
-    ACTIVE --> ACTIVE : .add_ingredient(), .add_action(), etc.
-    ACTIVE --> CLOSED : .sign() (pointer consumed by native library)
+    ACTIVE --> CLOSED_BY_SIGN : .sign()
     ACTIVE --> CLOSED : close() without signing
+    CLOSED_BY_SIGN --> [*]
     CLOSED --> [*]
-
-    note right of CLOSED
-        Builder cannot be reused
-        after signing
-    end note
 ```
+
+While `ACTIVE`, callers can use `.add_ingredient()`, `.add_action()`, etc. repeatedly. `.sign()` consumes the native pointer (ownership transfers to the native library), so the Builder cannot be reused afterward. Closing without signing frees the pointer normally.
 
 After `.sign()`, the builder calls `_mark_consumed()`, which sets the handle to `None` and the state to `CLOSED`. Because the native library now owns the pointer, `ManagedResource` does not call `c2pa_free`. That would double-free memory the native library already manages.
 
@@ -191,7 +193,7 @@ There are two cases where this is relevant:
 
 ## Consume-and-return
 
-`_mark_consumed()` closes an object permanently. A different pattern exists where an FFI call consumes the current pointer and returns a new one (pointer swap), and the same Python object keeps working with the replacement pointer.
+`_mark_consumed()` closes an object permanently. A different pattern exists where a FFI call consumes the current pointer and returns a new one (pointer swap), and the same Python object keeps working with the replacement pointer.
 
 `Reader.with_fragment()` and `Builder.with_archive()` both do this:
 
@@ -200,7 +202,7 @@ stateDiagram-v2
     state "ACTIVE (ptr A)" as A
     state "ACTIVE (ptr B)" as B
 
-    A --> B : FFI call consumes ptr A, returns ptr B
+    A --> B : C FFI call consumes ptr A, returns ptr B
     note right of B
         Same Python object,
         new native pointer
