@@ -3020,7 +3020,7 @@ class Builder(ManagedResource):
     ) -> 'Builder':
         """Create a new Builder from an archive stream.
 
-        This creates a context-free builder. To preserve context
+        This creates builder without a context. To preserve context
         settings, create a Builder with a context first, then call
         with_archive() on it.
 
