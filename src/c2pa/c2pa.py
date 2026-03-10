@@ -3020,16 +3020,15 @@ class Builder(ManagedResource):
     ) -> 'Builder':
         """Create a new Builder from an archive stream.
 
-        This creates builder without a context. To preserve context
-        settings, create a Builder with a context first, then call
-        with_archive() on it.
+        This creates builder without a context. To use a context,
+        create a Builder with a context first, then call with_archive() on it.
 
         Args:
             stream: The stream containing the archive
                 (any Python stream-like object)
 
         Returns:
-            A new Builder instance
+            A new Builder instance (without any context)
 
         Raises:
             C2paError: If there was an error creating the builder
@@ -3040,9 +3039,7 @@ class Builder(ManagedResource):
 
         try:
             builder._handle = (
-                _lib.c2pa_builder_from_archive(
-                    stream_obj._stream
-                )
+                _lib.c2pa_builder_from_archive(stream_obj._stream)
             )
 
             _check_ffi_operation_result(builder._handle,
@@ -3075,7 +3072,7 @@ class Builder(ManagedResource):
 
         Args:
             manifest_json: The manifest JSON definition (string or dict)
-            context: Optional ContextProvider for settings
+            context: Optional Context (ContextProvider) for settings
 
         Raises:
             C2paError: If there was an error creating the builder
@@ -3126,9 +3123,7 @@ class Builder(ManagedResource):
 
         # Consume-and-return: builder_ptr is consumed,
         # new_ptr is the valid pointer going forward
-        new_ptr = _lib.c2pa_builder_with_definition(
-            builder_ptr, json_str,
-        )
+        new_ptr = _lib.c2pa_builder_with_definition(builder_ptr, json_str)
 
         _check_ffi_operation_result(new_ptr,
             Builder._ERROR_MESSAGES[
@@ -3360,7 +3355,6 @@ class Builder(ManagedResource):
         self._ensure_valid_state()
 
         action_str = _to_utf8_bytes(action_json, "action JSON")
-
         result = _lib.c2pa_builder_add_action(self._handle, action_str)
 
         _check_ffi_operation_result(result,
