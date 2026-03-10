@@ -1517,7 +1517,7 @@ class Context(ManagedResource, ContextProvider):
     A Context may carry Settings and a Signer,
     and is passed to Reader or Builder to control their behavior,
     thus propagating settings and configurations by passing
-    object as parameter.
+    the Context object (+settings on it) as parameter.
 
     When a Signer is provided, the Signer object is consumed,
     as it becomes included into the Context, and must not be
@@ -1535,14 +1535,11 @@ class Context(ManagedResource, ContextProvider):
         Args:
             settings: Optional Settings for configuration.
                 If None, default SDK settings are used.
-            signer: Optional Signer. If provided it is
-                consumed and must not be used directly again
-                after that call.
+            signer: Optional Signer. If provided it is consumed
+                and must not be used directly again after that call.
 
         Raises:
-            C2paError: If creation fails or if signer is
-                provided but the library does not support
-                signer-on-context.
+            C2paError: If creation fails
         """
         super().__init__()
         self._has_signer = False
@@ -1566,8 +1563,7 @@ class Context(ManagedResource, ContextProvider):
                 if settings is not None:
                     result = (
                         _lib.c2pa_context_builder_set_settings(
-                            builder_ptr,
-                            settings._c_settings,
+                            builder_ptr, settings._c_settings,
                         )
                     )
                     if result != 0:
@@ -1576,8 +1572,7 @@ class Context(ManagedResource, ContextProvider):
                 if signer is not None:
                     signer._ensure_valid_state()
                     result = (
-                        _lib
-                        .c2pa_context_builder_set_signer(
+                        _lib.c2pa_context_builder_set_signer(
                             builder_ptr, signer._handle,
                         )
                     )
@@ -1586,9 +1581,7 @@ class Context(ManagedResource, ContextProvider):
 
                 # Build consumes builder_ptr
                 ptr = (
-                    _lib.c2pa_context_builder_build(
-                        builder_ptr
-                    )
+                    _lib.c2pa_context_builder_build(builder_ptr)
                 )
                 builder_ptr = None
 
@@ -1600,11 +1593,9 @@ class Context(ManagedResource, ContextProvider):
                 # Build succeeded, consume the Signer.
                 # Keep its callback ref alive on this Context,
                 # then mark it so it won't double-free the
-                # native pointer the Context now owns.
+                # pointer the Context now owns.
                 if signer is not None:
-                    self._signer_callback_cb = (
-                        signer._callback_cb
-                    )
+                    self._signer_callback_cb = (signer._callback_cb)
                     signer._mark_consumed()
                     self._has_signer = True
             except Exception:
