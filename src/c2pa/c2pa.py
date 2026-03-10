@@ -32,17 +32,27 @@ logger.addHandler(logging.NullHandler())
 
 # Define required function names
 _REQUIRED_FUNCTIONS = [
+    # Version
     'c2pa_version',
+    # Error retriever and parser
     'c2pa_error',
-    'c2pa_string_free',
+    # Legacy APIs, deprecated
     'c2pa_load_settings',
     'c2pa_read_file',
     'c2pa_read_ingredient_file',
+    # Reader bindings
     'c2pa_reader_from_stream',
     'c2pa_reader_from_manifest_data_and_stream',
     'c2pa_reader_json',
     'c2pa_reader_detailed_json',
     'c2pa_reader_resource_to_stream',
+    'c2pa_reader_from_context',
+    'c2pa_reader_with_stream',
+    'c2pa_reader_with_fragment',
+    'c2pa_reader_is_embedded',
+    'c2pa_reader_remote_url',
+    'c2pa_reader_supported_mime_types',
+    # Builder bindings
     'c2pa_builder_from_json',
     'c2pa_builder_from_archive',
     'c2pa_builder_set_no_embed',
@@ -54,32 +64,31 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_to_archive',
     'c2pa_builder_sign',
     'c2pa_builder_sign_context',
-    'c2pa_manifest_bytes_free',
+    'c2pa_builder_from_context',
+    'c2pa_builder_with_definition',
+    'c2pa_builder_with_archive',
+    'c2pa_builder_supported_mime_types',
     'c2pa_format_embeddable',
+    # Signer bindings
     'c2pa_signer_create',
     'c2pa_signer_from_info',
     'c2pa_signer_reserve_size',
     'c2pa_ed25519_sign',
     'c2pa_signature_free',
-    'c2pa_free_string_array',
-    'c2pa_reader_supported_mime_types',
-    'c2pa_builder_supported_mime_types',
-    'c2pa_reader_is_embedded',
-    'c2pa_reader_remote_url',
+    # Settings bindings
     'c2pa_settings_new',
     'c2pa_settings_set_value',
     'c2pa_settings_update_from_string',
+    # Context bindings
     'c2pa_context_builder_new',
     'c2pa_context_builder_set_settings',
     'c2pa_context_builder_build',
     'c2pa_context_builder_set_signer',
     'c2pa_context_new',
-    'c2pa_reader_from_context',
-    'c2pa_reader_with_stream',
-    'c2pa_reader_with_fragment',
-    'c2pa_builder_from_context',
-    'c2pa_builder_with_definition',
-    'c2pa_builder_with_archive',
+    # Free bindings
+    'c2pa_string_free',
+    'c2pa_free_string_array',
+    'c2pa_manifest_bytes_free',
     'c2pa_free',
 ]
 
@@ -1373,7 +1382,7 @@ class ContextProvider(ABC):
 
 
 class Settings(ManagedResource):
-    """Per-instance configuration for C2PA operations.
+    """Configuration for C2PA operations.
 
     Settings configure SDK behavior. Use with Context class to
     apply settings to Reader/Builder operations.
@@ -1392,7 +1401,7 @@ class Settings(ManagedResource):
 
     @classmethod
     def from_json(cls, json_str: str) -> 'Settings':
-        """Create Settings from a JSON configuration string.
+        """Create Settings from a serialized JSON configuration string.
 
         Args:
             json_str: JSON string with settings configuration.
@@ -1406,7 +1415,7 @@ class Settings(ManagedResource):
 
     @classmethod
     def from_dict(cls, config: dict) -> 'Settings':
-        """Create Settings from a dictionary.
+        """Create Settings from a (JSON-based)dictionary.
 
         Args:
             config: Dictionary with settings configuration.
@@ -1420,8 +1429,7 @@ class Settings(ManagedResource):
         """Set a configuration value by dot-notation path.
 
         Args:
-            path: Dot-notation path (e.g.
-                  "builder.thumbnail.enabled").
+            path: Dot-notation path (e.g. "builder.thumbnail.enabled").
             value: The value to set.
 
         Returns:
@@ -1443,11 +1451,10 @@ class Settings(ManagedResource):
     def update(
         self, data: Union[str, dict],
     ) -> 'Settings':
-        """Merge configuration from a JSON string or dict.
+        """Update current configuration from a JSON string or dict.
 
         Args:
-            data: A JSON string or dict with configuration
-                  to merge.
+            data: A JSON string or dict with configuration to merge.
 
         Returns:
             self, for method chaining.
@@ -1475,7 +1482,6 @@ class Settings(ManagedResource):
 class ContextBuilder:
     """Fluent builder for Context.
 
-    Matches the c2pa-rs ContextBuilder pattern.
     Use Context.builder() to create an instance.
     """
 
@@ -1486,7 +1492,7 @@ class ContextBuilder:
     def with_settings(
         self, settings: 'Settings',
     ) -> 'ContextBuilder':
-        """Attach Settings to the context being built."""
+        """Attach Settings to the Context being built."""
         self._settings = settings
         return self
 
@@ -1508,7 +1514,7 @@ class ContextBuilder:
 class Context(ManagedResource, ContextProvider):
     """Per-instance context for C2PA operations.
 
-    A Context may carry Settings and a  Signer,
+    A Context may carry Settings and a Signer,
     and is passed to Reader or Builder to control their behavior,
     thus propagating settings and configurations by passing
     object as parameter.
