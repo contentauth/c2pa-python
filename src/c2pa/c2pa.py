@@ -1595,7 +1595,7 @@ class Context(ManagedResource, ContextProvider):
                 # then mark it so it won't double-free the
                 # pointer the Context now owns.
                 if signer is not None:
-                    self._signer_callback_cb = (signer._callback_cb)
+                    self._signer_callback_cb = signer._callback_cb
                     signer._mark_consumed()
                     self._has_signer = True
             except Exception:
@@ -1654,9 +1654,7 @@ class Context(ManagedResource, ContextProvider):
         Returns:
             A new Context instance.
         """
-        return cls.from_json(
-            json.dumps(config), signer=signer
-        )
+        return cls.from_json(json.dumps(config), signer=signer)
 
     @property
     def has_signer(self) -> bool:
