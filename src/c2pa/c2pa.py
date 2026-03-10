@@ -99,7 +99,7 @@ def _validate_library_exports(lib):
     This validation is crucial for several security and reliability reasons:
 
     1. Security:
-       - Prevents loading of libraries that might be missing critical functions
+       - Prevents loading of lmibraries that might be missing critical functions
        - Ensures the library has expected functionality before code execution
        - Helps detect tampered or incomplete libraries
 
@@ -225,7 +225,7 @@ class ManagedResource:
       - Set `self._handle` to the native pointer after creation.
       - Set `self._lifecycle_state = LifecycleState.ACTIVE` once initialized.
       - Override `_release()` to free class-specific resources
-        (streams, caches, callbacks, etc.) — called *before* the
+        (streams, caches, callbacks, etc.), called before the
         native pointer is freed.
 
     The native pointer is freed automatically via `_free_native_ptr`.
@@ -2332,7 +2332,7 @@ class Reader(ManagedResource):
 
     def _init_from_context(self, context, format_or_path,
                            stream):
-        """Initialize Reader from a context object implementing
+        """Initialize Reader from a Context object implementing
         the ContextProvider interface/abstract base class.
         """
         if not context.is_valid:
@@ -3386,12 +3386,10 @@ class Builder(ManagedResource):
                 check=lambda r: r != 0)
 
     def with_archive(self, stream: Any) -> 'Builder':
-        """Load an archive into this builder, replacing its
+        """Load an archive into this Builder instance, replacing its
         manifest definition. The archive carries only the
-        definition, not settings — settings come from this
-        builder's context, which is preserved across the call.
-        Use this instead of from_archive() when you need
-        context-based settings.
+        definition, not settings. Settings come from the context that
+        was configured to be used with this Builder instance.
 
         Args:
             stream: The stream containing the archive
@@ -3423,9 +3421,7 @@ class Builder(ManagedResource):
             source_stream: Stream,
             dest_stream: Stream,
             signer: Optional[Signer] = None) -> bytes:
-        """Internal signing implementation used by both explicit-signer and
-        context-signer code paths.
-
+        """Internal signing implementation.
         When `signer` is provided, calls `c2pa_builder_sign` (explicit
         signer).  When `signer` is `None`, calls
         `c2pa_builder_sign_context` (context-based signer).
@@ -3472,7 +3468,7 @@ class Builder(ManagedResource):
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
                 )
-            # Builder pointer consumed by Rust FFI — prevent double-free
+            # Builder pointer consumed by Rust FFI at this point
             self._mark_consumed()
         except Exception as e:
             self._mark_consumed()
