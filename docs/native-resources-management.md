@@ -74,10 +74,10 @@ Each `ManagedResource` tracks its state with a `LifecycleState` enum:
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> UNINITIALIZED : __init__()
     UNINITIALIZED --> ACTIVE : native pointer created
-    ACTIVE --> CLOSED : close() / __exit__ / __del__
-    ACTIVE --> CLOSED : _mark_consumed()
+    ACTIVE --> CLOSED : close() / __exit__ / __del__ / _mark_consumed()
 ```
 
 - `UNINITIALIZED`: The Python object exists but the native pointer has not been set yet. This is a transient state during construction.
@@ -169,10 +169,13 @@ A `Builder` follows the same pattern as Reader, with one difference: **signing c
 stateDiagram-v2
     direction LR
     [*] --> ACTIVE : Builder.from_json(manifest)
-    ACTIVE --> CLOSED_BY_SIGN : .sign()
-    ACTIVE --> CLOSED : close() without signing
-    CLOSED_BY_SIGN --> [*]
+    ACTIVE --> CLOSED : .sign() or close()
     CLOSED --> [*]
+
+    note left of CLOSED
+        .sign() consumes the pointer
+        close() frees it
+    end note
 ```
 
 While `ACTIVE`, callers can use `.add_ingredient()`, `.add_action()`, etc. repeatedly. `.sign()` consumes the native pointer (ownership transfers to the native library), so the Builder cannot be reused afterward. Closing without signing frees the pointer normally.
