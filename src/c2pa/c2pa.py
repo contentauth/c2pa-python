@@ -2545,15 +2545,14 @@ class Reader(ManagedResource):
         return _convert_to_py_string(result)
 
     def _get_manifest_field(self, extractor):
-        """Extract a field from cached manifest data, or None if unavailable.
+        """Extract a field from (cached) manifest data, or None if unavailable.
 
         Args:
             extractor: A callable that takes the parsed manifest dict
                 and returns the desired field value.
 
         Returns:
-            The extracted field value, or None if no manifest data
-            is available.
+            Extracted field value, or None if not available.
         """
         try:
             data = self._get_cached_manifest_data()
@@ -2629,8 +2628,7 @@ class Reader(ManagedResource):
             or None if the validation_state field is not present or if no
             manifest is found or if there was an error parsing the JSON.
         """
-        return self._get_manifest_field(
-            lambda d: d.get("validation_state"))
+        return self._get_manifest_field(lambda d: d.get("validation_state"))
 
     def get_validation_results(self) -> Optional[dict]:
         """Get the validation results of the manifest store.
@@ -2645,8 +2643,7 @@ class Reader(ManagedResource):
             field is not present or if no manifest is found or if
             there was an error parsing the JSON.
         """
-        return self._get_manifest_field(
-            lambda d: d.get("validation_results"))
+        return self._get_manifest_field(lambda d: d.get("validation_results"))
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
         """Write a resource to a stream.
@@ -2898,10 +2895,8 @@ class Signer(ManagedResource):
         return signer_instance
 
     def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
-        """Initialize a new Signer instance.
-
-        Note: This constructor is not meant to be called directly.
-        Use from_info() or from_callback() instead.
+        """Initialize a new Signer instance. This constructor is not meant
+        to be called directly. Use from_info() or from_callback() instead.
 
         Args:
             signer_ptr: Pointer to the native C2PA signer
