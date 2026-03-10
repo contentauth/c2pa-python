@@ -2235,7 +2235,11 @@ class Reader(ManagedResource):
         # we may have opened ourselves, and that we need to close later
         self._backing_file = None
 
-        # Caches for manifest JSON string and parsed data
+        # Caches for manifest JSON string and parsed data.
+        # These are invalidated when with_fragment() is called, because each
+        # new BMFF fragment can refine or update the manifest content as the
+        # reader progressively builds its understanding of the fragmented stream.
+        # They are also cleared on close() to release memory.
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
 
@@ -2489,7 +2493,10 @@ class Reader(ManagedResource):
                 ].format("Unknown error"))
             self._handle = new_ptr
 
-        # Invalidate caches: fragment may change manifest data
+        # Invalidate caches: processing a new BMFF fragment updates the native
+        # reader's state, which can change the manifest data it returns.
+        # The cached JSON string and parsed dict may now be stale, so clear
+        # them to force a fresh read from the native layer on next access.
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
 
