@@ -49,6 +49,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_from_context',
     'c2pa_reader_with_stream',
     'c2pa_reader_with_fragment',
+    'c2pa_reader_with_manifest_data_and_stream',
     'c2pa_reader_is_embedded',
     'c2pa_reader_remote_url',
     'c2pa_reader_supported_mime_types',
@@ -704,6 +705,13 @@ _setup_function(
     [ctypes.POINTER(C2paReader), ctypes.c_char_p,
      ctypes.POINTER(C2paStream)],
     ctypes.POINTER(C2paReader)
+)
+_setup_function(
+    _lib.c2pa_reader_with_manifest_data_and_stream,
+    [ctypes.POINTER(C2paReader), ctypes.c_char_p,
+     ctypes.POINTER(C2paStream),
+     ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t],
+    ctypes.POINTER(C2paReader),
 )
 _setup_function(
     _lib.c2pa_reader_with_fragment,
@@ -2241,6 +2249,7 @@ class Reader(ManagedResource):
         if context is not None:
             self._init_from_context(
                 context, format_or_path, stream,
+                manifest_data,
             )
             return
 
@@ -2331,7 +2340,7 @@ class Reader(ManagedResource):
                 Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
     def _init_from_context(self, context, format_or_path,
-                           stream):
+                           stream, manifest_data=None):
         """Initialize Reader from a Context object implementing
         the ContextProvider interface/abstract base class.
         """
@@ -2362,7 +2371,7 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Create base reader from context
+            # Create reader from context
             reader_ptr = _lib.c2pa_reader_from_context(
                 context.execution_context,
             )
@@ -2372,13 +2381,35 @@ class Reader(ManagedResource):
                 ].format("Unknown error")
             )
 
-            # Consume-and-return: reader_ptr is consumed,
-            # new_ptr is the valid pointer going forward
-            new_ptr = _lib.c2pa_reader_with_stream(
-                reader_ptr, format_bytes,
-                self._own_stream._stream,
-            )
-            # reader_ptr has been invalidated(consumed)
+            if manifest_data is not None:
+                if not isinstance(manifest_data, bytes):
+                    raise TypeError(
+                        Reader._ERROR_MESSAGES[
+                            'manifest_error'])
+                manifest_array = (
+                    ctypes.c_ubyte *
+                    len(manifest_data))(
+                    *manifest_data)
+                # Consume current reader,
+                # with manifest data and stream (C FFI pattern),
+                # to create a new one (switch out)
+                new_ptr = (
+                    _lib.c2pa_reader_with_manifest_data_and_stream(
+                        reader_ptr,
+                        format_bytes,
+                        self._own_stream._stream,
+                        manifest_array,
+                        len(manifest_data),
+                    )
+                )
+                # reader_ptr has been invalidated(consumed)
+            else:
+                # Consume reader with stream
+                new_ptr = _lib.c2pa_reader_with_stream(
+                    reader_ptr, format_bytes,
+                    self._own_stream._stream,
+                )
+                # reader_ptr has been invalidated(consumed)
 
             _check_ffi_operation_result(new_ptr,
                 Reader._ERROR_MESSAGES[
