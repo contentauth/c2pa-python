@@ -100,7 +100,7 @@ def _validate_library_exports(lib):
     This validation is crucial for several security and reliability reasons:
 
     1. Security:
-       - Prevents loading of lmibraries that might be missing critical functions
+       - Prevents loading of libraries that might be missing critical functions
        - Ensures the library has expected functionality before code execution
        - Helps detect tampered or incomplete libraries
 
