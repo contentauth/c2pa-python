@@ -2340,7 +2340,7 @@ class Reader(ManagedResource):
                 Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
     def _init_from_context(self, context, format_or_path,
-                           stream):
+                           stream, manifest_data=None):
         """Initialize Reader from a Context object implementing
         the ContextProvider interface/abstract base class.
         """
