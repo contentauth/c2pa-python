@@ -40,6 +40,9 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_load_settings',
     'c2pa_read_file',
     'c2pa_read_ingredient_file',
+    # Stream
+    'c2pa_create_stream',
+    'c2pa_release_stream',
     # Reader bindings
     'c2pa_reader_from_stream',
     'c2pa_reader_from_manifest_data_and_stream',
@@ -3045,7 +3048,7 @@ class Builder(ManagedResource):
             _check_ffi_operation_result(builder._handle,
                 "Failed to create builder from archive")
 
-            builder._state = LifecycleState.ACTIVE
+            builder._lifecycle_state = LifecycleState.ACTIVE
             return builder
         finally:
             stream_obj.close()
