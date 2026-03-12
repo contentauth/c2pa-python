@@ -2545,7 +2545,7 @@ class Reader(ManagedResource):
             )
 
             if not new_ptr:
-                self._handle = None
+                self._mark_consumed()
             _check_ffi_operation_result(new_ptr,
                 Reader._ERROR_MESSAGES[
                     'fragment_error'
@@ -3105,7 +3105,7 @@ class Builder(ManagedResource):
             C2paError: If there was an error creating the builder
                 from archive
         """
-        # Handle builder handle lifecycle manually
+        # Handle builder._handle lifecycle somewhat manually
         builder = object.__new__(cls)
         ManagedResource.__init__(builder)
         builder._context = None
