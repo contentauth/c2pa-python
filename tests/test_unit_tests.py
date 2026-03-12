@@ -70,7 +70,7 @@ def load_test_settings_json():
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version.
-        self.assertIn("0.77.0", sdk_version())
+        self.assertIn("0.77.1", sdk_version())
 
 
 class TestReader(unittest.TestCase):
@@ -5325,6 +5325,56 @@ class TestContextBuilder(TestContextAPIs):
         context.close()
         settings.close()
 
+    def test_context_builder_with_settings_last_wins(self):
+        """The last with_settings call determines the settings used.
+
+        Toggles thumbnails on, off, on, off across four calls.
+        The last call disables thumbnails, so the signed manifest
+        should have no thumbnail.
+        """
+        settings_on_1 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": True}},
+        })
+        settings_off_1 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": False}},
+        })
+        settings_on_2 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": True}},
+        })
+        settings_off_2 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": False}},
+        })
+        context = (
+            Context.builder()
+            .with_settings(settings_on_1)
+            .with_settings(settings_off_1)
+            .with_settings(settings_on_2)
+            .with_settings(settings_off_2)
+            .build()
+        )
+        signer = self._ctx_make_signer()
+        builder = Builder(self.test_manifest, context)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source_file, dest_file,
+                )
+            reader = Reader(dest_path)
+            manifest = reader.get_active_manifest()
+            # Last settings disabled thumbnails
+            self.assertIsNone(manifest.get("thumbnail"))
+            reader.close()
+        builder.close()
+        context.close()
+        settings_on_1.close()
+        settings_off_1.close()
+        settings_on_2.close()
+        settings_off_2.close()
+
 
 class TestContextWithSigner(TestContextAPIs):
 
@@ -6117,6 +6167,42 @@ class TestContextIntegration(TestContextAPIs):
             )
             reader.close()
         archive.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_remote_sign_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        builder.set_no_embed()
+        with open(DEFAULT_TEST_FILE, "rb") as source:
+            with io.BytesIO() as output_buffer:
+                manifest_data = builder.sign(
+                    signer, "image/jpeg",
+                    source, output_buffer,
+                )
+                output_buffer.seek(0)
+                read_buffer = io.BytesIO(
+                    output_buffer.getvalue()
+                )
+                reader = Reader(
+                    "image/jpeg", read_buffer,
+                    manifest_data, context=context,
+                )
+                validation_state = (
+                    reader.get_validation_state()
+                )
+                self.assertEqual(
+                    validation_state, "Trusted",
+                )
+                reader.close()
+                read_buffer.close()
         builder.close()
         signer.close()
         context.close()

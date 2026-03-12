@@ -54,14 +54,13 @@ classDiagram
     ManagedResource <|-- Signer
 
     ContextProvider <|-- Context
-    ContextProvider <|-- Settings
 ```
 
-`Context` and `Settings` inherit from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance). `ContextProvider` is an ABC that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` and `Settings` satisfy the `ContextProvider` contract without duplicating the property.
+`Context` inherits from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance). `Settings` inherits from `ManagedResource` only. `ContextProvider` is an ABC that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` satisfies that part of the `ContextProvider` contract without duplicating the property.
 
 ## Guarantees provided by ManagedResource
 
-`ManagedResource` provides the following guarantees. Subclasses and callers can rely on them. These guarantees invariants must be maintained when subclassing the `ManagedResource` class in new implementation/new native resources handlers.
+`ManagedResource` provides the following guarantees. Subclasses and callers can rely on them. These invariants must be maintained when subclassing the `ManagedResource` class in new implementation/new native resources handlers.
 
 | Guarantee | Description |
 | --------- | ----------- |
@@ -280,7 +279,7 @@ The reason is that ownership runs in the opposite direction. A `Reader` or `Buil
 To wrap a new native resource, inherit from `ManagedResource` and follow these rules:
 
 ```python
-class MyResource(ManagedResource):
+class NativeResource(ManagedResource):
     def __init__(self, arg):
         super().__init__()
 
@@ -304,8 +303,14 @@ class MyResource(ManagedResource):
 
     def _release(self):
         # 4. Clean up class-specific resources.
-        #    Never let this method raise. Use try/except with
-        #    logging if needed.
+        #    Never let this method raise. Must be idempotent.
+        #
+        #    Consider defining a simple lifecycle for native resources
+        #    so _release() can check whether they are releasable
+        #    before attempting cleanup. The if-guard below
+        #    verifies the stream exists and has not
+        #    already been released. The try/except is a fallback
+        #    that silences unexpected errors from .close().
         if self._my_stream:
             try:
                 self._my_stream.close()
@@ -327,7 +332,7 @@ class MyResource(ManagedResource):
 
 - If `_lifecycle_state = ACTIVE` is set before the FFI call and the call fails, cleanup will try to free a null or invalid pointer. Activation should happen only after a valid handle exists.
 
-- If `_release()` raises, the exception is silently swallowed by `_cleanup_resources()`. It will not be visible unless logs are checked. Wrap risky operations in try/except.
+- If `_release()` raises, the exception is silently swallowed by `_cleanup_resources()`. It will not be visible unless logs are checked. Define a lifecycle for managed resources so `_release()` can check whether they need releasing. Wrap the actual release call in try/except as a fallback for unexpected failures.
 
 - `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls). Make sure it handles being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
 
