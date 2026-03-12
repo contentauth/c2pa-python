@@ -6,10 +6,10 @@
 
 `ManagedResource` is the internal base class responsible for managing native pointers owned by the C2PA Python SDK. It guarantees:
 
-- Native memory is freed exactly once.
+- Native memory is freed exactly once (no double-free).
 - Resources are cleaned up deterministically via context managers or explicit `close()`.
-- Ownership transfers** (e.g. signer to context) are handled safely so the same pointer is never freed twice.
-- Cleanup never raises or masks real exceptions.
+- Ownership transfers (e.g. signer to context) are handled so the same pointer is not freed twice (and the objects/classes know which one owns what).
+- Cleanup never raises (trade-off to avoid raising errors on clean-up only, but errors are logged).
 
 Developers wrapping new native resources must inherit from `ManagedResource` and follow the documented lifecycle rules.
 
@@ -17,7 +17,7 @@ Developers wrapping new native resources must inherit from `ManagedResource` and
 
 ### Native pointers in a Python wrapper
 
-The C2PA Python SDK is a wrapper around a native Rust library that exposes a C FFI. When the SDK creates a `Reader`, `Builder`, `Signer`, `Context`, or `Settings` object, that object holds a **pointer** to memory allocated on the native side.
+The C2PA Python SDK is a wrapper around a native Rust library that exposes a C FFI. When the SDK creates a `Reader`, `Builder`, `Signer`, `Context`, or `Settings` object, that object holds a **pointer** to memory allocated on the native side (by the native library).
 
 ### How Python's garbage collector works
 
@@ -25,15 +25,15 @@ Python manages its own objects' memory automatically through garbage collection.
 
 ### Why garbage collection is not enough for native memory
 
-This system works well for pure Python objects, but native memory sits outside of it entirely. The garbage collector sees the Python wrapper object (e.g. a `Reader` instance) and tracks references to it, but it has no visibility into the native memory that the wrapper's `_handle` attribute points to. It does not know the size of that native allocation, cannot tell when it is no longer needed, and will not call the native library's `c2pa_free` function to release it. If the Python wrapper is collected without first calling `c2pa_free`, the native memory leaks. If `c2pa_free` is called twice on the same pointer, the process crashes.
+This system works well for pure Python objects, but native memory sits outside of it entirely. The garbage collector sees the Python wrapper object (e.g. a `Reader` instance) and tracks references to it, but it has no visibility into the native memory that the wrapper's `_handle` attribute points to. Memory allocated by native libraries is invisible to the garbage collector: it does not know the size of that native allocation, cannot tell when it is no longer needed, and will not call the native library's `c2pa_free` function to release it. If the Python wrapper of those native resources is collected without first calling `c2pa_free`, the native memory is never released and leaks.
 
 ### Why `__del__` is not reliable enough
 
-Python does offer `__del__` as a hook that runs when an object is collected, and `ManagedResource` uses it as a fallback. But `__del__` cannot be relied on as the primary cleanup mechanism: its timing is unpredictable, it may not run at all during interpreter shutdown, and other Python implementations (PyPy, GraalPy) that do not use reference counting make its behavior even less deterministic.
+Python does offer `__del__` as a hook that runs when an object is collected (finalizer), and `ManagedResource` uses it as a fallback to possibly clean up leftover resources at that point. But `__del__` cannot be relied on as the primary cleanup mechanism: its timing is unpredictable (due to being called when the garbage collection runs, which is non-deterministic itself), it may not run at all during interpreter shutdown, and other Python implementations (PyPy, GraalPy) that do not use reference counting make its behavior even less deterministic.
 
 In CPython, `__del__` runs synchronously when the last reference to an object disappears, which in simple cases happens at a predictable point (e.g. when a local variable goes out of scope). But if the object is part of a reference cycle, its reference count never reaches zero on its own. The cycle collector must discover and break the cycle first, and it runs periodically rather than immediately. An object caught in a cycle might sit in memory for an arbitrary amount of time before `__del__` fires. CPython's cycle collector does not guarantee an order when finalizing groups of objects in a cycle, so `__del__` methods that depend on other objects in the same cycle may find those objects already partially torn down. During interpreter shutdown, the situation is even less reliable: CPython clears module globals and may collect objects in an arbitrary order, and `__del__` methods that reference global state (like the `_lib` handle to the native library) can fail silently because those globals have already been set to `None`. PyPy and GraalPy use tracing garbage collectors (which periodically walk the object graph to find unreachable objects, rather than tracking individual reference counts) instead of reference counting, so `__del__` does not run when the last reference disappears. It runs at some later point when the GC happens to trace that region of the heap, which could be seconds or minutes later, or not at all if the process exits first.
 
-`ManagedResource` is the internal base class that handles this. Every class that holds a native pointer inherits from it.
+`ManagedResource` is the internal base class that handles managed resources, especially their lifecycle and clean-up. Every class that holds a native pointer should inherit from it.
 
 ## Class hierarchy
 
@@ -56,14 +56,33 @@ classDiagram
     ContextProvider <|-- Context
 ```
 
-`Context` inherits from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance). `Settings` inherits from `ManagedResource` only. `ContextProvider` is an ABC that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` satisfies that part of the `ContextProvider` contract without duplicating the property.
+Notes:
+
+- `Context` inherits from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance).
+- `Settings` inherits from `ManagedResource` only.
+- `ContextProvider` is an ABC (abstract base class) that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` satisfies that part of the `ContextProvider` contract without duplicating the property.
+
+> [!NOTE]
+> **How `is_valid` resolves across both parents for Context**
+>
+> Python's MRO (Method Resolution Order) is the order in which Python searches parent classes when looking up a method or property. For `Context(ManagedResource, ContextProvider)`, the MRO is `Context then ManagedResource then ContextProvider then ABC then object (base class)`. When `context.is_valid` is accessed, Python walks the MRO left-to-right and finds `ManagedResource.is_valid` first. Since `ContextProvider.is_valid` is abstract (it declares the requirement but has no implementation), `ManagedResource`'s concrete version both provides the behavior and satisfies the ABC contract.
+>
+> The MRO is computed using C3 linearization, which enforces two rules: children appear before their parents, and left-to-right order from the class definition is preserved. For `class Context(ManagedResource, ContextProvider)`:
+>
+> 1. `Context`: the class itself always comes first.
+> 2. `ManagedResource` :first listed parent, nothing else requires it to appear later.
+> 3. `ContextProvider`: second listed parent, must come after `ManagedResource` to preserve declaration order.
+> 4. `ABC`: parent of `ContextProvider`, must come after its child.
+> 5. `object`: root of everything (all objects), always last.
+>
+> Putting `ManagedResource` first in the declaration matters: the concrete `is_valid` implementation is found immediately during lookup, rather than hitting the abstract declaration on `ContextProvider` first.
 
 ## Guarantees provided by ManagedResource
 
-`ManagedResource` provides the following guarantees. Subclasses and callers can rely on them. These invariants must be maintained when subclassing the `ManagedResource` class in new implementation/new native resources handlers.
+`ManagedResource` provides the following guarantees, invariants must be maintained when subclassing the `ManagedResource` class in new implementation/new native resources handlers:
 
 | Guarantee | Description |
-| --------- | ----------- |
+| --- | --- |
 | **Pointer freed exactly once** | Each native pointer is passed to `c2pa_free` at most once. No leak (zero frees) and no double-free. |
 | **Cleanup is idempotent** | Calling `close()` (or exiting a `with` block) multiple times is safe; after the first successful cleanup, further calls do nothing. |
 | **Cleanup never raises** | The cleanup path (including `_release()` and `c2pa_free`) is wrapped so that exceptions are caught and logged, never re-raised. The original exception from the `with` block (if any) is never masked. |
