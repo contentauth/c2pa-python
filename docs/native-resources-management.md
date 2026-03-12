@@ -356,3 +356,7 @@ class NativeResource(ManagedResource):
 - `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls). Make sure it handles being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
 
 - Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. If the pointer is freed manually and `ManagedResource` frees it again, the process crashes (double-free).
+
+- If a subclass inherits from both `ManagedResource` and an ABC like `ContextProvider`, and both define a property with the same name (e.g. `is_valid`), Python resolves it using the MRO. The parent listed first in the class definition wins. If the ABC is listed first, Python finds the abstract property before the concrete one and raises `TypeError: Can't instantiate abstract class`. Always list the class with the concrete implementation first (e.g. `class Context(ManagedResource, ContextProvider)`, not `class Context(ContextProvider, ManagedResource)`).
+
+- If two parent classes define the same method or property with different concrete implementations, the MRO silently picks the first one. This can cause subtle bugs where the wrong implementation is used. When combining multiple inheritance with shared property names, verify the MRO with `ClassName.__mro__` or `ClassName.mro()` to confirm the expected resolution order.
