@@ -1629,11 +1629,11 @@ class Context(ManagedResource, ContextProvider):
                     _lib.c2pa_context_builder_build(builder_ptr)
                 )
                 builder_ptr = None
+                self._handle = ptr
 
                 _check_ffi_operation_result(
                     ptr, "Failed to build Context"
                 )
-                self._handle = ptr
 
                 # Build succeeded, consume the Signer.
                 # Keep its callback ref alive on this Context,
@@ -2450,13 +2450,14 @@ class Reader(ManagedResource):
                 )
                 # reader_ptr has been invalidated(consumed)
 
+            self._handle = new_ptr
+
             _check_ffi_operation_result(new_ptr,
                 Reader._ERROR_MESSAGES[
                     'reader_error'
                 ].format("Unknown error")
             )
 
-            self._handle = new_ptr
             self._lifecycle_state = LifecycleState.ACTIVE
         except Exception:
             self._close_streams()
@@ -3104,7 +3105,12 @@ class Builder(ManagedResource):
             C2paError: If there was an error creating the builder
                 from archive
         """
-        builder = cls({})
+        # Handle builder handle lifecycle manually
+        builder = object.__new__(cls)
+        ManagedResource.__init__(builder)
+        builder._context = None
+        builder._has_context_signer = False
+
         stream_obj = Stream(stream)
 
         try:
@@ -3113,7 +3119,8 @@ class Builder(ManagedResource):
             )
 
             _check_ffi_operation_result(builder._handle,
-                "Failed to create builder from archive")
+                "Failed to create builder from archive"
+            )
 
             builder._lifecycle_state = LifecycleState.ACTIVE
             return builder
@@ -3194,14 +3201,13 @@ class Builder(ManagedResource):
         # Consume-and-return: builder_ptr is consumed,
         # new_ptr is the valid pointer going forward
         new_ptr = _lib.c2pa_builder_with_definition(builder_ptr, json_str)
+        self._handle = new_ptr
 
         _check_ffi_operation_result(new_ptr,
             Builder._ERROR_MESSAGES[
                     'builder_error'
                 ].format("Unknown error")
             )
-
-        self._handle = new_ptr
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -3481,9 +3487,8 @@ class Builder(ManagedResource):
                     f"Error loading archive: {e}"
                 )
             # Old handle consumed by FFI
-            self._handle = None
-            _check_ffi_operation_result(new_ptr, "Failed to load archive into builder")
             self._handle = new_ptr
+            _check_ffi_operation_result(new_ptr, "Failed to load archive into builder")
 
         return self
 
