@@ -41,11 +41,11 @@ class TestReaderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_FOLDER
-        self.testPath = DEFAULT_TEST_FILE
+        self.test_path = DEFAULT_TEST_FILE
 
     def test_stream_read(self):
         def read_metadata():
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 reader = Reader("image/jpeg", file)
                 json_data = reader.json()
                 self.assertIn("C.jpg", json_data)
@@ -65,7 +65,7 @@ class TestReaderWithThreads(unittest.TestCase):
 
     def test_stream_read_and_parse(self):
         def read_and_parse():
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 reader = Reader("image/jpeg", file)
                 manifest_store = json.loads(reader.json())
                 title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
@@ -321,12 +321,12 @@ class TestReaderWithThreads(unittest.TestCase):
 class TestContextualReaderWithThreads(unittest.TestCase):
     def setUp(self):
         self.data_dir = FIXTURES_FOLDER
-        self.testPath = DEFAULT_TEST_FILE
+        self.test_path = DEFAULT_TEST_FILE
 
     def test_stream_read(self):
         def read_metadata():
             ctx = Context()
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 reader = Reader("image/jpeg", file, context=ctx)
                 json_data = reader.json()
                 self.assertIn("C.jpg", json_data)
@@ -342,7 +342,7 @@ class TestContextualReaderWithThreads(unittest.TestCase):
     def test_stream_read_and_parse(self):
         def read_and_parse():
             ctx = Context()
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 reader = Reader("image/jpeg", file, context=ctx)
                 manifest_store = json.loads(reader.json())
                 title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
@@ -542,10 +542,10 @@ class TestBuilderWithThreads(unittest.TestCase):
         )
         self.signer = Signer.from_info(self.signer_info)
 
-        self.testPath = DEFAULT_TEST_FILE
-        self.testPath2 = INGREDIENT_TEST_FILE
-        self.testPath3 = OTHER_ALTERNATIVE_INGREDIENT_TEST_FILE
-        self.testPath4 = ALTERNATIVE_INGREDIENT_TEST_FILE
+        self.test_path = DEFAULT_TEST_FILE
+        self.test_path2 = INGREDIENT_TEST_FILE
+        self.test_path3 = OTHER_ALTERNATIVE_INGREDIENT_TEST_FILE
+        self.test_path4 = ALTERNATIVE_INGREDIENT_TEST_FILE
 
         # For that test manifest, we use a placeholder assertion with content
         # varying depending on thread/manifest, to check for data scrambling.
@@ -867,7 +867,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         output2 = io.BytesIO(bytearray())
 
         def write_manifest(manifest_def, output_stream, thread_id):
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 builder = Builder(manifest_def)
                 builder.sign(self.signer, "image/jpeg", file, output_stream)
                 output_stream.seek(0)
@@ -1115,7 +1115,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def write_manifest():
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -1188,7 +1188,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def write_manifest():
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)  # Reset stream position after write
@@ -1277,7 +1277,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         stream_lock = threading.Lock()  # Lock for stream access
 
         # First write some data to read
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -1358,7 +1358,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         start_times_lock = threading.Lock()
 
         # First write some data to read
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -1445,7 +1445,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 manifest_def,
                 thread_id):
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     # Create and save archive
                     builder = Builder(manifest_def)
                     builder.to_archive(archive_stream)
@@ -1547,7 +1547,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def sign_file(output_stream, manifest_def, thread_id):
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     # Sign the file
                     builder = Builder(manifest_def)
                     builder.sign(
@@ -1652,7 +1652,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         async def write_manifest():
             nonlocal write_success
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -1751,7 +1751,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         start_barrier = asyncio.Barrier(reader_count)
 
         # First write some data to read
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -1824,7 +1824,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         TOTAL_THREADS_USED = 12
 
         # Define the specific files to use as ingredients
-        # THose files should be valid to use as ingredient
+        # Those files should be valid to use as ingredient
         ingredient_files = [
             os.path.join(self.data_dir, "A_thumbnail.jpg"),
             os.path.join(self.data_dir, "C.jpg"),
@@ -2137,7 +2137,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
 
         def write_manifest(manifest_def, output_stream, thread_id):
             ctx = Context()
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 builder = Builder(manifest_def, ctx)
                 builder.sign(self.signer, "image/jpeg", file, output_stream)
                 output_stream.seek(0)
@@ -2285,7 +2285,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         def write_manifest():
             try:
                 ctx = Context()
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -2338,7 +2338,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         def write_manifest():
             try:
                 ctx = Context()
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -2397,7 +2397,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         stream_lock = threading.Lock()
 
         ctx = Context()
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1, ctx)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -2448,7 +2448,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         start_barrier = threading.Barrier(reader_count)
 
         ctx = Context()
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1, ctx)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -2499,7 +2499,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         def sign_file(output_stream, manifest_def, thread_id):
             try:
                 ctx = Context()
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(manifest_def, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output_stream)
                     output_stream.seek(0)
@@ -2562,7 +2562,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
             nonlocal write_success
             try:
                 ctx = Context()
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1, ctx)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -2621,7 +2621,7 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         start_barrier = asyncio.Barrier(reader_count)
 
         ctx = Context()
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1, ctx)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
