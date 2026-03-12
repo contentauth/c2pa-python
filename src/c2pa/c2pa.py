@@ -1033,30 +1033,34 @@ def _check_ffi_operation_result(result, fallback_msg, *, check=lambda r: not r):
     return result
 
 
-def _to_utf8_bytes(data, error_context="input") -> bytes:
+def _to_utf8_bytes(data: Union[str, dict], error_context: str = "input") -> bytes:
     """Convert a string or dict to UTF-8 bytes.
 
     If data is a dict, it is serialized to JSON first.
 
     Args:
-        data: String or dict to encode
-        error_context: Description for error messages
+        data: String or dict to encode.
+        error_context: Description for error messages.
 
     Returns:
-        UTF-8 encoded bytes
+        UTF-8 encoded bytes.
 
     Raises:
-        C2paError.Json: If dict serialization fails
-        C2paError.Encoding: If UTF-8 encoding fails
+        C2paError.Json: If dict serialization fails.
+        C2paError.Encoding: If UTF-8 encoding fails or data is not a supported type.
     """
     if isinstance(data, dict):
         try:
             data = json.dumps(data)
         except (TypeError, ValueError) as e:
             raise C2paError.Json(f"Failed to serialize {error_context}: {e}")
+    if not isinstance(data, str):
+        raise C2paError.Encoding(
+            f"Expected str or dict for {error_context}, got {type(data).__name__}"
+        )
     try:
         return data.encode('utf-8')
-    except (UnicodeError, AttributeError) as e:
+    except UnicodeError as e:
         raise C2paError.Encoding(f"Invalid UTF-8 in {error_context}: {e}")
 
 
@@ -1380,11 +1384,29 @@ class ContextProvider(ABC):
 
     @property
     @abstractmethod
-    def is_valid(self) -> bool: ...
+    def is_valid(self) -> bool:
+        """Whether this provider is in a usable state.
+
+        Return True when the underlying native context is active
+        and its handle has not been freed or consumed. Return
+        False after the provider has been closed or invalidated.
+
+        The ManagedResource base class provides a standard
+        implementation that checks lifecycle state and handle
+        presence.
+        """
+        ...
 
     @property
     @abstractmethod
-    def execution_context(self): ...
+    def execution_context(self):
+        """Return the raw native C2paContext pointer.
+
+        The returned pointer must be valid for the duration of any
+        FFI call that uses it. Callers should check is_valid before
+        accessing this property.
+        """
+        ...
 
 
 class Settings(ManagedResource):
@@ -1458,6 +1480,8 @@ class Settings(ManagedResource):
         self, data: Union[str, dict],
     ) -> 'Settings':
         """Update current configuration from a JSON string or dict.
+        If the updated string overwrite an existing settings value,
+        the last setting value set for that property wins.
 
         Args:
             data: A JSON string or dict with configuration to merge.
@@ -1498,7 +1522,19 @@ class ContextBuilder:
     def with_settings(
         self, settings: 'Settings',
     ) -> 'ContextBuilder':
-        """Attach Settings to the Context being built."""
+        """Attach Settings to the Context being built.
+
+        Can be called multiple times, but each call replaces
+        the previous Settings object entirely (the last one wins).
+        To merge multiple configurations, use Settings.update()
+        on a single Settings instance before passing it in.
+
+        Args:
+            settings: The Settings instance to use.
+
+        Returns:
+            self, for method chaining.
+        """
         self._settings = settings
         return self
 
