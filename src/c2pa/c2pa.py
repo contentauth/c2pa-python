@@ -3485,44 +3485,6 @@ class Builder(ManagedResource):
 
         return self
 
-    def with_archive(self, stream: Any) -> 'Builder':
-        """Load an archive into this builder, replacing its
-        manifest definition. The archive carries only the
-        definition, not settings — settings come from this
-        builder's context, which is preserved across the call.
-        Use this instead of from_archive() when you need
-        context-based settings.
-
-        Args:
-            stream: The stream containing the archive
-
-        Returns:
-            This builder instance, for method chaining.
-
-        Raises:
-            C2paError: If there was an error loading the archive
-        """
-        self._ensure_valid_state()
-
-        with Stream(stream) as stream_obj:
-            new_ptr = _lib.c2pa_builder_with_archive(
-                self._handle, stream_obj._stream,
-            )
-            # self._handle has been consumed by the FFI call
-            if not new_ptr:
-                self._handle = None
-                error = _parse_operation_result_for_error(
-                    _lib.c2pa_error()
-                )
-                if error:
-                    raise C2paError(error)
-                raise C2paError(
-                    "Failed to load archive into builder"
-                )
-            self._handle = new_ptr
-
-        return self
-
     def _sign_internal(
             self,
             format: str,
