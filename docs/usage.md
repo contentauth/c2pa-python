@@ -318,6 +318,27 @@ ctx = Context.builder().with_settings(settings).build()
 ctx = Context.builder().build()
 ```
 
+You can call `with_settings()` multiple times. This is useful when different code paths each need to configure settings before the context is built. Each call replaces the previous `Settings` object entirely (the last one wins):
+
+```py
+# Only settings_b is used, settings_a is replaced
+ctx = (
+    Context.builder()
+    .with_settings(settings_a)
+    .with_settings(settings_b)
+    .build()
+)
+```
+
+To merge multiple configurations into one, use `Settings.update()` on a single `Settings` object, and then pass the built Settings object to the context:
+
+```py
+settings = Settings.from_dict({"builder": {"thumbnail": {"enabled": False}}})
+settings.update({"verify": {"remote_manifest_fetch": True}})
+
+ctx = Context.builder().with_settings(settings).build()
+```
+
 ### Context with a Signer
 
 When a `Signer` is passed to `Context`, the `Signer` object is consumed and must not be reused directly. The `Context` takes ownership of the underlying native signer. This allows signing without passing an explicit signer to `Builder.sign()`.
@@ -353,15 +374,46 @@ manifest_bytes = builder.sign(explicit_signer, "image/jpeg", source, dest)
 
 ### ContextProvider (abstract base class)
 
-`ContextProvider` is an abstract base class (ABC) that allows third-party implementations of custom context providers. Any class that implements the `is_valid` and `execution_context` properties satisfies the interface and can be passed to `Reader` or `Builder` as `context`.
+`ContextProvider` is an abstract base class (ABC) that defines the interface `Reader` and `Builder` use to access a context. It requires two properties:
+
+- `is_valid` (bool): Whether the provider is in a usable state. `Reader` and `Builder` check this before every operation.
+- `execution_context`: The raw native context pointer (`C2paContext` handle). `Reader` and `Builder` pass this to the native library for FFI calls.
+
+The built-in `Context` class is the standard implementation to provide context:
 
 ```py
 from c2pa import ContextProvider, Context
 
-# The built-in Context satisfies ContextProvider
 ctx = Context()
 assert isinstance(ctx, ContextProvider)
 ```
+
+Any class can become a `ContextProvider` by inheriting from `ContextProvider` and implementing both properties. The two properties can live on any object through multiple inheritance, but a dedicated context class (as done in the SDK with `Context`) is preferred because it handles native memory management, lifecycle states, and signer ownership.
+
+In practice, `execution_context` must return a pointer that the native C2PA library understands, so custom providers will likely wrap a compatible native resource, rather than constructing native pointers independently:
+
+```py
+from c2pa import ContextProvider, Context, Settings
+
+class MyContextProvider(ContextProvider):
+    """Custom provider that wraps a Context with application-specific logic."""
+
+    def __init__(self, config: dict):
+        self._ctx = Context(settings=Settings.from_dict(config))
+
+    @property
+    def is_valid(self) -> bool:
+        return self._ctx.is_valid
+
+    @property
+    def execution_context(self):
+        return self._ctx.execution_context
+
+    def close(self):
+        self._ctx.close()
+```
+
+`Settings` is not a `ContextProvider`. It inherits from `ManagedResource` only and cannot be passed directly as the `context` parameter to `Reader` or `Builder`.
 
 ### Migrating from load_settings
 
