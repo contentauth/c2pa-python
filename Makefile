@@ -32,6 +32,7 @@ rebuild: clean-c2pa-env install-deps download-native-artifacts build-python
 run-examples:
 	python3 ./examples/sign.py
 	python3 ./examples/sign_info.py
+	python3 ./examples/no_thumbnails.py
 	python3 ./examples/training.py
 	rm -rf output/
 
