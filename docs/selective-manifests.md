@@ -25,8 +25,6 @@ flowchart LR
     D -->|sign| E[New Asset]
 ```
 
-
-
 The fundamental workflow is:
 
 1. **Read** the existing manifest with `Reader` to get JSON and binary resources
@@ -57,7 +55,7 @@ with open("signed_asset.jpg", "rb") as source:
 
 ### Extracting binary resources
 
-The JSON returned by `reader.json()` only contains string identifiers (JUMBF URIs) for binary data like thumbnails and ingredient manifest stores. Extract the actual binary content by using `resource_to_stream()`:
+The JSON returned by `reader.json()` contains only string identifiers (JUMBF URIs) for binary data like thumbnails and ingredient manifest stores. Extract the actual binary content by using `resource_to_stream()`:
 
 ```py
 # Extract a thumbnail to an in-memory stream
@@ -168,9 +166,9 @@ Sometimes all existing assertions and ingredients may need to be discarded but t
 
 The function `add_ingredient()` does not copy the original's assertions into the new manifest. Instead, it stores the original's entire manifest store as opaque binary data inside the ingredient record. This means:
 
-- The new manifest has its own, independent set of assertions
-- The original's full manifest is preserved inside the ingredient, so validators can inspect the full provenance history
-- The provenance chain is unbroken: anyone reading the new asset can follow the ingredient link back to the original
+- The new manifest has its own, independent set of assertions.
+- The original's full manifest is preserved inside the ingredient, so validators can inspect the full provenance history.
+- The provenance chain is unbroken: anyone reading the new asset can follow the ingredient link back to the original.
 
 ```mermaid
 flowchart TD
