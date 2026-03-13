@@ -2116,6 +2116,13 @@ def _validate_and_encode_format(
 class Reader(ManagedResource):
     """High-level wrapper for C2PA Reader operations.
 
+    Example:
+        ```
+        with Reader("image/jpeg", output) as reader:
+            manifest_json = reader.json()
+        ```
+        Where `output` is either an in-memory stream or an opened file.
+    """
 
 
     # Supported mimetypes cache
