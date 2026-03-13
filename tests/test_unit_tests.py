@@ -709,7 +709,7 @@ class TestReader(unittest.TestCase):
 
     def test_reader_partial_initialization_states(self):
         """Test Reader behavior with partial initialization failures."""
-        # Test with _reader = None but _state = ACTIVE
+        # Test with _reader = None but lifecycle state = ACTIVE
         reader = Reader.__new__(Reader)
         reader._lifecycle_state = LifecycleState.ACTIVE
         reader._handle = None
