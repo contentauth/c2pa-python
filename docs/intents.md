@@ -1,6 +1,6 @@
 # Using Builder intents
 
-_Intents_ enable validation, add required actions that are required by the C2PA specification, and help prevent invalid operations when using a `Builder`. Intents are about the operation (create, edit, update) executed on the source asset.
+_Intents_ enable validation, add the actions required by the C2PA specification, and help prevent invalid operations when using a `Builder`. Intents are about the operation (create, edit, update) executed on the source asset.
 
 ## Why use intents?
 
@@ -125,7 +125,7 @@ flowchart TD
 
 ## How intents relate to the source stream
 
-The intent operates on the source passed to `sign()`, not on any ingredient added via `add_ingredient`.
+The intent operates on the source passed to `sign()`, not on any ingredient added via `add_ingredient()`.
 
 The following diagram shows what happens at sign time for each intent:
 
@@ -168,7 +168,7 @@ For `Edit` and `Update` intents, `Builder` looks at the source stream, and if no
 
 ### How intent relates to `add_ingredient`
 
-The `Builder` intent controls what the Builder does with the source stream (source asset) at sign time. The `add_ingredient` method adds other ingredients explicitly. These are separate concerns.
+The `Builder` intent controls what the `Builder` does with the source stream (source asset) at sign time. The `add_ingredient` method adds other ingredients explicitly. These are separate concerns.
 
 ```mermaid
 flowchart TD

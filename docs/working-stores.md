@@ -45,7 +45,7 @@ For more information, see:
 
 - [Reading manifest stores from assets](#reading-manifest-stores-from-assets)
 - [Creating and signing manifests](#creating-and-signing-manifests)
-- [Embedded vs external manifests](#embedded-vs-external-manifests)
+- [Embedded versus external manifests](#embedded-versus-external-manifests)
 
 ### Working store
 
@@ -59,7 +59,7 @@ A _working store_ is a `Builder` object representing an editable, in-progress ma
 
 **Example:** When you create a `Builder` object and add assertions to it, you're dealing with a working store, as it is an "in progress" manifest being built.
 
-For more information, see [Using Working stores](#using-working-stores).
+For more information, see [Using working stores](#using-working-stores).
 
 ### Archive
 
@@ -68,7 +68,7 @@ A _C2PA archive_ (or just _archive_) contains the serialized bytes of a working 
 **Characteristics:**
 
 - Portable serialization of a working store (`Builder`).
-- Save an archive by using `Builder.to_archive()` and restore a full working store from an archive by using `Builder.with_archive()` (with a Builder created from a Context).
+- Save an archive by using `Builder.to_archive()` and restore a full working store from an archive by using `Builder.with_archive()` (with a `Builder` created from a `Context`).
 - Useful for separating manifest preparation ("work in progress") from final signing.
 
 For more information, see [Working with archives](#working-with-archives).
@@ -99,7 +99,7 @@ with open("signed_image.jpg", "rb") as stream:
     manifest_json = reader.json()
 ```
 
-For full details on `Context` and `Settings`, see [Using Context to configure the SDK](../context.md).
+For full details on `Context` and `Settings`, see [Context and settings](context-settings.md).
 
 ### Understanding Reader output
 
@@ -241,17 +241,6 @@ manifest_store_json = reader.json()
 ```
 
 ## Creating and signing manifests
-
-### Creating a Builder (working store)
-
-```py
-ctx = Context.from_dict({
-    "builder": {
-        "thumbnail": {"enabled": True}
-    }
-})
-builder = Builder(manifest_json, context=ctx)
-```
 
 ### Creating a Signer
 
@@ -417,10 +406,11 @@ with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
 
 ## Working with ingredients
 
-Ingredients represent source materials used to create an asset, preserving the provenance chain. Adding an ingredient to a manifest creates a verifiable link from the current asset back to its source material. 
-The `relationship` field describes how the source (ingredient) was used: `"parentOf"` for a direct edit, `"componentOf"` for an element composited into a larger work, or `"inputTo"` for a general input. 
+Ingredients represent source materials used to create an asset, preserving the provenance chain. Adding an ingredient to a manifest creates a verifiable link from the current asset back to its source material.
 
-Ingredients themselves can be turned into ingredient archives (`.c2pa`). An ingredient archive is a serialized `Builder` with _exactly one_ ingredient. Once archived with only one ingredient, the Builder archive is an ingredient archive. Such ingredient archives can be used as ingredient in other working stores, as an ingredient archive can be added back directly to a working store (no un-archiving of the ingredient needed, use `application/c2pa` format when adding an ingredient archive to a Builder instance).
+The `relationship` field describes how the source (ingredient) was used: `"parentOf"` for a direct edit, `"componentOf"` for an element composited into a larger work, or `"inputTo"` for a general input.
+
+Ingredients themselves can be turned into ingredient archives (`.c2pa`). An ingredient archive is a `Builder` archive containing _exactly one_ ingredient. Ingredient archives can be added directly as an ingredient to another working store using the `application/c2pa` MIME type — no un-archiving step is needed.
 
 ### Adding ingredients to a working store
 
@@ -455,7 +445,7 @@ Specify the relationship between the ingredient and the current asset:
 | `componentOf` | The ingredient is a component used in this asset |
 | `inputTo` | The ingredient was an input to creating this asset |
 
-Example with explicit relationship (builder is created with a Context as in the examples above):
+Example with explicit relationship:
 
 ```py
 ingredient_json = json.dumps({
@@ -591,7 +581,7 @@ By default, manifest stores are **embedded** directly into the asset file. You c
 
 ### Default: embedded manifest stores
 
-By default, the  manifest store is embedded in the output asset.
+By default, the manifest store is embedded in the output asset.
 
 ```py
 ctx = Context.from_dict({"builder": {"thumbnail": {"enabled": True}}, "signer": signer})
@@ -644,43 +634,9 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 
 ## Best practices
 
-### Use Context for configuration
-
-Use `Context` objects for SDK configuration:
-
-```py
-ctx = Context.from_dict({
-    "verify": {
-        "verify_after_sign": True
-    },
-    "trust": {
-        "user_anchors": trust_anchors_pem
-    }
-})
-
-builder = Builder(manifest_json, context=ctx)
-reader = Reader("asset.jpg", context=ctx)
-```
-
-### Use ingredients to build provenance chains
-
-Add ingredients to your manifests to maintain a provenance chain:
-
-```py
-ctx = Context.from_dict({"builder": {"claim_generator_info": {"name": "my-app", "version": "0.1.0"}}, "signer": signer})
-builder = Builder(manifest_json, context=ctx)
-
-ingredient_json = json.dumps({
-    "title": "Original source",
-    "relationship": "parentOf"
-})
-
-with open("original.jpg", "rb") as ingredient:
-    builder.add_ingredient(ingredient_json, "image/jpeg", ingredient)
-
-with open("edited.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
-    builder.sign("image/jpeg", src, dst)
-```
+- **Use `Context` for all configuration.** Pass a `Context` to `Builder` and `Reader` rather than using global state. See [Context and settings](context-settings.md).
+- **Use ingredients to build provenance chains.** Add a `parentOf` ingredient whenever editing an existing asset. See [Working with ingredients](#working-with-ingredients).
+- **Never hard-code private keys in production.** Use a Hardware Security Module (HSM) or Key Management Service (KMS) to access credentials.
 
 ## Additional resources
 

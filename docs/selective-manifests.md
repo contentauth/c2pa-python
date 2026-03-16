@@ -34,7 +34,7 @@ The fundamental workflow is:
 
 ## Reading an existing manifest
 
-Use `Reader` with a `Context` to extract the manifest store JSON and any binary resources (thumbnails, manifest data). The source asset is never modified. The context is used for trust configuration (which certificates are trusted when validating signatures) and verification settings. See [Configuring Reader](../context.md#configuring-reader) and [Trust configuration](../context.md#trust-configuration) for details.
+Use `Reader` with a `Context` to extract the manifest store JSON and any binary resources (thumbnails, manifest data). The source asset is never modified. The context is used for trust configuration (which certificates are trusted when validating signatures) and verification settings. See [Configuring `Reader`](context-settings.md#with-reader) and [Trust configuration](context-settings.md#trust) for details.
 
 ```py
 ctx = Context.from_dict({
@@ -70,7 +70,7 @@ with open("thumbnail.jpg", "wb") as f:
 ## Filtering into a new Builder
 
 > [!NOTE]
-> All examples on this page use `Context` with `Reader` and `Builder`. For `Reader`, the context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, the context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. When a signer is configured in the context, `builder.sign()` is called without a signer instance. See [Context](../context.md) for details.
+> All examples on this page use `Context` with `Reader` and `Builder`. For `Reader`, the context provides trust configuration and verification settings: `Reader(format, source, context=ctx)`. For `Builder`, the context provides custom settings (thumbnails, claim generator, intent): `Builder(manifest_json, context=ctx)`. When a signer is configured in the context, `builder.sign()` is called without a signer instance. See [Context and settings](context-settings.md) for details.
 
 Each example below creates a **new `Builder`** from filtered data. The original asset and its manifest store are never modified.
 
@@ -482,7 +482,7 @@ with open("signed_asset.jpg", "rb") as signed:
 
 ## Working with archives
 
-A `Builder` represents a **working store**: a manifest that is being assembled but has not yet been signed. Archives serialize this working store (definition + resources) to a `.c2pa` binary format, allowing to save, transfer, or resume the work later. For more background on working stores and archives, see [Working stores](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/working-stores).
+A `Builder` represents a **working store**: a manifest that is being assembled but has not yet been signed. Archives serialize this working store (definition + resources) to a `.c2pa` binary format, allowing to save, transfer, or resume the work later. For more background on working stores and archives, see [Working stores and archives](working-stores.md).
 
 There are two distinct types of archives, sharing the same binary format but being conceptually different: builder archives (working store archives) and ingredient archives.
 
@@ -632,7 +632,8 @@ layer_actions = [
 ]
 ```
 
-> **Naming convention:** Vendor parameters must use reverse domain notation with period-separated components (e.g., `com.mycompany.tool`, `net.example.session_id`). Some namespaces (e.g., `c2pa` or `cawg`) may be reserved.
+> [!NOTE]
+> Vendor parameters must use reverse domain notation with period-separated components (for example, `com.mycompany.tool`, `net.example.session_id`). Some namespaces (for example, `c2pa` or `cawg`) may be reserved.
 
 ### Extracting ingredients from a working store
 
@@ -692,7 +693,7 @@ with Builder({
 ```
 
 > [!NOTE]
-> When restoring from an archive, `with_archive()` preserves context settings while `from_archive()` does not. See [Working with archives](../working-stores.md#working-with-archives) for the full comparison.
+> When restoring from an archive, `with_archive()` preserves context settings while `from_archive()` does not. See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
 
 **Step 2:** Read the archive and extract ingredients:
 
@@ -733,7 +734,7 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
 ### Merging multiple working stores
 
 > [!NOTE]
-> The `Builder` construction and signing in the merge workflow also support `Context`. The caller can pass `context=ctx` to `Builder()` and call `sign()` without a signer argument when the context has one. See [Context](../context.md) for details.
+> The `Builder` construction and signing in the merge workflow also support `Context`. The caller can pass `context=ctx` to `Builder()` and call `sign()` without a signer argument when the context has one. See [Context and settings](context-settings.md) for details.
 
 In some cases it is necessary to merge ingredients from multiple working stores (builder archives) into a single `Builder`. This should be a **fallback strategy**. The recommended practice is to maintain a single active working store and add ingredients incrementally (archived ingredient catalogs help with this). Merging is available when multiple working stores must be consolidated.
 

@@ -154,12 +154,12 @@ Use the `Reader` to read C2PA data from the specified asset file.
 
 This examines the specified media file for C2PA data and generates a report of any data it finds. If there are validation errors, the report includes a `validation_status` field.
 
-An asset file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map. The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream` using the associated `identifier` field values and a `uri`.
+An asset file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map. The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream()` using the associated `identifier` field value as the URI.
 
 > [!NOTE]
 > For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
 
-Pass a `Context` to apply custom settings to the Reader, such as trust anchors or verification flags.
+Pass a `Context` to apply custom settings to the `Reader`, such as trust anchors or verification flags.
 
 ```py
 try:
@@ -181,7 +181,7 @@ except Exception as err:
 > [!WARNING]
 > This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production is insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
-Pass a `Context` to the Builder to apply custom settings during signing. The signer is still passed explicitly to `builder.sign()`.
+Pass a `Context` to the `Builder` to apply custom settings during signing. The signer is still passed explicitly to `builder.sign()`.
 
 ```py
 try:

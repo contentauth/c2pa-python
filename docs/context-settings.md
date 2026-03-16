@@ -92,7 +92,7 @@ with open("config/settings.json", "r") as f:
 ctx = Context(settings)
 ```
 
-## Class diagram 
+## Class diagram
 
 ```mermaid
 classDiagram
@@ -222,7 +222,7 @@ ctx = Context.from_dict({
     }
 })
 
-builder = Builder(manifest_json, ctx)
+builder = Builder(manifest_json, context=ctx)
 
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
@@ -246,7 +246,7 @@ ctx = Context.from_dict({
 })
 
 with open("manifest.c2pa", "rb") as archive:
-    builder = Builder({}, ctx)
+    builder = Builder({}, context=ctx)
     builder.with_archive(archive)
     # builder now has the archived definition + context settings
 ```
@@ -644,7 +644,7 @@ ctx = Context.from_dict({
     }
 })
 
-builder = Builder(manifest_json, ctx)
+builder = Builder(manifest_json, context=ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign("image/jpeg", src, dst)
 ```
@@ -664,7 +664,7 @@ signer = Signer.from_info(signer_info)
 ctx = Context(settings, signer)
 # signer is now invalid and must not be used directly again
 
-builder = Builder(manifest_json, ctx)
+builder = Builder(manifest_json, context=ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign("image/jpeg", src, dst)
 ```
@@ -675,7 +675,7 @@ For full programmatic control, pass a `Signer` directly to `Builder.sign()`:
 
 ```py
 signer = Signer.from_info(signer_info)
-builder = Builder(manifest_json, ctx)
+builder = Builder(manifest_json, context=ctx)
 
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
