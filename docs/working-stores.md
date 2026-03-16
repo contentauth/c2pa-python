@@ -53,7 +53,7 @@ A _working store_ is a `Builder` object representing an editable, in-progress ma
 
 **Characteristics:**
 
-- Editable, mutable state in memory (a Builder object).
+- Editable, mutable state in memory (a `Builder` object).
 - Contains claims, ingredients, and assertions that can be modified.
 - Can be saved to a C2PA archive (`.c2pa` JUMBF binary format) for later use.
 
@@ -67,7 +67,7 @@ A _C2PA archive_ (or just _archive_) contains the serialized bytes of a working 
 
 **Characteristics:**
 
-- Portable serialization of a working store (Builder).
+- Portable serialization of a working store (`Builder`).
 - Save an archive by using `Builder.to_archive()` and restore a full working store from an archive by using `Builder.with_archive()` (with a Builder created from a Context).
 - Useful for separating manifest preparation ("work in progress") from final signing.
 
@@ -179,7 +179,7 @@ builder = Builder(manifest_json, context=ctx)
 
 ### Modifying a working store
 
-Before signing, you can modify the working store (Builder):
+Before signing, you can modify the working store (`Builder`):
 
 ```py
 import io
@@ -210,7 +210,7 @@ builder.set_remote_url("https://example.com/manifests/")
 
 ### From working store to manifest store
 
-When you sign an asset, the working store (Builder) becomes a manifest store embedded in the output:
+When you sign an asset, the working store (`Builder`) becomes a manifest store embedded in the output:
 
 ```py
 from c2pa import Signer, C2paSignerInfo, C2paSigningAlg, Context
@@ -280,7 +280,7 @@ signer = Signer.from_info(signer_info)
 
 ### Signing an asset
 
-The Builder must be created with a Context that includes a signer. Then call `sign()` without passing a signer argument:
+The `Builder` must be created with a `Context` that includes a signer. Then call `sign()` without passing a signer argument:
 
 ```py
 try:
@@ -357,7 +357,7 @@ C2PA manifest data is not just JSON. A manifest store also contains binary resou
 
 ### Understanding resource identifiers
 
-When you add a resource to a working store (Builder), you assign it an identifier string. When the manifest store is created during signing, the SDK automatically converts this to a proper JUMBF URI.
+When you add a resource to a working store (`Builder`), you assign it an identifier string. When the manifest store is created during signing, the SDK automatically converts this to a proper JUMBF URI.
 
 **Resource identifier workflow:**
 
@@ -417,15 +417,10 @@ with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
 
 ## Working with ingredients
 
-### Why ingredients matter
+Ingredients represent source materials used to create an asset, preserving the provenance chain. Adding an ingredient to a manifest creates a verifiable link from the current asset back to its source material. 
+The `relationship` field describes how the source (ingredient) was used: `"parentOf"` for a direct edit, `"componentOf"` for an element composited into a larger work, or `"inputTo"` for a general input. 
 
-Ingredients are how C2PA tracks the history of content through edits, compositions, and transformations to build a content provenance chain represented by the manifest store. Adding an ingredient to a manifest creates a verifiable link from the current asset back to its source material. This builds a **provenance chain**: original photo, then edited version, then composite, then published asset, etc.
-
-The `relationship` field describes how the source (ingredient) was used: `"parentOf"` for a direct edit, `"componentOf"` for an element composited into a larger work, or `"inputTo"` for a general input. This lets verifiers understand not just what the sources were, but how they contributed to the final asset.
-
-### Overview
-
-Ingredients represent source materials used to create an asset, preserving the provenance chain. Ingredients themselves can be turned into ingredient archives (`.c2pa`). An ingredient archive is a serialized `Builder` with _exactly one and only one_ ingredient. Once archived with only one ingredient, the Builder archive is an ingredient archive. Such ingredient archives can be used as ingredient in other working stores, as an ingredient archive can be added back directly to a working store (no un-archiving of the ingredient needed, use `application/c2pa` format when adding an ingredient archive to a Builder instance).
+Ingredients themselves can be turned into ingredient archives (`.c2pa`). An ingredient archive is a serialized `Builder` with _exactly one_ ingredient. Once archived with only one ingredient, the Builder archive is an ingredient archive. Such ingredient archives can be used as ingredient in other working stores, as an ingredient archive can be added back directly to a working store (no un-archiving of the ingredient needed, use `application/c2pa` format when adding an ingredient archive to a Builder instance).
 
 ### Adding ingredients to a working store
 
@@ -509,15 +504,11 @@ with open("manifest.c2pa", "wb") as f:
 print("Working store saved to archive")
 ```
 
-A Builder containing **only one ingredient and only the ingredient data** (no other ingredient, no other actions) is an ingredient archive. Ingredient archives can be added directly as ingredient to other working stores too.
+A `Builder` containing **only one ingredient and only the ingredient data** (no other ingredient, no other actions) is an ingredient archive. Ingredient archives can be added directly as ingredient to other working stores too.
 
 ### Restoring a working store from archive
 
-There are two ways to load a working store from an archive. They differ in whether the builder's current context (settings) is preserved or not.
-
-#### `with_archive()`
-
-Use `with_archive()` when you need the restored builder to use specific settings that you put on the Builder on instanciation by using a context as parameter of the Builder constructor. Create a `Builder` with a `Context` first, then call `with_archive()` to load the archived manifest definition into it. The archive replaces only the manifest definition; the builder's context and settings are preserved.
+To restore a `Builder` from a working store, use `with_archive()`. The restored `Builder` will have the settings used when the `Builder` was created with a `Context`. The archive replaces only the manifest definition; the `Context` and `Settings` are preserved.
 
 ```py
 # Create context with custom settings and signer
@@ -541,23 +532,14 @@ with open("asset.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
 ```
 
 > [!IMPORTANT]
-> `with_archive()` replaces the builder's manifest definition with the one from the archive. Any definition passed to `Builder()` on instanciation is discarded. An empty dict `{}` is idiomatic for the initial definition when you plan to load an archive immediately after.
+> Calling `with_archive()` replaces the `Builder`'s manifest definition with the one from the archive, discarding any definition passed to `Builder()` when it was created. An empty dict `{}` is idiomatic for the initial definition when you plan to load an archive immediately after.
 
-#### Choosing how to restore from an archive
-
-Use `with_archive()` so that the restored builder uses your `Context` (custom settings and signer). The archive carries only the manifest definition; it does not store context or settings. By creating a `Builder` with a `Context` and then calling `with_archive()`, you ensure the restored builder keeps your settings.
-
-| | `with_archive()` |
-|---|---|
-| **Context preserved** | Yes — settings come from the builder's context |
-| **Usage pattern** | `Builder({}, context=ctx).with_archive(stream)` |
-| **What the archive carries** | Only the manifest definition (not settings, signer, or context) |
 
 ### Two-phase workflow example
 
-#### Phase 1: Prepare manifest
+**Phase 1: Prepare manifest**
 
-This step prepares the manifest on a Builder, and archives it into a Builder archive for later reuse.
+This step prepares the manifest on a `Builder`, and archives it into a `Builder` archive for later reuse.
 
 ```py
 import io
@@ -584,9 +566,9 @@ with open("artwork_manifest.c2pa", "wb") as f:
 print("Working store saved to artwork_manifest.c2pa")
 ```
 
-#### Phase 2: Sign the asset
+**Phase 2: Sign the asset**
 
-Restore the working store with a Context so that settings (e.g. thumbnails on/off) and the signer are applied:
+Restore the working store with a `Context` so that settings (e.g. thumbnails on/off) and the signer are applied:
 
 ```py
 ctx = Context.from_dict({
@@ -603,11 +585,13 @@ with open("artwork.jpg", "rb") as src, open("signed_artwork.jpg", "w+b") as dst:
     builder.sign("image/jpeg", src, dst)
 ```
 
-## Embedded vs external manifests
+## Embedded versus external manifests
 
 By default, manifest stores are **embedded** directly into the asset file. You can also use **external** or **remote** manifest stores.
 
 ### Default: embedded manifest stores
+
+By default, the  manifest store is embedded in the output asset.
 
 ```py
 ctx = Context.from_dict({"builder": {"thumbnail": {"enabled": True}}, "signer": signer})
@@ -623,7 +607,7 @@ reader = Reader("signed.jpg", context=ctx)
 
 ### External manifest stores (no embed)
 
-Prevent embedding the manifest store in the asset:
+Call `set_no_embed()` on the `Builder` instance to prevent embedding the manifest store in the asset. For example:
 
 ```py
 ctx = Context.from_dict({"signer": signer})
@@ -645,7 +629,7 @@ print("Manifest store saved externally to output.c2pa")
 
 ### Remote manifest stores
 
-Reference a manifest store stored at a remote URL:
+Call `set_remote_url()` on the `Builder` instance to reference a manifest store stored at a remote URL. For example:
 
 ```py
 ctx = Context.from_dict({"signer": signer})

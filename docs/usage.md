@@ -52,7 +52,9 @@ manifest_json = json.dumps({
 
 ## Settings, Context, and ContextProvider
 
-The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated. See [Context and settings](context-settings.md) for details.
+The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated. 
+
+See [Context and settings](context-settings.md) for details.
 
 ### Settings
 
@@ -89,9 +91,9 @@ builder = Builder(manifest_json, ctx)
 
 For full details on configuring `Context` and using it with `Reader` and `Builder`, see [Using Context](context-settings.md#using-context) and the [Settings reference](context-settings.md#settings-reference).
 
-### ContextBuilder (fluent API)
+### Using ContextBuilder
 
-`ContextBuilder` provides a fluent interface for constructing a `Context`. Use `Context.builder()` to get started.
+`ContextBuilder` provides a fluent interface for constructing a `Context`. Use `Context.builder()` to get started; for example:
 
 ```py
 from c2pa import Context, ContextBuilder, Settings, Signer
@@ -131,9 +133,9 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 
 If both an explicit signer and a context signer are available, the explicit signer takes precedence. For more details, including remote signers, see [Configuring signers](context-settings.md#configuring-signers).
 
-### ContextProvider (abstract base class)
+### Using ContextProvider
 
-`ContextProvider` is an abstract base class (ABC) that defines the interface `Reader` and `Builder` use to access a context. It requires two properties:
+`ContextProvider` is an abstract base class that defines the interface `Reader` and `Builder` use to access a context. It requires two properties:
 
 - `is_valid` (bool): Whether the provider is in a usable state.
 - `execution_context`: The raw native context pointer (`C2paContext` handle).
@@ -154,31 +156,8 @@ This examines the specified media file for C2PA data and generates a report of a
 
 An asset file may contain many manifests in a manifest store. The most recent manifest is identified by the value of the `active_manifest` field in the manifests map. The manifests may contain binary resources such as thumbnails which can be retrieved with `resource_to_stream` using the associated `identifier` field values and a `uri`.
 
-NOTE: For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
-
-#### Reading without Context
-
-```py
-try:
-    # Create a Reader from a file path.
-    with Reader("path/to/media_file.jpg") as reader:
-        # Print manifest store as JSON.
-        print("Manifest store:", reader.json())
-
-        # Get the active manifest.
-        manifest = json.loads(reader.json())
-        active_manifest = manifest["manifests"][manifest["active_manifest"]]
-        if active_manifest:
-            # Get the uri to the manifest's thumbnail and write it to a file.
-            uri = active_manifest["thumbnail"]["identifier"]
-            with open("thumbnail.jpg", "wb") as f:
-                reader.resource_to_stream(uri, f)
-
-except Exception as err:
-    print(err)
-```
-
-#### Reading with Context
+> [!NOTE]
+> For a comprehensive reference to the JSON manifest structure, see the [Manifest store reference](https://opensource.contentauthenticity.org/docs/manifest/manifest-ref).
 
 Pass a `Context` to apply custom settings to the Reader, such as trust anchors or verification flags.
 
@@ -199,51 +178,8 @@ except Exception as err:
 
 ### Add a signed manifest
 
-**WARNING**: This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production may be insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
-
-#### Signing without Context
-
-Use a `Builder` and `Signer` to add a manifest to an asset:
-
-```py
-try:
-    # Load certificate and key files
-    with open("path/to/cert.pem", "rb") as cert_file, open("path/to/key.pem", "rb") as key_file:
-        cert_data = cert_file.read()
-        key_data = key_file.read()
-
-        # Create signer info with the correct field names
-        signer_info = C2paSignerInfo(
-            alg=C2paSigningAlg.PS256,
-            sign_cert=cert_data,
-            private_key=key_data,
-            ta_url=b"http://timestamp.digicert.com"
-        )
-
-        # Create signer using the defined SignerInfo
-        signer = Signer.from_info(signer_info)
-
-        # Create builder with manifest and add ingredients
-        with Builder(manifest_json) as builder:
-            with open("path/to/ingredient.jpg", "rb") as ingredient_file:
-                ingredient_json = json.dumps({"title": "Ingredient Image"})
-                builder.add_ingredient(ingredient_json, "image/jpeg", ingredient_file)
-
-            # Sign the file (dest must be opened in w+b mode)
-            with open("path/to/source.jpg", "rb") as source, open("path/to/output.jpg", "w+b") as dest:
-                builder.sign(signer, "image/jpeg", source, dest)
-
-        # Verify the signed file by reading data from the signed output file
-        with Reader("path/to/output.jpg") as reader:
-            manifest_store = json.loads(reader.json())
-            active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-            print("Signed manifest:", active_manifest)
-
-except Exception as e:
-    print("Failed to sign manifest store: " + str(e))
-```
-
-#### Signing with Context
+> [!WARNING]
+> This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production is insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
 Pass a `Context` to the Builder to apply custom settings during signing. The signer is still passed explicitly to `builder.sign()`.
 
@@ -284,28 +220,7 @@ except Exception as e:
 
 Instead of working with files, you can read, validate, and add a signed manifest to streamed data. This example is similar to what the file-based example does.
 
-### Read and validate C2PA data using streams
-
-#### Stream reading without Context
-
-```py
-try:
-    with open("path/to/media_file.jpg", "rb") as stream:
-        with Reader("image/jpeg", stream) as reader:
-            print("Manifest store:", reader.json())
-
-            manifest = json.loads(reader.json())
-            active_manifest = manifest["manifests"][manifest["active_manifest"]]
-            if active_manifest:
-                uri = active_manifest["thumbnail"]["identifier"]
-                with open("thumbnail.jpg", "wb") as f:
-                    reader.resource_to_stream(uri, f)
-
-except Exception as err:
-    print(err)
-```
-
-#### Stream reading with Context
+### Read and validate manifest data
 
 ```py
 try:
@@ -322,46 +237,8 @@ except Exception as err:
 
 ### Add a signed manifest to a stream
 
-**WARNING**: These examples access the private key and security certificate directly from the local file system. This is fine during development, but doing so in production may be insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
-
-#### Stream signing without Context
-
-```py
-try:
-    with open("path/to/cert.pem", "rb") as cert_file, open("path/to/key.pem", "rb") as key_file:
-        cert_data = cert_file.read()
-        key_data = key_file.read()
-
-        signer_info = C2paSignerInfo(
-            alg=C2paSigningAlg.PS256,
-            sign_cert=cert_data,
-            private_key=key_data,
-            ta_url=b"http://timestamp.digicert.com"
-        )
-
-        signer = Signer.from_info(signer_info)
-
-        with Builder(manifest_json) as builder:
-            with open("path/to/ingredient.jpg", "rb") as ingredient_file:
-                ingredient_json = json.dumps({"title": "Ingredient Image"})
-                builder.add_ingredient(ingredient_json, "image/jpeg", ingredient_file)
-
-            # Sign using streams (dest must be opened in w+b mode)
-            with open("path/to/source.jpg", "rb") as source, open("path/to/output.jpg", "w+b") as dest:
-                builder.sign(signer, "image/jpeg", source, dest)
-
-            # Verify the signed file
-            with open("path/to/output.jpg", "rb") as stream:
-                with Reader("image/jpeg", stream) as reader:
-                    manifest_store = json.loads(reader.json())
-                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-                    print("Signed manifest:", active_manifest)
-
-except Exception as e:
-    print("Failed to sign manifest store: " + str(e))
-```
-
-#### Stream signing with Context
+> [!WARNING] 
+> This example accesses the private key and security certificate directly from the local file system. This is fine during development, but doing so in production IS insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
 ```py
 try:
