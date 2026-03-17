@@ -11,27 +11,32 @@ TRUST_ANCHORS_URL = "https://contentcredentials.org/trust/anchors.pem"
 
 
 def load_trust_anchors():
+    """Load trust anchors and return a Settings object holding trust configuration."""
     try:
         with urllib.request.urlopen(TRUST_ANCHORS_URL) as response:
             anchors = response.read().decode('utf-8')
-        settings = {
+        return c2pa.Settings.from_dict({
             "verify": {
                 "verify_cert_anchors": True
             },
             "trust": {
                 "trust_anchors": anchors
             }
-        }
-        c2pa.load_settings(settings)
+        })
     except Exception as e:
         print(f"Warning: Could not load trust anchors from {TRUST_ANCHORS_URL}: {e}")
+        return None
 
 
 def read_c2pa_data(media_path: str):
     print(f"Reading {media_path}")
     try:
-        with c2pa.Reader(media_path) as reader:
-            print(reader.detailed_json())
+        settings = load_trust_anchors()
+        # Settings are put into the context, to make sure they propagate.
+        # All objects using this context will have trust configured.
+        with c2pa.Context(settings) as context:
+            with c2pa.Reader(media_path, context=context) as reader:
+                print(reader.detailed_json())
     except Exception as e:
         print(f"Error reading C2PA data from {media_path}: {e}")
         sys.exit(1)
@@ -43,5 +48,4 @@ if __name__ == '__main__':
     else:
         media_path = sys.argv[1]
 
-    load_trust_anchors()
     read_c2pa_data(media_path)

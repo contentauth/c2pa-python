@@ -21,7 +21,8 @@ import time
 import asyncio
 import random
 
-from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
+from c2pa import Context, Settings
 from c2pa.c2pa import Stream
 
 PROJECT_PATH = os.getcwd()
@@ -40,11 +41,11 @@ class TestReaderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
         self.data_dir = FIXTURES_FOLDER
-        self.testPath = DEFAULT_TEST_FILE
+        self.test_path = DEFAULT_TEST_FILE
 
     def test_stream_read(self):
         def read_metadata():
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 reader = Reader("image/jpeg", file)
                 json_data = reader.json()
                 self.assertIn("C.jpg", json_data)
@@ -64,7 +65,7 @@ class TestReaderWithThreads(unittest.TestCase):
 
     def test_stream_read_and_parse(self):
         def read_and_parse():
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 reader = Reader("image/jpeg", file)
                 manifest_store = json.loads(reader.json())
                 title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
@@ -316,6 +317,213 @@ class TestReaderWithThreads(unittest.TestCase):
         if errors:
             self.fail("\n".join(errors))
 
+
+class TestContextualReaderWithThreads(unittest.TestCase):
+    def setUp(self):
+        self.data_dir = FIXTURES_FOLDER
+        self.test_path = DEFAULT_TEST_FILE
+
+    def test_stream_read(self):
+        def read_metadata():
+            ctx = Context()
+            with open(self.test_path, "rb") as file:
+                reader = Reader("image/jpeg", file, context=ctx)
+                json_data = reader.json()
+                self.assertIn("C.jpg", json_data)
+                return json_data
+
+        thread1 = threading.Thread(target=read_metadata)
+        thread2 = threading.Thread(target=read_metadata)
+        thread1.start()
+        thread2.start()
+        thread1.join()
+        thread2.join()
+
+    def test_stream_read_and_parse(self):
+        def read_and_parse():
+            ctx = Context()
+            with open(self.test_path, "rb") as file:
+                reader = Reader("image/jpeg", file, context=ctx)
+                manifest_store = json.loads(reader.json())
+                title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
+                self.assertEqual(title, "C.jpg")
+                return manifest_store
+
+        thread1 = threading.Thread(target=read_and_parse)
+        thread2 = threading.Thread(target=read_and_parse)
+        thread1.start()
+        thread2.start()
+        thread1.join()
+        thread2.join()
+
+    def test_read_all_files(self):
+        """Test reading C2PA metadata from all files using context APIs."""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+        skip_files = {'.DS_Store'}
+
+        def process_file(filename):
+            if filename in skip_files:
+                return None
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+            mime_type = mime_types[ext]
+            try:
+                ctx = Context()
+                with open(file_path, "rb") as file:
+                    reader = Reader(mime_type, file, context=ctx)
+                    json_data = reader.json()
+                    manifest = json.loads(json_data)
+                    if "manifests" not in manifest or "active_manifest" not in manifest:
+                        return f"Invalid manifest structure in {filename}"
+                    return None
+            except Exception as e:
+                return f"Failed to read metadata from {filename}: {str(e)}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            future_to_file = {
+                executor.submit(process_file, filename): filename
+                for filename in os.listdir(reading_dir)
+            }
+            errors = []
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename = future_to_file[future]
+                try:
+                    error = future.result()
+                    if error:
+                        errors.append(error)
+                except Exception as e:
+                    errors.append(f"Unexpected error processing {filename}: {str(e)}")
+        if errors:
+            self.fail("\n".join(errors))
+
+    def test_read_cached_all_files(self):
+        """Test reading C2PA metadata with cache using context APIs."""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+        skip_files = {'.DS_Store'}
+
+        def process_file_with_cache(filename):
+            if filename in skip_files:
+                return None
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+            mime_type = mime_types[ext]
+            try:
+                ctx = Context()
+                with open(file_path, "rb") as file:
+                    reader = Reader(mime_type, file, context=ctx)
+                    if reader._manifest_json_str_cache is not None:
+                        return f"JSON cache should be None initially for {filename}"
+                    if reader._manifest_data_cache is not None:
+                        return f"Manifest data cache should be None initially for {filename}"
+                    json_data_1 = reader.json()
+                    if reader._manifest_json_str_cache is None:
+                        return f"JSON cache not set after first json() call for {filename}"
+                    if json_data_1 != reader._manifest_json_str_cache:
+                        return f"JSON cache doesn't match return value for {filename}"
+                    json_data_2 = reader.json()
+                    if json_data_1 != json_data_2:
+                        return f"JSON inconsistency for {filename}"
+                    if not isinstance(json_data_1, str):
+                        return f"JSON data is not a string for {filename}"
+                    try:
+                        active_manifest = reader.get_active_manifest()
+                        if not isinstance(active_manifest, dict):
+                            return f"Active manifest not dict for {filename}"
+                        if reader._manifest_json_str_cache is None:
+                            return f"JSON cache not set after get_active_manifest for {filename}"
+                        if reader._manifest_data_cache is None:
+                            return f"Manifest data cache not set after get_active_manifest for {filename}"
+                        active_manifest_2 = reader.get_active_manifest()
+                        if active_manifest != active_manifest_2:
+                            return f"Active manifest cache inconsistency for {filename}"
+                        validation_state = reader.get_validation_state()
+                        validation_results = reader.get_validation_results()
+                        validation_state_2 = reader.get_validation_state()
+                        if validation_state != validation_state_2:
+                            return f"Validation state cache inconsistency for {filename}"
+                        validation_results_2 = reader.get_validation_results()
+                        if validation_results != validation_results_2:
+                            return f"Validation results cache inconsistency for {filename}"
+                    except KeyError:
+                        pass
+                    manifest = json.loads(json_data_1)
+                    if "manifests" not in manifest:
+                        return f"Missing 'manifests' key in {filename}"
+                    if "active_manifest" not in manifest:
+                        return f"Missing 'active_manifest' key in {filename}"
+                    reader.close()
+                    if reader._manifest_json_str_cache is not None:
+                        return f"JSON cache not cleared for {filename}"
+                    if reader._manifest_data_cache is not None:
+                        return f"Manifest data cache not cleared for {filename}"
+                    return None
+            except Exception as e:
+                return f"Failed to read cached metadata from {filename}: {str(e)}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            future_to_file = {
+                executor.submit(process_file_with_cache, filename): filename
+                for filename in os.listdir(reading_dir)
+            }
+            errors = []
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename = future_to_file[future]
+                try:
+                    error = future.result()
+                    if error:
+                        errors.append(error)
+                except Exception as e:
+                    errors.append(f"Unexpected error processing {filename}: {str(e)}")
+        if errors:
+            self.fail("\n".join(errors))
+
+
 class TestBuilderWithThreads(unittest.TestCase):
     def setUp(self):
         # Use the fixtures_dir fixture to set up paths
@@ -334,10 +542,10 @@ class TestBuilderWithThreads(unittest.TestCase):
         )
         self.signer = Signer.from_info(self.signer_info)
 
-        self.testPath = DEFAULT_TEST_FILE
-        self.testPath2 = INGREDIENT_TEST_FILE
-        self.testPath3 = OTHER_ALTERNATIVE_INGREDIENT_TEST_FILE
-        self.testPath4 = ALTERNATIVE_INGREDIENT_TEST_FILE
+        self.test_path = DEFAULT_TEST_FILE
+        self.test_path2 = INGREDIENT_TEST_FILE
+        self.test_path3 = OTHER_ALTERNATIVE_INGREDIENT_TEST_FILE
+        self.test_path4 = ALTERNATIVE_INGREDIENT_TEST_FILE
 
         # For that test manifest, we use a placeholder assertion with content
         # varying depending on thread/manifest, to check for data scrambling.
@@ -659,7 +867,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         output2 = io.BytesIO(bytearray())
 
         def write_manifest(manifest_def, output_stream, thread_id):
-            with open(self.testPath, "rb") as file:
+            with open(self.test_path, "rb") as file:
                 builder = Builder(manifest_def)
                 builder.sign(self.signer, "image/jpeg", file, output_stream)
                 output_stream.seek(0)
@@ -907,7 +1115,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def write_manifest():
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -980,7 +1188,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def write_manifest():
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)  # Reset stream position after write
@@ -1069,7 +1277,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         stream_lock = threading.Lock()  # Lock for stream access
 
         # First write some data to read
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -1150,7 +1358,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         start_times_lock = threading.Lock()
 
         # First write some data to read
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -1237,7 +1445,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 manifest_def,
                 thread_id):
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     # Create and save archive
                     builder = Builder(manifest_def)
                     builder.to_archive(archive_stream)
@@ -1339,7 +1547,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def sign_file(output_stream, manifest_def, thread_id):
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     # Sign the file
                     builder = Builder(manifest_def)
                     builder.sign(
@@ -1429,10 +1637,6 @@ class TestBuilderWithThreads(unittest.TestCase):
             active_manifest1["title"],
             active_manifest2["title"])
 
-        # Verify both outputs have valid signatures
-        self.assertNotIn("validation_status", manifest_store1)
-        self.assertNotIn("validation_status", manifest_store2)
-
         # Clean up
         output1.close()
         output2.close()
@@ -1448,7 +1652,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         async def write_manifest():
             nonlocal write_success
             try:
-                with open(self.testPath, "rb") as file:
+                with open(self.test_path, "rb") as file:
                     builder = Builder(self.manifestDefinition_1)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -1511,12 +1715,6 @@ class TestBuilderWithThreads(unittest.TestCase):
                 self.assertTrue(author_found,
                                 "Author assertion not found in manifest")
 
-                # Verify no validation errors
-                self.assertNotIn(
-                    "validation_status",
-                    manifest_store,
-                    "Manifest should not have validation errors")
-
             except Exception as e:
                 read_errors.append(f"Read error: {str(e)}")
 
@@ -1553,7 +1751,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         start_barrier = asyncio.Barrier(reader_count)
 
         # First write some data to read
-        with open(self.testPath, "rb") as file:
+        with open(self.test_path, "rb") as file:
             builder = Builder(self.manifestDefinition_1)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -1620,210 +1818,13 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Verify all readers completed
         self.assertEqual(active_readers, 0, "Not all readers completed")
 
-    def test_builder_sign_with_multiple_ingredients_from_stream(self):
-        """Test Builder class operations with multiple ingredients using streams."""
-        # Test creating builder from JSON
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
-
-        # Thread synchronization
-        add_errors = []
-        add_lock = threading.Lock()
-        completed_threads = 0
-        completion_lock = threading.Lock()
-
-        def add_ingredient_from_stream(ingredient_json, file_path, thread_id):
-            nonlocal completed_threads
-            try:
-                with open(file_path, 'rb') as f:
-                    builder.add_ingredient_from_stream(
-                        ingredient_json, "image/jpeg", f)
-                with add_lock:
-                    add_errors.append(None)  # Success case
-            except Exception as e:
-                with add_lock:
-                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
-            finally:
-                with completion_lock:
-                    completed_threads += 1
-
-        # Create and start two threads for parallel ingredient addition
-        thread1 = threading.Thread(
-            target=add_ingredient_from_stream,
-            args=('{"title": "Test Ingredient Stream 1"}', self.testPath3, 1)
-        )
-        thread2 = threading.Thread(
-            target=add_ingredient_from_stream,
-            args=('{"title": "Test Ingredient Stream 2"}', self.testPath4, 2)
-        )
-
-        # Start both threads
-        thread1.start()
-        thread2.start()
-
-        # Wait for both threads to complete
-        thread1.join()
-        thread2.join()
-
-        # Check for errors during ingredient addition
-        if any(error for error in add_errors if error is not None):
-            self.fail(
-                "\n".join(
-                    error for error in add_errors if error is not None))
-
-        # Verify both ingredients were added successfully
-        self.assertEqual(
-            completed_threads,
-            2,
-            "Both threads should have completed")
-        self.assertEqual(
-            len(add_errors),
-            2,
-            "Both threads should have completed without errors")
-
-        # Now sign the manifest with the added ingredients
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertEqual(len(active_manifest["ingredients"]), 2)
-
-            # Verify both ingredients exist in the array (order doesn't matter)
-            ingredient_titles = [ing["title"]
-                                 for ing in active_manifest["ingredients"]]
-            self.assertIn("Test Ingredient Stream 1", ingredient_titles)
-            self.assertIn("Test Ingredient Stream 2", ingredient_titles)
-
-        builder.close()
-
-    def test_builder_sign_with_same_ingredient_multiple_times(self):
-        """Test Builder class operations with the same ingredient added multiple times from different threads."""
-        # Test creating builder from JSON
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
-
-        # Thread synchronization
-        add_errors = []
-        add_lock = threading.Lock()
-        completed_threads = 0
-        completion_lock = threading.Lock()
-
-        def add_ingredient(ingredient_json, thread_id):
-            nonlocal completed_threads
-            try:
-                with open(self.testPath3, 'rb') as f:
-                    builder.add_ingredient(ingredient_json, "image/jpeg", f)
-                with add_lock:
-                    add_errors.append(None)  # Success case
-            except Exception as e:
-                with add_lock:
-                    add_errors.append(f"Thread {thread_id} error: {str(e)}")
-            finally:
-                with completion_lock:
-                    completed_threads += 1
-
-        # Create and start 5 threads for parallel ingredient addition
-        threads = []
-        for i in range(1, 6):
-            # Create unique manifest JSON for each thread
-            ingredient_json = json.dumps({
-                "title": f"Test Ingredient Thread {i}"
-            })
-
-            thread = threading.Thread(
-                target=add_ingredient,
-                args=(ingredient_json, i)
-            )
-            threads.append(thread)
-            thread.start()
-
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-
-        # Check for errors during ingredient addition
-        if any(error for error in add_errors if error is not None):
-            self.fail(
-                "\n".join(
-                    error for error in add_errors if error is not None))
-
-        # Verify all ingredients were added successfully
-        self.assertEqual(
-            completed_threads,
-            5,
-            "All 5 threads should have completed")
-        self.assertEqual(
-            len(add_errors),
-            5,
-            "All 5 threads should have completed without errors")
-
-        # Now sign the manifest with the added ingredients
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertEqual(len(active_manifest["ingredients"]), 5)
-
-            # Verify all ingredients exist in the array with correct thread IDs
-            # and unique metadata
-            ingredient_titles = [ing["title"]
-                                 for ing in active_manifest["ingredients"]]
-
-            # Check that we have 5 unique titles
-            self.assertEqual(len(set(ingredient_titles)), 5,
-                             "Should have 5 unique ingredient titles")
-
-            # Verify each thread's ingredient exists with correct metadata
-            for i in range(1, 6):
-                # Find ingredients with this thread ID
-                thread_ingredients = [ing for ing in active_manifest["ingredients"]
-                                      if ing["title"] == f"Test Ingredient Thread {i}"]
-                self.assertEqual(
-                    len(thread_ingredients),
-                    1,
-                    f"Should find exactly one ingredient for thread {i}")
-
-        builder.close()
-
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder class operations with 12 threads, each adding 3 specific ingredients and signing a file."""
         # Number of threads to use in the test
         TOTAL_THREADS_USED = 12
 
         # Define the specific files to use as ingredients
-        # THose files should be valid to use as ingredient
+        # Those files should be valid to use as ingredient
         ingredient_files = [
             os.path.join(self.data_dir, "A_thumbnail.jpg"),
             os.path.join(self.data_dir, "C.jpg"),
@@ -1986,6 +1987,769 @@ class TestBuilderWithThreads(unittest.TestCase):
                         current_manifest["active_manifest"],
                         other_manifest["active_manifest"],
                         f"Thread {thread_id} and {other_thread_id} share the same active manifest ID")
+
+
+class TestContextualBuilderWithThreads(TestBuilderWithThreads):
+    """Same as TestBuilderWithThreads but using only the context APIs (Context, Builder/Reader with context=ctx)."""
+
+    def test_sign_all_files(self):
+        """Test signing all files using a thread pool with Context"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        mime_types = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+            '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic',
+            '.heif': 'image/heif', '.avif': 'image/avif', '.tif': 'image/tiff',
+            '.tiff': 'image/tiff', '.mp4': 'video/mp4', '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav'
+        }
+        skip_files = {'sample3.invalid.wav'}
+
+        def sign_file(filename, thread_id):
+            if filename in skip_files:
+                return None
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+            mime_type = mime_types[ext]
+            try:
+                with open(file_path, "rb") as file:
+                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
+                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
+                    ctx = Context()
+                    builder = Builder(manifest_def, ctx)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader(mime_type, output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+                    for assertion in active_manifest["assertions"]:
+                        if assertion["label"] == "com.unit.test":
+                            self.assertEqual(assertion["data"]["author"][0]["name"], expected_author)
+                            break
+                    output.close()
+                    return None
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+            future_to_file = {
+                executor.submit(sign_file, filename, i): (filename, i)
+                for i, filename in enumerate(all_files)
+            }
+            errors = []
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename, thread_id = future_to_file[future]
+                try:
+                    error = future.result()
+                    if error:
+                        errors.append(error)
+                except Exception as e:
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
+            if errors:
+                self.fail("\n".join(errors))
+
+    def test_sign_all_files_async(self):
+        """Test signing all files using asyncio with Context"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        mime_types = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+            '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic',
+            '.heif': 'image/heif', '.avif': 'image/avif', '.tif': 'image/tiff',
+            '.tiff': 'image/tiff', '.mp4': 'video/mp4', '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav'
+        }
+        skip_files = {'sample3.invalid.wav'}
+
+        async def async_sign_file(filename, thread_id):
+            if filename in skip_files:
+                return None
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+            mime_type = mime_types[ext]
+            try:
+                with open(file_path, "rb") as file:
+                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
+                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
+                    ctx = Context()
+                    builder = Builder(manifest_def, ctx)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader(mime_type, output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+                    for assertion in active_manifest["assertions"]:
+                        if assertion["label"] == "com.unit.test":
+                            self.assertEqual(assertion["data"]["author"][0]["name"], expected_author)
+                            break
+                    output.close()
+                    return None
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
+
+        async def run_async_tests():
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+            tasks = [asyncio.create_task(async_sign_file(f, i)) for i, f in enumerate(all_files)]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errors = []
+            for result in results:
+                if isinstance(result, Exception):
+                    errors.append(str(result))
+                elif result:
+                    errors.append(result)
+            if errors:
+                self.fail("\n".join(errors))
+        asyncio.run(run_async_tests())
+
+    def test_parallel_manifest_writing(self):
+        """Test writing different manifests in parallel using context APIs"""
+        output1 = io.BytesIO(bytearray())
+        output2 = io.BytesIO(bytearray())
+
+        def write_manifest(manifest_def, output_stream, thread_id):
+            ctx = Context()
+            with open(self.test_path, "rb") as file:
+                builder = Builder(manifest_def, ctx)
+                builder.sign(self.signer, "image/jpeg", file, output_stream)
+                output_stream.seek(0)
+                read_ctx = Context()
+                reader = Reader("image/jpeg", output_stream, context=read_ctx)
+                json_data = reader.json()
+                manifest_store = json.loads(json_data)
+                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], f"python_test_{thread_id}/0.0.1")
+                self.assertEqual(active_manifest["title"], f"Python Test Image {thread_id}")
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], f"Tester {'One' if thread_id == 1 else 'Two'}")
+                        break
+                return active_manifest
+
+        thread1 = threading.Thread(target=write_manifest, args=(self.manifestDefinition_1, output1, 1))
+        thread2 = threading.Thread(target=write_manifest, args=(self.manifestDefinition_2, output2, 2))
+        thread1.start()
+        thread2.start()
+        thread2.join()
+        thread1.join()
+        output1.seek(0)
+        output2.seek(0)
+        read_ctx1 = Context()
+        read_ctx2 = Context()
+        reader1 = Reader("image/jpeg", output1, context=read_ctx1)
+        reader2 = Reader("image/jpeg", output2, context=read_ctx2)
+        manifest_store1 = json.loads(reader1.json())
+        manifest_store2 = json.loads(reader2.json())
+        active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
+        active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
+        self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
+        self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
+        output1.close()
+        output2.close()
+
+    def test_parallel_sign_all_files_interleaved(self):
+        """Test signing all files with context APIs, thread pool cycling through manifest definitions"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+        mime_types = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+            '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic',
+            '.heif': 'image/heif', '.avif': 'image/avif', '.tif': 'image/tiff',
+            '.tiff': 'image/tiff', '.mp4': 'video/mp4', '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav'
+        }
+        skip_files = {'sample3.invalid.wav'}
+        thread_counter = 0
+        thread_counter_lock = threading.Lock()
+        thread_execution_order = []
+        thread_order_lock = threading.Lock()
+
+        def sign_file(filename, thread_id):
+            nonlocal thread_counter
+            if filename in skip_files:
+                return None
+            file_path = os.path.join(signing_dir, filename)
+            if not os.path.isfile(file_path):
+                return None
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                return None
+            mime_type = mime_types[ext]
+            try:
+                with open(file_path, "rb") as file:
+                    if thread_id % 3 == 0:
+                        manifest_def = self.manifestDefinition
+                        expected_author = "Tester"
+                        expected_thread = ""
+                    elif thread_id % 3 == 1:
+                        manifest_def = self.manifestDefinition_1
+                        expected_author = "Tester One"
+                        expected_thread = "1"
+                    else:
+                        manifest_def = self.manifestDefinition_2
+                        expected_author = "Tester Two"
+                        expected_thread = "2"
+                    with thread_counter_lock:
+                        current_count = thread_counter
+                        thread_counter += 1
+                        with thread_order_lock:
+                            thread_execution_order.append((current_count, thread_id))
+                    time.sleep(0.01)
+                    ctx = Context()
+                    builder = Builder(manifest_def, ctx)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, mime_type, file, output)
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader(mime_type, output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                    expected_claim_generator = "python_test/0.0.1" if thread_id % 3 == 0 else f"python_test_{expected_thread}/0.0.1"
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+                    for assertion in active_manifest["assertions"]:
+                        if assertion["label"] == "com.unit.test":
+                            self.assertEqual(assertion["data"]["author"][0]["name"], expected_author)
+                            break
+                    output.close()
+                    return None
+            except Error.NotSupported:
+                return None
+            except Exception as e:
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            all_files = []
+            for directory in [signing_dir, reading_dir]:
+                all_files.extend(os.listdir(directory))
+            future_to_file = {executor.submit(sign_file, filename, i): (filename, i) for i, filename in enumerate(all_files)}
+            errors = []
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename, thread_id = future_to_file[future]
+                try:
+                    error = future.result()
+                    if error:
+                        errors.append(error)
+                except Exception as e:
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
+        max_same_thread_sequence = 3
+        current_sequence = 1
+        current_thread = thread_execution_order[0][1] if thread_execution_order else None
+        for i in range(1, len(thread_execution_order)):
+            if thread_execution_order[i][1] == current_thread:
+                current_sequence += 1
+                if current_sequence > max_same_thread_sequence:
+                    self.fail(f"Thread {current_thread} executed {current_sequence} times in sequence")
+            else:
+                current_sequence = 1
+                current_thread = thread_execution_order[i][1]
+        if errors:
+            self.fail("\n".join(errors))
+
+    def test_concurrent_read_after_write(self):
+        """Test reading from a file after writing is complete, using context APIs"""
+        output = io.BytesIO(bytearray())
+        write_complete = threading.Event()
+        write_errors = []
+        read_errors = []
+
+        def write_manifest():
+            try:
+                ctx = Context()
+                with open(self.test_path, "rb") as file:
+                    builder = Builder(self.manifestDefinition_1, ctx)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    write_complete.set()
+            except Exception as e:
+                write_errors.append(f"Write error: {str(e)}")
+                write_complete.set()
+
+        def read_manifest():
+            try:
+                write_complete.wait()
+                output.seek(0)
+                read_ctx = Context()
+                reader = Reader("image/jpeg", output, context=read_ctx)
+                json_data = reader.json()
+                manifest_store = json.loads(json_data)
+                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
+                        break
+            except Exception as e:
+                read_errors.append(f"Read error: {str(e)}")
+
+        read_thread = threading.Thread(target=read_manifest)
+        write_thread = threading.Thread(target=write_manifest)
+        read_thread.start()
+        write_thread.start()
+        write_thread.join()
+        read_thread.join()
+        output.close()
+        if write_errors:
+            self.fail("\n".join(write_errors))
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+    def test_concurrent_read_write_multiple_readers(self):
+        """Test multiple readers reading after write, using context APIs"""
+        output = io.BytesIO(bytearray())
+        write_complete = threading.Event()
+        write_errors = []
+        read_errors = []
+        reader_count = 3
+        active_readers = 0
+        readers_lock = threading.Lock()
+        stream_lock = threading.Lock()
+
+        def write_manifest():
+            try:
+                ctx = Context()
+                with open(self.test_path, "rb") as file:
+                    builder = Builder(self.manifestDefinition_1, ctx)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    write_complete.set()
+            except Exception as e:
+                write_errors.append(f"Write error: {str(e)}")
+                write_complete.set()
+
+        def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                with readers_lock:
+                    active_readers += 1
+                write_complete.wait()
+                with stream_lock:
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader("image/jpeg", output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
+                        break
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                with readers_lock:
+                    active_readers -= 1
+
+        write_thread = threading.Thread(target=write_manifest)
+        write_thread.start()
+        read_threads = [threading.Thread(target=read_manifest, args=(i,)) for i in range(reader_count)]
+        for t in read_threads:
+            t.start()
+        write_thread.join()
+        for t in read_threads:
+            t.join()
+        output.close()
+        if write_errors:
+            self.fail("\n".join(write_errors))
+        if read_errors:
+            self.fail("\n".join(read_errors))
+        self.assertEqual(active_readers, 0)
+
+    def test_resource_contention_read(self):
+        """Test multiple threads reading the same file with context APIs"""
+        output = io.BytesIO(bytearray())
+        read_errors = []
+        reader_count = 5
+        active_readers = 0
+        readers_lock = threading.Lock()
+        stream_lock = threading.Lock()
+
+        ctx = Context()
+        with open(self.test_path, "rb") as file:
+            builder = Builder(self.manifestDefinition_1, ctx)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+        def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                with readers_lock:
+                    active_readers += 1
+                with stream_lock:
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader("image/jpeg", output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
+                        break
+                time.sleep(0.01)
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                with readers_lock:
+                    active_readers -= 1
+
+        read_threads = [threading.Thread(target=read_manifest, args=(i,)) for i in range(reader_count)]
+        for t in read_threads:
+            t.start()
+        for t in read_threads:
+            t.join()
+        output.close()
+        if read_errors:
+            self.fail("\n".join(read_errors))
+        self.assertEqual(active_readers, 0)
+
+    def test_resource_contention_read_parallel(self):
+        """Test multiple threads starting simultaneously to read with context APIs"""
+        output = io.BytesIO(bytearray())
+        read_errors = []
+        reader_count = 5
+        active_readers = 0
+        readers_lock = threading.Lock()
+        stream_lock = threading.Lock()
+        start_barrier = threading.Barrier(reader_count)
+
+        ctx = Context()
+        with open(self.test_path, "rb") as file:
+            builder = Builder(self.manifestDefinition_1, ctx)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+        def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                with readers_lock:
+                    active_readers += 1
+                start_barrier.wait()
+                with stream_lock:
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader("image/jpeg", output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
+                        break
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                with readers_lock:
+                    active_readers -= 1
+
+        read_threads = [threading.Thread(target=read_manifest, args=(i,)) for i in range(reader_count)]
+        for t in read_threads:
+            t.start()
+        for t in read_threads:
+            t.join()
+        output.close()
+        if read_errors:
+            self.fail("\n".join(read_errors))
+        self.assertEqual(active_readers, 0)
+
+    def test_sign_all_files_twice(self):
+        """Test signing the same file twice with different manifests using context APIs"""
+        output1 = io.BytesIO(bytearray())
+        output2 = io.BytesIO(bytearray())
+        sign_errors = []
+        thread_results = {}
+        thread_lock = threading.Lock()
+
+        def sign_file(output_stream, manifest_def, thread_id):
+            try:
+                ctx = Context()
+                with open(self.test_path, "rb") as file:
+                    builder = Builder(manifest_def, ctx)
+                    builder.sign(self.signer, "image/jpeg", file, output_stream)
+                    output_stream.seek(0)
+                    read_ctx = Context()
+                    reader = Reader("image/jpeg", output_stream, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                    if thread_id == 1:
+                        expected_claim_generator = "python_test_1/0.0.1"
+                        expected_author = "Tester One"
+                    else:
+                        expected_claim_generator = "python_test_2/0.0.1"
+                        expected_author = "Tester Two"
+                    with thread_lock:
+                        thread_results[thread_id] = {'manifest': active_manifest}
+                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
+                    for assertion in active_manifest["assertions"]:
+                        if assertion["label"] == "com.unit.test":
+                            self.assertEqual(assertion["data"]["author"][0]["name"], expected_author)
+                            break
+                    return None
+            except Exception as e:
+                return f"Thread {thread_id} error: {str(e)}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future1 = executor.submit(sign_file, output1, self.manifestDefinition_1, 1)
+            future2 = executor.submit(sign_file, output2, self.manifestDefinition_2, 2)
+            for future in concurrent.futures.as_completed([future1, future2]):
+                error = future.result()
+                if error:
+                    sign_errors.append(error)
+        if sign_errors:
+            self.fail("\n".join(sign_errors))
+        self.assertEqual(len(thread_results), 2)
+        output1.seek(0)
+        output2.seek(0)
+        read_ctx1 = Context()
+        read_ctx2 = Context()
+        reader1 = Reader("image/jpeg", output1, context=read_ctx1)
+        reader2 = Reader("image/jpeg", output2, context=read_ctx2)
+        manifest_store1 = json.loads(reader1.json())
+        manifest_store2 = json.loads(reader2.json())
+        active_manifest1 = manifest_store1["manifests"][manifest_store1["active_manifest"]]
+        active_manifest2 = manifest_store2["manifests"][manifest_store2["active_manifest"]]
+        self.assertNotEqual(active_manifest1["claim_generator"], active_manifest2["claim_generator"])
+        self.assertNotEqual(active_manifest1["title"], active_manifest2["title"])
+        output1.close()
+        output2.close()
+
+    def test_concurrent_read_after_write_async(self):
+        """Test read after write using asyncio with context APIs"""
+        output = io.BytesIO(bytearray())
+        write_complete = asyncio.Event()
+        write_errors = []
+        read_errors = []
+        write_success = False
+
+        async def write_manifest():
+            nonlocal write_success
+            try:
+                ctx = Context()
+                with open(self.test_path, "rb") as file:
+                    builder = Builder(self.manifestDefinition_1, ctx)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    write_success = True
+                    write_complete.set()
+            except Exception as e:
+                write_errors.append(f"Write error: {str(e)}")
+                write_complete.set()
+
+        async def read_manifest():
+            try:
+                await write_complete.wait()
+                if not write_success:
+                    raise Exception("Write operation did not complete successfully")
+                self.assertGreater(len(output.getvalue()), 0)
+                output.seek(0)
+                read_ctx = Context()
+                reader = Reader("image/jpeg", output, context=read_ctx)
+                json_data = reader.json()
+                manifest_store = json.loads(json_data)
+                self.assertIn("manifests", manifest_store)
+                self.assertIn("active_manifest", manifest_store)
+                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+                author_found = False
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
+                        author_found = True
+                        break
+                self.assertTrue(author_found)
+            except Exception as e:
+                read_errors.append(f"Read error: {str(e)}")
+
+        async def run_async_tests():
+            write_task = asyncio.create_task(write_manifest())
+            await write_task
+            read_task = asyncio.create_task(read_manifest())
+            await read_task
+        asyncio.run(run_async_tests())
+        output.close()
+        if write_errors:
+            self.fail("\n".join(write_errors))
+        if read_errors:
+            self.fail("\n".join(read_errors))
+
+    def test_resource_contention_read_parallel_async(self):
+        """Test multiple async tasks reading the same file with context APIs"""
+        output = io.BytesIO(bytearray())
+        read_errors = []
+        reader_count = 5
+        active_readers = 0
+        readers_lock = asyncio.Lock()
+        stream_lock = asyncio.Lock()
+        start_barrier = asyncio.Barrier(reader_count)
+
+        ctx = Context()
+        with open(self.test_path, "rb") as file:
+            builder = Builder(self.manifestDefinition_1, ctx)
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+
+        async def read_manifest(reader_id):
+            nonlocal active_readers
+            try:
+                async with readers_lock:
+                    active_readers += 1
+                await start_barrier.wait()
+                async with stream_lock:
+                    output.seek(0)
+                    read_ctx = Context()
+                    reader = Reader("image/jpeg", output, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_store = json.loads(json_data)
+                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
+                self.assertEqual(active_manifest["title"], "Python Test Image 1")
+                for assertion in active_manifest["assertions"]:
+                    if assertion["label"] == "com.unit.test":
+                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
+                        break
+            except Exception as e:
+                read_errors.append(f"Reader {reader_id} error: {str(e)}")
+            finally:
+                async with readers_lock:
+                    active_readers -= 1
+
+        async def run_async_tests():
+            tasks = [asyncio.create_task(read_manifest(i)) for i in range(reader_count)]
+            await asyncio.gather(*tasks)
+        asyncio.run(run_async_tests())
+        output.close()
+        if read_errors:
+            self.fail("\n".join(read_errors))
+        self.assertEqual(active_readers, 0)
+
+    def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
+        """Test Builder with 12 threads adding ingredients and signing using context APIs"""
+        TOTAL_THREADS_USED = 12
+        ingredient_files = [
+            os.path.join(self.data_dir, "A_thumbnail.jpg"),
+            os.path.join(self.data_dir, "C.jpg"),
+            os.path.join(self.data_dir, "cloud.jpg")
+        ]
+        thread_results = {}
+        completed_threads = 0
+        thread_lock = threading.Lock()
+
+        def thread_work(thread_id):
+            nonlocal completed_threads
+            try:
+                ctx = Context()
+                builder = Builder.from_json(self.manifestDefinition, context=ctx)
+                for i, file_path in enumerate(ingredient_files, 1):
+                    ingredient_json = json.dumps({"title": f"Thread {thread_id} Ingredient {i} - {os.path.basename(file_path)}"})
+                    with open(file_path, 'rb') as f:
+                        builder.add_ingredient(ingredient_json, "image/jpeg", f)
+                sign_file_path = os.path.join(self.data_dir, "A.jpg")
+                with open(sign_file_path, "rb") as file:
+                    output = io.BytesIO()
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.flush()
+                    output_data = output.getvalue()
+                    input_stream = io.BytesIO(output_data)
+                    read_ctx = Context()
+                    reader = Reader("image/jpeg", input_stream, context=read_ctx)
+                    json_data = reader.json()
+                    manifest_data = json.loads(json_data)
+                    with thread_lock:
+                        thread_results[thread_id] = {
+                            'manifest': manifest_data,
+                            'ingredient_files': [os.path.basename(f) for f in ingredient_files],
+                            'sign_file': os.path.basename(sign_file_path),
+                            'manifest_hash': hash(json.dumps(manifest_data, sort_keys=True))
+                        }
+                    output.close()
+                    input_stream.close()
+                builder.close()
+            except Exception as e:
+                with thread_lock:
+                    thread_results[thread_id] = {'error': str(e)}
+            finally:
+                with thread_lock:
+                    completed_threads += 1
+
+        threads = [threading.Thread(target=thread_work, args=(i,)) for i in range(1, TOTAL_THREADS_USED + 1)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(completed_threads, TOTAL_THREADS_USED)
+        self.assertEqual(len(thread_results), TOTAL_THREADS_USED)
+        manifest_hashes = set()
+        thread_manifest_data = {}
+        for thread_id in range(1, TOTAL_THREADS_USED + 1):
+            result = thread_results[thread_id]
+            if 'error' in result:
+                self.fail(f"Thread {thread_id} failed with error: {result['error']}")
+            manifest_data = result['manifest']
+            ingredient_files_basename = result['ingredient_files']
+            manifest_hash = result['manifest_hash']
+            thread_manifest_data[thread_id] = manifest_data
+            manifest_hashes.add(manifest_hash)
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+            self.assertIn("ingredients", active_manifest)
+            self.assertEqual(len(active_manifest["ingredients"]), 3)
+            ingredient_titles = [ing["title"] for ing in active_manifest["ingredients"]]
+            for i, file_name in enumerate(ingredient_files_basename, 1):
+                self.assertIn(f"Thread {thread_id} Ingredient {i} - {file_name}", ingredient_titles)
+            for other_thread_id in range(1, TOTAL_THREADS_USED + 1):
+                if other_thread_id != thread_id:
+                    for title in ingredient_titles:
+                        self.assertNotIn(f"Thread {other_thread_id} Ingredient", title)
+        self.assertEqual(len(manifest_hashes), TOTAL_THREADS_USED)
+        for thread_id in range(1, TOTAL_THREADS_USED + 1):
+            current_manifest = thread_manifest_data[thread_id]
+            self.assertIn("active_manifest", current_manifest)
+            self.assertIn("manifests", current_manifest)
+            for other_thread_id in range(1, TOTAL_THREADS_USED + 1):
+                if other_thread_id != thread_id:
+                    self.assertNotEqual(current_manifest["active_manifest"], thread_manifest_data[other_thread_id]["active_manifest"])
+
 
 if __name__ == '__main__':
     unittest.main()

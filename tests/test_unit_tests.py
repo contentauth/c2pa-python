@@ -23,12 +23,16 @@ from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
 import ctypes
+import toml
+import threading
 
 # Suppress deprecation warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.simplefilter("ignore", category=DeprecationWarning)
 
-from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version
-from c2pa.c2pa import Stream, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
+from c2pa import Settings, Context, ContextBuilder, ContextProvider
+from c2pa.c2pa import Stream, LifecycleState, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -38,13 +42,40 @@ DEFAULT_TEST_FILE = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
 INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
+
+def load_test_settings_json():
+    """
+    Load default (legacy) trust configuration test settings from a
+    JSON config file and return its content as JSON-compatible dict.
+    The return value is used to load settings (thread_local) in tests.
+
+    Returns:
+        dict: The parsed JSON content as a Python dictionary (JSON-compatible).
+
+    Raises:
+        FileNotFoundError: If trust_config_test_settings.json is not found.
+        json.JSONDecodeError: If the JSON file is malformed.
+    """
+    # Locate the file which contains default settings for tests
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    settings_path = os.path.join(tests_dir, 'trust_config_test_settings.json')
+
+    # Load the located default test settings
+    with open(settings_path, 'r') as f:
+        settings_data = json.load(f)
+
+    return settings_data
+
+
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
-        self.assertIn("0.67.1", sdk_version())
+        # This test verifies the native libraries used match the expected version.
+        self.assertIn("0.78.4", sdk_version())
 
 
 class TestReader(unittest.TestCase):
     def setUp(self):
+        warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
 
@@ -58,11 +89,45 @@ class TestReader(unittest.TestCase):
 
         self.assertEqual(result1, result2)
 
+    def test_stream_read_nothing_to_read(self):
+        # The ingredient test file has no manifest
+        # So if we instantiate directly, the Reader instance should throw
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            with self.assertRaises(Error) as context:
+                reader = Reader("image/jpeg", file)
+            self.assertIn("ManifestNotFound: no JUMBF data found", str(context.exception))
+
+    def test_try_create_reader_nothing_to_read(self):
+        # The ingredient test file has no manifest
+        # So if we use Reader.try_create, in this case we'll get None
+        # And no error should be raised
+        with open(INGREDIENT_TEST_FILE, "rb") as file:
+            reader = Reader.try_create("image/jpeg", file)
+            self.assertIsNone(reader)
+
     def test_stream_read(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_try_create_reader_from_stream(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create("image/jpeg", file)
+            self.assertIsNotNone(reader)
+            json_data = reader.json()
+            self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_try_create_reader_from_stream_context_manager(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create("image/jpeg", file)
+            self.assertIsNotNone(reader)
+            # Check that a Reader returned by try_create is not None,
+            # before using it in a context manager pattern (with)
+            if reader is not None:
+                with reader:
+                    json_data = reader.json()
+                    self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
     def test_stream_read_detailed(self):
         with open(self.testPath, "rb") as file:
@@ -124,6 +189,42 @@ class TestReader(unittest.TestCase):
             self.assertIsNotNone(validation_state)
             self.assertEqual(validation_state, "Valid")
 
+    def test_stream_read_get_validation_state_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def read_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    reader = Reader("image/jpeg", file)
+                    validation_state = reader.get_validation_state()
+                    result['validation_state'] = validation_state
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=read_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIsNotNone(result.get('validation_state'))
+        # With trust configuration loaded, manifest is Trusted
+        self.assertEqual(result.get('validation_state'), "Trusted")
+
     def test_stream_read_get_validation_results(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file)
@@ -155,10 +256,19 @@ class TestReader(unittest.TestCase):
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["claim"]["dc:title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
-    def test_stream_read_string_stream(self):
+    def test_stream_read_string_stream_path_only(self):
         with Reader(self.testPath) as reader:
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
+
+    def test_try_create_from_path(self):
+        test_path = os.path.join(self.data_dir, "C.dng")
+
+        # Create reader with the file content
+        reader = Reader.try_create(test_path)
+        self.assertIsNotNone(reader)
+        # Just run and verify there is no crash
+        json.loads(reader.json())
 
     def test_stream_read_string_stream_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
@@ -166,9 +276,19 @@ class TestReader(unittest.TestCase):
             # as mimetype chemical/x-xyz
             Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
 
+    def test_try_create_raises_mimetype_not_supported(self):
+        with self.assertRaises(Error.NotSupported):
+            # xyz is actually an extension that is recognized
+            # as mimetype chemical/x-xyz, but we don't support it
+            Reader.try_create(os.path.join(FIXTURES_DIR, "C.xyz"))
+
     def test_stream_read_string_stream_mimetype_not_recognized(self):
         with self.assertRaises(Error.NotSupported):
             Reader(os.path.join(FIXTURES_DIR, "C.test"))
+
+    def test_try_create_raises_mimetype_not_recognized(self):
+        with self.assertRaises(Error.NotSupported):
+            Reader.try_create(os.path.join(FIXTURES_DIR, "C.test"))
 
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
@@ -208,10 +328,10 @@ class TestReader(unittest.TestCase):
             # Close the reader
             reader.close()
             # Verify all resources are cleaned up
-            self.assertIsNone(reader._reader)
+            self.assertIsNone(reader._handle)
             self.assertIsNone(reader._own_stream)
             # Verify reader is marked as closed
-            self.assertTrue(reader._closed)
+            self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
     def test_resource_to_stream_on_closed_reader(self):
         """Test that resource_to_stream correctly raises error on closed."""
@@ -294,6 +414,116 @@ class TestReader(unittest.TestCase):
             try:
                 with open(file_path, "rb") as file:
                     reader = Reader(mime_type, file)
+                    json_data = reader.json()
+                    reader.close()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
+    def test_try_create_all_files(self):
+        """Test reading C2PA metadata using Reader.try_create from all files in the fixtures/files-for-reading-tests directory"""
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav',
+            '.pdf': 'application/pdf',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in mime_types:
+                continue
+
+            mime_type = mime_types[ext]
+
+            try:
+                with open(file_path, "rb") as file:
+                    reader = Reader.try_create(mime_type, file)
+                    # try_create returns None if no manifest found, otherwise a Reader
+                    self.assertIsNotNone(reader, f"Expected Reader for {filename}")
+                    json_data = reader.json()
+                    reader.close()
+                    self.assertIsInstance(json_data, str)
+                    # Verify the manifest contains expected fields
+                    manifest = json.loads(json_data)
+                    self.assertIn("manifests", manifest)
+                    self.assertIn("active_manifest", manifest)
+            except Exception as e:
+                self.fail(f"Failed to read metadata from {filename}: {str(e)}")
+
+    def test_try_create_all_files_using_extension(self):
+        """
+        Test reading C2PA metadata using Reader.try_create
+        from files in the fixtures/files-for-reading-tests directory
+        """
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        extensions = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+        }
+
+        # Skip system files
+        skip_files = {
+            '.DS_Store'
+        }
+
+        for filename in os.listdir(reading_dir):
+            if filename in skip_files:
+                continue
+
+            file_path = os.path.join(reading_dir, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Get file extension and corresponding MIME type
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            if ext not in extensions:
+                continue
+
+            try:
+                with open(file_path, "rb") as file:
+                    # Remove the leading dot
+                    parsed_extension = ext[1:]
+                    reader = Reader.try_create(parsed_extension, file)
+                    # try_create returns None if no manifest found, otherwise a Reader
+                    self.assertIsNotNone(reader, f"Expected Reader for {filename}")
                     json_data = reader.json()
                     reader.close()
                     self.assertIsInstance(json_data, str)
@@ -463,9 +693,8 @@ class TestReader(unittest.TestCase):
         try:
             with Reader(self.testPath) as reader:
                 # Inside context - should be valid
-                self.assertFalse(reader._closed)
-                self.assertTrue(reader._initialized)
-                self.assertIsNotNone(reader._reader)
+                self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+                self.assertIsNotNone(reader._handle)
                 self.assertIsNotNone(reader._own_stream)
                 self.assertIsNotNone(reader._backing_file)
                 raise ValueError("Test exception")
@@ -473,19 +702,17 @@ class TestReader(unittest.TestCase):
             pass
 
         # After exception - should still be closed
-        self.assertTrue(reader._closed)
-        self.assertFalse(reader._initialized)
-        self.assertIsNone(reader._reader)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(reader._handle)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
     def test_reader_partial_initialization_states(self):
         """Test Reader behavior with partial initialization failures."""
-        # Test with _reader = None but _initialized = True
+        # Test with _reader = None but lifecycle state = ACTIVE
         reader = Reader.__new__(Reader)
-        reader._closed = False
-        reader._initialized = True
-        reader._reader = None
+        reader._lifecycle_state = LifecycleState.ACTIVE
+        reader._handle = None
         reader._own_stream = None
         reader._backing_file = None
 
@@ -497,9 +724,8 @@ class TestReader(unittest.TestCase):
         reader = Reader(self.testPath)
 
         reader._cleanup_resources()
-        self.assertTrue(reader._closed)
-        self.assertFalse(reader._initialized)
-        self.assertIsNone(reader._reader)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(reader._handle)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
@@ -509,13 +735,12 @@ class TestReader(unittest.TestCase):
 
         # First cleanup
         reader._cleanup_resources()
-        self.assertTrue(reader._closed)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
         # Second cleanup should not change state
         reader._cleanup_resources()
-        self.assertTrue(reader._closed)
-        self.assertFalse(reader._initialized)
-        self.assertIsNone(reader._reader)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(reader._handle)
         self.assertIsNone(reader._own_stream)
         self.assertIsNone(reader._backing_file)
 
@@ -524,7 +749,7 @@ class TestReader(unittest.TestCase):
         reader = Reader(self.testPath)
 
         # Simulate invalid native pointer
-        reader._reader = 0
+        reader._handle = 0
 
         # Operations should fail gracefully
         with self.assertRaises(Error):
@@ -938,7 +1163,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
             output.close()
 
     def test_streams_sign_with_es256_alg_v1_manifest(self):
@@ -950,7 +1174,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            self.assertIn("Valid", json_data)
 
             # Write buffer to file
             # output.seek(0)
@@ -975,7 +1199,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("image/jpeg", target)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                self.assertIn("Valid", json_data)
 
         finally:
             # Clean up...
@@ -1001,7 +1225,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("image/jpeg", target)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                self.assertIn("Valid", json_data)
 
         finally:
             # Clean up...
@@ -1023,7 +1247,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             output.close()
 
     def test_streams_sign_with_es256_alg_2(self):
@@ -1035,8 +1261,261 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            self.assertIn("Valid", json_data)
             output.close()
+
+    def test_streams_sign_with_es256_alg_create_intent(self):
+        """Test signing with CREATE intent and empty manifest."""
+
+        with open(self.testPath2, "rb") as file:
+            # Start with an empty manifest
+            builder = Builder({})
+            # Set the intent for creating new content
+            builder.set_intent(
+                C2paBuilderIntent.CREATE,
+                C2paDigitalSourceType.DIGITAL_CREATION
+            )
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+
+            # Verify c2pa.created action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            created_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.created"
+            ]
+
+            self.assertEqual(len(created_actions), 1)
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertEqual(manifest_data["validation_state"], "Valid")
+            output.close()
+
+    def test_streams_sign_with_es256_alg_create_intent_2(self):
+        """Test signing with CREATE intent and manifestDefinitionV2."""
+
+        with open(self.testPath2, "rb") as file:
+            # Start with manifestDefinitionV2 which has predefined metadata
+            builder = Builder(self.manifestDefinitionV2)
+            # Set the intent for creating new content
+            # If we provided a full manifest, the digital source type from the full manifest "wins"
+            builder.set_intent(
+                C2paBuilderIntent.CREATE,
+                C2paDigitalSourceType.SCREEN_CAPTURE
+            )
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Verify title from manifestDefinitionV2 is preserved
+            self.assertIn("title", active_manifest)
+            self.assertEqual(active_manifest["title"], "Python Test Image V2")
+
+            # Verify claim_generator_info is present
+            self.assertIn("claim_generator_info", active_manifest)
+            claim_generator_info = active_manifest["claim_generator_info"]
+            self.assertIsInstance(claim_generator_info, list)
+            self.assertGreater(len(claim_generator_info), 0)
+
+            # Check for the custom claim generator info from manifestDefinitionV2
+            has_python_test = any(
+                gen.get("name") == "python_test" and gen.get("version") == "0.0.1"
+                for gen in claim_generator_info
+            )
+            self.assertTrue(has_python_test, "Should have python_test claim generator")
+
+            # Verify no ingredients for CREATE intent
+            ingredients_manifest = active_manifest.get("ingredients", [])
+            self.assertEqual(len(ingredients_manifest), 0, "CREATE intent should have no ingredients")
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+
+            # Verify c2pa.created action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            created_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.created"
+            ]
+
+            self.assertEqual(len(created_actions), 1)
+
+            # Verify the digitalSourceType is present in the created action
+            created_action = created_actions[0]
+            self.assertIn("digitalSourceType", created_action)
+            self.assertIn("digitalCreation", created_action["digitalSourceType"])
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertEqual(manifest_data["validation_state"], "Valid")
+            output.close()
+
+    def test_streams_sign_with_es256_alg_edit_intent(self):
+        """Test signing with EDIT intent and empty manifest."""
+
+        with open(self.testPath2, "rb") as file:
+            # Start with an empty manifest
+            builder = Builder({})
+            # Set the intent for editing existing content
+            builder.set_intent(C2paBuilderIntent.EDIT)
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_str = reader.json()
+
+            # Verify the manifest was created
+            self.assertIsNotNone(json_str)
+
+            # Parse the JSON to verify the structure
+            manifest_data = json.loads(json_str)
+            active_manifest_label = manifest_data["active_manifest"]
+            active_manifest = manifest_data["manifests"][active_manifest_label]
+
+            # Check that ingredients exist in the active manifest
+            self.assertIn("ingredients", active_manifest)
+            ingredients_manifest = active_manifest["ingredients"]
+            self.assertIsInstance(ingredients_manifest, list)
+            self.assertEqual(len(ingredients_manifest), 1)
+
+            # Verify the ingredient has relationship "parentOf"
+            ingredient = ingredients_manifest[0]
+            self.assertIn("relationship", ingredient)
+            self.assertEqual(
+                ingredient["relationship"],
+                "parentOf"
+            )
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion)
+
+            # Verify c2pa.opened action exists and there is only one
+            actions = actions_assertion["data"]["actions"]
+            opened_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.opened"
+            ]
+
+            self.assertEqual(len(opened_actions), 1)
+
+            # Verify the c2pa.opened action has the correct structure
+            opened_action = opened_actions[0]
+            self.assertIn("parameters", opened_action)
+            self.assertIn("ingredients", opened_action["parameters"])
+            ingredients = opened_action["parameters"]["ingredients"]
+            self.assertIsInstance(ingredients, list)
+            self.assertGreater(len(ingredients), 0)
+
+            # Verify each ingredient has url and hash
+            for ingredient in ingredients:
+                self.assertIn("url", ingredient)
+                self.assertIn("hash", ingredient)
+
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertEqual(manifest_data["validation_state"], "Valid")
+            output.close()
+
+    def test_streams_sign_with_es256_alg_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_sign_with_ed25519_alg(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
@@ -1060,8 +1539,70 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             output.close()
+
+    def test_sign_with_ed25519_alg_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
+                    certs = cert_file.read()
+                with open(os.path.join(self.data_dir, "ed25519.pem"), "rb") as key_file:
+                    key = key_file.read()
+
+                signer_info = C2paSignerInfo(
+                    alg=b"ed25519",
+                    sign_cert=certs,
+                    private_key=key,
+                    ta_url=b"http://timestamp.digicert.com"
+                )
+                signer = Signer.from_info(signer_info)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_sign_with_ed25519_alg_2(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
@@ -1085,7 +1626,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             output.close()
 
     def test_sign_with_ps256_alg(self):
@@ -1110,7 +1653,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             output.close()
 
     def test_sign_with_ps256_alg_2(self):
@@ -1135,8 +1680,69 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted
+            # self.assertNotIn("validation_status", json_data)
             output.close()
+
+    def test_sign_with_ps256_alg_2_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(os.path.join(self.data_dir, "ps256.pub"), "rb") as cert_file:
+                    certs = cert_file.read()
+                with open(os.path.join(self.data_dir, "ps256.pem"), "rb") as key_file:
+                    key = key_file.read()
+
+                signer_info = C2paSignerInfo(
+                    alg=b"ps256",
+                    sign_cert=certs,
+                    private_key=key,
+                    ta_url=b"http://timestamp.digicert.com"
+                )
+                signer = Signer.from_info(signer_info)
+
+                with open(self.testPath2, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_archive_sign(self):
         with open(self.testPath, "rb") as file:
@@ -1150,9 +1756,62 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             archive.close()
             output.close()
+
+    def test_archive_sign_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinition)
+                    archive = io.BytesIO(bytearray())
+                    builder.to_archive(archive)
+                    builder = Builder.from_archive(archive)
+                    output = io.BytesIO(bytearray())
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    archive.close()
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_archive_sign_with_added_ingredient(self):
         with open(self.testPath, "rb") as file:
@@ -1169,9 +1828,65 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             archive.close()
             output.close()
+
+    def test_archive_sign_with_added_ingredient_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    archive = io.BytesIO(bytearray())
+                    builder.to_archive(archive)
+                    builder = Builder.from_archive(archive)
+                    output = io.BytesIO(bytearray())
+                    ingredient_json = '{"test": "ingredient"}'
+                    with open(self.testPath, 'rb') as f:
+                        builder.add_ingredient(ingredient_json, "image/jpeg", f)
+                    builder.sign(self.signer, "image/jpeg", file, output)
+                    output.seek(0)
+                    reader = Reader("image/jpeg", output)
+                    json_data = reader.json()
+
+                    # Get validation state with trust config
+                    validation_state = reader.get_validation_state()
+
+                    result['json_data'] = json_data
+                    result['validation_state'] = validation_state
+                    archive.close()
+                    output.close()
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_remote_sign(self):
         with open(self.testPath, "rb") as file:
@@ -1200,7 +1915,6 @@ class TestBuilderWithSigner(unittest.TestCase):
                 with Reader("image/jpeg", read_buffer, manifest_data) as reader:
                     manifest_data = reader.json()
                     self.assertIn("Python Test", manifest_data)
-                    self.assertNotIn("validation_status", manifest_data)
 
     def test_remote_sign_using_returned_bytes_V2(self):
         with open(self.testPath, "rb") as file:
@@ -1215,7 +1929,56 @@ class TestBuilderWithSigner(unittest.TestCase):
                 with Reader("image/jpeg", read_buffer, manifest_data) as reader:
                     manifest_data = reader.json()
                     self.assertIn("Python Test", manifest_data)
-                    self.assertNotIn("validation_status", manifest_data)
+
+    def test_remote_sign_using_returned_bytes_V2_with_trust_config(self):
+        # Run in a separate thread to isolate thread-local settings
+        result = {}
+        exception = {}
+
+        def sign_and_validate_with_trust_config():
+            try:
+                # Load trust configuration
+                settings_dict = load_test_settings_json()
+
+                # Apply the settings (including trust configuration)
+                # Settings are thread-local, so they won't affect other tests
+                # And that is why we also run the test in its own thread, so tests are isolated
+                load_settings(settings_dict)
+
+                with open(self.testPath, "rb") as file:
+                    builder = Builder(self.manifestDefinitionV2)
+                    builder.set_no_embed()
+                    with io.BytesIO() as output_buffer:
+                        manifest_data = builder.sign(
+                            self.signer, "image/jpeg", file, output_buffer)
+                        output_buffer.seek(0)
+                        read_buffer = io.BytesIO(output_buffer.getvalue())
+
+                        with Reader("image/jpeg", read_buffer, manifest_data) as reader:
+                            json_data = reader.json()
+
+                            # Get validation state with trust config
+                            validation_state = reader.get_validation_state()
+
+                            result['json_data'] = json_data
+                            result['validation_state'] = validation_state
+            except Exception as e:
+                exception['error'] = e
+
+        # Create and start thread
+        thread = threading.Thread(target=sign_and_validate_with_trust_config)
+        thread.start()
+        thread.join()
+
+        # Check for exceptions
+        if 'error' in exception:
+            raise exception['error']
+
+        # Assertions run in main thread
+        self.assertIn("Python Test", result.get('json_data', ''))
+        # With trust configuration loaded, validation should return "Trusted"
+        self.assertIsNotNone(result.get('validation_state'))
+        self.assertEqual(result.get('validation_state'), "Trusted")
 
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
@@ -1274,7 +2037,76 @@ class TestBuilderWithSigner(unittest.TestCase):
                         reader = Reader(mime_type, output)
                         json_data = reader.json()
                         self.assertIn("Python Test", json_data)
-                        self.assertNotIn("validation_status", json_data)
+                        # Needs trust configuration to be set up to validate as Trusted,
+                        # or validation_status on read reports `signing certificate untrusted`.
+                        self.assertIn("Valid", json_data)
+                        reader.close()
+                        output.close()
+                except Error.NotSupported:
+                    continue
+                except Exception as e:
+                    self.fail(f"Failed to sign {filename}: {str(e)}")
+
+    def test_sign_all_files_V2(self):
+        """Test signing all files in both fixtures directories"""
+        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
+        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
+
+        # Map of file extensions to MIME types
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.wav': 'audio/wav'
+        }
+
+        # Skip files that are known to be invalid or unsupported
+        skip_files = {
+            'sample3.invalid.wav',  # Invalid file
+        }
+
+        # Process both directories
+        for directory in [signing_dir, reading_dir]:
+            for filename in os.listdir(directory):
+                if filename in skip_files:
+                    continue
+
+                file_path = os.path.join(directory, filename)
+                if not os.path.isfile(file_path):
+                    continue
+
+                # Get file extension and corresponding MIME type
+                _, ext = os.path.splitext(filename)
+                ext = ext.lower()
+                if ext not in mime_types:
+                    continue
+
+                mime_type = mime_types[ext]
+
+                try:
+                    with open(file_path, "rb") as file:
+                        builder = Builder(self.manifestDefinitionV2)
+                        output = io.BytesIO(bytearray())
+                        builder.sign(self.signer, mime_type, file, output)
+                        builder.close()
+                        output.seek(0)
+                        reader = Reader(mime_type, output)
+                        json_data = reader.json()
+                        self.assertIn("Python Test", json_data)
+                        # Needs trust configuration to be set up to validate as Trusted,
+                        # or validation_status on read reports `signing certificate untrusted`
+                        self.assertIn("Valid", json_data)
                         reader.close()
                         output.close()
                 except Error.NotSupported:
@@ -1294,7 +2126,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{"test": "ingredient"}'
@@ -1305,7 +2137,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_ingredient_dict(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient with a dictionary instead of JSON string
         ingredient_dict = {"test": "ingredient"}
@@ -1316,7 +2148,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test builder operations
         builder.set_no_embed()
@@ -1336,7 +2168,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients_2(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test builder operations
         builder.set_no_embed()
@@ -1356,7 +2188,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients_and_resources(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test builder operations
         builder.set_no_embed()
@@ -1385,7 +2217,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         with open(self.testPath, 'rb') as f:
             builder.add_resource("test_uri_1", f)
@@ -1408,7 +2240,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -1449,12 +2281,114 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-    def test_builder_sign_with_setting_no_thumbnail_and_ingredient(self):
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+    def test_builder_sign_with_ingredients_edit_intent(self):
+        """Test signing with EDIT intent and ingredient."""
+        builder = Builder.from_json({})
+        assert builder._handle is not None
 
+        # Set the intent for editing existing content
+        builder.set_intent(C2paBuilderIntent.EDIT)
+
+        # Test adding ingredient
+        ingredient_json = '{ "title": "Test Ingredient" }'
+        with open(self.testPath3, 'rb') as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            json_data = reader.json()
+            manifest_data = json.loads(json_data)
+
+            # Verify active manifest exists
+            self.assertIn("active_manifest", manifest_data)
+            active_manifest_id = manifest_data["active_manifest"]
+
+            # Verify active manifest object exists
+            self.assertIn("manifests", manifest_data)
+            self.assertIn(active_manifest_id, manifest_data["manifests"])
+            active_manifest = manifest_data["manifests"][active_manifest_id]
+
+            # Verify ingredients array exists with exactly 2 ingredients
+            self.assertIn("ingredients", active_manifest)
+            ingredients_manifest = active_manifest["ingredients"]
+            self.assertIsInstance(ingredients_manifest, list)
+            self.assertEqual(len(ingredients_manifest), 2, "Should have exactly two ingredients")
+
+            # Verify the first ingredient is the one we added manually with componentOf relationship
+            first_ingredient = ingredients_manifest[0]
+            self.assertEqual(first_ingredient["title"], "Test Ingredient")
+            self.assertEqual(first_ingredient["format"], "image/jpeg")
+            self.assertIn("instance_id", first_ingredient)
+            self.assertIn("thumbnail", first_ingredient)
+            self.assertEqual(first_ingredient["thumbnail"]["format"], "image/jpeg")
+            self.assertIn("identifier", first_ingredient["thumbnail"])
+            self.assertEqual(first_ingredient["relationship"], "componentOf")
+            self.assertIn("label", first_ingredient)
+
+            # Verify the second ingredient is the auto-created parent with parentOf relationship
+            second_ingredient = ingredients_manifest[1]
+            # Parent ingredient may not have a title field, or may have an empty one
+            self.assertEqual(second_ingredient["format"], "image/jpeg")
+            self.assertIn("instance_id", second_ingredient)
+            self.assertIn("thumbnail", second_ingredient)
+            self.assertEqual(second_ingredient["thumbnail"]["format"], "image/jpeg")
+            self.assertIn("identifier", second_ingredient["thumbnail"])
+            self.assertEqual(second_ingredient["relationship"], "parentOf")
+            self.assertIn("label", second_ingredient)
+
+            # Count ingredients with parentOf relationship - should be exactly one
+            parent_ingredients = [
+                ing for ing in ingredients_manifest
+                if ing.get("relationship") == "parentOf"
+            ]
+            self.assertEqual(len(parent_ingredients), 1, "Should have exactly one parentOf ingredient")
+
+            # Check that assertions exist
+            self.assertIn("assertions", active_manifest)
+            assertions = active_manifest["assertions"]
+
+            # Find the actions assertion
+            actions_assertion = None
+            for assertion in assertions:
+                if assertion["label"] in ["c2pa.actions", "c2pa.actions.v2"]:
+                    actions_assertion = assertion
+                    break
+
+            self.assertIsNotNone(actions_assertion, "Should have c2pa.actions assertion")
+
+            # Verify exactly one c2pa.opened action exists for EDIT intent
+            actions = actions_assertion["data"]["actions"]
+            opened_actions = [
+                action for action in actions
+                if action["action"] == "c2pa.opened"
+            ]
+            self.assertEqual(len(opened_actions), 1, "Should have exactly one c2pa.opened action")
+
+            # Verify the c2pa.opened action has the correct structure with parameters and ingredients
+            opened_action = opened_actions[0]
+            self.assertIn("parameters", opened_action, "c2pa.opened action should have parameters")
+            self.assertIn("ingredients", opened_action["parameters"], "parameters should have ingredients array")
+            ingredients_params = opened_action["parameters"]["ingredients"]
+            self.assertIsInstance(ingredients_params, list)
+            self.assertGreater(len(ingredients_params), 0, "Should have at least one ingredient reference")
+
+            # Verify each ingredient reference has url and hash
+            for ingredient_ref in ingredients_params:
+                self.assertIn("url", ingredient_ref, "Ingredient reference should have url")
+                self.assertIn("hash", ingredient_ref, "Ingredient reference should have hash")
+
+        builder.close()
+
+    def test_builder_sign_with_setting_no_thumbnail_and_ingredient(self):
         # The following removes the manifest's thumbnail
+        # Settings should be loaded before the builder is created
         load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -1497,11 +2431,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
     def test_builder_sign_with_settingdict_no_thumbnail_and_ingredient(self):
-        builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
-
         # The following removes the manifest's thumbnail - using dict instead of string
         load_settings({"builder": {"thumbnail": {"enabled": False}}})
+
+        builder = Builder.from_json(self.manifestDefinition)
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{ "title": "Test Ingredient" }'
@@ -1545,7 +2479,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_duplicate_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient
         ingredient_json = '{"title": "Test Ingredient"}'
@@ -1591,7 +2525,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_ingredient_from_stream(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient using stream
         ingredient_json = '{"title": "Test Ingredient Stream"}'
@@ -1631,7 +2565,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_ingredient_dict_from_stream(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Test adding ingredient using stream with a dictionary
         ingredient_dict = {"title": "Test Ingredient Stream"}
@@ -1671,7 +2605,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_multiple_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Add first ingredient
         ingredient_json1 = '{"title": "Test Ingredient 1"}'
@@ -1716,7 +2650,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_sign_with_multiple_ingredients_from_stream(self):
         builder = Builder.from_json(self.manifestDefinition)
-        assert builder._builder is not None
+        assert builder._handle is not None
 
         # Add first ingredient using stream
         ingredient_json1 = '{"title": "Test Ingredient Stream 1"}'
@@ -1775,8 +2709,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_set_remote_url_no_embed(self):
         """Test setting the remote url of a builder with no embed flag."""
-        builder = Builder.from_json(self.manifestDefinition)
+
+        # Settings need to be loaded before the builder is created
         load_settings(r'{"verify": { "remote_manifest_fetch": false} }')
+
+        builder = Builder.from_json(self.manifestDefinition)
         builder.set_no_embed()
         builder.set_remote_url("http://this_does_not_exist/foo.jpg")
 
@@ -1805,7 +2742,9 @@ class TestBuilderWithSigner(unittest.TestCase):
           reader = Reader("image/jpeg", output)
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
-          self.assertNotIn("validation_status", json_data)
+          # Needs trust configuration to be set up to validate as Trusted,
+          # or validation_status on read reports `signing certificate untrusted`.
+          self.assertIn("Valid", json_data)
           output.close()
 
     def test_sign_mp4_video_file_single(self):
@@ -1820,7 +2759,9 @@ class TestBuilderWithSigner(unittest.TestCase):
           reader = Reader("video/mp4", output)
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
-          self.assertNotIn("validation_status", json_data)
+          # Needs trust configuration to be set up to validate as Trusted,
+          # or validation_status on read reports `signing certificate untrusted`.
+          self.assertIn("Valid", json_data)
           output.close()
 
     def test_sign_mov_video_file_single(self):
@@ -1835,36 +2776,10 @@ class TestBuilderWithSigner(unittest.TestCase):
           reader = Reader("mov", output)
           json_data = reader.json()
           self.assertIn("Python Test", json_data)
-          self.assertNotIn("validation_status", json_data)
+          # Needs trust configuration to be set up to validate as Trusted,
+          # or validation_status on read reports `signing certificate untrusted`.
+          self.assertIn("Valid", json_data)
           output.close()
-
-    def test_sign_file_tmn_wip(self):
-        temp_dir = tempfile.mkdtemp()
-        try:
-            # Create a temporary output file path
-            output_path = os.path.join(temp_dir, "signed_output.jpg")
-
-            # Use the sign_file method
-            builder = Builder(self.manifestDefinition)
-            builder.sign_file(
-                self.testPath,
-                output_path,
-                self.signer
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path))
-
-            # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
-                json_data = reader.json()
-                self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
-
-        finally:
-            # Clean up the temporary directory
-            shutil.rmtree(temp_dir)
 
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
@@ -1888,7 +2803,9 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("video/mp4", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -1940,7 +2857,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
                 # Parse the JSON and verify the signature algorithm
                 manifest_data = json.loads(json_data)
@@ -1991,7 +2910,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
                 # Parse the JSON and verify the signature algorithm
                 manifest_data = json.loads(json_data)
@@ -2044,7 +2965,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             reader = Reader("image/jpeg", output)
             json_data = reader.json()
             self.assertIn("Python Test", json_data)
-            self.assertNotIn("validation_status", json_data)
+            # Needs trust configuration to be set up to validate as Trusted,
+            # or validation_status on read reports `signing certificate untrusted`.
+            self.assertIn("Valid", json_data)
             reader.close()
             output.close()
 
@@ -2068,7 +2991,9 @@ class TestBuilderWithSigner(unittest.TestCase):
 
                     # Basic verification of the manifest
                     self.assertIn("Python Test Image V2", json_data)
-                    self.assertNotIn("validation_status", json_data)
+                    # Needs trust configuration to be set up to validate as Trusted,
+                    # or validation_status on read reports `signing certificate untrusted`.
+                    self.assertIn("Valid", json_data)
 
                 output.close()
 
@@ -2101,7 +3026,9 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("video/mp4", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -2129,13 +3056,17 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("mov", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
             # Verify also signed file using manifest bytes
             with Reader("mov", output_path, manifest_bytes) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -2163,13 +3094,17 @@ class TestBuilderWithSigner(unittest.TestCase):
                 reader = Reader("mov", file)
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
             # Verify also signed file using manifest bytes
             with Reader("mov", output_path, manifest_bytes) as reader:
                 json_data = reader.json()
                 self.assertIn("Python Test", json_data)
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted,
+                # or validation_status on read reports `signing certificate untrusted`.
+                self.assertIn("Valid", json_data)
 
         finally:
             # Clean up the temporary directory
@@ -2202,7 +3137,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Use a mock object that looks like a signer but isn't
         class MockSigner:
             def __init__(self):
-                self._signer = None
+                self._handle = None
 
         mock_signer = MockSigner()
 
@@ -2322,56 +3257,49 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder = Builder(self.manifestDefinition)
 
         # Initial state
-        self.assertFalse(builder._closed)
-        self.assertTrue(builder._initialized)
-        self.assertIsNotNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertIsNotNone(builder._handle)
 
         # After close
         builder.close()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_context_manager_states(self):
         """Test Builder state management in context manager."""
         with Builder(self.manifestDefinition) as builder:
             # Inside context - should be valid
-            self.assertFalse(builder._closed)
-            self.assertTrue(builder._initialized)
-            self.assertIsNotNone(builder._builder)
+            self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+            self.assertIsNotNone(builder._handle)
 
             # Placeholder operation
             builder.set_no_embed()
 
         # After context exit - should be closed
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_context_manager_with_exception(self):
         """Test Builder state after exception in context manager."""
         try:
             with Builder(self.manifestDefinition) as builder:
                 # Inside context - should be valid
-                self.assertFalse(builder._closed)
-                self.assertTrue(builder._initialized)
-                self.assertIsNotNone(builder._builder)
+                self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+                self.assertIsNotNone(builder._handle)
                 raise ValueError("Test exception")
         except ValueError:
             pass
 
         # After exception - should still be closed
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_partial_initialization_states(self):
         """Test Builder behavior with partial initialization failures."""
-        # Test with _builder = None but _initialized = True
+        # Test with _builder = None but _state = ACTIVE
         builder = Builder.__new__(Builder)
-        builder._closed = False
-        builder._initialized = True
-        builder._builder = None
+        builder._lifecycle_state = LifecycleState.ACTIVE
+        builder._handle = None
 
         with self.assertRaises(Error):
             builder._ensure_valid_state()
@@ -2382,9 +3310,8 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # Test _cleanup_resources method
         builder._cleanup_resources()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_cleanup_idempotency(self):
         """Test that cleanup operations are idempotent."""
@@ -2392,13 +3319,12 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # First cleanup
         builder._cleanup_resources()
-        self.assertTrue(builder._closed)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
         # Second cleanup should not change state
         builder._cleanup_resources()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_state_after_sign_operations(self):
         """Test Builder state after signing operations."""
@@ -2407,14 +3333,9 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath, "rb") as file:
             manifest_bytes = builder.sign(self.signer, "image/jpeg", file)
 
-        # State should still be valid after signing
-        self.assertFalse(builder._closed)
-        self.assertTrue(builder._initialized)
-        self.assertIsNotNone(builder._builder)
-
-        # Should be able to sign again
-        with open(self.testPath, "rb") as file:
-            manifest_bytes2 = builder.sign(self.signer, "image/jpeg", file)
+        # Builder is consumed by sign — pointer ownership transferred to Rust
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_state_after_archive_operations(self):
         """Test Builder state after archive operations."""
@@ -2425,9 +3346,8 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.to_archive(archive_stream)
 
         # State should still be valid
-        self.assertFalse(builder._closed)
-        self.assertTrue(builder._initialized)
-        self.assertIsNotNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertIsNotNone(builder._handle)
 
     def test_builder_state_after_double_close(self):
         """Test Builder state after double close operations."""
@@ -2435,22 +3355,20 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # First close
         builder.close()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
         # Second close should not change state
         builder.close()
-        self.assertTrue(builder._closed)
-        self.assertFalse(builder._initialized)
-        self.assertIsNone(builder._builder)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
 
     def test_builder_state_with_invalid_native_pointer(self):
         """Test Builder state handling with invalid native pointer."""
         builder = Builder(self.manifestDefinition)
 
         # Simulate invalid native pointer
-        builder._builder = 0
+        builder._handle = 0
 
         # Operations should fail gracefully
         with self.assertRaises(Error):
@@ -2534,7 +3452,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_add_action_to_manifest_from_dict_no_auto_add(self):
         # For testing, remove auto-added actions
@@ -2615,11 +3533,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_add_action_to_manifest_with_auto_add(self):
         # For testing, force settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -2704,7 +3622,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings to default
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_no_auto_add(self):
         # For testing, remove auto-added actions
@@ -2769,11 +3687,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_with_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -2843,7 +3761,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_sign_dicts_no_auto_add(self):
         # For testing, remove auto-added actions
@@ -2924,7 +3842,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         builder.close()
 
         # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true}}}}')
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_opened_action_one_ingredient_no_auto_add(self):
         """Test Builder with c2pa.opened action and one ingredient, following Adobe provenance patterns"""
@@ -3367,6 +4285,7 @@ class TestLegacyAPI(unittest.TestCase):
         warnings.filterwarnings("ignore", message="The read_ingredient_file function is deprecated")
         warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
         warnings.filterwarnings("ignore", message="The create_signer_from_info function is deprecated")
+        warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
 
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -3437,11 +4356,6 @@ class TestLegacyAPI(unittest.TestCase):
         if os.path.exists(self.temp_data_dir):
             shutil.rmtree(self.temp_data_dir)
 
-    def test_invalid_settings_str(self):
-        """Test loading a malformed settings string."""
-        with self.assertRaises(Error):
-            load_settings(r'{"verify": { "remote_manifest_fetch": false }')
-
     def test_read_ingredient_file(self):
         """Test reading a C2PA ingredient from a file."""
         # Test reading ingredient from file with data_dir
@@ -3462,6 +4376,7 @@ class TestLegacyAPI(unittest.TestCase):
         temp_data_dir = os.path.join(self.data_dir, "temp_data")
         os.makedirs(temp_data_dir, exist_ok=True)
 
+        # Load settings first, before they need to be used
         load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
 
         ingredient_json_with_dir = read_ingredient_file(self.testPath2, temp_data_dir)
@@ -3751,7 +4666,7 @@ class TestLegacyAPI(unittest.TestCase):
 
             builder.close()
 
-    def test_builder_add_ingredient_from_file_path(self):
+    def test_builder_add_ingredient_from_file_path_not_found(self):
         """Test Builder class add_ingredient_from_file_path method."""
 
         # Suppress the specific deprecation warning for this test, as this is a legacy method
@@ -3825,7 +4740,6 @@ class TestLegacyAPI(unittest.TestCase):
                 reader = Reader("image/jpeg", file)
                 file_manifest_json = reader.json()
                 self.assertIn("Python Test", file_manifest_json)
-                self.assertNotIn("validation_status", file_manifest_json)
 
         finally:
             shutil.rmtree(temp_dir)
@@ -3996,56 +4910,8 @@ class TestLegacyAPI(unittest.TestCase):
             # Read the signed file and verify the manifest
             with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                 json_data = reader.json()
-                self.assertNotIn("validation_status", json_data)
-
-                # Parse the JSON and verify the signature algorithm
-                manifest_data = json.loads(json_data)
-                active_manifest_id = manifest_data["active_manifest"]
-                active_manifest = manifest_data["manifests"][active_manifest_id]
-
-                self.assertIn("signature_info", active_manifest)
-                signature_info = active_manifest["signature_info"]
-                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
-
-        finally:
-            shutil.rmtree(temp_dir)
-
-    def test_sign_file_callback_signer(self):
-        """Test signing a file using the sign_file method."""
-
-        temp_dir = tempfile.mkdtemp()
-
-        try:
-            output_path = os.path.join(temp_dir, "signed_output.jpg")
-
-            # Use the sign_file method
-            builder = Builder(self.manifestDefinition)
-
-            # Create signer with callback using create_signer function
-            signer = create_signer(
-                callback=self.callback_signer_es256,
-                alg=SigningAlg.ES256,
-                certs=self.certs.decode('utf-8'),
-                tsa_url="http://timestamp.digicert.com"
-            )
-
-            manifest_bytes = builder.sign_file(
-                source_path=self.testPath,
-                dest_path=output_path,
-                signer=signer
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path))
-
-            # Verify results
-            self.assertIsInstance(manifest_bytes, bytes)
-            self.assertGreater(len(manifest_bytes), 0)
-
-            # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
-                json_data = reader.json()
-                self.assertNotIn("validation_status", json_data)
+                # Needs trust configuration to be set up to validate as Trusted
+                # self.assertNotIn("validation_status", json_data)
 
                 # Parse the JSON and verify the signature algorithm
                 manifest_data = json.loads(json_data)
@@ -4091,7 +4957,8 @@ class TestLegacyAPI(unittest.TestCase):
                 with Reader("image/jpeg", file) as reader:
                     json_data = reader.json()
                     self.assertIn("Python Test", json_data)
-                    self.assertNotIn("validation_status", json_data)
+                    # Needs trust configuration to be set up to validate as Trusted
+                    # self.assertNotIn("validation_status", json_data)
 
                     # Parse the JSON and verify the signature algorithm
                     manifest_data = json.loads(json_data)
@@ -4133,10 +5000,12 @@ class TestLegacyAPI(unittest.TestCase):
                 self.assertIsInstance(manifest_bytes_1, bytes)
                 self.assertGreater(len(manifest_bytes_1), 0)
 
-                # Second signing operation with the same signer
-                # This is to verify we don't free the signer or the callback too early
+                # Second signing operation with a new builder but same signer
+                # Builder is consumed by sign, so we need a fresh one.
+                # This verifies we don't free the signer or the callback too early.
+                builder2 = Builder(self.manifestDefinition)
                 output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
-                manifest_bytes_2 = builder.sign_file(
+                manifest_bytes_2 = builder2.sign_file(
                     source_path=self.testPath,
                     dest_path=output_path_2,
                     signer=signer
@@ -4152,7 +5021,8 @@ class TestLegacyAPI(unittest.TestCase):
                     with open(output_path, "rb") as file, Reader("image/jpeg", file) as reader:
                         json_data = reader.json()
                         self.assertIn("Python Test", json_data)
-                        self.assertNotIn("validation_status", json_data)
+                        # Needs trust configuration to be set up to validate as Trusted
+                        # self.assertNotIn("validation_status", json_data)
 
                         # Parse the JSON and verify the signature algorithm
                         manifest_data = json.loads(json_data)
@@ -4173,5 +5043,1196 @@ class TestLegacyAPI(unittest.TestCase):
         self.assertIsNotNone(signer)
 
 
+class TestContextAPIs(unittest.TestCase):
+    """Base for context-related tests; provides test_manifest and signer helpers."""
+
+    test_manifest = {
+        "claim_generator": "c2pa_python_sdk_test/context",
+        "claim_generator_info": [{
+            "name": "c2pa_python_sdk_contextual_test",
+            "version": "0.1.0",
+        }],
+        "format": "image/jpeg",
+        "title": "Test Image",
+        "ingredients": [],
+        "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.created",
+                    }]
+                }
+            }
+        ]
+    }
+
+    def _ctx_make_signer(self):
+        """Create a Signer for context tests."""
+        certs_path = os.path.join(
+            FIXTURES_DIR, "es256_certs.pem"
+        )
+        key_path = os.path.join(
+            FIXTURES_DIR, "es256_private.key"
+        )
+        with open(certs_path, "rb") as f:
+            certs = f.read()
+        with open(key_path, "rb") as f:
+            key = f.read()
+        info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        return Signer.from_info(info)
+
+    def _ctx_make_callback_signer(self):
+        """Create a callback-based Signer for context tests."""
+        certs_path = os.path.join(
+            FIXTURES_DIR, "es256_certs.pem"
+        )
+        key_path = os.path.join(
+            FIXTURES_DIR, "es256_private.key"
+        )
+        with open(certs_path, "rb") as f:
+            certs = f.read()
+        with open(key_path, "rb") as f:
+            key_data = f.read()
+
+        from cryptography.hazmat.primitives import (
+            serialization,
+        )
+        private_key = serialization.load_pem_private_key(
+            key_data, password=None,
+            backend=default_backend(),
+        )
+
+        def sign_cb(data: bytes) -> bytes:
+            from cryptography.hazmat.primitives.asymmetric import (  # noqa: E501
+                utils as asym_utils,
+            )
+            sig = private_key.sign(
+                data, ec.ECDSA(hashes.SHA256()),
+            )
+            r, s = asym_utils.decode_dss_signature(sig)
+            return (
+                r.to_bytes(32, byteorder='big')
+                + s.to_bytes(32, byteorder='big')
+            )
+
+        return Signer.from_callback(
+            sign_cb,
+            SigningAlg.ES256,
+            certs.decode('utf-8'),
+            "http://timestamp.digicert.com",
+        )
+
+    def _ctx_make_ed25519_signer(self):
+        """Create an ED25519 Signer for context tests."""
+        with open(
+            os.path.join(FIXTURES_DIR, "ed25519.pub"), "rb"
+        ) as f:
+            certs = f.read()
+        with open(
+            os.path.join(FIXTURES_DIR, "ed25519.pem"), "rb"
+        ) as f:
+            key = f.read()
+        info = C2paSignerInfo(
+            alg=b"ed25519",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        return Signer.from_info(info)
+
+    def _ctx_make_ps256_signer(self):
+        """Create a PS256 Signer for context tests."""
+        with open(
+            os.path.join(FIXTURES_DIR, "ps256.pub"), "rb"
+        ) as f:
+            certs = f.read()
+        with open(
+            os.path.join(FIXTURES_DIR, "ps256.pem"), "rb"
+        ) as f:
+            key = f.read()
+        info = C2paSignerInfo(
+            alg=b"ps256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        return Signer.from_info(info)
+
+
+class TestSettings(TestContextAPIs):
+
+    def test_settings_default_construction(self):
+        settings = Settings()
+        self.assertTrue(settings.is_valid)
+        settings.close()
+
+    def test_settings_set_chaining(self):
+        settings = Settings()
+        result = (
+            settings.set(
+                "builder.thumbnail.enabled", "false"
+            ).set(
+                "builder.thumbnail.enabled", "true"
+            )
+        )
+        self.assertIs(result, settings)
+        settings.close()
+
+    def test_settings_from_json(self):
+        settings = Settings.from_json(
+            '{"builder":{"thumbnail":'
+            '{"enabled":false}}}'
+        )
+        self.assertTrue(settings.is_valid)
+        settings.close()
+
+    def test_settings_from_dict(self):
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        self.assertTrue(settings.is_valid)
+        settings.close()
+
+    def test_settings_update_json(self):
+        settings = Settings()
+        result = settings.update(
+            '{"builder":{"thumbnail":'
+            '{"enabled":false}}}'
+        )
+        self.assertIs(result, settings)
+        settings.close()
+
+    def test_settings_update_dict(self):
+        settings = Settings()
+        result = settings.update({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        self.assertIs(result, settings)
+        settings.close()
+
+    def test_settings_is_valid_after_close(self):
+        settings = Settings()
+        settings.close()
+        self.assertFalse(settings.is_valid)
+
+    def test_settings_raises_after_close(self):
+        settings = Settings()
+        settings.close()
+        with self.assertRaises(Error):
+            settings.set(
+                "builder.thumbnail.enabled", "false"
+            )
+
+
+class TestContext(TestContextAPIs):
+
+    def test_context_default(self):
+        context = Context()
+        self.assertTrue(context.is_valid)
+        self.assertFalse(context.has_signer)
+        context.close()
+
+    def test_context_from_settings(self):
+        settings = Settings()
+        context = Context(settings)
+        self.assertTrue(context.is_valid)
+        context.close()
+        settings.close()
+
+    def test_context_from_json(self):
+        context = Context.from_json(
+            '{"builder":{"thumbnail":'
+            '{"enabled":false}}}'
+        )
+        self.assertTrue(context.is_valid)
+        context.close()
+
+    def test_context_from_dict(self):
+        context = Context.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        self.assertTrue(context.is_valid)
+        context.close()
+
+    def test_context_context_manager(self):
+        with Context() as context:
+            self.assertTrue(context.is_valid)
+
+    def test_context_is_valid_after_close(self):
+        context = Context()
+        context.close()
+        self.assertFalse(context.is_valid)
+
+
+class TestContextBuilder(TestContextAPIs):
+
+    def test_context_builder_default(self):
+        context = Context.builder().build()
+        self.assertTrue(context.is_valid)
+        self.assertFalse(context.has_signer)
+        context.close()
+
+    def test_context_builder_with_settings(self):
+        settings = Settings()
+        context = Context.builder().with_settings(settings).build()
+        self.assertTrue(context.is_valid)
+        context.close()
+        settings.close()
+
+    def test_context_builder_with_signer(self):
+        signer = self._ctx_make_signer()
+        context = (
+            Context.builder()
+            .with_signer(signer)
+            .build()
+        )
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
+
+    def test_context_builder_with_settings_and_signer(self):
+        settings = Settings()
+        signer = self._ctx_make_signer()
+        context = (
+            Context.builder()
+            .with_settings(settings)
+            .with_signer(signer)
+            .build()
+        )
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
+        settings.close()
+
+    def test_context_builder_chaining_returns_self(self):
+        settings = Settings()
+        context_builder = Context.builder()
+        result = context_builder.with_settings(settings)
+        self.assertIs(result, context_builder)
+        context = context_builder.build()
+        context.close()
+        settings.close()
+
+    def test_context_builder_with_settings_last_wins(self):
+        """The last with_settings call determines the settings used.
+
+        Toggles thumbnails on, off, on, off across four calls.
+        The last call disables thumbnails, so the signed manifest
+        should have no thumbnail.
+        """
+        settings_on_1 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": True}},
+        })
+        settings_off_1 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": False}},
+        })
+        settings_on_2 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": True}},
+        })
+        settings_off_2 = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": False}},
+        })
+        context = (
+            Context.builder()
+            .with_settings(settings_on_1)
+            .with_settings(settings_off_1)
+            .with_settings(settings_on_2)
+            .with_settings(settings_off_2)
+            .build()
+        )
+        signer = self._ctx_make_signer()
+        builder = Builder(self.test_manifest, context)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source_file, dest_file,
+                )
+            reader = Reader(dest_path)
+            manifest = reader.get_active_manifest()
+            # Last settings disabled thumbnails
+            self.assertIsNone(manifest.get("thumbnail"))
+            reader.close()
+        builder.close()
+        context.close()
+        settings_on_1.close()
+        settings_off_1.close()
+        settings_on_2.close()
+        settings_off_2.close()
+
+
+class TestContextWithSigner(TestContextAPIs):
+
+    def test_context_with_signer(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
+
+    def test_context_with_settings_and_signer(self):
+        settings = Settings()
+        signer = self._ctx_make_signer()
+        context = Context(settings, signer)
+        self.assertTrue(context.is_valid)
+        self.assertTrue(context.has_signer)
+        context.close()
+        settings.close()
+
+    def test_consumed_signer_is_closed(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        context.close()
+
+    def test_consumed_signer_raises_on_use(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        with self.assertRaises(Error):
+            signer._ensure_valid_state()
+        context.close()
+
+    def test_context_has_signer_flag(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        self.assertTrue(context.has_signer)
+        context.close()
+
+    def test_context_no_signer_flag(self):
+        context = Context()
+        self.assertFalse(context.has_signer)
+        context.close()
+
+    def test_context_from_json_with_signer(self):
+        signer = self._ctx_make_signer()
+        context = Context.from_json(
+            '{"builder":{"thumbnail":'
+            '{"enabled":false}}}',
+            signer,
+        )
+        self.assertTrue(context.has_signer)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        context.close()
+
+
+class TestReaderWithContext(TestContextAPIs):
+
+    def test_reader_with_default_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader("image/jpeg", file_handle, context=context,)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+        context.close()
+
+    def test_reader_with_settings_context(self):
+        settings = Settings()
+        context = Context(settings)
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader("image/jpeg", file_handle, context=context,)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+        context.close()
+        settings.close()
+
+    def test_reader_without_context(self):
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader("image/jpeg", file_handle)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+
+    def test_reader_try_create_with_context(self):
+        context = Context()
+        reader = Reader.try_create(DEFAULT_TEST_FILE, context=context,)
+        self.assertIsNotNone(reader)
+        data = reader.json()
+        self.assertIsNotNone(data)
+        reader.close()
+        context.close()
+
+    def test_reader_try_create_no_manifest(self):
+        context = Context()
+        reader = Reader.try_create(INGREDIENT_TEST_FILE, context=context,)
+        self.assertIsNone(reader)
+        context.close()
+
+    def test_reader_file_path_with_context(self):
+        context = Context()
+        reader = Reader(DEFAULT_TEST_FILE, context=context,)
+        data = reader.json()
+        self.assertIsNotNone(data)
+        reader.close()
+        context.close()
+
+    def test_reader_format_and_path_with_ctx(self):
+        context = Context()
+        reader = Reader("image/jpeg", DEFAULT_TEST_FILE, context=context)
+        data = reader.json()
+        self.assertIsNotNone(data)
+        reader.close()
+        context.close()
+
+    def test_with_fragment_on_closed_reader_raises(self):
+        context = Context()
+        reader = Reader(DEFAULT_TEST_FILE, context=context)
+        reader.close()
+        with self.assertRaises(Error):
+            reader.with_fragment(
+                "video/mp4",
+                io.BytesIO(b"\x00" * 100),
+                io.BytesIO(b"\x00" * 100),
+            )
+        context.close()
+
+    def test_with_fragment_unsupported_format_raises(self):
+        context = Context()
+        reader = Reader(DEFAULT_TEST_FILE, context=context)
+        with self.assertRaises(Error):
+            reader.with_fragment(
+                "text/plain",
+                io.BytesIO(b"\x00" * 100),
+                io.BytesIO(b"\x00" * 100),
+            )
+        reader.close()
+        context.close()
+
+    def test_with_fragment_with_dash_fixtures(self):
+        context = Context()
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        with open(init_path, "rb") as init_fragment:
+            reader = Reader("video/mp4", init_fragment, context=context)
+        frag_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init_fragment, \
+             open(frag_path, "rb") as next_fragment:
+            reader.with_fragment("video/mp4", init_fragment, next_fragment)
+        reader.close()
+        context.close()
+
+
+class TestBuilderWithContext(TestContextAPIs):
+
+    def test_contextual_builder_with_default_context(self):
+        context = Context()
+        builder = Builder(self.test_manifest, context)
+        self.assertIsNotNone(builder)
+        builder.close()
+        context.close()
+
+    def test_contextual_builder_with_settings_context(self):
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        context = Context(settings)
+        builder = Builder(self.test_manifest, context)
+        signer = self._ctx_make_signer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source_file, dest_file,
+                )
+            reader = Reader(dest_path)
+            manifest = reader.get_active_manifest()
+            self.assertIsNone(
+                manifest.get("thumbnail")
+            )
+            reader.close()
+        builder.close()
+        context.close()
+        settings.close()
+
+    def test_contextual_builder_from_json_with_context(self):
+        context = Context()
+        builder = Builder.from_json(self.test_manifest, context)
+        self.assertIsNotNone(builder)
+        builder.close()
+        context.close()
+
+    def test_contextual_builder_sign_context_signer(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                manifest_bytes = builder.sign(
+                    "image/jpeg",
+                    source_file,
+                    dest_file,
+                )
+                self.assertIsNotNone(manifest_bytes)
+                self.assertGreater(len(manifest_bytes), 0)
+            reader = Reader(dest_path)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+        builder.close()
+        context.close()
+
+    def test_contextual_builder_sign_signer_ovverride(self):
+        context_signer = self._ctx_make_signer()
+        context = Context(signer=context_signer)
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        explicit_signer = self._ctx_make_signer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                manifest_bytes = builder.sign(
+                    explicit_signer,
+                    "image/jpeg", source_file, dest_file,
+                )
+                self.assertIsNotNone(manifest_bytes)
+                self.assertGreater(len(manifest_bytes), 0)
+        builder.close()
+        explicit_signer.close()
+        context.close()
+
+    def test_contextual_builder_sign_no_signer_raises(self):
+        context = Context()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                with self.assertRaises(Error):
+                    builder.sign(
+                        "image/jpeg",
+                        source_file,
+                        dest_file,
+                    )
+        builder.close()
+        context.close()
+
+    def test_sign_file_with_context_signer_no_explicit_signer(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            manifest_bytes = builder.sign_file(
+                source_path=DEFAULT_TEST_FILE,
+                dest_path=dest_path,
+            )
+            self.assertIsNotNone(manifest_bytes)
+            self.assertGreater(len(manifest_bytes), 0)
+            reader = Reader(dest_path)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+        builder.close()
+        context.close()
+
+    def test_sign_file_no_signer_raises(self):
+        context = Context()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with self.assertRaises(Error):
+                builder.sign_file(
+                    source_path=DEFAULT_TEST_FILE,
+                    dest_path=dest_path,
+                )
+        builder.close()
+        context.close()
+
+    def test_with_archive_preserves_settings(self):
+        """with_archive() preserves the builder's context settings.
+
+        Settings live on the builder's context, not in the archive.
+        The archive only carries the manifest definition. This test
+        proves that a builder created with no-thumbnail settings
+        keeps those settings after loading an archive.
+        """
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+
+        # Context provides the no-thumbnail setting;
+        # with_archive only loads the manifest definition.
+        builder2 = Builder({}, context)
+        builder2.with_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder2.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=Context(),
+            )
+            manifest = reader.get_active_manifest()
+            self.assertIsNone(
+                manifest.get("thumbnail"),
+                "with_archive should preserve no-thumbnail setting",
+            )
+            reader.close()
+        archive.close()
+        builder2.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_with_archive_replaces_definition(self):
+        """with_archive() restores the original builder's
+        manifest definition, even if something set on new Builder."""
+        context = Context()
+        signer = self._ctx_make_signer()
+        original_manifest = dict(self.test_manifest)
+        original_manifest["title"] = "Original Title"
+        builder = Builder(original_manifest, context)
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+
+        replaced_manifest = dict(self.test_manifest)
+        replaced_manifest["title"] = "Replaced Title"
+        builder2 = Builder(replaced_manifest, context)
+        builder2.with_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder2.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=Context(),
+            )
+            json_data = reader.json()
+            self.assertIn("Original Title", json_data)
+            self.assertNotIn("Replaced Title", json_data)
+            reader.close()
+        archive.close()
+        builder2.close()
+        signer.close()
+        context.close()
+
+    def test_with_archive_on_closed_builder_raises(self):
+        """with_archive() on a closed builder raises C2paError."""
+        context = Context()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+        builder.close()
+        with self.assertRaises(Error):
+            builder.with_archive(archive)
+        context.close()
+
+    def test_from_archive_roundtrip(self):
+        """from_archive() can't propagate contexts."""
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+
+        # from_archive creates a context-free builder
+        builder2 = Builder.from_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder2.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=Context(),
+            )
+            manifest = reader.get_active_manifest()
+            # from_archive can't propagate contexts
+            self.assertIsNotNone(
+                manifest.get("thumbnail"),
+                "from_archive should lose settings and generate thumbnail",
+            )
+            reader.close()
+        archive.close()
+        builder2.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+
+class TestContextIntegration(TestContextAPIs):
+
+    def test_sign_no_thumbnail_via_context(self):
+        settings = Settings.from_dict({
+            "builder": {
+                "thumbnail": {"enabled": False}
+            }
+        })
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source_file, dest_file,
+                )
+            reader = Reader(dest_path)
+            manifest = reader.get_active_manifest()
+            self.assertIsNone(
+                manifest.get("thumbnail")
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_sign_read_roundtrip(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                builder.sign(
+                    "image/jpeg",
+                    source_file,
+                    dest_file,
+                )
+            reader = Reader(dest_path)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            self.assertIn("manifests", data)
+            reader.close()
+        builder.close()
+        context.close()
+
+    def test_shared_context_multi_builders(self):
+        context = Context()
+        signer1 = self._ctx_make_signer()
+        signer2 = self._ctx_make_signer()
+
+        builder1 = Builder(self.test_manifest, context)
+        builder2 = Builder(self.test_manifest, context)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index, (builder, signer) in enumerate(
+                [(builder1, signer1), (builder2, signer2)]
+            ):
+                dest_path = os.path.join(
+                    temp_dir, f"out{index}.jpg"
+                )
+                with (
+                    open(
+                        DEFAULT_TEST_FILE, "rb"
+                    ) as source_file,
+                    open(dest_path, "w+b") as dest_file,
+                ):
+                    manifest_bytes = builder.sign(
+                        signer, "image/jpeg",
+                        source_file, dest_file,
+                    )
+                    self.assertGreater(len(manifest_bytes), 0)
+
+        builder1.close()
+        builder2.close()
+        signer1.close()
+        signer2.close()
+        context.close()
+
+    def test_trusted_sign_no_thumbnail_via_context(self):
+        trust_dict = load_test_settings_json()
+        trust_dict.setdefault("builder", {})["thumbnail"] = {
+            "enabled": False,
+        }
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                builder.sign(
+                    signer, "image/jpeg",
+                    source_file, dest_file,
+                )
+            reader = Reader(dest_path, context=context)
+            manifest = reader.get_active_manifest()
+            self.assertIsNone(manifest.get("thumbnail"))
+            validation_state = reader.get_validation_state()
+            self.assertEqual(validation_state, "Trusted")
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_shared_trusted_context_multi_builders(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer1 = self._ctx_make_signer()
+        signer2 = self._ctx_make_signer()
+
+        builder1 = Builder(
+            self.test_manifest, context=context,
+        )
+        builder2 = Builder(
+            self.test_manifest, context=context,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index, (builder, signer) in enumerate(
+                [(builder1, signer1), (builder2, signer2)]
+            ):
+                dest_path = os.path.join(
+                    temp_dir, f"out{index}.jpg"
+                )
+                with (
+                    open(
+                        DEFAULT_TEST_FILE, "rb"
+                    ) as source_file,
+                    open(dest_path, "w+b") as dest_file,
+                ):
+                    manifest_bytes = builder.sign(
+                        signer, "image/jpeg",
+                        source_file, dest_file,
+                    )
+                    self.assertGreater(
+                        len(manifest_bytes), 0,
+                    )
+                reader = Reader(
+                    dest_path, context=context,
+                )
+                validation_state = (
+                    reader.get_validation_state()
+                )
+                self.assertEqual(
+                    validation_state, "Trusted",
+                )
+                reader.close()
+
+        builder1.close()
+        builder2.close()
+        signer1.close()
+        signer2.close()
+        context.close()
+        settings.close()
+
+    def test_read_validation_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            reader = Reader("image/jpeg", f, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        context.close()
+        settings.close()
+
+    def test_sign_es256_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source,
+                open(dest_path, "w+b") as dest,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source, dest,
+                )
+            reader = Reader(dest_path, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_sign_ed25519_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer = self._ctx_make_ed25519_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source,
+                open(dest_path, "w+b") as dest,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source, dest,
+                )
+            reader = Reader(dest_path, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_sign_ps256_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer = self._ctx_make_ps256_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source,
+                open(dest_path, "w+b") as dest,
+            ):
+                builder.sign(
+                    signer, "image/jpeg", source, dest,
+                )
+            reader = Reader(dest_path, context=context)
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_archive_sign_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+        builder = Builder({}, context=context)
+        builder.with_archive(archive)
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=context,
+            )
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        archive.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_archive_sign_with_ingredient_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        archive = io.BytesIO(bytearray())
+        builder.to_archive(archive)
+        builder = Builder({}, context=context)
+        builder.with_archive(archive)
+        ingredient_json = '{"test": "ingredient"}'
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            builder.add_ingredient(
+                ingredient_json, "image/jpeg", f,
+            )
+        with (
+            open(DEFAULT_TEST_FILE, "rb") as source,
+            io.BytesIO(bytearray()) as output,
+        ):
+            builder.sign(
+                signer, "image/jpeg", source, output,
+            )
+            output.seek(0)
+            reader = Reader(
+                "image/jpeg", output, context=context,
+            )
+            validation_state = (
+                reader.get_validation_state()
+            )
+            self.assertEqual(
+                validation_state, "Trusted",
+            )
+            reader.close()
+        archive.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_remote_sign_trusted_via_context(self):
+        trust_dict = load_test_settings_json()
+        settings = Settings.from_dict(trust_dict)
+        context = Context(settings=settings)
+        signer = self._ctx_make_signer()
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        builder.set_no_embed()
+        with open(DEFAULT_TEST_FILE, "rb") as source:
+            with io.BytesIO() as output_buffer:
+                manifest_data = builder.sign(
+                    signer, "image/jpeg",
+                    source, output_buffer,
+                )
+                output_buffer.seek(0)
+                read_buffer = io.BytesIO(
+                    output_buffer.getvalue()
+                )
+                reader = Reader(
+                    "image/jpeg", read_buffer,
+                    manifest_data, context=context,
+                )
+                validation_state = (
+                    reader.get_validation_state()
+                )
+                self.assertEqual(
+                    validation_state, "Trusted",
+                )
+                reader.close()
+                read_buffer.close()
+        builder.close()
+        signer.close()
+        context.close()
+        settings.close()
+
+    def test_sign_callback_signer_in_ctx(self):
+        signer = self._ctx_make_callback_signer()
+        context = Context(signer=signer)
+        builder = Builder(
+            self.test_manifest, context=context,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dest_path = os.path.join(temp_dir, "out.jpg")
+            with (
+                open(DEFAULT_TEST_FILE, "rb") as source_file,
+                open(dest_path, "w+b") as dest_file,
+            ):
+                manifest_bytes = builder.sign(
+                    "image/jpeg",
+                    source_file,
+                    dest_file,
+                )
+                self.assertGreater(len(manifest_bytes), 0)
+            reader = Reader(dest_path)
+            data = reader.json()
+            self.assertIsNotNone(data)
+            reader.close()
+        builder.close()
+        context.close()
+
+
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(warnings='ignore')

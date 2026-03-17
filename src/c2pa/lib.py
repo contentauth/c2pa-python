@@ -239,7 +239,7 @@ def dynamically_load_library(
             logger.info(f"Using library name from env var C2PA_LIBRARY_NAME: {env_lib_name}")
         try:
             possible_paths = _get_possible_search_paths()
-            lib = _load_single_library(env_lib_name, possible_paths)
+            lib, load_errors = _load_single_library(env_lib_name, possible_paths)
             if lib:
                 return lib
             else:

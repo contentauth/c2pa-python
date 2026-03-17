@@ -100,6 +100,9 @@ with c2pa.Signer.from_info(signer_info) as signer:
 print("\nReading signed image metadata:")
 with open(output_dir + "C_signed.jpg", "rb") as file:
     with c2pa.Reader("image/jpeg", file) as reader:
+        # The validation state will depend on loaded trust settings.
+        # Without loaded trust settings,
+        # the manifest validation_state will be "Invalid".
         print(reader.json())
 
 print("\nExample completed successfully!")
