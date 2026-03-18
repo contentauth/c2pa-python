@@ -564,7 +564,7 @@ When building an ingredient archive, you can set `instance_id` on the ingredient
 `instance_id` is only for identification and catalog lookups. It cannot be used as a linking key in `ingredientIds` when linking ingredient archives to actions — use `label` for that (see [Linking an archived ingredient to an action](#linking-an-archived-ingredient-to-an-action)).
 
 ```py
-# Set instance_id when adding the ingredient to the archive builder
+# Set instance_id when adding the ingredient to the archive builder.
 builder = Builder.from_json(manifest_json)
 with open("photo-A.jpg", "rb") as f:
     builder.add_ingredient(
@@ -778,31 +778,30 @@ An ingredient archive is a serialized `Builder` containing exactly one ingredien
 flowchart LR
     IA["ingredient_archive.c2pa"] -->|"Reader(application/c2pa)"| JSON["JSON + resources"]
     JSON --> TH["Thumbnail"]
-    JSON --> AM["Active manifest?"]
+    JSON --> AM["Active manifest (only if ingredient has Content Credentials)"]
     JSON --> VS["Validation status"]
     JSON --> REL["Relationship"]
 ```
 
 ```py
-# Open the ingredient archive
+# Open the ingredient archive.
 with open("ingredient_archive.c2pa", "rb") as archive_file:
     reader = Reader("application/c2pa", archive_file, context=ctx)
     parsed = json.loads(reader.json())
     active = parsed["active_manifest"]
     manifest = parsed["manifests"][active]
 
-    # An ingredient archive has exactly one ingredient
+    # An ingredient archive has exactly one ingredient.
     ingredient = manifest["ingredients"][0]
 
-    # Relationship
-    relationship = ingredient["relationship"]  # e.g. "parentOf", "componentOf", "inputTo"
+    # Relationship e.g. "parentOf", "componentOf", "inputTo".
+    relationship = ingredient["relationship"]
 
-    # Instance ID (optional, set by the caller via add_ingredient or derived from XMP metadata)
+    # Instance ID (optional, can be set by caller).
     instance_id = ingredient.get("instance_id")
 
     # Active manifest:
-    # When present, the ingredient was a signed asset and its manifest label
-    # points into the top-level "manifests" dictionary.
+    # When present, the ingredient had content credentials itself.
     if "active_manifest" in ingredient:
         ing_manifest_label = ingredient["active_manifest"]
         ing_manifest = parsed["manifests"][ing_manifest_label]
@@ -810,8 +809,7 @@ with open("ingredient_archive.c2pa", "rb") as archive_file:
 
     # Validation status.
     # The top-level "validation_status" array covers the entire manifest store,
-    # including this ingredient's manifest. An empty or absent array means
-    # no validation errors were found.
+    # including this ingredient's manifest.
     if "validation_status" in parsed:
         for status in parsed["validation_status"]:
             print(f"{status['code']}: {status['explanation']}")
@@ -831,7 +829,7 @@ After reading the ingredient details from an ingredient archive, the ingredient 
 
 Labels are only used as build-time linking keys. The SDK may reassign the actual label in the signed manifest.
 
-Assign a `label` in the `add_ingredient()` call and reference that same label in `ingredientIds`. This works whether or not the ingredient has an `instance_id`.
+Assign a `label` in the `add_ingredient()` call and reference that same label in `ingredientIds` to link an ingredient to an action.
 
 ```py
 ctx = Context.from_dict({
@@ -839,14 +837,15 @@ ctx = Context.from_dict({
     "signer": signer,
 })
 
-# Read the ingredient archive
+# Read the ingredient archive.
 with open("ingredient_archive.c2pa", "rb") as archive_file:
     reader = Reader("application/c2pa", archive_file, context=ctx)
     parsed = json.loads(reader.json())
     active = parsed["active_manifest"]
     ingredient = parsed["manifests"][active]["ingredients"][0]
 
-    # Use a caller-assigned label as the linking key
+    # Use a label as the linking key.
+    # Any label can be used, as long as it uniquely identifies the link.
     manifest_json = {
         "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
         "assertions": [
@@ -867,7 +866,7 @@ with open("ingredient_archive.c2pa", "rb") as archive_file:
     }
 
     with Builder(manifest_json, context=ctx) as builder:
-        # The label on the ingredient matches the entry in ingredientIds
+        # The label on the ingredient must match the entry in ingredientIds on the action.
         archive_file.seek(0)
         builder.add_ingredient(
             {
@@ -963,18 +962,7 @@ By default, `sign()` embeds the manifest directly inside the output asset file.
 
 ### Remove the manifest from the asset entirely
 
-Use `set_no_embed()` so the signed asset contains no embedded manifest. The manifest bytes are returned from `sign()` and can be stored separately (as a sidecar file, on a server, etc.):
-
-```mermaid
-flowchart LR
-    subgraph Default["Default (embedded)"]
-        A1[Output Asset] --- A2[Image data + C2PA manifest]
-    end
-
-    subgraph NoEmbed["With set_no_embed()"]
-        B1[Output Asset] ~~~ B2[Manifest bytes with store as sidecar or uploaded to server]
-    end
-```
+Use `set_no_embed()` so the signed asset contains no embedded manifest store. The manifest store bytes are returned from `sign()` and can be stored separately (e.g. as a sidecar file).
 
 ```py
 ctx = Context.from_dict({
@@ -987,9 +975,9 @@ builder.set_remote_url("<<URI/URL to remote storage of manifest bytes>>")
 
 with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
     manifest_bytes = builder.sign("image/jpeg", source, dest)
-    # manifest_bytes contains the full manifest store
-    # Upload manifest_bytes to the remote URL
-    # The output asset has no embedded manifest
+    # manifest_bytes contains the full manifest store.
+    # Upload manifest_bytes to the remote URL.
+    # The output asset has no embedded manifest.
 ```
 
 Reading back:

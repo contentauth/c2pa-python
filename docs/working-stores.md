@@ -442,7 +442,7 @@ To link an ingredient archive to an action via `ingredientIds`, you must use a `
 ```py
 import io, json
 
-# Step 1: Create the ingredient archive
+# Step 1: Create the ingredient archive.
 archive_builder = Builder.from_json({
     "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
     "assertions": [],
@@ -457,7 +457,7 @@ archive = io.BytesIO()
 archive_builder.to_archive(archive)
 archive.seek(0)
 
-# Step 2: Build a manifest with an action that references the ingredient
+# Step 2: Build a manifest with an action that references the ingredient.
 manifest_json = {
     "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
     "assertions": [
