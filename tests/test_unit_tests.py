@@ -4491,6 +4491,145 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
+    def test_ingredient_fields_survive_archive(self):
+        archive = self._create_ingredient_archive({
+            "title": "tracked-asset.jpg",
+            "relationship": "componentOf",
+            "instance_id": "tracking:project-7:asset-42",
+            "description": "A tracked ingredient",
+            "informational_URI": "https://example.com/assets/42",
+        })
+
+        reader = Reader("application/c2pa", archive)
+        manifest_data = json.loads(reader.json())
+        active = manifest_data["active_manifest"]
+        ingredients = manifest_data["manifests"][active]["ingredients"]
+
+        self.assertGreaterEqual(len(ingredients), 1)
+        ing = ingredients[0]
+
+        self.assertEqual(ing["title"], "tracked-asset.jpg")
+        self.assertIn("instance_id", ing)
+        self.assertEqual(ing["instance_id"], "tracking:project-7:asset-42")
+
+        reader.close()
+        archive.close()
+
+    def test_ingredient_fields_survive_archive_then_sign(self):
+        """instance_id set on the archive ingredient persists through
+        archive then sign."""
+        archive = self._create_ingredient_archive({
+            "title": "tracked-asset.jpg",
+            "relationship": "componentOf",
+            "instance_id": "tracking:project-7:asset-42",
+            "description": "A tracked ingredient",
+            "informational_URI": "https://example.com/assets/42",
+        })
+
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        builder.add_ingredient(
+            {"title": "tracked-asset.jpg", "relationship": "componentOf"},
+            "application/c2pa",
+            archive,
+        )
+
+        with open(self.testPath, "rb") as src:
+            output = io.BytesIO()
+            builder.sign(self.signer, "image/jpeg", src, output)
+            output.seek(0)
+
+            reader = Reader("image/jpeg", output)
+            manifest_data = json.loads(reader.json())
+            active = manifest_data["active_manifest"]
+            ingredients = manifest_data["manifests"][active]["ingredients"]
+
+            self.assertGreaterEqual(len(ingredients), 1)
+            ing = ingredients[0]
+
+            self.assertIn("instance_id", ing)
+            self.assertEqual(ing["instance_id"], "tracking:project-7:asset-42")
+
+            reader.close()
+            output.close()
+        archive.close()
+        builder.close()
+
+    def test_instance_id_as_ingredient_identifier_in_catalog(self):
+        """Two ingredients with different instance_id values in one archive.
+        Read the archive back and select an ingredient by instance_id."""
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(
+                {"title": "photo-A.jpg", "relationship": "componentOf",
+                 "instance_id": "catalog:photo-A"},
+                "image/jpeg", f,
+            )
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(
+                {"title": "photo-B.jpg", "relationship": "componentOf",
+                 "instance_id": "catalog:photo-B"},
+                "image/jpeg", f,
+            )
+
+        archive = io.BytesIO()
+        builder.to_archive(archive)
+        archive.seek(0)
+        builder.close()
+
+        reader = Reader("application/c2pa", archive)
+        manifest_data = json.loads(reader.json())
+        active = manifest_data["active_manifest"]
+        ingredients = manifest_data["manifests"][active]["ingredients"]
+
+        self.assertEqual(len(ingredients), 2)
+
+        found = None
+        for ing in ingredients:
+            if ing.get("instance_id") == "catalog:photo-B":
+                found = ing
+                break
+
+        self.assertIsNotNone(found,
+            "Should find ingredient by instance_id 'catalog:photo-B' in archive")
+        self.assertEqual(found["title"], "photo-B.jpg")
+
+        reader.close()
+        archive.close()
+
 
 class TestStream(unittest.TestCase):
     def setUp(self):

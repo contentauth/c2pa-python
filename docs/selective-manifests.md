@@ -557,6 +557,43 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
             new_builder.sign("image/jpeg", source, dest)
 ```
 
+### Identifying ingredients in archives
+
+When building an ingredient archive, you can set `instance_id` on the ingredient to give it a stable, caller-controlled identifier. This field survives archiving and signing unchanged. The `description` and `informational_URI` fields also survive and can carry additional metadata about the ingredient's origin.
+
+```py
+# Set instance_id when adding the ingredient to the archive builder
+builder = Builder.from_json(manifest_json)
+with open("photo-A.jpg", "rb") as f:
+    builder.add_ingredient(
+        {
+            "title": "photo-A.jpg",
+            "relationship": "componentOf",
+            "instance_id": "catalog:photo-A",
+        },
+        "image/jpeg",
+        f,
+    )
+
+archive = io.BytesIO()
+builder.to_archive(archive)
+```
+
+Later, when reading the archive, select ingredients by their `instance_id`:
+
+```py
+archive.seek(0)
+reader = Reader("application/c2pa", archive)
+manifest_data = json.loads(reader.json())
+active = manifest_data["active_manifest"]
+ingredients = manifest_data["manifests"][active]["ingredients"]
+
+for ing in ingredients:
+    if ing.get("instance_id") == "catalog:photo-A":
+        # Found the target ingredient
+        pass
+```
+
 ### Overriding ingredient properties
 
 When adding an ingredient from an archive or from a file, the JSON passed to `add_ingredient()` can override properties like `title` and `relationship`. This is useful when reusing archived ingredients in a different context:
