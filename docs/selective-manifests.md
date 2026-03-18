@@ -973,7 +973,7 @@ with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
 
 ### Checking manifest location on a Reader
 
-After opening an asset with `Reader`, use `is_embedded()` to check whether the manifest is embedded in the asset or stored remotely. If the manifest is remote, `get_remote_url()` returns the URL it was fetched from (or the URL set via `set_remote_url()` at signing time).
+After opening an asset with `Reader`, use `is_embedded()` to check whether the manifest is embedded in the asset or stored remotely. If the manifest is remote, `get_remote_url()` returns the URL it was fetched from (the URL set via `set_remote_url()` at signing time).
 
 ```py
 reader = Reader("output.jpg", context=ctx)
