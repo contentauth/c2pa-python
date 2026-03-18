@@ -559,7 +559,9 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
 
 ### Identifying ingredients in archives
 
-When building an ingredient archive, you can set `instance_id` on the ingredient to give it a stable, caller-controlled identifier. This field survives archiving and signing unchanged. The `description` and `informational_URI` fields also survive and can carry additional metadata about the ingredient's origin.
+When building an ingredient archive, you can set `instance_id` on the ingredient to give it a stable, caller-controlled identifier. This field survives archiving and signing unchanged, so it can be used to look up a specific ingredient from a catalog archive. The `description` and `informational_URI` fields also survive and can carry additional metadata about the ingredient's origin.
+
+`instance_id` is only for identification and catalog lookups. It cannot be used as a linking key in `ingredientIds` when linking ingredient archives to actions — use `label` for that (see [Linking an archived ingredient to an action](#linking-an-archived-ingredient-to-an-action)).
 
 ```py
 # Set instance_id when adding the ingredient to the archive builder
@@ -590,7 +592,7 @@ ingredients = manifest_data["manifests"][active]["ingredients"]
 
 for ing in ingredients:
     if ing.get("instance_id") == "catalog:photo-A":
-        # Found the target ingredient
+        # Do something with the found ingredient...
         pass
 ```
 
@@ -768,6 +770,121 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
             new_builder.sign("image/jpeg", source, dest)
 ```
 
+### Reading ingredient details from an ingredient archive
+
+An ingredient archive is a serialized `Builder` containing exactly one ingredient (see [Builder archives vs. ingredient archives](#builder-archives-vs-ingredient-archives)). Reading it with `Reader` allows the caller to inspect the ingredient before deciding whether to use it: its thumbnail, whether it carries provenance (e.g. an active manifest), validation status, relationship, etc.
+
+```mermaid
+flowchart LR
+    IA["ingredient_archive.c2pa"] -->|"Reader(application/c2pa)"| JSON["JSON + resources"]
+    JSON --> TH["Thumbnail"]
+    JSON --> AM["Active manifest?"]
+    JSON --> VS["Validation status"]
+    JSON --> REL["Relationship"]
+```
+
+```py
+# Open the ingredient archive
+with open("ingredient_archive.c2pa", "rb") as archive_file:
+    reader = Reader("application/c2pa", archive_file, context=ctx)
+    parsed = json.loads(reader.json())
+    active = parsed["active_manifest"]
+    manifest = parsed["manifests"][active]
+
+    # An ingredient archive has exactly one ingredient
+    ingredient = manifest["ingredients"][0]
+
+    # Relationship
+    relationship = ingredient["relationship"]  # e.g. "parentOf", "componentOf", "inputTo"
+
+    # Instance ID (optional, set by the caller via add_ingredient or derived from XMP metadata)
+    instance_id = ingredient.get("instance_id")
+
+    # Active manifest:
+    # When present, the ingredient was a signed asset and its manifest label
+    # points into the top-level "manifests" dictionary.
+    if "active_manifest" in ingredient:
+        ing_manifest_label = ingredient["active_manifest"]
+        ing_manifest = parsed["manifests"][ing_manifest_label]
+        # ing_manifest contains the ingredient's own assertions, actions, etc.
+
+    # Validation status.
+    # The top-level "validation_status" array covers the entire manifest store,
+    # including this ingredient's manifest. An empty or absent array means
+    # no validation errors were found.
+    if "validation_status" in parsed:
+        for status in parsed["validation_status"]:
+            print(f"{status['code']}: {status['explanation']}")
+
+    # Thumbnail
+    if "thumbnail" in ingredient:
+        thumb_id = ingredient["thumbnail"]["identifier"]
+        with open("thumbnail.jpg", "wb") as thumb_file:
+            reader.resource_to_stream(thumb_id, thumb_file)
+
+    reader.close()
+```
+
+#### Linking an archived ingredient to an action
+
+After reading the ingredient details from an ingredient archive, the ingredient can be added to a new `Builder` and linked to an action. You must assign a `label` in the `add_ingredient()` call on the signing builder and use that label as the linking key in `ingredientIds`. Labels baked into the archive ingredient are not carried through, and `instance_id` does not work as a linking key for ingredient archives.
+
+Labels are only used as build-time linking keys. The SDK may reassign the actual label in the signed manifest.
+
+Assign a `label` in the `add_ingredient()` call and reference that same label in `ingredientIds`. This works whether or not the ingredient has an `instance_id`.
+
+```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
+# Read the ingredient archive
+with open("ingredient_archive.c2pa", "rb") as archive_file:
+    reader = Reader("application/c2pa", archive_file, context=ctx)
+    parsed = json.loads(reader.json())
+    active = parsed["active_manifest"]
+    ingredient = parsed["manifests"][active]["ingredients"][0]
+
+    # Use a caller-assigned label as the linking key
+    manifest_json = {
+        "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
+        "assertions": [
+            {
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.opened",
+                            "parameters": {
+                                "ingredientIds": ["archived-ingredient"]
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+
+    with Builder(manifest_json, context=ctx) as builder:
+        # The label on the ingredient matches the entry in ingredientIds
+        archive_file.seek(0)
+        builder.add_ingredient(
+            {
+                "title": ingredient["title"],
+                "relationship": "parentOf",
+                "label": "archived-ingredient",
+            },
+            "application/c2pa",
+            archive_file,
+        )
+
+        with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
+            builder.sign("image/jpeg", source, dest)
+
+    reader.close()
+```
+
 ### Merging multiple working stores
 
 > [!NOTE]
@@ -838,4 +955,47 @@ with Builder({
         # A Signer can also be passed as first argument to
         # configure a dedicated Signer explicitly.
         builder.sign("image/jpeg", source, dest)
+```
+
+## Controlling manifest embedding
+
+By default, `sign()` embeds the manifest directly inside the output asset file.
+
+### Remove the manifest from the asset entirely
+
+Use `set_no_embed()` so the signed asset contains no embedded manifest. The manifest bytes are returned from `sign()` and can be stored separately (as a sidecar file, on a server, etc.):
+
+```mermaid
+flowchart LR
+    subgraph Default["Default (embedded)"]
+        A1[Output Asset] --- A2[Image data + C2PA manifest]
+    end
+
+    subgraph NoEmbed["With set_no_embed()"]
+        B1[Output Asset] ~~~ B2[Manifest bytes with store as sidecar or uploaded to server]
+    end
+```
+
+```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+builder = Builder(manifest_json, context=ctx)
+builder.set_no_embed()
+builder.set_remote_url("<<URI/URL to remote storage of manifest bytes>>")
+
+with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
+    manifest_bytes = builder.sign("image/jpeg", source, dest)
+    # manifest_bytes contains the full manifest store
+    # Upload manifest_bytes to the remote URL
+    # The output asset has no embedded manifest
+```
+
+Reading back:
+
+```py
+reader = Reader("output.jpg", context=ctx)
+reader.is_embedded()    # False
+reader.remote_url()     # "<<URI/URL to remote storage of manifest bytes>>"
 ```
