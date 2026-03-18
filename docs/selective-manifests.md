@@ -557,6 +557,45 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
             new_builder.sign("image/jpeg", source, dest)
 ```
 
+### Identifying ingredients in archives
+
+When building an ingredient archive, you can set `instance_id` on the ingredient to give it a stable, caller-controlled identifier. This field survives archiving and signing unchanged, so it can be used to look up a specific ingredient from a catalog archive. The `description` and `informational_URI` fields also survive and can carry additional metadata about the ingredient's origin.
+
+`instance_id` is only for identification and catalog lookups. It cannot be used as a linking key in `ingredientIds` when linking ingredient archives to actions — use `label` for that (see [Linking an archived ingredient to an action](#linking-an-archived-ingredient-to-an-action)).
+
+```py
+# Set instance_id when adding the ingredient to the archive builder.
+builder = Builder.from_json(manifest_json)
+with open("photo-A.jpg", "rb") as f:
+    builder.add_ingredient(
+        {
+            "title": "photo-A.jpg",
+            "relationship": "componentOf",
+            "instance_id": "catalog:photo-A",
+        },
+        "image/jpeg",
+        f,
+    )
+
+archive = io.BytesIO()
+builder.to_archive(archive)
+```
+
+Later, when reading the archive, select ingredients by their `instance_id`:
+
+```py
+archive.seek(0)
+reader = Reader("application/c2pa", archive)
+manifest_data = json.loads(reader.json())
+active = manifest_data["active_manifest"]
+ingredients = manifest_data["manifests"][active]["ingredients"]
+
+for ing in ingredients:
+    if ing.get("instance_id") == "catalog:photo-A":
+        # Do something with the found ingredient...
+        pass
+```
+
 ### Overriding ingredient properties
 
 When adding an ingredient from an archive or from a file, the JSON passed to `add_ingredient()` can override properties like `title` and `relationship`. This is useful when reusing archived ingredients in a different context:
@@ -731,6 +770,111 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
             new_builder.sign("image/jpeg", source, dest)
 ```
 
+### Reading ingredient details from an ingredient archive
+
+An ingredient archive is a serialized `Builder` containing exactly one ingredient (see [Builder archives vs. ingredient archives](#builder-archives-vs-ingredient-archives)). Reading it with `Reader` allows the caller to inspect the ingredient before deciding whether to use it: its thumbnail, whether it carries provenance (e.g. an active manifest), validation status, relationship, etc.
+
+```py
+# Open the ingredient archive.
+with open("ingredient_archive.c2pa", "rb") as archive_file:
+    reader = Reader("application/c2pa", archive_file, context=ctx)
+    parsed = json.loads(reader.json())
+    active = parsed["active_manifest"]
+    manifest = parsed["manifests"][active]
+
+    # An ingredient archive has exactly one ingredient.
+    ingredient = manifest["ingredients"][0]
+
+    # Relationship e.g. "parentOf", "componentOf", "inputTo".
+    relationship = ingredient["relationship"]
+
+    # Instance ID (optional, can be set by caller).
+    instance_id = ingredient.get("instance_id")
+
+    # Active manifest:
+    # When present, the ingredient had content credentials itself.
+    if "active_manifest" in ingredient:
+        ing_manifest_label = ingredient["active_manifest"]
+        ing_manifest = parsed["manifests"][ing_manifest_label]
+        # ing_manifest contains the ingredient's own assertions, actions, etc.
+
+    # Validation status.
+    # The top-level "validation_status" array covers the entire manifest store,
+    # including this ingredient's manifest.
+    if "validation_status" in parsed:
+        for status in parsed["validation_status"]:
+            print(f"{status['code']}: {status['explanation']}")
+
+    # Thumbnail
+    if "thumbnail" in ingredient:
+        thumb_id = ingredient["thumbnail"]["identifier"]
+        with open("thumbnail.jpg", "wb") as thumb_file:
+            reader.resource_to_stream(thumb_id, thumb_file)
+
+    reader.close()
+```
+
+#### Linking an archived ingredient to an action
+
+After reading the ingredient details from an ingredient archive, the ingredient can be added to a new `Builder` and linked to an action. You must assign a `label` in the `add_ingredient()` call on the signing builder and use that label as the linking key in `ingredientIds`. Labels baked into the archive ingredient are not carried through, and `instance_id` does not work as a linking key for ingredient archives.
+
+Labels are only used as build-time linking keys. The SDK may reassign the actual label in the signed manifest.
+
+Assign a `label` in the `add_ingredient()` call and reference that same label in `ingredientIds` to link an ingredient to an action.
+
+```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+
+# Read the ingredient archive.
+with open("ingredient_archive.c2pa", "rb") as archive_file:
+    reader = Reader("application/c2pa", archive_file, context=ctx)
+    parsed = json.loads(reader.json())
+    active = parsed["active_manifest"]
+    ingredient = parsed["manifests"][active]["ingredients"][0]
+
+    # Use a label as the linking key.
+    # Any label can be used, as long as it uniquely identifies the link.
+    manifest_json = {
+        "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
+        "assertions": [
+            {
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.opened",
+                            "parameters": {
+                                "ingredientIds": ["archived-ingredient"]
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+
+    with Builder(manifest_json, context=ctx) as builder:
+        # The label on the ingredient must match the entry in ingredientIds on the action.
+        archive_file.seek(0)
+        builder.add_ingredient(
+            {
+                "title": ingredient["title"],
+                "relationship": "parentOf",
+                "label": "archived-ingredient",
+            },
+            "application/c2pa",
+            archive_file,
+        )
+
+        with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
+            builder.sign("image/jpeg", source, dest)
+
+    reader.close()
+```
+
 ### Merging multiple working stores
 
 > [!NOTE]
@@ -801,4 +945,44 @@ with Builder({
         # A Signer can also be passed as first argument to
         # configure a dedicated Signer explicitly.
         builder.sign("image/jpeg", source, dest)
+```
+
+## Controlling manifest embedding
+
+By default, `sign()` embeds the manifest directly inside the output asset file.
+
+### Not embedding a manifest store into an asset
+
+Use `set_no_embed()` so the signed asset contains no embedded manifest store. The manifest store bytes are returned from `sign()` and can be stored separately (e.g. as a sidecar file).
+
+```py
+ctx = Context.from_dict({
+    "builder": {"claim_generator_info": {"name": "an-application", "version": "0.1.0"}},
+    "signer": signer,
+})
+builder = Builder(manifest_json, context=ctx)
+builder.set_no_embed()
+builder.set_remote_url("<<URI/URL to remote storage of manifest bytes>>")
+
+with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
+    manifest_bytes = builder.sign("image/jpeg", source, dest)
+    # manifest_bytes contains the full manifest store.
+    # Upload manifest_bytes to the remote URL.
+    # The output asset has no embedded manifest.
+```
+
+### Checking manifest location on a Reader
+
+After opening an asset with `Reader`, use `is_embedded()` to check whether the manifest is embedded in the asset or stored remotely. If the manifest is remote, `get_remote_url()` returns the URL it was fetched from (the URL set via `set_remote_url()` at signing time).
+
+```py
+reader = Reader("output.jpg", context=ctx)
+
+if reader.is_embedded():
+    print("Manifest is embedded in the asset.")
+else:
+    print("Manifest is not embedded.")
+    url = reader.get_remote_url()
+    if url is not None:
+        print(f"Remote manifest URL: {url}")
 ```

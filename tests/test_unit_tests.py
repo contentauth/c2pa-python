@@ -1021,6 +1021,35 @@ class TestBuilderWithSigner(unittest.TestCase):
             return signature
         self.callback_signer_es256 = callback_signer_es256
 
+    def _create_ingredient_archive(self, ingredient_json=None):
+        """Helper: create an ingredient archive from a single ingredient."""
+        if ingredient_json is None:
+            ingredient_json = {"title": "photo.jpg", "relationship": "componentOf"}
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        builder.to_archive(archive)
+        builder.close()
+        archive.seek(0)
+        return archive
+
     def test_can_retrieve_builder_supported_mimetypes(self):
         result1 = Builder.get_supported_mime_types()
         self.assertTrue(len(result1) > 0)
@@ -4150,6 +4179,456 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         # Make sure settings are put back to the common test defaults
         load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_link_archive_label_on_signing_builder_placed(self):
+        """Label set on the signing builder's add_ingredient links an
+        ingredient archive to a c2pa.placed action."""
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        archive = self._create_ingredient_archive()
+
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {
+                                    "ingredientIds": ["my-ingredient"]
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        builder.add_ingredient(
+            {"title": "photo.jpg", "relationship": "componentOf", "label": "my-ingredient"},
+            "application/c2pa",
+            archive,
+        )
+
+        with open(self.testPath, "rb") as src:
+            output = io.BytesIO()
+            builder.sign(self.signer, "image/jpeg", src, output)
+            output.seek(0)
+
+            reader = Reader("image/jpeg", output)
+            manifest_data = json.loads(reader.json())
+            active = manifest_data["active_manifest"]
+            assertions = manifest_data["manifests"][active]["assertions"]
+
+            placed_action = None
+            for assertion in assertions:
+                if assertion.get("label") == "c2pa.actions.v2":
+                    for action in assertion["data"]["actions"]:
+                        if action["action"] == "c2pa.placed":
+                            placed_action = action
+                            break
+
+            self.assertIsNotNone(placed_action, "c2pa.placed action not found")
+            self.assertIn("parameters", placed_action)
+            self.assertIn("ingredients", placed_action["parameters"])
+            self.assertEqual(len(placed_action["parameters"]["ingredients"]), 1)
+            self.assertIn(
+                "c2pa.ingredient.v3",
+                placed_action["parameters"]["ingredients"][0]["url"],
+            )
+
+            reader.close()
+            output.close()
+        archive.close()
+        builder.close()
+
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_link_archive_label_on_signing_builder_opened(self):
+        """Label set on the signing builder's add_ingredient links an
+        ingredient archive to a c2pa.opened action."""
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        archive = self._create_ingredient_archive(
+            {"title": "photo.jpg", "relationship": "parentOf"}
+        )
+
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                                "parameters": {
+                                    "ingredientIds": ["my-ingredient"]
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        builder.add_ingredient(
+            {"title": "photo.jpg", "relationship": "parentOf", "label": "my-ingredient"},
+            "application/c2pa",
+            archive,
+        )
+
+        with open(self.testPath, "rb") as src:
+            output = io.BytesIO()
+            builder.sign(self.signer, "image/jpeg", src, output)
+            output.seek(0)
+
+            reader = Reader("image/jpeg", output)
+            manifest_data = json.loads(reader.json())
+            active = manifest_data["active_manifest"]
+            assertions = manifest_data["manifests"][active]["assertions"]
+
+            opened_action = None
+            for assertion in assertions:
+                if assertion.get("label") == "c2pa.actions.v2":
+                    for action in assertion["data"]["actions"]:
+                        if action["action"] == "c2pa.opened":
+                            opened_action = action
+                            break
+
+            self.assertIsNotNone(opened_action, "c2pa.opened action not found")
+            self.assertIn("parameters", opened_action)
+            self.assertIn("ingredients", opened_action["parameters"])
+            self.assertEqual(len(opened_action["parameters"]["ingredients"]), 1)
+            self.assertIn(
+                "c2pa.ingredient.v3",
+                opened_action["parameters"]["ingredients"][0]["url"],
+            )
+
+            reader.close()
+            output.close()
+        archive.close()
+        builder.close()
+
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_link_archive_two_ingredients_labels(self):
+        """Two ingredient archives linked to two different actions via
+        distinct labels. Verifies no cross-linking."""
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        archive1 = self._create_ingredient_archive(
+            {"title": "photo-placed.jpg", "relationship": "componentOf"}
+        )
+        archive2 = self._create_ingredient_archive(
+            {"title": "photo-opened.jpg", "relationship": "parentOf"}
+        )
+
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {
+                                    "ingredientIds": ["ingredient-for-placed"]
+                                },
+                            },
+                            {
+                                "action": "c2pa.opened",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                                "parameters": {
+                                    "ingredientIds": ["ingredient-for-opened"]
+                                },
+                            },
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        builder.add_ingredient(
+            {"title": "photo-placed.jpg", "relationship": "componentOf", "label": "ingredient-for-placed"},
+            "application/c2pa",
+            archive1,
+        )
+        builder.add_ingredient(
+            {"title": "photo-opened.jpg", "relationship": "parentOf", "label": "ingredient-for-opened"},
+            "application/c2pa",
+            archive2,
+        )
+
+        with open(self.testPath, "rb") as src:
+            output = io.BytesIO()
+            builder.sign(self.signer, "image/jpeg", src, output)
+            output.seek(0)
+
+            reader = Reader("image/jpeg", output)
+            manifest_data = json.loads(reader.json())
+            active = manifest_data["active_manifest"]
+            assertions = manifest_data["manifests"][active]["assertions"]
+
+            placed_action = None
+            opened_action = None
+            for assertion in assertions:
+                if assertion.get("label") == "c2pa.actions.v2":
+                    for action in assertion["data"]["actions"]:
+                        if action["action"] == "c2pa.placed":
+                            placed_action = action
+                        if action["action"] == "c2pa.opened":
+                            opened_action = action
+
+            self.assertIsNotNone(placed_action, "c2pa.placed action not found")
+            self.assertIsNotNone(opened_action, "c2pa.opened action not found")
+
+            self.assertIn("ingredients", placed_action["parameters"])
+            self.assertEqual(len(placed_action["parameters"]["ingredients"]), 1)
+            placed_url = placed_action["parameters"]["ingredients"][0]["url"]
+
+            self.assertIn("ingredients", opened_action["parameters"])
+            self.assertEqual(len(opened_action["parameters"]["ingredients"]), 1)
+            opened_url = opened_action["parameters"]["ingredients"][0]["url"]
+
+            # Each action should link to a different ingredient (no cross-linking)
+            self.assertNotEqual(placed_url, opened_url,
+                "Each action should link to a different ingredient")
+
+            reader.close()
+            output.close()
+        archive1.close()
+        archive2.close()
+        builder.close()
+
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_link_archive_multiple_ingredients_in_one_placed_action(self):
+        """A single c2pa.placed action references two componentOf ingredients
+        via ingredientIds with two labels."""
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+        archive1 = self._create_ingredient_archive(
+            {"title": "base-layer.jpg", "relationship": "componentOf"}
+        )
+        archive2 = self._create_ingredient_archive(
+            {"title": "overlay-layer.jpg", "relationship": "componentOf"}
+        )
+
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {
+                                    "ingredientIds": ["base-layer", "overlay-layer"]
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        builder.add_ingredient(
+            {"title": "base-layer.jpg", "relationship": "componentOf", "label": "base-layer"},
+            "application/c2pa",
+            archive1,
+        )
+        builder.add_ingredient(
+            {"title": "overlay-layer.jpg", "relationship": "componentOf", "label": "overlay-layer"},
+            "application/c2pa",
+            archive2,
+        )
+
+        with open(self.testPath, "rb") as src:
+            output = io.BytesIO()
+            builder.sign(self.signer, "image/jpeg", src, output)
+            output.seek(0)
+
+            reader = Reader("image/jpeg", output)
+            manifest_data = json.loads(reader.json())
+            active = manifest_data["active_manifest"]
+            assertions = manifest_data["manifests"][active]["assertions"]
+
+            placed_action = None
+            for assertion in assertions:
+                if assertion.get("label") == "c2pa.actions.v2":
+                    for action in assertion["data"]["actions"]:
+                        if action["action"] == "c2pa.placed":
+                            placed_action = action
+                            break
+
+            self.assertIsNotNone(placed_action, "c2pa.placed action not found")
+            self.assertIn("parameters", placed_action)
+            self.assertIn("ingredients", placed_action["parameters"])
+            ingredients = placed_action["parameters"]["ingredients"]
+            self.assertEqual(len(ingredients), 2,
+                "c2pa.placed should reference both ingredients")
+
+            url0 = ingredients[0]["url"]
+            url1 = ingredients[1]["url"]
+            self.assertNotEqual(url0, url1,
+                "Each ingredient should have a distinct URL")
+
+            reader.close()
+            output.close()
+        archive1.close()
+        archive2.close()
+        builder.close()
+
+        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+
+    def test_ingredient_fields_survive_archive(self):
+        archive = self._create_ingredient_archive({
+            "title": "tracked-asset.jpg",
+            "relationship": "componentOf",
+            "instance_id": "tracking:project-7:asset-42",
+            "description": "A tracked ingredient",
+            "informational_URI": "https://example.com/assets/42",
+        })
+
+        reader = Reader("application/c2pa", archive)
+        manifest_data = json.loads(reader.json())
+        active = manifest_data["active_manifest"]
+        ingredients = manifest_data["manifests"][active]["ingredients"]
+
+        self.assertGreaterEqual(len(ingredients), 1)
+        ing = ingredients[0]
+
+        self.assertEqual(ing["title"], "tracked-asset.jpg")
+        self.assertIn("instance_id", ing)
+        self.assertEqual(ing["instance_id"], "tracking:project-7:asset-42")
+
+        reader.close()
+        archive.close()
+
+    def test_ingredient_fields_survive_archive_then_sign(self):
+        """instance_id set on the archive ingredient persists through
+        archive then sign."""
+        archive = self._create_ingredient_archive({
+            "title": "tracked-asset.jpg",
+            "relationship": "componentOf",
+            "instance_id": "tracking:project-7:asset-42",
+            "description": "A tracked ingredient",
+            "informational_URI": "https://example.com/assets/42",
+        })
+
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        builder.add_ingredient(
+            {"title": "tracked-asset.jpg", "relationship": "componentOf"},
+            "application/c2pa",
+            archive,
+        )
+
+        with open(self.testPath, "rb") as src:
+            output = io.BytesIO()
+            builder.sign(self.signer, "image/jpeg", src, output)
+            output.seek(0)
+
+            reader = Reader("image/jpeg", output)
+            manifest_data = json.loads(reader.json())
+            active = manifest_data["active_manifest"]
+            ingredients = manifest_data["manifests"][active]["ingredients"]
+
+            self.assertGreaterEqual(len(ingredients), 1)
+            ing = ingredients[0]
+
+            self.assertIn("instance_id", ing)
+            self.assertEqual(ing["instance_id"], "tracking:project-7:asset-42")
+
+            reader.close()
+            output.close()
+        archive.close()
+        builder.close()
+
+    def test_instance_id_as_ingredient_identifier_in_catalog(self):
+        """Two ingredients with different instance_id values in one archive.
+        Read the archive back and select an ingredient by instance_id."""
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(
+                {"title": "photo-A.jpg", "relationship": "componentOf",
+                 "instance_id": "catalog:photo-A"},
+                "image/jpeg", f,
+            )
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(
+                {"title": "photo-B.jpg", "relationship": "componentOf",
+                 "instance_id": "catalog:photo-B"},
+                "image/jpeg", f,
+            )
+
+        archive = io.BytesIO()
+        builder.to_archive(archive)
+        archive.seek(0)
+        builder.close()
+
+        reader = Reader("application/c2pa", archive)
+        manifest_data = json.loads(reader.json())
+        active = manifest_data["active_manifest"]
+        ingredients = manifest_data["manifests"][active]["ingredients"]
+
+        self.assertEqual(len(ingredients), 2)
+
+        found = None
+        for ing in ingredients:
+            if ing.get("instance_id") == "catalog:photo-B":
+                found = ing
+                break
+
+        self.assertIsNotNone(found,
+            "Should find ingredient by instance_id 'catalog:photo-B' in archive")
+        self.assertEqual(found["title"], "photo-B.jpg")
+
+        reader.close()
+        archive.close()
 
 
 class TestStream(unittest.TestCase):
