@@ -492,9 +492,65 @@ with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
     builder.sign("image/jpeg", src, dst)
 ```
 
-When linking multiple ingredient archives, give each a distinct label and reference them separately in `ingredientIds`:
+When linking multiple ingredient archives, give each a distinct label and reference it in the appropriate action's `ingredientIds` array.
+
+If each ingredient has its own action (e.g., one `c2pa.opened` for the parent and one `c2pa.placed` for a composited element), set up two actions with separate `ingredientIds`:
 
 ```py
+manifest_json = {
+    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "assertions": [{
+        "label": "c2pa.actions.v2",
+        "data": {
+            "actions": [
+                {
+                    "action": "c2pa.opened",
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+                    "parameters": {"ingredientIds": ["parent-photo"]},
+                },
+                {
+                    "action": "c2pa.placed",
+                    "parameters": {"ingredientIds": ["overlay-graphic"]},
+                },
+            ]
+        },
+    }],
+}
+
+builder = Builder(manifest_json, context=ctx)
+
+builder.add_ingredient(
+    {"title": "photo.jpg", "relationship": "parentOf", "label": "parent-photo"},
+    "application/c2pa",
+    photo_archive,
+)
+builder.add_ingredient(
+    {"title": "overlay.png", "relationship": "componentOf", "label": "overlay-graphic"},
+    "application/c2pa",
+    overlay_archive,
+)
+```
+
+A single `c2pa.placed` action can also reference several `componentOf` ingredients composited together. List all labels in the `ingredientIds` array:
+
+```py
+manifest_json = {
+    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "assertions": [{
+        "label": "c2pa.actions.v2",
+        "data": {
+            "actions": [{
+                "action": "c2pa.placed",
+                "parameters": {
+                    "ingredientIds": ["base-layer", "overlay-layer"]
+                },
+            }]
+        },
+    }],
+}
+
+builder = Builder(manifest_json, context=ctx)
+
 builder.add_ingredient(
     {"title": "base.jpg", "relationship": "componentOf", "label": "base-layer"},
     "application/c2pa",
@@ -506,6 +562,8 @@ builder.add_ingredient(
     overlay_archive,
 )
 ```
+
+After signing, the action's `parameters.ingredients` array contains one resolved URL per ingredient.
 
 ### Ingredient relationships
 
