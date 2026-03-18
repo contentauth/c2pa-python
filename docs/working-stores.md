@@ -444,7 +444,7 @@ import io, json
 
 # Step 1: Create the ingredient archive.
 archive_builder = Builder.from_json({
-    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [],
 })
 with open("photo.jpg", "rb") as f:
@@ -459,7 +459,7 @@ archive.seek(0)
 
 # Step 2: Build a manifest with an action that references the ingredient.
 manifest_json = {
-    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [
         {
             "label": "c2pa.actions.v2",
@@ -498,7 +498,7 @@ If each ingredient has its own action (e.g., one `c2pa.opened` for the parent an
 
 ```py
 manifest_json = {
-    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [{
         "label": "c2pa.actions.v2",
         "data": {
@@ -535,7 +535,7 @@ A single `c2pa.placed` action can also reference several `componentOf` ingredien
 
 ```py
 manifest_json = {
-    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [{
         "label": "c2pa.actions.v2",
         "data": {

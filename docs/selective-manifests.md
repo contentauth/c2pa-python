@@ -774,15 +774,6 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
 
 An ingredient archive is a serialized `Builder` containing exactly one ingredient (see [Builder archives vs. ingredient archives](#builder-archives-vs-ingredient-archives)). Reading it with `Reader` allows the caller to inspect the ingredient before deciding whether to use it: its thumbnail, whether it carries provenance (e.g. an active manifest), validation status, relationship, etc.
 
-```mermaid
-flowchart LR
-    IA["ingredient_archive.c2pa"] -->|"Reader(application/c2pa)"| JSON["JSON + resources"]
-    JSON --> TH["Thumbnail"]
-    JSON --> AM["Active manifest (only if ingredient has Content Credentials)"]
-    JSON --> VS["Validation status"]
-    JSON --> REL["Relationship"]
-```
-
 ```py
 # Open the ingredient archive.
 with open("ingredient_archive.c2pa", "rb") as archive_file:
@@ -960,7 +951,7 @@ with Builder({
 
 By default, `sign()` embeds the manifest directly inside the output asset file.
 
-### Remove the manifest from the asset entirely
+### Not embedding a manifest store into an asset
 
 Use `set_no_embed()` so the signed asset contains no embedded manifest store. The manifest store bytes are returned from `sign()` and can be stored separately (e.g. as a sidecar file).
 
@@ -980,10 +971,18 @@ with open("source.jpg", "rb") as source, open("output.jpg", "w+b") as dest:
     # The output asset has no embedded manifest.
 ```
 
-Reading back:
+### Checking manifest location on a Reader
+
+After opening an asset with `Reader`, use `is_embedded()` to check whether the manifest is embedded in the asset or stored remotely. If the manifest is remote, `get_remote_url()` returns the URL it was fetched from (or the URL set via `set_remote_url()` at signing time).
 
 ```py
 reader = Reader("output.jpg", context=ctx)
-reader.is_embedded()    # False
-reader.remote_url()     # "<<URI/URL to remote storage of manifest bytes>>"
+
+if reader.is_embedded():
+    print("Manifest is embedded in the asset.")
+else:
+    print("Manifest is not embedded.")
+    url = reader.get_remote_url()
+    if url is not None:
+        print(f"Remote manifest URL: {url}")
 ```
