@@ -435,6 +435,78 @@ with open("new_asset.jpg", "rb") as src, open("signed_asset.jpg", "w+b") as dst:
     builder.sign("image/jpeg", src, dst)
 ```
 
+### Linking an ingredient archive to an action
+
+To link an ingredient archive to an action via `ingredientIds`, you must use a `label` set in the `add_ingredient()` call on the signing builder. Labels baked into the archive ingredient are not carried through, and `instance_id` does not work as a linking key for ingredient archives regardless of where it is set.
+
+```py
+import io, json
+
+# Step 1: Create the ingredient archive
+archive_builder = Builder.from_json({
+    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "assertions": [],
+})
+with open("photo.jpg", "rb") as f:
+    archive_builder.add_ingredient(
+        {"title": "photo.jpg", "relationship": "componentOf"},
+        "image/jpeg",
+        f,
+    )
+archive = io.BytesIO()
+archive_builder.to_archive(archive)
+archive.seek(0)
+
+# Step 2: Build a manifest with an action that references the ingredient
+manifest_json = {
+    "claim_generator_info": [{"name": "my-app", "version": "1.0"}],
+    "assertions": [
+        {
+            "label": "c2pa.actions.v2",
+            "data": {
+                "actions": [
+                    {
+                        "action": "c2pa.placed",
+                        "parameters": {
+                            "ingredientIds": ["my-ingredient"]
+                        },
+                    }
+                ]
+            },
+        }
+    ],
+}
+
+ctx = Context.from_dict({"signer": signer})
+builder = Builder(manifest_json, context=ctx)
+
+# Step 3: Add the ingredient archive with a label matching the ingredientIds value.
+# The label MUST be set here, on the signing builder's add_ingredient call.
+builder.add_ingredient(
+    {"title": "photo.jpg", "relationship": "componentOf", "label": "my-ingredient"},
+    "application/c2pa",
+    archive,
+)
+
+with open("source.jpg", "rb") as src, open("signed.jpg", "w+b") as dst:
+    builder.sign("image/jpeg", src, dst)
+```
+
+When linking multiple ingredient archives, give each a distinct label and reference them separately in `ingredientIds`:
+
+```py
+builder.add_ingredient(
+    {"title": "base.jpg", "relationship": "componentOf", "label": "base-layer"},
+    "application/c2pa",
+    base_archive,
+)
+builder.add_ingredient(
+    {"title": "overlay.jpg", "relationship": "componentOf", "label": "overlay-layer"},
+    "application/c2pa",
+    overlay_archive,
+)
+```
+
 ### Ingredient relationships
 
 Specify the relationship between the ingredient and the current asset:
