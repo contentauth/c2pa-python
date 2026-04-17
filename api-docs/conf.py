@@ -61,4 +61,27 @@ autodoc_typehints = "description"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
 
+# -- Global HTML meta tags ---------------------------------------------------
+
+# Inject extra <meta> tags into the <head> of every generated HTML page,
+# regardless of source format (.rst, .md, AutoAPI-generated, etc.).
+html_meta_tags = [
+    {"name": "algolia-site-verification", "content": "EA363696C40197CA"},
+]
+
+
+def _add_html_meta_tags(app, pagename, templatename, context, doctree):
+    rendered = "".join(
+        "<meta "
+        + " ".join(f'{k}="{v}"' for k, v in tag.items())
+        + " />\n"
+        for tag in html_meta_tags
+    )
+    context["metatags"] = context.get("metatags", "") + rendered
+
+
+def setup(app):
+    app.connect("html-page-context", _add_html_meta_tags)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}
+
 
