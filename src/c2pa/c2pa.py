@@ -1810,10 +1810,9 @@ class Stream:
                 src = self._file_like_stream
                 # For larger reads, fill the buffer directly
                 # via a memoryview, avoiding the intermediate
-                # `bytes` allocation.  BytesIO and binary file objects
-                # implement readinto.  For smaller reads the per-call
-                # ctypes setup cost (from_address+memoryview) outweighs
-                # the savings, so we keep the bytes path for those.
+                # `bytes` allocation.
+                # For smaller reads the per-call ctypes setup cost
+                # outweighs the savings, so we use the bytes path.
                 READINTO_THRESHOLD = 4096
                 if length >= READINTO_THRESHOLD:
                     readinto = getattr(src, "readinto", None)
