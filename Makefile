@@ -46,6 +46,42 @@ test:
 benchmark:
 	python3 -m pytest tests/benchmark.py -v
 
+# Memory-profile benchmarks (peak traced, retained, RSS delta, alloc count)
+benchmark-memory:
+	mkdir -p .benchmarks
+	python3 -m pytest tests/benchmark_memory.py -v --benchmark-only \
+	  -m "not slow" \
+	  --benchmark-json=.benchmarks/memory-latest.json
+
+# Stress benchmarks (concurrency + scaling + leak detection); excludes slow tests
+benchmark-stress:
+	mkdir -p .benchmarks
+	python3 -m pytest tests/benchmark_stress.py -v -p no:cacheprovider \
+	  -m "not slow" \
+	  --benchmark-json=.benchmarks/stress-latest.json
+
+# Slow stress benchmarks (includes the 250MB fixture)
+benchmark-stress-slow:
+	mkdir -p .benchmarks
+	python3 -m pytest tests/benchmark_stress.py -v -m slow \
+	  -p no:cacheprovider \
+	  --benchmark-json=.benchmarks/stress-slow-latest.json
+
+# All non-slow benchmark suites
+benchmark-all: benchmark benchmark-memory benchmark-stress
+
+# Capture 5x main + 5x changes replicates of memory and stress suites
+# and regenerate tests/BENCHMARK_RESULTS.md.
+benchmark-compare:
+	mkdir -p .benchmarks
+	scripts/run_benchmark_comparison.sh
+
+# Capture the leak suite (read + sign + mixed) once per side and append
+# slope numbers into tests/BENCHMARK_RESULTS.md on next aggregation.
+benchmark-compare-leak:
+	mkdir -p .benchmarks
+	scripts/run_benchmark_leak_comparison.sh
+
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
 test-local-wheel-build:

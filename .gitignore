@@ -6,6 +6,13 @@ __pycache__/
 /artifacts
 scripts/artifacts
 tests/fixtures/temp_data
+tests/fixtures/generated/
+tests/temp/
+
+# Benchmark outputs (generated JSONs); commit baseline JSONs explicitly if needed
+.benchmarks/*-latest.json
+.benchmarks/*-slow-latest.json
+.benchmarks/.c2pa_modified.snapshot.py
 
 # For the examples
 /output
