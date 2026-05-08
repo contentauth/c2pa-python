@@ -1807,7 +1807,24 @@ class Stream:
                 if not data or length <= 0:
                     return -1
 
-                buffer = self._file_like_stream.read(length)
+                src = self._file_like_stream
+                # For larger reads, fill the buffer directly
+                # via a memoryview, avoiding the intermediate
+                # `bytes` allocation.  BytesIO and binary file objects
+                # implement readinto.  For smaller reads the per-call
+                # ctypes setup cost (from_address+memoryview) outweighs
+                # the savings, so we keep the bytes path for those.
+                READINTO_THRESHOLD = 4096
+                if length >= READINTO_THRESHOLD:
+                    readinto = getattr(src, "readinto", None)
+                    if readinto is not None:
+                        arr = (ctypes.c_ubyte * length).from_address(
+                            ctypes.addressof(data.contents)
+                        )
+                        n = readinto(memoryview(arr))
+                        return n or 0
+
+                buffer = src.read(length)
                 if not buffer:  # EOF
                     return 0
 
@@ -1870,17 +1887,8 @@ class Stream:
                 if not data or length <= 0:
                     return -1
 
-                # Create a temporary buffer to safely handle the data
-                temp_buffer = (ctypes.c_ubyte * length)()
-                try:
-                    # Copy data to our temporary buffer
-                    ctypes.memmove(temp_buffer, data, length)
-                    # Write from our safe buffer
-                    self._file_like_stream.write(bytes(temp_buffer))
-                    return length
-                finally:
-                    # Ensure temporary buffer is cleared
-                    ctypes.memset(temp_buffer, 0, length)
+                self._file_like_stream.write(ctypes.string_at(data, length))
+                return length
             except Exception:
                 return -1
 
@@ -2890,10 +2898,7 @@ class Signer(ManagedResource):
                 if data_len > 1024 * 1024:  # 1MB limit
                     return -1
 
-                # Recover signed data (copy, to avoid lifetime issues)
-                temp_buffer = (ctypes.c_ubyte * data_len)()
-                ctypes.memmove(temp_buffer, data_ptr, data_len)
-                data = bytes(temp_buffer)
+                data = ctypes.string_at(data_ptr, data_len)
 
                 if not data:
                     # Error: empty data, invalid so return -1,
@@ -3558,10 +3563,7 @@ class Builder(ManagedResource):
         manifest_bytes = b""
         if manifest_bytes_ptr and result > 0:
             try:
-                # Convert the C pointer to Python bytes
-                temp_buffer = (ctypes.c_ubyte * result)()
-                ctypes.memmove(temp_buffer, manifest_bytes_ptr, result)
-                manifest_bytes = bytes(temp_buffer)
+                manifest_bytes = ctypes.string_at(manifest_bytes_ptr, result)
             except Exception:
                 manifest_bytes = b""
             finally:
@@ -3660,7 +3662,13 @@ class Builder(ManagedResource):
                 context's signer is used.
             format: The MIME type of the content.
             source: The source stream.
-            dest: The destination stream (optional).
+            dest: The destination stream (optional). When
+                omitted, the signed asset is buffered into
+                an in-memory `BytesIO` sized to the full
+                output. For assets larger than a few MB,
+                pass a file or other writable stream to
+                avoid buffering the whole signed payload
+                in memory.
 
         Returns:
             Manifest bytes
@@ -3758,7 +3766,9 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     _clear_error_state()
 
     format_str = format.encode('utf-8')
-    manifest_array = (ctypes.c_ubyte * len(manifest_bytes))(*manifest_bytes)
+    manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
+        manifest_bytes
+    )
     result_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
     result = _lib.c2pa_format_embeddable(
@@ -3771,10 +3781,9 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     _check_ffi_operation_result(result,
         "Failed to format embeddable manifest", check=lambda r: r < 0)
 
-    # Convert the result bytes to a Python bytes object
     size = result
     try:
-        result_bytes = bytes(result_bytes_ptr[:size])
+        result_bytes = ctypes.string_at(result_bytes_ptr, size)
     except Exception as e:
         raise C2paError(
             f"Failed to convert embeddable manifest bytes: {e}"
