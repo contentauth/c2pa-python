@@ -1807,23 +1807,7 @@ class Stream:
                 if not data or length <= 0:
                     return -1
 
-                src = self._file_like_stream
-                # For larger reads, fill the buffer directly
-                # via a memoryview, avoiding the intermediate
-                # `bytes` allocation.
-                # For smaller reads the per-call ctypes setup cost
-                # outweighs the savings, so we use the bytes path.
-                READINTO_THRESHOLD = 4096
-                if length >= READINTO_THRESHOLD:
-                    readinto = getattr(src, "readinto", None)
-                    if readinto is not None:
-                        arr = (ctypes.c_ubyte * length).from_address(
-                            ctypes.addressof(data.contents)
-                        )
-                        n = readinto(memoryview(arr))
-                        return n or 0
-
-                buffer = src.read(length)
+                buffer = self._file_like_stream.read(length)
                 if not buffer:  # EOF
                     return 0
 
