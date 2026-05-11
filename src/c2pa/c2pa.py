@@ -2330,10 +2330,8 @@ class Reader(ManagedResource):
         else:
             if not isinstance(manifest_data, bytes):
                 raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
-            manifest_array = (
-                ctypes.c_ubyte *
-                len(manifest_data))(
-                *manifest_data)
+            manifest_array = (ctypes.c_ubyte * len(manifest_data)).from_buffer_copy(
+                manifest_data)
             self._handle = (
                 _lib.c2pa_reader_from_manifest_data_and_stream(
                     format_bytes,
@@ -2416,10 +2414,8 @@ class Reader(ManagedResource):
                     raise TypeError(
                         Reader._ERROR_MESSAGES[
                             'manifest_error'])
-                manifest_array = (
-                    ctypes.c_ubyte *
-                    len(manifest_data))(
-                    *manifest_data)
+                manifest_array = (ctypes.c_ubyte * len(manifest_data)).from_buffer_copy(
+                    manifest_data)
                 # Consume current reader,
                 # with manifest data and stream (C FFI pattern),
                 # to create a new one (switch out)
