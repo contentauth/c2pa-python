@@ -14,10 +14,6 @@
 """
 Regression tests for resource growth under concurrent Reader/Builder load.
 
-These tests reproduce the production symptom observed in gen-3p-proxy-pipeline:
-  - Memory growing from ~11 GiB to ~19 GiB per pod under signing load
-  - CPU spiking to 599% during concurrent operations
-
 Root causes fixed in c2pa-rs:
   - A new tokio multi-thread Runtime (= new OS thread pool) was created per
     Reader FFI call. Under load this produced hundreds of leaked threads.
