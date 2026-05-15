@@ -25,9 +25,13 @@ concurrent Reader operations and assert both stay within reasonable bounds.
 They are expected to FAIL against the un-fixed c2pa-rs library.
 """
 
+import ctypes
+import ctypes.util
 import gc
 import io
 import os
+import platform
+import struct
 import threading
 import time
 import unittest
@@ -69,8 +73,51 @@ def _thread_count() -> int:
     return threading.active_count()
 
 
+def _rss_mb_macos() -> float | None:
+    """Current RSS on macOS via mach task_info(TASK_BASIC_INFO). No dependencies."""
+    if platform.system() != "Darwin":
+        return None
+    # task_basic_info layout (arm64 / x86_64):
+    #   uint32  virtual_size       (but mach_vm_size_t = uint64 on 64-bit)
+    #   uint64  virtual_size
+    #   uint64  resident_size
+    #   uint64  resident_size_max
+    #   int32   user_time.seconds
+    #   int32   user_time.microseconds
+    #   int32   system_time.seconds
+    #   int32   system_time.microseconds
+    #   int32   policy
+    #   int32   suspend_count
+    # Defined in <mach/task_info.h>; TASK_BASIC_INFO = 5, count = 10 (32-bit integers).
+    # On 64-bit the sizes are natural_t (32) + mach_vm_size_t (64) fields;
+    # easier to use MACH_TASK_BASIC_INFO (20) which has a well-known struct layout.
+    MACH_TASK_BASIC_INFO = 20
+    # struct mach_task_basic_info { uint64 vsize, rsize, rsize_max; time_value_t utime, stime; int32 policy, suspend }
+    # time_value_t = { int32 sec, int32 usec } → total struct = 3×8 + 2×(2×4) + 2×4 = 24 + 16 + 8 = 48 bytes
+    fmt = "QQQiiiiii"  # 3 uint64 + 6 int32 = 24+24 = 48 bytes
+    buf = (ctypes.c_uint32 * (struct.calcsize(fmt) // 4))()
+    count = ctypes.c_uint32(struct.calcsize(fmt) // 4)
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        ret = libc.task_info(
+            libc.mach_task_self(),
+            ctypes.c_uint32(MACH_TASK_BASIC_INFO),
+            ctypes.byref(buf),
+            ctypes.byref(count),
+        )
+        if ret != 0:
+            return None
+        rss_bytes = struct.unpack_from(fmt, buf)[1]  # resident_size is second uint64
+        return rss_bytes / (1024.0 * 1024.0)
+    except Exception:
+        return None
+
+
 def _rss_mb() -> float | None:
     """Resident set size in MB, or None if not measurable."""
+    macos_rss = _rss_mb_macos()
+    if macos_rss is not None:
+        return macos_rss
     status = _proc_status()
     if "VmRSS" in status:
         kb = int(status["VmRSS"].strip().split()[0])
