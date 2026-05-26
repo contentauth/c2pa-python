@@ -149,6 +149,30 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
+      - name: Set OPENSSL_DIR for Windows ARM64
+        if: matrix.runs-on == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          # Find pre-installed OpenSSL (runner ships with OpenSSL 3.x)
+          $candidates = @(
+            "C:\Program Files\OpenSSL",
+            "C:\Program Files\OpenSSL-Win64",
+            "C:\OpenSSL-Win64",
+            "C:\OpenSSL"
+          )
+          $found = $candidates | Where-Object { Test-Path "$_\include\openssl\ssl.h" } | Select-Object -First 1
+          if ($found) {
+            Write-Host "Found OpenSSL at: $found"
+            echo "OPENSSL_DIR=$found" >> $env:GITHUB_ENV
+            echo "$found\bin" >> $env:GITHUB_PATH
+          } else {
+            Write-Host "OpenSSL not found in standard locations, installing via vcpkg..."
+            & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows
+            $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows"
+            echo "OPENSSL_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
+            echo "$vcpkgRoot\bin" >> $env:GITHUB_PATH
+          }
+
       - name: Install project dependencies
         run: python -m pip install -r requirements.txt
 
@@ -340,6 +364,29 @@ jobs:
         with:
           name: wheels-windows-${{ matrix.target }}
           path: dist
+
+      - name: Set OPENSSL_DIR for Windows ARM64
+        if: matrix.runs-on == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "C:\Program Files\OpenSSL",
+            "C:\Program Files\OpenSSL-Win64",
+            "C:\OpenSSL-Win64",
+            "C:\OpenSSL"
+          )
+          $found = $candidates | Where-Object { Test-Path "$_\include\openssl\ssl.h" } | Select-Object -First 1
+          if ($found) {
+            Write-Host "Found OpenSSL at: $found"
+            echo "OPENSSL_DIR=$found" >> $env:GITHUB_ENV
+            echo "$found\bin" >> $env:GITHUB_PATH
+          } else {
+            Write-Host "OpenSSL not found, installing via vcpkg..."
+            & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows
+            $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows"
+            echo "OPENSSL_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
+            echo "$vcpkgRoot\bin" >> $env:GITHUB_PATH
+          }
 
       - name: Create and activate virtual environment
         run: |

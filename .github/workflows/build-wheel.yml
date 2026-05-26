@@ -88,6 +88,29 @@ jobs:
           echo "Verifying wheels using twine check"
           twine check dist/*
 
+      - name: Set OPENSSL_DIR for Windows ARM64
+        if: runner.os == 'Windows' && inputs.architecture == 'arm64'
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "C:\Program Files\OpenSSL",
+            "C:\Program Files\OpenSSL-Win64",
+            "C:\OpenSSL-Win64",
+            "C:\OpenSSL"
+          )
+          $found = $candidates | Where-Object { Test-Path "$_\include\openssl\ssl.h" } | Select-Object -First 1
+          if ($found) {
+            Write-Host "Found OpenSSL at: $found"
+            echo "OPENSSL_DIR=$found" >> $env:GITHUB_ENV
+            echo "$found\bin" >> $env:GITHUB_PATH
+          } else {
+            Write-Host "OpenSSL not found in standard locations, installing via vcpkg..."
+            & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows
+            $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows"
+            echo "OPENSSL_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
+            echo "$vcpkgRoot\bin" >> $env:GITHUB_PATH
+          }
+
       - name: Build Windows wheel
         if: runner.os == 'Windows'
         shell: pwsh
