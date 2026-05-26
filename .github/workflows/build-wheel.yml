@@ -88,7 +88,7 @@ jobs:
           echo "Verifying wheels using twine check"
           twine check dist/*
 
-      - name: Build Windows wheel (x64)
+      - name: Build Windows wheel
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -107,6 +107,7 @@ jobs:
           # Download native artifacts
           Write-Host "Starting artifact download process..."
           Write-Host "C2PA_VERSION: $env:C2PA_VERSION"
+          Write-Host "Architecture: ${{ inputs.architecture }}"
 
           python scripts/download_artifacts.py "$env:C2PA_VERSION"
 
@@ -115,8 +116,15 @@ jobs:
           Write-Host "src/c2pa/libs directory contents:"
           Get-ChildItem -Recurse -Path src/c2pa/libs
 
+          # Set platform tag based on architecture
+          if ("${{ inputs.architecture }}" -eq "arm64") {
+            $PLATFORM_TAG = "win_arm64"
+          } else {
+            $PLATFORM_TAG = "win_amd64"
+          }
+
           # Build wheel
-          python setup.py bdist_wheel --plat-name win_amd64
+          python setup.py bdist_wheel --plat-name $PLATFORM_TAG
 
           # Verify wheel structure
           twine check dist/*

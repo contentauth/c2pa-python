@@ -41,6 +41,7 @@ PLATFORM_FOLDERS = {
     'aarch64-apple-darwin': 'dylib',
     'x86_64-apple-darwin': 'dylib',
     'x86_64-pc-windows-msvc': 'dll',
+    'aarch64-pc-windows-msvc': 'dll',
     'x86_64-unknown-linux-gnu': 'so',
     'aarch64-unknown-linux-gnu': 'so',
 }
