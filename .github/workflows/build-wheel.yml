@@ -92,11 +92,12 @@ jobs:
         if: runner.os == 'Windows' && inputs.architecture == 'arm64'
         shell: pwsh
         run: |
-          # Pre-installed OpenSSL on runner is x64 — unusable for ARM64 cargo builds.
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows
-          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows"
+          # Static-md triplet: static OpenSSL libs, dynamic CRT.
+          # Static linking avoids runtime DLL load issues.
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows-static-md
+          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static-md"
           echo "OPENSSL_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
-          echo "$vcpkgRoot\bin" >> $env:GITHUB_PATH
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
       - name: Build Windows wheel
         if: runner.os == 'Windows'
