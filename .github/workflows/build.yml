@@ -137,7 +137,7 @@ jobs:
           - runs-on: windows-latest
             python-version: "3.10"
           - runs-on: windows-11-arm
-            python-version: "3.11"  # 3.11 only viable option for win arm actions
+            python-version: "3.11"  # win-arm runner needs 3.11 atleast
 
     steps:
       - name: Checkout repository
@@ -153,9 +153,8 @@ jobs:
         if: matrix.runs-on == 'windows-11-arm'
         shell: pwsh
         run: |
-          # Pre-installed OpenSSL on runner is x64 — unusable for ARM64 cargo builds.
-          # Use static-md triplet: static OpenSSL libs, dynamic CRT (matches Python).
-          # Static linking avoids runtime DLL search issues (Python 3.8+ ignores PATH for .pyd deps).
+          # Pre-installed OpenSSL on runner fails build.
+          # Static OpenSSL to avoid runtime DLL load complexities.
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows-static-md
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static-md"
           echo "OPENSSL_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
@@ -329,7 +328,7 @@ jobs:
             python-version: "3.10"
           - target: arm64
             runs-on: windows-11-arm
-            python-version: "3.11"  # 3.11 only viable option for win arm actions
+            python-version: "3.11"  # win-arm runner needs 3.11 atleast
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -357,7 +356,6 @@ jobs:
         if: matrix.runs-on == 'windows-11-arm'
         shell: pwsh
         run: |
-          # Static-md triplet: static OpenSSL libs, dynamic CRT.
           # Static linking avoids runtime DLL load issues.
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows-static-md
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static-md"
