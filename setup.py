@@ -79,7 +79,7 @@ def get_platform_identifier(target_arch=None) -> str:
         else:
             return "universal-apple-darwin"
     elif system == "windows":
-        if target_arch == "arm64":
+        if target_arch == "arm64" or platform.machine().lower() in ["arm64", "aarch64"]:
             return "aarch64-pc-windows-msvc"
         else:
             return "x86_64-pc-windows-msvc"
