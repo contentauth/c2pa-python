@@ -137,7 +137,7 @@ jobs:
           - runs-on: windows-latest
             python-version: "3.10"
           - runs-on: windows-11-arm
-            python-version: "3.11"  # 3.10 has no win-arm64 build in actions/python-versions
+            python-version: "3.11"  # 3.11 only viable option for win arm actions
 
     steps:
       - name: Checkout repository
@@ -325,7 +325,7 @@ jobs:
             python-version: "3.10"
           - target: arm64
             runs-on: windows-11-arm
-            python-version: "3.11"  # 3.10 has no win-arm64 build in actions/python-versions
+            python-version: "3.11"  # 3.11 only viable option for win arm actions
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||

@@ -84,7 +84,7 @@ def _get_architecture() -> str:
     elif sys.platform == "win32":
         # win32 will cover all Windows versions
         # (the 32 is a historical quirk)
-        return platform.machine()
+        return platform.machine().lower()
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
