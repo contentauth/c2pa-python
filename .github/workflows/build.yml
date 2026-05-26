@@ -149,15 +149,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      - name: Install OpenSSL via vcpkg (Windows ARM64)
-        if: matrix.runs-on == 'windows-11-arm'
-        shell: pwsh
-        run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows
-          $opensslRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows"
-          echo "OPENSSL_DIR=$opensslRoot" >> $env:GITHUB_ENV
-          echo "$opensslRoot\bin" >> $env:GITHUB_PATH
-
       - name: Install project dependencies
         run: python -m pip install -r requirements.txt
 
@@ -361,15 +352,7 @@ jobs:
           $wheel = Get-ChildItem -Path dist -Filter "c2pa_python-*.whl" | Select-Object -First 1
           if (-not $wheel) { Write-Error "No wheel file found in dist directory"; exit 1 }
           pip install $wheel.FullName
-
-      - name: Run unittest tests on installed wheel
-        run: |
-          .\venv\Scripts\activate
-          python .\tests\test_unit_tests.py
-
-      - name: Install pytest (in venv)
-        run: |
-          .\venv\Scripts\activate
+          pip install -r requirements.txt
           pip install pytest
 
       - name: Run tests with pytest (venv)
