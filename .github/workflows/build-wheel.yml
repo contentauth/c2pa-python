@@ -92,7 +92,6 @@ jobs:
         if: runner.os == 'Windows' && inputs.architecture == 'arm64'
         shell: pwsh
         run: |
-          # Static-md triplet: static OpenSSL libs, dynamic CRT.
           # Static linking avoids runtime DLL load issues.
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows-static-md
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static-md"
