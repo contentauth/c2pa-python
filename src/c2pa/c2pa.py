@@ -3529,10 +3529,18 @@ class Builder(ManagedResource):
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
                 )
-            # Builder pointer consumed by Rust FFI at this point
-            self._mark_consumed()
+            # c2pa_builder_sign / c2pa_builder_sign_context BORROW the builder
+            # (&mut self on the Rust side); they do NOT take ownership. The
+            # native Builder is still owned by us and must be freed. Marking it
+            # only "consumed" nulls the handle WITHOUT calling c2pa_free, leaking
+            # a fully-populated Builder (manifest store + claim + ingredients) on
+            # every sign. close() frees it and keeps the Builder closed so it is
+            # not reused (a Builder is single-shot). _mark_consumed() stays
+            # correct for the real consume-and-return calls (with_definition /
+            # with_archive), just not sign.
+            self.close()
         except Exception as e:
-            self._mark_consumed()
+            self.close()
             raise C2paError(f"Error during signing: {e}")
 
         _check_ffi_operation_result(result,
