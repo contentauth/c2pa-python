@@ -3529,15 +3529,9 @@ class Builder(ManagedResource):
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
                 )
-            # c2pa_builder_sign / c2pa_builder_sign_context BORROW the builder
-            # (&mut self on the Rust side); they do NOT take ownership. The
-            # native Builder is still owned by us and must be freed. Marking it
-            # only "consumed" nulls the handle WITHOUT calling c2pa_free, leaking
-            # a fully-populated Builder (manifest store + claim + ingredients) on
-            # every sign. close() frees it and keeps the Builder closed so it is
-            # not reused (a Builder is single-shot). _mark_consumed() stays
-            # correct for the real consume-and-return calls (with_definition /
-            # with_archive), just not sign.
+            # Sign borrows the Builder without taking ownership.
+            # Closing here ensures resources clean up,
+            # and single use/single sign done by a Builder.
             self.close()
         except Exception as e:
             self.close()
