@@ -3486,6 +3486,8 @@ class Builder(ManagedResource):
         When `signer` is provided, calls `c2pa_builder_sign` (explicit
         signer).  When `signer` is `None`, calls
         `c2pa_builder_sign_context` (context-based signer).
+        Sign can only be called once on a Builder, as Builder objects
+        are single-sign use. The Builder is closed after signing.
 
         Args:
             format: The MIME type or extension of the content
@@ -3529,10 +3531,12 @@ class Builder(ManagedResource):
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
                 )
-            # Builder pointer consumed by Rust FFI at this point
-            self._mark_consumed()
+            # Sign borrows the Builder without taking ownership.
+            # Closing here ensures resources clean up,
+            # and single use/single sign done by a Builder.
+            self.close()
         except Exception as e:
-            self._mark_consumed()
+            self.close()
             raise C2paError(f"Error during signing: {e}")
 
         _check_ffi_operation_result(result,
@@ -3565,6 +3569,8 @@ class Builder(ManagedResource):
         dest: Any = None,
     ) -> bytes:
         """Shared signing logic for sign().
+        Sign can only be called once on a Builder, as Builder objects
+        are single-sign use. The Builder is closed after signing.
 
         Args:
             signer: The signer to use, or None for context signer.
@@ -3635,6 +3641,8 @@ class Builder(ManagedResource):
         If no signer is provided, the context's signer is
         used (builder must have been created with a Context
         that has a signer).
+        Sign can only be called once on a Builder, as Builder objects
+        are single-sign use. The Builder is closed after signing.
 
         Args:
             signer: The signer to use. If not provided, the
