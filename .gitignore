@@ -122,3 +122,7 @@ target/
 src/c2pa/libs/
 !tests/fixtures/*.pem
 !tests/fixtures/*.key
+
+# Memory profiling reports
+tests/perf/reports/*.html
+tests/perf/reports/*.bin
