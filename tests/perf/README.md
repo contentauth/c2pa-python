@@ -23,6 +23,8 @@ make memory-use-bench MEMRAY_ITERATIONS=1000
 
 Most scenarios use the Context API: they build a `Context` once and reuse it across iterations, so its settings are parsed a single time. The jpeg and png cases also keep a `_legacy` variant that builds the `Reader`/`Builder` without a `Context`, which re-reads the thread-local settings on each construction. Running a pair (for example `builder_sign_jpeg_legacy` and `builder_sign_jpeg_with_context`) compares the two paths.
 
+The `builder_sign_{jpeg,png}_parallel_*` scenarios build one `Context` and share it across 10 threads that sign concurrently, each with its own streams and `Builder`. The name encodes two axes. `split` divides the iteration budget across the threads, so total work matches a single-threaded scenario; `full` runs the full loop on each of the 10 threads, so total work is 10x (use these with `SCENARIO=` rather than the whole suite). `pool` runs the threads through a `ThreadPoolExecutor`; `barrier` starts all 10 at once with a `threading.Barrier`.
+
 ## Environments
 
 Select the target environment with `PERF_ENV` (default: `python-3.12-slim`):

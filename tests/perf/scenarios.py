@@ -12,6 +12,8 @@ Each function is called N times by run_profile.py.
 import io
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from c2pa import Builder, C2paSignerInfo, Context, Reader, Signer
 
@@ -136,6 +138,64 @@ def _read_file_context(path: Path, mime: str, iterations: int) -> None:
             reader = Reader(mime, f, manifest_data=None, context=context)
             reader.json()
             reader.close()
+
+
+# Parallel signing: one Context built once and shared across threads. Each
+# thread uses its own BytesIO source/dest and its own Builder per sign; the
+# Context (and its signer) is only read. This exercises Context thread-safety
+# under concurrent signing.
+
+_PARALLEL_THREADS = 10
+
+
+def _sign_parallel(path: Path, mime: str, iterations: int, *,
+                   per_thread_full: bool, launch: str) -> None:
+    """Sign from `_PARALLEL_THREADS` threads sharing one Context.
+
+    per_thread_full=False: the iteration budget is split across threads (each
+        does iterations // _PARALLEL_THREADS), so total work matches the
+        single-threaded scenarios.
+    per_thread_full=True: each thread runs the full `iterations` loop, so total
+        work is _PARALLEL_THREADS x iterations (aggregate concurrent load).
+    launch="pool": ThreadPoolExecutor(max_workers=_PARALLEL_THREADS).
+    launch="barrier": threads released together by a Barrier so all signs run
+        simultaneously (peak Context contention).
+    """
+    signer = _make_signer()
+    context = Context(signer=signer)  # built once, shared, kept open
+    source_bytes = path.read_bytes()
+    manifest = {**MANIFEST_BASE, "format": mime}
+
+    per_thread = (
+        iterations if per_thread_full
+        else max(1, iterations // _PARALLEL_THREADS)
+    )
+
+    def work(barrier=None):
+        if barrier is not None:
+            barrier.wait()  # release all threads at once
+        for _ in range(per_thread):
+            source = io.BytesIO(source_bytes)  # per-thread, never shared
+            output = io.BytesIO()
+            builder = Builder(manifest, context=context)
+            # str first arg selects the context signer.
+            builder.sign(mime, source, output)
+
+    if launch == "pool":
+        with ThreadPoolExecutor(max_workers=_PARALLEL_THREADS) as ex:
+            futures = [ex.submit(work) for _ in range(_PARALLEL_THREADS)]
+            for f in futures:
+                f.result()  # surface exceptions from worker threads
+    else:  # barrier
+        barrier = threading.Barrier(_PARALLEL_THREADS)
+        threads = [
+            threading.Thread(target=work, args=(barrier,))
+            for _ in range(_PARALLEL_THREADS)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
 
 # Reader scenarios: read manifests from files with manifests
@@ -418,6 +478,33 @@ def scenario_reader_jpeg_with_context(iterations: int = 100) -> None:
     _read_file_context(SIGNED_JPEG, "image/jpeg", iterations)
 
 
+# Parallel signing variants: one shared Context across 10 threads.
+# {split, full} x {pool, barrier} x {jpeg, png}.
+
+def scenario_builder_sign_jpeg_parallel_split_pool(iterations: int = 100) -> None:
+    _sign_parallel(SOURCE_JPEG, "image/jpeg", iterations, per_thread_full=False, launch="pool")
+
+
+def scenario_builder_sign_jpeg_parallel_split_barrier(iterations: int = 100) -> None:
+    _sign_parallel(SOURCE_JPEG, "image/jpeg", iterations, per_thread_full=False, launch="barrier")
+
+
+def scenario_builder_sign_png_parallel_split_pool(iterations: int = 100) -> None:
+    _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=False, launch="pool")
+
+
+def scenario_builder_sign_png_parallel_split_barrier(iterations: int = 100) -> None:
+    _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=False, launch="barrier")
+
+
+def scenario_builder_sign_png_parallel_full_pool(iterations: int = 100) -> None:
+    _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=True, launch="pool")
+
+
+def scenario_builder_sign_png_parallel_full_barrier(iterations: int = 100) -> None:
+    _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=True, launch="barrier")
+
+
 SCENARIOS = {
     "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
     "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
@@ -427,6 +514,12 @@ SCENARIOS = {
     "builder_sign_jpeg_with_context": scenario_builder_sign_jpeg_with_context,
     "builder_sign_png_legacy": scenario_builder_sign_png_legacy,
     "builder_sign_png_with_context": scenario_builder_sign_png_with_context,
+    "builder_sign_jpeg_parallel_split_pool": scenario_builder_sign_jpeg_parallel_split_pool,
+    "builder_sign_jpeg_parallel_split_barrier": scenario_builder_sign_jpeg_parallel_split_barrier,
+    "builder_sign_png_parallel_split_pool": scenario_builder_sign_png_parallel_split_pool,
+    "builder_sign_png_parallel_split_barrier": scenario_builder_sign_png_parallel_split_barrier,
+    "builder_sign_png_parallel_full_pool": scenario_builder_sign_png_parallel_full_pool,
+    "builder_sign_png_parallel_full_barrier": scenario_builder_sign_png_parallel_full_barrier,
     "builder_sign_gif": scenario_builder_sign_gif,
     "builder_sign_heic": scenario_builder_sign_heic,
     "builder_sign_m4a": scenario_builder_sign_m4a,
