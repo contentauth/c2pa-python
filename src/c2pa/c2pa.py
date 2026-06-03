@@ -1436,7 +1436,12 @@ class Settings(ManagedResource):
         super().__init__()
 
         ptr = _lib.c2pa_settings_new()
-        _check_ffi_operation_result(ptr, "Failed to create Settings")
+        try:
+            _check_ffi_operation_result(ptr, "Failed to create Settings")
+        except Exception:
+            if ptr:
+                ManagedResource._free_native_ptr(ptr)
+            raise
 
         self._handle = ptr
         self._lifecycle_state = LifecycleState.ACTIVE
@@ -2414,11 +2419,16 @@ class Reader(ManagedResource):
             reader_ptr = _lib.c2pa_reader_from_context(
                 context.execution_context,
             )
-            _check_ffi_operation_result(reader_ptr,
-                Reader._ERROR_MESSAGES[
-                    'reader_error'
-                ].format("Unknown error")
-            )
+            try:
+                _check_ffi_operation_result(reader_ptr,
+                    Reader._ERROR_MESSAGES[
+                        'reader_error'
+                    ].format("Unknown error")
+                )
+            except Exception:
+                if reader_ptr:
+                    ManagedResource._free_native_ptr(reader_ptr)
+                raise
 
             if manifest_data is not None:
                 if not isinstance(manifest_data, bytes):
@@ -3187,11 +3197,16 @@ class Builder(ManagedResource):
         builder_ptr = _lib.c2pa_builder_from_context(
             context.execution_context,
         )
-        _check_ffi_operation_result(builder_ptr,
-            Builder._ERROR_MESSAGES[
-                'builder_error'
-            ].format("Unknown error")
-        )
+        try:
+            _check_ffi_operation_result(builder_ptr,
+                Builder._ERROR_MESSAGES[
+                    'builder_error'
+                ].format("Unknown error")
+            )
+        except Exception:
+            if builder_ptr:
+                ManagedResource._free_native_ptr(builder_ptr)
+            raise
 
         # Consume-and-return: builder_ptr is consumed,
         # new_ptr is the valid pointer going forward
