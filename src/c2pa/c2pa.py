@@ -1812,7 +1812,26 @@ class Stream:
                 if not data or length <= 0:
                     return -1
 
-                buffer = self._file_like_stream.read(length)
+                stream = self._file_like_stream
+                readinto = getattr(stream, "readinto", None)
+                if readinto is not None:
+                    # Zero-copy fast path. from_address wraps the native buffer
+                    # Rust handed us (size == length) without a cast object and
+                    # without allocating a length-sized bytes. readinto fills it
+                    # directly and returns the byte count, so there is no
+                    # intermediate bytes, no len()/min(), and no memmove copy.
+                    # Every binary stream (BytesIO, BufferedReader, FileIO,
+                    # BufferedRandom) implements readinto; only text-mode or
+                    # custom duck-typed streams lack it and fall through below.
+                    # data is a POINTER(c_uint8); addressof(.contents) gives the
+                    # raw int address from_address needs (no cast object).
+                    buf = (ctypes.c_char * length).from_address(
+                        ctypes.addressof(data.contents))
+                    n = readinto(buf)
+                    return n if n else 0
+
+                # Fallback for streams without readinto.
+                buffer = stream.read(length)
                 if not buffer:  # EOF
                     return 0
 
@@ -1846,8 +1865,14 @@ class Stream:
             if not self._initialized or self._closed:
                 return -1
             try:
-                file_stream.seek(offset, whence)
-                return file_stream.tell()
+                # io.IOBase.seek returns the new absolute position, which is
+                # exactly what the Rust seek callback expects (see
+                # c2pa_stream.rs). Use it directly and skip a separate tell()
+                # call, which would allocate another Python int on every seek.
+                # Fall back to tell() only for stream objects that do not honor
+                # the return-value contract and return None.
+                pos = file_stream.seek(offset, whence)
+                return pos if pos is not None else file_stream.tell()
             except Exception:
                 return -1
 
