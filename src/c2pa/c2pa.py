@@ -1823,7 +1823,17 @@ class Stream:
                 if not data or length <= 0:
                     return -1
 
-                buffer = self._file_like_stream.read(length)
+                stream = self._file_like_stream
+                readinto = getattr(stream, "readinto", None)
+                if readinto is not None:
+                    # Most streams have readinto
+                    buf = (ctypes.c_char * length).from_address(
+                        ctypes.addressof(data.contents))
+                    n = readinto(buf)
+                    return n if n else 0
+
+                # Fallback for streams without readinto.
+                buffer = stream.read(length)
                 if not buffer:  # EOF
                     return 0
 
@@ -1857,8 +1867,10 @@ class Stream:
             if not self._initialized or self._closed:
                 return -1
             try:
-                file_stream.seek(offset, whence)
-                return file_stream.tell()
+                # Fall back to tell() only for stream objects that do not
+                # return the new absolute position and return None.
+                pos = file_stream.seek(offset, whence)
+                return pos if pos is not None else file_stream.tell()
             except Exception:
                 return -1
 
