@@ -180,7 +180,7 @@ The `_meta` block records which toolchain produced the baseline so the numbers a
 
 You might expect the baseline to show `leaked_bytes: 0`. In practice it never does. When the c2pa native library (`libc2pa_c.so`) is first loaded, Rust sets up global data structures designed to live for the entire lifetime of the process. They get cleaned up when the process exits, which is after memray stops watching, so memray sees them as "never freed" even though they are not leaking.
 
-A memory leak grows proportionally with work done. If you sign 50 images and get 3.2 MB leaked, then sign 1000 images and still get 3.2 MB leaked, that 3.2 MB is static one-time overhead rather than a leak, since it does not grow with the work that ran. If signing 1000 images gave you 64 MB leaked, that would be a leak, because the leaked memory grows with the work executed.
+A memory leak grows proportionally with work done. If you sign 50 images and get 3.2 MB leaked, then sign 1000 images and still get 3.2 MB leaked, that 3.2 MB is static one-time overhead rather than a leak, since it does not grow with the work that ran. If signing 1000 images gave you 64 MB leaked, that would be a leak, as the leaked memory grows with the work executed.
 
 The baseline captures this expected static overhead. Future runs compare against it: if `leaked_bytes` grows beyond the baseline by more than 10%, the run fails.
 
@@ -192,11 +192,11 @@ Run with a higher iteration count than default (100) and compare:
 make memory-use-bench MEMRAY_ITERATIONS=1000 PERF_ARGS=--update-baseline
 ```
 
-If `leaked_bytes` stays flat compared to a 100-iteration run, there is no leak. If it scales with iterations, open `tests/perf/reports/<scenario>-leaks.html` in a browser to see which function is responsible.
+If `leaked_bytes` stays flat compared to a baseline run or in a larger run (more iterations), there is no leak. If it scales with iterations, open `tests/perf/reports/<scenario>-leaks.html` in a browser to see which function is responsible.
 
 ### Reading the "Resident set size over time" graph (why memory looks like it climbs)
 
-The "Resident set size over time" plot (chart icon, top-right of the report) draws two lines. "Resident size" (RSS) is every page the OS counts as resident: interpreter, `libc2pa_c`, thread stacks, and pages the allocator holds but has not returned. "Heap size" is only the live tracked allocations.
+The "Resident set size over time" plot (chart icon, top-right of the report) draws two lines. "Resident size" (RSS) is every page the OS counts as resident: interpreter and pages the allocator holds but has not returned. "Heap size" is only the live tracked allocations.
 
 On the parallel scenarios the RSS line steps up and stays high. The threads each hold their own source, output, and `Builder` live at once, so RSS rises to cover that combined working set (the steps line up with the moments all threads overlap). The allocator then keeps those arena pages for reuse instead of returning them, so RSS plateaus at the high-water mark.
 
@@ -205,8 +205,6 @@ Judge leaks by the heap line. The heap rises early and then settles or falls, th
 ### Temporary allocations
 
 `<scenario>-temporary.html` shows temporary allocations, meaning memory that is allocated and then freed almost immediately (memray's threshold is one allocation: a block is temporary if it is freed before more than one other allocation happens). The memory is returned, so these are not leaks, but they are churn: high allocation and free turnover that costs CPU and can fragment the heap. A scenario doing lots of short-lived work can show heavy temporary allocations while `leaked_bytes` stays flat.
-
-Open the file in a browser to see which call sites are responsible. The view may be sparse or empty if a scenario does little churn. Note that temporary allocations are not part of the baseline regression check: that graph is a debugging aid only.
 
 ### When to update the baseline
 
