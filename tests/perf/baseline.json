@@ -8,143 +8,133 @@
     "arch": "aarch64"
   },
   "reader_jpeg_legacy": {
-    "peak_bytes": 3814601,
-    "leaked_bytes": 3266541,
-    "total_allocations": 698915
+    "peak_bytes": 3814421,
+    "leaked_bytes": 3266116,
+    "total_allocations": 698899
   },
   "reader_jpeg_with_context": {
-    "peak_bytes": 3807522,
-    "leaked_bytes": 3259634,
-    "total_allocations": 692971
+    "peak_bytes": 3822953,
+    "leaked_bytes": 3257471,
+    "total_allocations": 692953
   },
   "reader_mp4": {
-    "peak_bytes": 4877918,
-    "leaked_bytes": 3259562,
-    "total_allocations": 2113007
+    "peak_bytes": 4876441,
+    "leaked_bytes": 3257485,
+    "total_allocations": 2112991
   },
   "reader_wav": {
-    "peak_bytes": 5521743,
-    "leaked_bytes": 3269504,
-    "total_allocations": 400387
+    "peak_bytes": 5520266,
+    "leaked_bytes": 3267427,
+    "total_allocations": 400371
   },
   "builder_sign_jpeg_legacy": {
-    "peak_bytes": 7695839,
-    "leaked_bytes": 3385100,
-    "total_allocations": 522543
+    "peak_bytes": 7695310,
+    "leaked_bytes": 3383623,
+    "total_allocations": 522425
   },
   "builder_sign_jpeg_with_context": {
-    "peak_bytes": 7688843,
-    "leaked_bytes": 3377852,
-    "total_allocations": 516747
+    "peak_bytes": 7688236,
+    "leaked_bytes": 3376293,
+    "total_allocations": 516851
   },
   "builder_sign_png_legacy": {
-    "peak_bytes": 7933706,
-    "leaked_bytes": 3385542,
-    "total_allocations": 1694638
+    "peak_bytes": 7932767,
+    "leaked_bytes": 3383648,
+    "total_allocations": 1694629
   },
   "builder_sign_png_with_context": {
-    "peak_bytes": 7926495,
-    "leaked_bytes": 3377973,
-    "total_allocations": 1688857
+    "peak_bytes": 7925490,
+    "leaked_bytes": 3376452,
+    "total_allocations": 1688908
   },
   "builder_sign_jpeg_parallel_split_pool": {
-    "peak_bytes": 45766622,
-    "leaked_bytes": 3819391,
-    "total_allocations": 528677
+    "peak_bytes": 45764159,
+    "leaked_bytes": 3818113,
+    "total_allocations": 528785
   },
   "builder_sign_jpeg_parallel_split_barrier": {
-    "peak_bytes": 45734302,
-    "leaked_bytes": 3809638,
-    "total_allocations": 527440
+    "peak_bytes": 46225287,
+    "leaked_bytes": 3809216,
+    "total_allocations": 527412
   },
   "builder_sign_png_parallel_split_pool": {
-    "peak_bytes": 46004425,
-    "leaked_bytes": 3820410,
-    "total_allocations": 1700717
+    "peak_bytes": 46002549,
+    "leaked_bytes": 3817801,
+    "total_allocations": 1700731
   },
   "builder_sign_png_parallel_split_barrier": {
-    "peak_bytes": 45972521,
-    "leaked_bytes": 3814097,
-    "total_allocations": 1699504
-  },
-  "builder_sign_png_parallel_full_pool": {
-    "peak_bytes": 46495487,
-    "leaked_bytes": 3893924,
-    "total_allocations": 16164989
-  },
-  "builder_sign_png_parallel_full_barrier": {
-    "peak_bytes": 45972519,
-    "leaked_bytes": 3870183,
-    "total_allocations": 16163593
+    "peak_bytes": 45970433,
+    "leaked_bytes": 3812044,
+    "total_allocations": 1699396
   },
   "builder_sign_gif": {
-    "peak_bytes": 14545919,
-    "leaked_bytes": 3378154,
-    "total_allocations": 7183245
+    "peak_bytes": 14544515,
+    "leaked_bytes": 3375865,
+    "total_allocations": 7183237
   },
   "builder_sign_heic": {
-    "peak_bytes": 4609191,
-    "leaked_bytes": 3378224,
-    "total_allocations": 771063
+    "peak_bytes": 4608484,
+    "leaked_bytes": 3376030,
+    "total_allocations": 771079
   },
   "builder_sign_m4a": {
-    "peak_bytes": 18849432,
-    "leaked_bytes": 3378282,
-    "total_allocations": 2273533
+    "peak_bytes": 18849082,
+    "leaked_bytes": 3376431,
+    "total_allocations": 2273497
   },
   "builder_sign_webp": {
-    "peak_bytes": 8901434,
-    "leaked_bytes": 3378224,
-    "total_allocations": 487631
+    "peak_bytes": 8900701,
+    "leaked_bytes": 3376432,
+    "total_allocations": 487683
   },
   "builder_sign_avi": {
-    "peak_bytes": 7040821,
-    "leaked_bytes": 3378012,
-    "total_allocations": 40315491
+    "peak_bytes": 7040387,
+    "leaked_bytes": 3376267,
+    "total_allocations": 40315553
   },
   "builder_sign_mp4": {
-    "peak_bytes": 6163287,
-    "leaked_bytes": 3378176,
-    "total_allocations": 1809680
+    "peak_bytes": 6162851,
+    "leaked_bytes": 3376431,
+    "total_allocations": 1809672
   },
   "builder_sign_tiff": {
-    "peak_bytes": 13125777,
-    "leaked_bytes": 3378214,
-    "total_allocations": 5139996
+    "peak_bytes": 13124728,
+    "leaked_bytes": 3376268,
+    "total_allocations": 5139967
   },
   "builder_sign_jpeg_parent_of": {
-    "peak_bytes": 14174948,
-    "leaked_bytes": 3379432,
-    "total_allocations": 1209913
+    "peak_bytes": 14173992,
+    "leaked_bytes": 3377656,
+    "total_allocations": 1209933
   },
   "builder_sign_jpeg_component_of": {
-    "peak_bytes": 14176483,
-    "leaked_bytes": 3379509,
-    "total_allocations": 1232398
+    "peak_bytes": 14175518,
+    "leaked_bytes": 3377891,
+    "total_allocations": 1232336
   },
   "builder_sign_jpeg_parent_and_component": {
-    "peak_bytes": 14524112,
-    "leaked_bytes": 3476721,
-    "total_allocations": 2160920
+    "peak_bytes": 14530406,
+    "leaked_bytes": 3474418,
+    "total_allocations": 2160934
   },
   "builder_sign_jpeg_parent_and_component_mixed_mime": {
-    "peak_bytes": 14476564,
-    "leaked_bytes": 3380647,
-    "total_allocations": 2451479
+    "peak_bytes": 14476171,
+    "leaked_bytes": 3378735,
+    "total_allocations": 2451587
   },
   "builder_sign_jpeg_two_components_same_mime": {
-    "peak_bytes": 14520586,
-    "leaked_bytes": 3475529,
-    "total_allocations": 2150809
+    "peak_bytes": 14519270,
+    "leaked_bytes": 3473673,
+    "total_allocations": 2150782
   },
   "builder_sign_jpeg_two_components_mixed_mime": {
-    "peak_bytes": 14474050,
-    "leaked_bytes": 3379259,
-    "total_allocations": 2441187
+    "peak_bytes": 14473127,
+    "leaked_bytes": 3377445,
+    "total_allocations": 2441195
   },
   "builder_sign_jpeg_archive_roundtrip": {
-    "peak_bytes": 14229441,
-    "leaked_bytes": 3429100,
-    "total_allocations": 1680242
+    "peak_bytes": 14226832,
+    "leaked_bytes": 3426491,
+    "total_allocations": 1680290
   }
 }

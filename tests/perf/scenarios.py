@@ -497,14 +497,6 @@ def scenario_builder_sign_png_parallel_split_barrier(iterations: int = 100) -> N
     _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=False, launch="barrier")
 
 
-def scenario_builder_sign_png_parallel_full_pool(iterations: int = 100) -> None:
-    _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=True, launch="pool")
-
-
-def scenario_builder_sign_png_parallel_full_barrier(iterations: int = 100) -> None:
-    _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=True, launch="barrier")
-
-
 SCENARIOS = {
     "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
     "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
@@ -518,8 +510,6 @@ SCENARIOS = {
     "builder_sign_jpeg_parallel_split_barrier": scenario_builder_sign_jpeg_parallel_split_barrier,
     "builder_sign_png_parallel_split_pool": scenario_builder_sign_png_parallel_split_pool,
     "builder_sign_png_parallel_split_barrier": scenario_builder_sign_png_parallel_split_barrier,
-    "builder_sign_png_parallel_full_pool": scenario_builder_sign_png_parallel_full_pool,
-    "builder_sign_png_parallel_full_barrier": scenario_builder_sign_png_parallel_full_barrier,
     "builder_sign_gif": scenario_builder_sign_gif,
     "builder_sign_heic": scenario_builder_sign_heic,
     "builder_sign_m4a": scenario_builder_sign_m4a,
