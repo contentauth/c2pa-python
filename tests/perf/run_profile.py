@@ -27,6 +27,7 @@ Environment variables:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -74,7 +75,7 @@ SCENARIOS["{name}"]({ITERATIONS})
         sys.exit(1)
 
 
-def _generate_flamegraph(bin_path: Path, out_path: Path, mode: str = "peak") -> None:
+def _generate_flamegraph(bin_path: Path, out_path: Path, mode: str = "peak") -> bool:
     """Render one flamegraph view of a capture file.
 
     mode:
@@ -94,8 +95,13 @@ def _generate_flamegraph(bin_path: Path, out_path: Path, mode: str = "peak") -> 
     print(f"    flamegraph ({mode})...", flush=True)
     result = subprocess.run(cmd, text=True)
     if result.returncode != 0:
-        print(f"  flamegraph generation failed for {out_path.name} (exit {result.returncode})", file=sys.stderr)
-        sys.exit(1)
+        # -9 is SIGKILL, almost always the OOM killer reaping the heavy
+        # temporary render on a large capture. Do not abort the whole run:
+        # the capture and metrics are recorded separately and still good.
+        reason = "killed (likely OOM)" if result.returncode == -9 else f"exit {result.returncode}"
+        print(f"  flamegraph {mode} render failed for {out_path.name} ({reason})", file=sys.stderr)
+        return False
+    return True
 
 
 # get_allocation_records() yields deallocation records too...
@@ -189,6 +195,7 @@ def main() -> None:
 
     results: dict = {}
     failures: list[str] = []
+    render_failures: list[dict] = []
 
     total = len(scenarios_to_run)
     for idx, name in enumerate(scenarios_to_run, 1):
@@ -197,18 +204,25 @@ def main() -> None:
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
             bin_path = Path(tmp.name)
 
+        env_tag = f"-{PERF_ENV}" if PERF_ENV else ""
+        scenario_render_failed = False
+        failed_modes: list[dict] = []
         try:
             print(f"  profiling...")
             _run_scenario_under_memray(name, bin_path)
 
-            env_tag = f"-{PERF_ENV}" if PERF_ENV else ""
             peak_html = REPORTS_DIR / f"{name}{env_tag}-peak.html"
             leaks_html = REPORTS_DIR / f"{name}{env_tag}-leaks.html"
             temporary_html = REPORTS_DIR / f"{name}{env_tag}-temporary.html"
             print(f"  generating flamegraphs (peak + leaks + temporary)...")
-            _generate_flamegraph(bin_path, peak_html, mode="peak")
-            _generate_flamegraph(bin_path, leaks_html, mode="leaks")
-            _generate_flamegraph(bin_path, temporary_html, mode="temporary")
+            scenario_render_failed = False
+            failed_modes: list[dict] = []
+            for mode, html in (("peak", peak_html),
+                               ("leaks", leaks_html),
+                               ("temporary", temporary_html)):
+                if not _generate_flamegraph(bin_path, html, mode=mode):
+                    scenario_render_failed = True
+                    failed_modes.append({"name": name, "mode": mode, "html": html.name})
 
             print(f"  reading metrics...", flush=True)
             metrics = _read_metrics(bin_path)
@@ -234,7 +248,17 @@ def main() -> None:
                             f" (+{diff_pct:.1f}%, threshold {(THRESHOLD-1)*100:.0f}%)"
                         )
         finally:
-            bin_path.unlink(missing_ok=True)
+            if scenario_render_failed:
+                # Keep the capture so the failed view can be re-rendered
+                # offline (with a higher --temporary-allocation-threshold)
+                # instead of re-profiling the whole scenario.
+                kept = REPORTS_DIR / f"{name}{env_tag}.bin"
+                shutil.move(str(bin_path), str(kept))
+                for fm in failed_modes:
+                    fm["bin"] = str(kept)
+                render_failures.extend(failed_modes)
+            else:
+                bin_path.unlink(missing_ok=True)
 
     if args.update_baseline or not baseline:
         # When running a single scenario, merge its result into the existing
@@ -249,6 +273,14 @@ def main() -> None:
         BASELINE_FILE.write_text(json.dumps(output, indent=2))
         verb = "Updated" if baseline else "Created"
         print(f"\n{verb} baseline: {BASELINE_FILE}")
+
+    if render_failures:
+        print("\nFLAMEGRAPH RENDERS FAILED (capture + metrics still recorded):", file=sys.stderr)
+        for r in render_failures:
+            print(f"  {r['name']} [{r['mode']}] -> {r['html']}  (capture kept: {r['bin']})", file=sys.stderr)
+        print("  Recover without re-profiling, e.g.:", file=sys.stderr)
+        print("    python3 -m memray flamegraph <kept.bin> -o <out.html> "
+              "--temporary-allocations --temporary-allocation-threshold=10 --force", file=sys.stderr)
 
     if failures:
         print("\nREGRESSIONS DETECTED:", file=sys.stderr)

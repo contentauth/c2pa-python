@@ -95,6 +95,8 @@ Why it's useful: temporary allocations are not leaks, since the memory is return
 
 How to read it: wide frames are the biggest sources of throwaway allocations. The view may be sparse or empty for a scenario that does little churn, which is itself a valid result. See [Temporary allocations](#temporary-allocations).
 
+The temporary view is the heaviest to render: memray holds every allocation and free to decide which are short-lived. On a very large capture (a long run, a high `MEMRAY_ITERATIONS`, or a churn-heavy scenario) the render can run out of memory and fail. The run does not abort in that case; it records what failed and keeps going. See [Troubleshooting](#troubleshooting).
+
 ## Running without Docker (if memray is supported and installed locally)
 
 ```bash
@@ -215,3 +217,37 @@ make memory-use-bench PERF_ARGS=--update-baseline
 ```
 
 Commit the updated `baseline.json` alongside the code change, so it becomes the new reference to compare against.
+
+## Troubleshooting
+
+### A flamegraph render fails with `exit -9`
+
+You may see a message like `flamegraph render failed for reader_mp4-...-temporary.html (killed (likely OOM))`. The `-9` is SIGKILL: the operating system's out-of-memory killer terminated the `memray flamegraph` subprocess. The temporary view is the heaviest to render, and on a large capture (a long run, a high `MEMRAY_ITERATIONS`, or a churn-heavy scenario such as `reader_mp4`) it can exhaust available memory.
+
+The run does not abort. The capture and the metrics (`peak_bytes`, `leaked_bytes`, `total_allocations`) are read separately and are still recorded, the baseline is still written, and the run lists every failed render at the end. Only the HTML render is missing, and you have two ways to regenerate it.
+
+#### Option A: rerun the one scenario
+
+A single-scenario run renders one capture at a time with nothing else resident, so it often fits where the full suite did not:
+
+```bash
+make memory-use-bench SCENARIO=reader_mp4
+```
+
+If it still runs out of memory, lower the iteration count to shrink the capture:
+
+```bash
+make memory-use-bench SCENARIO=reader_mp4 MEMRAY_ITERATIONS=20
+```
+
+A lower iteration count makes that scenario's absolute allocation numbers no longer directly comparable to a full 100-iteration run.
+
+#### Option B: re-render the kept capture (no re-profiling)
+
+When a render fails, the run keeps that scenario's capture as `reports/<scenario>-<env>.bin`. Re-render just the failed view from that file with a higher temporary-allocation threshold, which cuts how much memray holds in memory so the render fits. This uses the original run's data, so the result stays comparable to the rest of the run:
+
+```bash
+python3 -m memray flamegraph reports/reader_mp4-python-3.12-slim.bin \
+  -o reports/reader_mp4-python-3.12-slim-temporary.html \
+  --temporary-allocations --temporary-allocation-threshold=10 --force
+```
