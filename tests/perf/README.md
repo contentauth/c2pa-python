@@ -1,4 +1,4 @@
-# Memory Profiling Harness
+# Memory profiling framework
 
 Uses [memray](https://github.com/bloomberg/memray) to track peak memory, allocation patterns,
 and memory leaks across c2pa-python read and sign operations.
@@ -11,7 +11,7 @@ and memory leaks across c2pa-python read and sign operations.
 | `run_profile.py` | Memory performance/usage analysis. Runs each scenario under `memray`, generates HTML reports, reads metrics, and compares against `baseline.json`. |
 | `Dockerfiles/` | One Dockerfile per target environment. Selected via `PERF_ENV` at `make` time when running the memory analysis. |
 | `entrypoint.sh` | Container entrypoint. Downloads the Linux native `libc2pa_c.so` at startup into the volume-mounted workspace so it sticks around even through the `-v` mount. |
-| `reports/` | Generated HTML flamegraphs (gitignored). Three files per scenario: `<scenario>-peak.html` (peak/high-water view), `<scenario>-leaks.html` (leak view), and `<scenario>-temporary.html` (temporary-allocations view). |
+| `reports/` | Generated HTML reports (gitignored). Three files per scenario: `<scenario>-peak.html` (peak/high-water view), `<scenario>-leaks.html` (leak view), and `<scenario>-temporary.html` (temporary-allocations view). |
 
 ## Scenarios
 
@@ -162,7 +162,7 @@ The `_meta` block records which toolchain produced the baseline so the numbers a
 | `_meta` field | Meaning |
 | --- | --- |
 | `memray_version` | memray version that generated the metrics |
-| `python_version` | Python version that ran the test harness |
+| `python_version` | Python version that ran the test framework |
 | `c2pa_native_version` | native `libc2pa_c` version (from `c2pa-native-version.txt`) |
 | `iterations` | `MEMRAY_ITERATIONS` used for the run |
 | `perf_env` | `PERF_ENV` (target environment) |
@@ -194,11 +194,19 @@ make memory-use-bench MEMRAY_ITERATIONS=1000 PERF_ARGS=--update-baseline
 
 If `leaked_bytes` stays flat compared to a 100-iteration run, there is no leak. If it scales with iterations, open `tests/perf/reports/<scenario>-leaks.html` in a browser to see which function is responsible.
 
+### Reading the "Resident set size over time" graph (why memory looks like it climbs)
+
+The "Resident set size over time" plot (chart icon, top-right of the report) draws two lines. "Resident size" (RSS) is every page the OS counts as resident: interpreter, `libc2pa_c`, thread stacks, and pages the allocator holds but has not returned. "Heap size" is only the live tracked allocations.
+
+On the parallel scenarios the RSS line steps up and stays high. The threads each hold their own source, output, and `Builder` live at once, so RSS rises to cover that combined working set (the steps line up with the moments all threads overlap). The allocator then keeps those arena pages for reuse instead of returning them, so RSS plateaus at the high-water mark.
+
+Judge leaks by the heap line. The heap rises early and then settles or falls, the same shape as the single-threaded baseline. A within-run heap rise is not by itself proof of a leak (the allocator high-water can climb and settle within a bounded run).
+
 ### Temporary allocations
 
 `<scenario>-temporary.html` shows temporary allocations, meaning memory that is allocated and then freed almost immediately (memray's threshold is one allocation: a block is temporary if it is freed before more than one other allocation happens). The memory is returned, so these are not leaks, but they are churn: high allocation and free turnover that costs CPU and can fragment the heap. A scenario doing lots of short-lived work can show heavy temporary allocations while `leaked_bytes` stays flat.
 
-Open the file in a browser to see which call sites are responsible. The view may be sparse or empty if a scenario does little churn, which is a valid result. Temporary allocations are not part of the baseline regression check; the graph is a debugging aid only.
+Open the file in a browser to see which call sites are responsible. The view may be sparse or empty if a scenario does little churn. Note that temporary allocations are not part of the baseline regression check: that graph is a debugging aid only.
 
 ### When to update the baseline
 
