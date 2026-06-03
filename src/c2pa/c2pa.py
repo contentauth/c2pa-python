@@ -1846,8 +1846,14 @@ class Stream:
             if not self._initialized or self._closed:
                 return -1
             try:
-                file_stream.seek(offset, whence)
-                return file_stream.tell()
+                # io.IOBase.seek returns the new absolute position, which is
+                # exactly what the Rust seek callback expects (see
+                # c2pa_stream.rs). Use it directly and skip a separate tell()
+                # call, which would allocate another Python int on every seek.
+                # Fall back to tell() only for stream objects that do not honor
+                # the return-value contract and return None.
+                pos = file_stream.seek(offset, whence)
+                return pos if pos is not None else file_stream.tell()
             except Exception:
                 return -1
 
