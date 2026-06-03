@@ -1,0 +1,120 @@
+{
+  "_meta": {
+    "memray_version": "1.19.3",
+    "python_version": "3.12.13",
+    "c2pa_native_version": "c2pa-v0.85.1",
+    "iterations": 20,
+    "perf_env": "python-3.12-slim",
+    "arch": "aarch64"
+  },
+  "reader_jpeg_legacy": {
+    "peak_bytes": 3708873,
+    "leaked_bytes": 3176394,
+    "total_allocations": 201698
+  },
+  "reader_jpeg_with_context": {
+    "peak_bytes": 3701615,
+    "leaked_bytes": 3168500,
+    "total_allocations": 200473
+  },
+  "reader_mp4": {
+    "peak_bytes": 4773723,
+    "leaked_bytes": 3170004,
+    "total_allocations": 484511
+  },
+  "reader_wav": {
+    "peak_bytes": 5417548,
+    "leaked_bytes": 3179946,
+    "total_allocations": 142211
+  },
+  "builder_sign_jpeg_legacy": {
+    "peak_bytes": 7575647,
+    "leaked_bytes": 3275161,
+    "total_allocations": 166775
+  },
+  "builder_sign_jpeg_with_context": {
+    "peak_bytes": 7569823,
+    "leaked_bytes": 3269085,
+    "total_allocations": 165627
+  },
+  "builder_sign_png_legacy": {
+    "peak_bytes": 7813477,
+    "leaked_bytes": 3274992,
+    "total_allocations": 401211
+  },
+  "builder_sign_png_with_context": {
+    "peak_bytes": 7807341,
+    "leaked_bytes": 3269072,
+    "total_allocations": 400018
+  },
+  "builder_sign_gif": {
+    "peak_bytes": 14425854,
+    "leaked_bytes": 3267823,
+    "total_allocations": 1498929
+  },
+  "builder_sign_heic": {
+    "peak_bytes": 4489702,
+    "leaked_bytes": 3267869,
+    "total_allocations": 216475
+  },
+  "builder_sign_m4a": {
+    "peak_bytes": 18729821,
+    "leaked_bytes": 3267803,
+    "total_allocations": 516969
+  },
+  "builder_sign_webp": {
+    "peak_bytes": 8781442,
+    "leaked_bytes": 3267804,
+    "total_allocations": 159830
+  },
+  "builder_sign_avi": {
+    "peak_bytes": 6921294,
+    "leaked_bytes": 3267803,
+    "total_allocations": 8125369
+  },
+  "builder_sign_mp4": {
+    "peak_bytes": 6043592,
+    "leaked_bytes": 3267803,
+    "total_allocations": 424223
+  },
+  "builder_sign_tiff": {
+    "peak_bytes": 13005040,
+    "leaked_bytes": 3267330,
+    "total_allocations": 1090303
+  },
+  "builder_sign_jpeg_parent_of": {
+    "peak_bytes": 14056720,
+    "leaked_bytes": 3269920,
+    "total_allocations": 304324
+  },
+  "builder_sign_jpeg_component_of": {
+    "peak_bytes": 14058389,
+    "leaked_bytes": 3270187,
+    "total_allocations": 308806
+  },
+  "builder_sign_jpeg_parent_and_component": {
+    "peak_bytes": 14408397,
+    "leaked_bytes": 3434911,
+    "total_allocations": 494789
+  },
+  "builder_sign_jpeg_parent_and_component_mixed_mime": {
+    "peak_bytes": 14359472,
+    "leaked_bytes": 3270648,
+    "total_allocations": 552704
+  },
+  "builder_sign_jpeg_two_components_same_mime": {
+    "peak_bytes": 14389022,
+    "leaked_bytes": 3417992,
+    "total_allocations": 492787
+  },
+  "builder_sign_jpeg_two_components_mixed_mime": {
+    "peak_bytes": 14356999,
+    "leaked_bytes": 3270651,
+    "total_allocations": 550625
+  },
+  "builder_sign_jpeg_archive_roundtrip": {
+    "peak_bytes": 14096563,
+    "leaked_bytes": 3296281,
+    "total_allocations": 398663
+  }
+}

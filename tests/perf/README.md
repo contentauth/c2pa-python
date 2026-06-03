@@ -21,6 +21,8 @@ Each scenario loops multiple times so leaks accumulate and become visible in the
 make memory-use-bench MEMRAY_ITERATIONS=1000
 ```
 
+Most scenarios use the Context API: they build a `Context` once and reuse it across iterations, so its settings are parsed a single time. The jpeg and png cases also keep a `_legacy` variant that builds the `Reader`/`Builder` without a `Context`, which re-reads the thread-local settings on each construction. Running a pair (for example `builder_sign_jpeg_legacy` and `builder_sign_jpeg_with_context`) compares the two paths.
+
 ## Environments
 
 Select the target environment with `PERF_ENV` (default: `python-3.12-slim`):
@@ -50,10 +52,10 @@ make memory-use-bench PERF_ARGS=--update-baseline
 make memory-use-bench PERF_ENV=ubuntu-24.04
 
 # Run a single scenario instead of the whole suite
-make memory-use-bench SCENARIO=builder_sign_jpeg
+make memory-use-bench SCENARIO=builder_sign_gif
 
 # Refresh just one scenario's baseline entry (others are preserved)
-make memory-use-bench SCENARIO=builder_sign_jpeg PERF_ARGS=--update-baseline
+make memory-use-bench SCENARIO=builder_sign_gif PERF_ARGS=--update-baseline
 
 # Remove all generated HTML reports
 make clean-memory-perf-reports
@@ -101,13 +103,13 @@ python -m tests.perf.run_profile
 Run a single scenario (useful for generating data for one operation without the full suite):
 
 ```bash
-python -m tests.perf.run_profile --scenario builder_sign_jpeg
+python -m tests.perf.run_profile --scenario builder_sign_gif
 ```
 
 With `--update-baseline`, a single-scenario run only rewrites that scenario's entry in `baseline.json`; the other scenarios' entries are preserved.
 
 ```bash
-python -m tests.perf.run_profile --scenario builder_sign_jpeg --update-baseline
+python -m tests.perf.run_profile --scenario builder_sign_gif --update-baseline
 ```
 
 ## Configuration

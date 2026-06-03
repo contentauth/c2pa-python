@@ -13,7 +13,7 @@ import io
 import os
 import sys
 from pathlib import Path
-from c2pa import Builder, C2paSignerInfo, Reader, Signer
+from c2pa import Builder, C2paSignerInfo, Context, Reader, Signer
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
@@ -110,63 +110,91 @@ def _read_file(path: Path, mime: str, iterations: int) -> None:
             reader.close()
 
 
+# Context-API helpers: the Context is built once before the loop and reused on
+# every iteration, so its settings are parsed a single time. Most scenarios use
+# these. The `_legacy` jpeg/png scenarios build the Reader/Builder without a
+# Context, which re-reads thread-local settings on each construction; running a
+# legacy scenario against its `_with_context` pair isolates the settings cost.
+
+def _sign_file_context(path: Path, mime: str, iterations: int) -> None:
+    signer = _make_signer()
+    context = Context(signer=signer)  # signer is consumed into the context
+    source_bytes = path.read_bytes()
+    manifest = {**MANIFEST_BASE, "format": mime}
+    for _ in _iterate(iterations):
+        source = io.BytesIO(source_bytes)
+        output = io.BytesIO()
+        builder = Builder(manifest, context=context)
+        # str first arg selects the context signer (c2pa_builder_sign_context).
+        builder.sign(mime, source, output)
+
+
+def _read_file_context(path: Path, mime: str, iterations: int) -> None:
+    context = Context()
+    for _ in _iterate(iterations):
+        with open(path, "rb") as f:
+            reader = Reader(mime, f, manifest_data=None, context=context)
+            reader.json()
+            reader.close()
+
+
 # Reader scenarios: read manifests from files with manifests
 
-def scenario_reader_jpeg(iterations: int = 100) -> None:
+def scenario_reader_jpeg_legacy(iterations: int = 100) -> None:
     _read_file(SIGNED_JPEG, "image/jpeg", iterations)
 
 
 def scenario_reader_mp4(iterations: int = 100) -> None:
-    _read_file(READING_FIXTURES_DIR / "video1.mp4", "video/mp4", iterations)
+    _read_file_context(READING_FIXTURES_DIR / "video1.mp4", "video/mp4", iterations)
 
 
 def scenario_reader_wav(iterations: int = 100) -> None:
-    _read_file(READING_FIXTURES_DIR / "sample1_signed.wav", "audio/wav", iterations)
+    _read_file_context(READING_FIXTURES_DIR / "sample1_signed.wav", "audio/wav", iterations)
 
 
 # Builder.sign (without ingredients))
 
-def scenario_builder_sign_jpeg(iterations: int = 100) -> None:
+def scenario_builder_sign_jpeg_legacy(iterations: int = 100) -> None:
     _sign_file(SOURCE_JPEG, "image/jpeg", iterations)
 
 
 def scenario_builder_sign_gif(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "sample1.gif", "image/gif", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "sample1.gif", "image/gif", iterations)
 
 
 def scenario_builder_sign_heic(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "sample1.heic", "image/heic", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "sample1.heic", "image/heic", iterations)
 
 
 def scenario_builder_sign_m4a(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "sample1.m4a", "audio/mp4", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "sample1.m4a", "audio/mp4", iterations)
 
 
-def scenario_builder_sign_png(iterations: int = 100) -> None:
+def scenario_builder_sign_png_legacy(iterations: int = 100) -> None:
     _sign_file(SIGNING_FIXTURES_DIR / "sample1.png", "image/png", iterations)
 
 
 def scenario_builder_sign_webp(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "sample1.webp", "image/webp", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "sample1.webp", "image/webp", iterations)
 
 
 def scenario_builder_sign_avi(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "test.avi", "video/x-msvideo", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "test.avi", "video/x-msvideo", iterations)
 
 
 def scenario_builder_sign_mp4(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "video1.mp4", "video/mp4", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "video1.mp4", "video/mp4", iterations)
 
 
 def scenario_builder_sign_tiff(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "TUSCANY.TIF", "image/tiff", iterations)
+    _sign_file_context(SIGNING_FIXTURES_DIR / "TUSCANY.TIF", "image/tiff", iterations)
 
 
 # Builder.sign scenarios with ingredient linking
 
 def scenario_builder_sign_jpeg_parent_of(iterations: int = 100) -> None:
     """One parentOf ingredient linked to c2pa.opened action."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     ingredient_bytes = SIGNED_JPEG.read_bytes()
     manifest = {
@@ -182,18 +210,18 @@ def scenario_builder_sign_jpeg_parent_of(iterations: int = 100) -> None:
         }],
     }
     for _ in _iterate(iterations):
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=context)
         with io.BytesIO(ingredient_bytes) as ing:
             builder.add_ingredient(
                 {"relationship": "parentOf", "instance_id": _PARENT_ID},
                 "image/jpeg", ing,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 def scenario_builder_sign_jpeg_component_of(iterations: int = 100) -> None:
     """One componentOf ingredient linked to c2pa.placed action."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     ingredient_bytes = SIGNED_JPEG.read_bytes()
     manifest = {
@@ -210,18 +238,18 @@ def scenario_builder_sign_jpeg_component_of(iterations: int = 100) -> None:
         }],
     }
     for _ in _iterate(iterations):
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=context)
         with io.BytesIO(ingredient_bytes) as ing:
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID},
                 "image/jpeg", ing,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 def scenario_builder_sign_jpeg_parent_and_component(iterations: int = 100) -> None:
     """parentOf + componentOf ingredients (both JPEG) linked to opened + placed actions."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     parent_bytes = SIGNED_JPEG.read_bytes()
     placed_bytes = CLOUD_JPEG.read_bytes()
@@ -246,7 +274,7 @@ def scenario_builder_sign_jpeg_parent_and_component(iterations: int = 100) -> No
         }],
     }
     for _ in _iterate(iterations):
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=context)
         with io.BytesIO(parent_bytes) as ing1, io.BytesIO(placed_bytes) as ing2:
             builder.add_ingredient(
                 {"relationship": "parentOf",   "instance_id": _PARENT_ID2}, "image/jpeg", ing1,
@@ -254,12 +282,12 @@ def scenario_builder_sign_jpeg_parent_and_component(iterations: int = 100) -> No
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID2}, "image/jpeg", ing2,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 def scenario_builder_sign_jpeg_parent_and_component_mixed_mime(iterations: int = 100) -> None:
     """parentOf JPEG + componentOf PNG linked to opened + placed actions."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     parent_bytes = SIGNED_JPEG.read_bytes()
     placed_bytes = SIGNING_PNG.read_bytes()
@@ -284,7 +312,7 @@ def scenario_builder_sign_jpeg_parent_and_component_mixed_mime(iterations: int =
         }],
     }
     for _ in _iterate(iterations):
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=context)
         with io.BytesIO(parent_bytes) as ing1, io.BytesIO(placed_bytes) as ing2:
             builder.add_ingredient(
                 {"relationship": "parentOf",   "instance_id": _PARENT_ID3}, "image/jpeg", ing1,
@@ -292,12 +320,12 @@ def scenario_builder_sign_jpeg_parent_and_component_mixed_mime(iterations: int =
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID3}, "image/png",  ing2,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 def scenario_builder_sign_jpeg_two_components_same_mime(iterations: int = 100) -> None:
     """Two componentOf JPEG ingredients in a single c2pa.placed action."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     comp1_bytes = SIGNED_JPEG.read_bytes()
     comp2_bytes = CLOUD_JPEG.read_bytes()
@@ -314,7 +342,7 @@ def scenario_builder_sign_jpeg_two_components_same_mime(iterations: int = 100) -
         }],
     }
     for _ in _iterate(iterations):
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=context)
         with io.BytesIO(comp1_bytes) as ing1, io.BytesIO(comp2_bytes) as ing2:
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID4}, "image/jpeg", ing1,
@@ -322,12 +350,12 @@ def scenario_builder_sign_jpeg_two_components_same_mime(iterations: int = 100) -
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID5}, "image/jpeg", ing2,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 def scenario_builder_sign_jpeg_two_components_mixed_mime(iterations: int = 100) -> None:
     """componentOf JPEG + componentOf PNG in a single c2pa.placed action."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     comp1_bytes = SIGNED_JPEG.read_bytes()
     comp2_bytes = SIGNING_PNG.read_bytes()
@@ -344,7 +372,7 @@ def scenario_builder_sign_jpeg_two_components_mixed_mime(iterations: int = 100) 
         }],
     }
     for _ in _iterate(iterations):
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=context)
         with io.BytesIO(comp1_bytes) as ing1, io.BytesIO(comp2_bytes) as ing2:
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID4}, "image/jpeg", ing1,
@@ -352,36 +380,56 @@ def scenario_builder_sign_jpeg_two_components_mixed_mime(iterations: int = 100) 
             builder.add_ingredient(
                 {"relationship": "componentOf", "instance_id": _PLACED_ID5}, "image/png",  ing2,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
     """Serialize builder to archive, reload, add ingredient, sign."""
-    signer = _make_signer()
+    context = Context(signer=_make_signer())
     source_bytes = SOURCE_JPEG.read_bytes()
     ingredient_bytes = SIGNED_JPEG.read_bytes()
     for _ in _iterate(iterations):
         archive = io.BytesIO()
         Builder(MANIFEST_BASE).to_archive(archive)
         archive.seek(0)
-        builder = Builder.from_archive(archive)
+        # from_archive() yields a context-less Builder; to keep the Context
+        # (and its signer), build with the context first, then load the archive.
+        builder = Builder(MANIFEST_BASE, context=context).with_archive(archive)
         with io.BytesIO(ingredient_bytes) as ing:
             builder.add_ingredient(
                 {"relationship": "parentOf", "instance_id": _PARENT_ID},
                 "image/jpeg", ing,
             )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+# jpeg + png context variants, paired with the `_legacy` scenarios above for
+# side-by-side comparison.
+
+def scenario_builder_sign_jpeg_with_context(iterations: int = 100) -> None:
+    _sign_file_context(SOURCE_JPEG, "image/jpeg", iterations)
+
+
+def scenario_builder_sign_png_with_context(iterations: int = 100) -> None:
+    _sign_file_context(SIGNING_PNG, "image/png", iterations)
+
+
+def scenario_reader_jpeg_with_context(iterations: int = 100) -> None:
+    _read_file_context(SIGNED_JPEG, "image/jpeg", iterations)
 
 
 SCENARIOS = {
-    "reader_jpeg": scenario_reader_jpeg,
+    "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
+    "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
     "reader_mp4": scenario_reader_mp4,
     "reader_wav": scenario_reader_wav,
-    "builder_sign_jpeg": scenario_builder_sign_jpeg,
+    "builder_sign_jpeg_legacy": scenario_builder_sign_jpeg_legacy,
+    "builder_sign_jpeg_with_context": scenario_builder_sign_jpeg_with_context,
+    "builder_sign_png_legacy": scenario_builder_sign_png_legacy,
+    "builder_sign_png_with_context": scenario_builder_sign_png_with_context,
     "builder_sign_gif": scenario_builder_sign_gif,
     "builder_sign_heic": scenario_builder_sign_heic,
     "builder_sign_m4a": scenario_builder_sign_m4a,
-    "builder_sign_png": scenario_builder_sign_png,
     "builder_sign_webp": scenario_builder_sign_webp,
     "builder_sign_avi": scenario_builder_sign_avi,
     "builder_sign_mp4": scenario_builder_sign_mp4,
