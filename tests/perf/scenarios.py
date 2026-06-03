@@ -396,15 +396,6 @@ SCENARIOS = {
 }
 
 
-# Validate the SCENARIOS dict against the canonical name list so there is
-# a single source of truth for scenario names.
-from tests.perf.scenario_names import SCENARIO_NAMES
-
-_declared = set(SCENARIO_NAMES)
-_defined = set(SCENARIOS)
-if _declared != _defined:
-    raise RuntimeError(
-        "tests/perf scenario name mismatch:\n"
-        f"  missing from SCENARIOS dict: {sorted(_declared - _defined)}\n"
-        f"  extra in SCENARIOS dict:    {sorted(_defined - _declared)}"
-    )
+# Canonical scenario name list, derived from SCENARIOS so the two cannot drift.
+# (dict preserves insertion order, so this matches the dict's declaration order.)
+SCENARIO_NAMES = tuple(SCENARIOS)

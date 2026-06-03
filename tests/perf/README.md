@@ -18,19 +18,21 @@ and memory leaks across c2pa-python read and sign operations.
 Each scenario loops multiple times so leaks accumulate and become visible in the leaks flamegraph and the memory use graph (defaults to 100). Change the count of iterations when running by setting the `MEMRAY_ITERATIONS` variable (the Makefile forwards it into the container):
 
 ```bash
-MEMRAY_ITERATIONS=1000 make memory-use-bench
+make memory-use-bench MEMRAY_ITERATIONS=1000
 ```
 
 ## Environments
 
 Select the target environment with `PERF_ENV` (default: `python-3.12-slim`):
 
-| `PERF_ENV` value | Base image | Python |
-| --- | --- | --- |
-| `python-3.12-slim` | `python:3.12-slim` | 3.12 |
-| `python-3.10-slim` | `python:3.10-slim` | 3.10 |
-| `ubuntu-22.04` | `ubuntu:22.04` | 3.10 (apt default) |
-| `ubuntu-24.04` | `ubuntu:24.04` | 3.12 (apt default) |
+| `PERF_ENV` value | Base image | Python | Native symbols |
+| --- | --- | --- | --- |
+| `python-3.12-slim` | `python:3.12-slim` | 3.12 | interpreter frames unresolved |
+| `python-3.10-slim` | `python:3.10-slim` | 3.10 | interpreter frames unresolved |
+| `ubuntu-22.04` | `ubuntu:22.04` | 3.10 (apt default) | resolved (`python3-dbg`) |
+| `ubuntu-24.04` | `ubuntu:24.04` | 3.12 (apt default) | resolved (`python3-dbg`) |
+
+The slim images run a source-built `/usr/local/bin/python` that ships stripped, and Debian's `python3-dbg` targets a different binary (build-id mismatch), so memray cannot resolve the interpreter's native (C) frames there — you will see a "No debug information was found for the Python interpreter" warning and native traces may lack file names/line numbers. The ubuntu images install `python3-dbg` for the matching apt interpreter, so their native flamegraphs are fully symbolized. Use an `ubuntu-*` `PERF_ENV` when you need resolved native traces.
 
 ## Running (via Docker)
 
@@ -47,9 +49,17 @@ make memory-use-bench PERF_ARGS=--update-baseline
 # Run against a different runner environment
 make memory-use-bench PERF_ENV=ubuntu-24.04
 
+# Run a single scenario instead of the whole suite
+make memory-use-bench SCENARIO=builder_sign_jpeg
+
+# Refresh just one scenario's baseline entry (others are preserved)
+make memory-use-bench SCENARIO=builder_sign_jpeg PERF_ARGS=--update-baseline
+
 # Remove all generated HTML reports
 make clean-memory-perf-reports
 ```
+
+The trailing `VAR=value` arguments (e.g. `PERF_ENV=ubuntu-24.04`, `PERF_ARGS=--update-baseline`) are `make` variable overrides, not shell env vars. `make` parses `word=value` argument as a variable assignment. Each overrides a `?=` default in the Makefile, and the recipe interpolates them into the `docker build`/`docker run` commands. See [Configuration](#configuration) for the full list and what each forwards to.
 
 Reports are written to `tests/perf/reports/` on the local machine. Two HTML files per scenario: `<scenario>.html` for the peak/high-water view and `<scenario>-leaks.html` for the leak view. Open either in a browser. After a run, the run also reports if the scenarios were or were not all within baseline threshold (baseline +10% memory use tolerance).
 
@@ -60,17 +70,36 @@ pip install memray
 python -m tests.perf.run_profile
 ```
 
-## Environment variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `MEMRAY_ITERATIONS` | `100` | Loop count per scenario |
-| `MEMRAY_THRESHOLD` | `1.1` | Regression multiplier (1.1 = 10% tolerance) |
-
-Override iteration count:
+Run a single scenario (useful for generating data for one operation without the full suite):
 
 ```bash
-MEMRAY_ITERATIONS=1000 make memory-use-bench
+python -m tests.perf.run_profile --scenario builder_sign_jpeg
+```
+
+With `--update-baseline`, a single-scenario run only rewrites that scenario's entry in `baseline.json`; the other scenarios' entries are preserved.
+
+```bash
+python -m tests.perf.run_profile --scenario builder_sign_jpeg --update-baseline
+```
+
+## Configuration
+
+With `make memory-use-bench VAR=value` you set the **`make` variable** and the Makefile forwards it as shown in the "Forwarded as" column. Running `run_profile.py` without Docker, you set the **env var** (or pass the CLI arg) directly.
+
+| `make` variable | Forwarded as | Default | Description |
+| --- | --- | --- | --- |
+| `PERF_ENV` | `PERF_ENV` env var | `python-3.12-slim` | Target environment; selects the Dockerfile, tags report filenames (`<scenario>-<PERF_ENV>.html`), recorded in `baseline.json` `_meta`. See [Environments](#environments). |
+| `MEMRAY_ITERATIONS` | `MEMRAY_ITERATIONS` env var | `100` | Loop count per scenario. |
+| `MEMRAY_THRESHOLD` | `MEMRAY_THRESHOLD` env var | `1.1` | Regression multiplier (1.1 = 10% tolerance). |
+| `SCENARIO` | `--scenario` CLI arg | _(all)_ | Run a single scenario (e.g. `SCENARIO=builder_sign_jpeg`). |
+| `PERF_ARGS` | passed straight through | _(none)_ | Extra `run_profile.py` args (e.g. `PERF_ARGS=--update-baseline`). |
+
+`PERF_SCENARIO` is an additional env var, but internal: the runner sets it per scenario so the loop can label its progress. Not user-configurable.
+
+Example to override iteration count:
+
+```bash
+make memory-use-bench MEMRAY_ITERATIONS=1000
 ```
 
 ## Reading baseline.json
@@ -115,7 +144,7 @@ The `_meta` block records which toolchain produced the baseline so the numbers a
 
 **`total_allocations`**: total number of individual memory allocation calls made.
 
-### Why leaked_bytes is not zero
+### Why is leaked_bytes not zero?
 
 You might expect a the baseline to show `leaked_bytes: 0`. In practice it never does: when the c2pa native library (`libc2pa_c.so`) is first loaded, Rust sets up global data structures that are designed to live for the entire lifetime of the process. They get cleaned up when the process exits, which is after memray stops watching. So memray sees them as "never freed" even though they are not actually leaking.
 
@@ -123,12 +152,12 @@ A memory leak grows proportionally with work done. If you sign 50 images and get
 
 The baseline captures this expected static overhead. Future runs compare against it: if `leaked_bytes` grows beyond the baseline by more than 10%, the run fails.
 
-### How to confirm no leak exists
+### How to confirm no leak exists?
 
 Run with a higher iteration count than default (100) and compare:
 
 ```bash
-MEMRAY_ITERATIONS=1000 make memory-use-bench PERF_ARGS=--update-baseline
+make memory-use-bench MEMRAY_ITERATIONS=1000 PERF_ARGS=--update-baseline
 ```
 
 If `leaked_bytes` stays flat compared to a 100-iteration run, there is no leak. If it scales with iterations, open `tests/perf/reports/<scenario>-leaks.html` in a browser to see which function is responsible.

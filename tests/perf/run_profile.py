@@ -36,7 +36,7 @@ import platform
 import memray
 
 # Scenario name list
-from tests.perf.scenario_names import SCENARIO_NAMES
+from tests.perf.scenarios import SCENARIO_NAMES
 
 HERE = Path(__file__).parent
 REPORTS_DIR = HERE / "reports"
@@ -160,7 +160,16 @@ def main() -> None:
         action="store_true",
         help="Overwrite baseline.json with current measurements and exit 0",
     )
+    parser.add_argument(
+        "--scenario",
+        choices=SCENARIO_NAMES,
+        default=None,
+        help="Run a single scenario instead of all of them. With --update-baseline, "
+             "only that scenario's entry in baseline.json is updated; the rest are kept.",
+    )
     args = parser.parse_args()
+
+    scenarios_to_run = (args.scenario,) if args.scenario else SCENARIO_NAMES
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -171,8 +180,8 @@ def main() -> None:
     results: dict = {}
     failures: list[str] = []
 
-    total = len(SCENARIO_NAMES)
-    for idx, name in enumerate(SCENARIO_NAMES, 1):
+    total = len(scenarios_to_run)
+    for idx, name in enumerate(scenarios_to_run, 1):
         print(f"\n=== [{idx}/{total}] {name} (iterations={ITERATIONS}) ===")
 
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
@@ -215,7 +224,14 @@ def main() -> None:
             bin_path.unlink(missing_ok=True)
 
     if args.update_baseline or not baseline:
-        output = {"_meta": _build_meta()}
+        # When running a single scenario, merge its result into the existing
+        # baseline so the other scenarios' entries are preserved. A full run
+        # replaces the file wholesale.
+        if args.scenario and baseline:
+            output = dict(baseline)
+        else:
+            output = {}
+        output["_meta"] = _build_meta()
         output.update(results)
         BASELINE_FILE.write_text(json.dumps(output, indent=2))
         verb = "Updated" if baseline else "Created"
