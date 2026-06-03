@@ -66,6 +66,8 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_add_ingredient_from_stream',
     'c2pa_builder_add_action',
     'c2pa_builder_to_archive',
+    'c2pa_builder_write_ingredient_archive',
+    'c2pa_builder_add_ingredient_from_archive',
     'c2pa_builder_sign',
     'c2pa_builder_sign_context',
     'c2pa_builder_from_context',
@@ -611,6 +613,15 @@ _setup_function(_lib.c2pa_builder_add_action,
                 ctypes.c_int)
 _setup_function(_lib.c2pa_builder_to_archive,
                 [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
+                ctypes.c_int)
+_setup_function(_lib.c2pa_builder_write_ingredient_archive,
+                [ctypes.POINTER(C2paBuilder),
+                 ctypes.c_char_p,
+                 ctypes.POINTER(C2paStream)],
+                ctypes.c_int)
+_setup_function(_lib.c2pa_builder_add_ingredient_from_archive,
+                [ctypes.POINTER(C2paBuilder),
+                 ctypes.POINTER(C2paStream)],
                 ctypes.c_int)
 _setup_function(_lib.c2pa_builder_sign,
                 [ctypes.POINTER(C2paBuilder),
@@ -3441,6 +3452,54 @@ class Builder(ManagedResource):
 
             _check_ffi_operation_result(result,
                 Builder._ERROR_MESSAGES["archive_error"].format(
+                    "Unknown error"
+                ),
+                check=lambda r: r != 0)
+
+    def write_ingredient_archive(self, ingredient_id: str, stream: Any) -> None:
+        """Write a single-ingredient archive for the named ingredient.
+        The archive is in C2PA format.
+
+        Args:
+            ingredient_id: The instance_id of the ingredient within this builder
+            stream: Writable stream to receive the archive
+
+        Raises:
+            C2paError: If there was an error writing the archive
+        """
+        self._ensure_valid_state()
+
+        ingredient_id_str = _to_utf8_bytes(ingredient_id, "ingredient_id")
+
+        with Stream(stream) as stream_obj:
+            result = _lib.c2pa_builder_write_ingredient_archive(
+                self._handle, ingredient_id_str, stream_obj._stream)
+
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES["archive_error"].format(
+                    "Unknown error"
+                ),
+                check=lambda r: r != 0)
+
+    def add_ingredient_from_archive(self, stream: Any) -> None:
+        """Add an ingredient from a per-ingredient archive stream.
+        The archive must be in C2PA format, as written by
+        write_ingredient_archive.
+
+        Args:
+            stream: Readable, seekable stream containing the ingredient archive
+
+        Raises:
+            C2paError: If there was an error reading the archive
+        """
+        self._ensure_valid_state()
+
+        with Stream(stream) as stream_obj:
+            result = _lib.c2pa_builder_add_ingredient_from_archive(
+                self._handle, stream_obj._stream)
+
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES["ingredient_error"].format(
                     "Unknown error"
                 ),
                 check=lambda r: r != 0)

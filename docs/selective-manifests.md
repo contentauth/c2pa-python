@@ -494,6 +494,17 @@ An **ingredient archive** contains the manifest store from an asset that was add
 
 The key difference: a builder archive is a work-in-progress (unsigned). An ingredient archive carries the provenance history of a source asset for reuse as an ingredient in other working stores.
 
+### Producing an ingredient archive
+
+The SDK supports two approaches for producing an ingredient archive. They share the same `.c2pa` binary format and are interchangeable from the consumer side.
+
+| Approach | Entry point | Status |
+| --- | --- | --- |
+| Dedicated ingredient archive APIs | `add_ingredient` then `write_ingredient_archive(id, stream)` | **Recommended** |
+| Read-filter-rebuild pattern | `Builder` + `add_ingredient` + `to_archive`, then `Reader` + manual JSON | **Older pattern** |
+
+For the full contract, see [Single-ingredient archive APIs](./working-stores.md#single-ingredient-archive-apis) in the working stores guide.
+
 ### The ingredients catalog pattern
 
 An **ingredients catalog** is a collection of archived ingredients that can be selected when constructing a final manifest. Each archive holds ingredients; at build time the caller selects only the ones needed.
@@ -556,6 +567,132 @@ with Reader("application/c2pa", archive_stream, context=ctx) as reader:
             # configure a dedicated Signer explicitly.
             new_builder.sign("image/jpeg", source, dest)
 ```
+
+### Dedicated archives API: one ingredient per archive
+
+The producer registers each ingredient on a builder and writes one archive per ingredient, keyed by `instance_id` as unique identifier. The consumer assembles a final Builder instance by loading only the archives it needs via `add_ingredient_from_archive`.
+
+The first argument to `write_ingredient_archive` is the *archive key*: it locates the ingredient on the producer (matched against either `label` or `instance_id`) and becomes the `ingredientIds` value to use on the signing builder. See [Lookup keys and action linking](working-stores.md#lookup-keys-and-action-linking) for the full rules.
+
+> [!NOTE]
+> `"relationship": "componentOf"` is shown explicitly below, but `componentOf` is the default the SDK applies when `relationship` is omitted.
+
+Producer side, build the catalog:
+
+```py
+import io
+from c2pa import Builder
+
+catalog_builder = Builder.from_json(manifest_json)
+with open("photo-A.jpg", "rb") as f:
+    catalog_builder.add_ingredient(
+        {"title": "photo-A.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-A"},
+        "image/jpeg", f
+    )
+with open("photo-B.jpg", "rb") as f:
+    catalog_builder.add_ingredient(
+        {"title": "photo-B.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-B"},
+        "image/jpeg", f
+    )
+with open("photo-C.jpg", "rb") as f:
+    catalog_builder.add_ingredient(
+        {"title": "photo-C.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-C"},
+        "image/jpeg", f
+    )
+
+# One archive per ingredient, keyed by the instance_id used at registration.
+archive_a, archive_b, archive_c = io.BytesIO(), io.BytesIO(), io.BytesIO()
+catalog_builder.write_ingredient_archive("catalog:ingredient-A", archive_a)
+catalog_builder.write_ingredient_archive("catalog:ingredient-B", archive_b)
+catalog_builder.write_ingredient_archive("catalog:ingredient-C", archive_c)
+```
+
+Consumer side, pick one archive and load it:
+
+```py
+final_builder = Builder.from_json(manifest_json)
+archive_b.seek(0)
+final_builder.add_ingredient_from_archive(archive_b)
+
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    final_builder.sign(signer, "image/jpeg", src, dst)
+```
+
+The signed output contains exactly the picked ingredient (`photo-B.jpg` here). `archive_a` stays unused.
+
+A single action can link several ingredients loaded this way. With the three archives from the producer above, a `c2pa.placed` action that lists all three ids in `ingredientIds` resolves to three distinct ingredient URLs after signing:
+
+```py
+signing_manifest = {
+    "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
+    "assertions": [{
+        "label": "c2pa.actions.v2",
+        "data": {
+            "actions": [{
+                "action": "c2pa.placed",
+                "parameters": {
+                    "ingredientIds": ["catalog:ingredient-A", "catalog:ingredient-B", "catalog:ingredient-C"]
+                }
+            }]
+        }
+    }]
+}
+
+signing_builder = Builder.from_json(signing_manifest)
+for archive in (archive_a, archive_b, archive_c):
+    archive.seek(0)
+    signing_builder.add_ingredient_from_archive(archive)
+
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    signing_builder.sign(signer, "image/jpeg", src, dst)
+```
+
+### Legacy catalog: read-filter-rebuild APIs
+
+> [!NOTE]
+> **Legacy approach.** This pattern requires manual JSON parsing and `add_resource` loops to transfer binary data related to ingredients. See [Migration guide](#migration-guide-catalog-pattern) to use the [dedicated ingredient archive APIs](#dedicated-archives-api-one-ingredient-per-archive) instead.
+
+Use this approach when the catalog already exists as a single `.c2pa` builder archive containing many ingredients and you need to pick a subset by reading, filtering, and rebuilding.
+
+#### Migration guide: catalog pattern
+
+Switch to the dedicated ingredient archive APIs: set `instance_id` per ingredient, call `write_ingredient_archive` once per ingredient on the producer, and `add_ingredient_from_archive` on the consumer. No JSON parsing or `add_resource` loops required.
+
+Producer side:
+
+```py
+catalog_builder = Builder.from_json(manifest_json)
+with open("photo-A.jpg", "rb") as f:
+    catalog_builder.add_ingredient(
+        {"title": "photo-A.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-A"},
+        "image/jpeg", f
+    )
+with open("photo-B.jpg", "rb") as f:
+    catalog_builder.add_ingredient(
+        {"title": "photo-B.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-B"},
+        "image/jpeg", f
+    )
+
+archive_a, archive_b = io.BytesIO(), io.BytesIO()
+catalog_builder.write_ingredient_archive("catalog:ingredient-A", archive_a)
+catalog_builder.write_ingredient_archive("catalog:ingredient-B", archive_b)
+```
+
+Consumer side:
+
+```py
+final_builder = Builder.from_json(manifest_json)
+archive_b.seek(0)
+final_builder.add_ingredient_from_archive(archive_b)
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    final_builder.sign(signer, "image/jpeg", src, dst)
+```
+
+Action linking also changes between the two approaches. Legacy catalog code linked ingredients via `label` set on the signing builder's `add_ingredient` JSON; `instance_id` was not accepted. The dedicated archive API accepts the archive key passed to `write_ingredient_archive`, which can be either `label` or `instance_id`. See [Lookup keys and action linking](working-stores.md#lookup-keys-and-action-linking).
+
+#### Choosing between approaches
+
+The legacy read-filter-rebuild APIs fit when the catalog already exists as one multi-ingredient builder archive and the consumer wants a subset of it. The dedicated ingredient archive APIs fit when ingredients are produced and consumed independently: each archive holds exactly one ingredient, and the call sites stay short. Both produce the same signed output.
 
 ### Identifying ingredients in archives
 
@@ -875,6 +1012,26 @@ with open("ingredient_archive.c2pa", "rb") as archive_file:
     reader.close()
 ```
 
+#### Troubleshooting ingredients to actions linking errors
+
+A signing-time error when linking ingredients to actions failed is:
+
+```text
+Builder.sign failure: Other: assertion-specific error:
+Action ingredientId not found: <some id>
+```
+
+Causes and potential fixes to investigate:
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `Action ingredientId not found: xmp:iid:...` (or any `instance_id` value) | `instance_id` was used as the linking key for an ingredient archive loaded via the legacy path. | Assign a `label` on the signing builder's `add_ingredient` JSON and use that label in `ingredientIds`. |
+| `Action ingredientId not found: <label>` where the label was set only when building the archive | Labels baked into an archive ingredient do not carry through as linking keys for the legacy load path. | Re-assert the same `label` in the signing builder's `add_ingredient` JSON. |
+| `Action ingredientId not found: <label>` where the label is on `add_ingredient` but the action references a different string | Typo or mismatch between `ingredientIds[i]` and the `label` field on the ingredient. | Make the two strings identical. |
+| Sign succeeds but the action's `parameters.ingredients` array is empty in the signed output | The action was kept during a filter/rebuild but the corresponding ingredient was not, or was not linked. | Keep the ingredient and its binary resources alongside the action. Verify that the linking of ingredients and actions uses the correct JSON attributes. |
+
+For the linking rules, see [Linking an archived ingredient to an action](#linking-an-archived-ingredient-to-an-action) above.
+
 ### Merging multiple working stores
 
 > [!NOTE]
@@ -946,6 +1103,228 @@ with Builder({
         # configure a dedicated Signer explicitly.
         builder.sign("image/jpeg", source, dest)
 ```
+
+## Retrieving actions from a working store
+
+Actions are stored in the `c2pa.actions.v2` assertion. Use `Reader` to extract them from a signed asset or an archived `Builder`.
+
+### Reading actions
+
+```py
+import json
+from c2pa import Context, Reader
+
+ctx = Context()
+with open("source.jpg", "rb") as f:
+    reader = Reader("image/jpeg", f, context=ctx)
+    parsed = json.loads(reader.json())
+
+active = parsed["active_manifest"]
+assertions = parsed["manifests"][active].get("assertions", [])
+
+for assertion in assertions:
+    if assertion["label"] == "c2pa.actions.v2":
+        for action in assertion["data"]["actions"]:
+            print("Action:", action["action"])
+            if "description" in action:
+                print("  Description:", action["description"])
+```
+
+### Reading actions from an archive
+
+Use the same approach with format `"application/c2pa"` and an archive stream:
+
+```py
+with open("builder_archive.c2pa", "rb") as archive_file:
+    reader = Reader("application/c2pa", archive_file)
+    # Then parse and iterate assertions as in the example above
+```
+
+### Understanding the manifest tree
+
+`reader.json()` returns a manifest store, a dictionary of manifests keyed by label (a URN like `contentauth:urn:uuid:...`). Conceptually it forms a tree: each manifest has assertions and ingredients; ingredients with `manifest_data` carry their own manifest store, which can have its own ingredients and assertions recursively. The `active_manifest` key indicates the root.
+
+```mermaid
+flowchart TD
+    subgraph Store["Manifest Store"]
+        M1["Active Manifest\n- assertions (including c2pa.actions.v2)\n- ingredients"]
+        M2["Ingredient A's manifest\n- its own c2pa.actions.v2\n- its own ingredients"]
+        M3["Ingredient B's manifest\n- its own c2pa.actions.v2"]
+    end
+    M1 -->|"ingredient A has manifest_data"| M2
+    M1 -->|"ingredient B has manifest_data"| M3
+    M1 -.-|"ingredient C has no manifest_data"| M5["Ingredient C\n(unsigned asset, no provenance)"]
+    M2 -->|"may have its own ingredients..."| M4["...deeper in the tree"]
+
+    style M5 fill:#eee,stroke:#999,stroke-dasharray: 5 5
+```
+
+Not every ingredient has provenance. An unsigned asset added as an ingredient has `title`, `format`, and `relationship`, but no `manifest_data` and no entry in the `"manifests"` dictionary. Walking the tree reveals the full provenance chain: what each actor did at each step, including actions performed and ingredients used.
+
+To walk the tree and find actions at each level:
+
+```py
+import json
+from c2pa import Reader
+
+parsed = json.loads(reader.json())
+active = parsed["active_manifest"]
+active_manifest = parsed["manifests"][active]
+
+# Read the active manifest's actions
+for assertion in active_manifest.get("assertions", []):
+    if assertion["label"] == "c2pa.actions.v2":
+        print("Active manifest actions:")
+        for action in assertion["data"]["actions"]:
+            print(" ", action["action"])
+
+# Walk into each ingredient's manifest
+for ingredient in active_manifest.get("ingredients", []):
+    print("Ingredient:", ingredient["title"])
+
+    if "active_manifest" in ingredient:
+        ing_manifest_label = ingredient["active_manifest"]
+        ing_manifest = parsed["manifests"].get(ing_manifest_label)
+        if ing_manifest:
+            for assertion in ing_manifest.get("assertions", []):
+                if assertion["label"] == "c2pa.actions.v2":
+                    print("  Ingredient's actions:")
+                    for action in assertion["data"]["actions"]:
+                        print("   ", action["action"])
+    else:
+        # This ingredient has no manifest of its own (unsigned asset).
+        print("  (no content credentials)")
+```
+
+## Filtering actions
+
+To remove actions, use the same read-filter-rebuild pattern: **read, pick the ones to keep, create a new Builder**.
+
+```mermaid
+flowchart TD
+    SA["Signed Asset with 3 actions: opened, placed, filtered"] -->|Reader| JSON[Parse JSON]
+    JSON -->|"Keep only opened + placed"| FILT[Filtered actions]
+    FILT -->|"New Builder with 2 actions"| NB[New Builder]
+    NB -->|sign| OUT["New asset with 2 actions only: opened, placed"]
+```
+
+### Basic action filtering
+
+When filtering, remember that the first action must remain `c2pa.created` or `c2pa.opened` for the manifest to be valid. If the first action is removed, a new one must be added.
+
+```py
+import json
+from c2pa import Builder, Context, Reader
+
+ctx = Context()
+with open("source.jpg", "rb") as f:
+    reader = Reader("image/jpeg", f, context=ctx)
+    parsed = json.loads(reader.json())
+
+active = parsed["active_manifest"]
+manifest = parsed["manifests"][active]
+
+# Filter actions: keep c2pa.created/c2pa.opened (mandatory) and c2pa.placed, drop the rest
+kept_actions = []
+for assertion in manifest.get("assertions", []):
+    if assertion["label"] == "c2pa.actions.v2":
+        for action in assertion["data"]["actions"]:
+            action_type = action["action"]
+            if action_type in ("c2pa.created", "c2pa.opened", "c2pa.placed"):
+                kept_actions.append(action)
+            # Skip c2pa.filtered, c2pa.color_adjustments, etc.
+
+# Build a new manifest with only the kept actions
+new_manifest = {"claim_generator_info": [{"name": "an-application", "version": "1.0"}]}
+if kept_actions:
+    new_manifest["assertions"] = [{"label": "c2pa.actions", "data": {"actions": kept_actions}}]
+
+builder = Builder.from_json(new_manifest)
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+### Filtering actions that reference ingredients
+
+Some actions reference ingredients (via `parameters.ingredients[].url` after signing). If keeping an action that references an ingredient, **the corresponding ingredient and its binary resources must also be kept**. If an ingredient is dropped, any actions that reference it must also be dropped (or updated).
+
+#### `c2pa.opened` action
+
+The `c2pa.opened` action is special because it must be the first action and it references the asset that was opened (the `parentOf` ingredient). When filtering:
+
+- **Always keep `c2pa.opened` or `c2pa.created`**: it is required for a valid manifest.
+- **Keep the ingredient it references**: the `parentOf` ingredient linked via its `parameters.ingredients[].url`.
+- Removing the ingredient that `c2pa.opened` points to will make the manifest invalid.
+
+#### `c2pa.placed` action
+
+The `c2pa.placed` action references a `componentOf` ingredient that was composited into the asset. When filtering:
+
+- If keeping `c2pa.placed`, keep the ingredient it references.
+- If the ingredient is dropped, also drop the `c2pa.placed` action.
+- If `c2pa.placed` is not required, it can safely be removed (along with the ingredient it references, if it is the only reference).
+
+#### Example
+
+```py
+import io
+import json
+from c2pa import Builder, Context, Reader
+
+ctx = Context()
+with open("source.jpg", "rb") as f:
+    reader = Reader("image/jpeg", f, context=ctx)
+    parsed = json.loads(reader.json())
+    active = parsed["active_manifest"]
+    manifest = parsed["manifests"][active]
+
+    # Filter actions and track which ingredients are needed
+    kept_actions = []
+    needed_ingredient_labels = set()
+
+    for assertion in manifest.get("assertions", []):
+        if assertion["label"] == "c2pa.actions.v2":
+            for action in assertion["data"]["actions"]:
+                action_type = action["action"]
+                keep = action_type in ("c2pa.opened", "c2pa.created", "c2pa.placed")
+                if keep:
+                    kept_actions.append(action)
+                    # Track which ingredients this action needs
+                    for ing_ref in action.get("parameters", {}).get("ingredients", []):
+                        url = ing_ref["url"]
+                        label = url.rsplit("/", 1)[-1]
+                        needed_ingredient_labels.add(label)
+
+    # Keep only the ingredients that are referenced by kept actions
+    kept_ingredients = [
+        ing for ing in manifest.get("ingredients", [])
+        if ing.get("label") in needed_ingredient_labels
+    ]
+
+    # Build the new manifest with filtered actions and matching ingredients
+    new_manifest = {"claim_generator_info": [{"name": "an-application", "version": "1.0"}]}
+    new_manifest["ingredients"] = kept_ingredients
+    if kept_actions:
+        new_manifest["assertions"] = [{"label": "c2pa.actions", "data": {"actions": kept_actions}}]
+
+    builder = Builder.from_json(new_manifest)
+
+    # Transfer binary resources for kept ingredients
+    for ingredient in kept_ingredients:
+        for key in ("thumbnail", "manifest_data"):
+            if key in ingredient:
+                resource_id = ingredient[key]["identifier"]
+                resource_buf = io.BytesIO()
+                reader.resource_to_stream(resource_id, resource_buf)
+                resource_buf.seek(0)
+                builder.add_resource(resource_id, resource_buf)
+
+with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
+    builder.sign(signer, "image/jpeg", src, dst)
+```
+
+> [!NOTE]
+> When copying ingredient JSON objects from a reader, they keep their `label` field. Since the action URLs reference ingredients by label, the links resolve correctly as long as ingredients are not renamed or reindexed. If ingredients are re-added via `add_ingredient()` (which generates new labels), the action URLs will also need to be updated.
 
 ## Controlling manifest embedding
 
