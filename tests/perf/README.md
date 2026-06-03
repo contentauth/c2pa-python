@@ -1,7 +1,7 @@
 # Memory profiling framework
 
 Uses [memray](https://github.com/bloomberg/memray) to track peak memory, allocation patterns,
-and memory leaks across c2pa-python read and sign operations.
+and memory leaks across c2pa-python SDK operations.
 
 ## Files
 
