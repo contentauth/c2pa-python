@@ -11,7 +11,7 @@ and memory leaks across c2pa-python read and sign operations.
 | `run_profile.py` | Memory performance/usage analysis. Runs each scenario under `memray`, generates HTML reports, reads metrics, and compares against `baseline.json`. |
 | `Dockerfiles/` | One Dockerfile per target environment. Selected via `PERF_ENV` at `make` time when running the memory analysis. |
 | `entrypoint.sh` | Container entrypoint. Downloads the Linux native `libc2pa_c.so` at startup into the volume-mounted workspace so it sticks around even through the `-v` mount. |
-| `reports/` | Generated HTML flamegraphs (gitignored). Two files per scenario: `<scenario>.html` (peak/high-water view) and `<scenario>-leaks.html` (leak view). |
+| `reports/` | Generated HTML flamegraphs (gitignored). Three files per scenario: `<scenario>-peak.html` (peak/high-water view), `<scenario>-leaks.html` (leak view), and `<scenario>-temporary.html` (temporary-allocations view). |
 
 ## Scenarios
 
@@ -61,7 +61,7 @@ make clean-memory-perf-reports
 
 The trailing `VAR=value` arguments (e.g. `PERF_ENV=ubuntu-24.04`, `PERF_ARGS=--update-baseline`) are `make` variable overrides, not shell env vars. `make` parses `word=value` argument as a variable assignment. Each overrides a `?=` default in the Makefile, and the recipe interpolates them into the `docker build`/`docker run` commands. See [Configuration](#configuration) for the full list and what each forwards to.
 
-Reports are written to `tests/perf/reports/` on the local machine. Two HTML files per scenario: `<scenario>.html` for the peak/high-water view and `<scenario>-leaks.html` for the leak view. Open either in a browser. After a run, the run also reports if the scenarios were or were not all within baseline threshold (baseline +10% memory use tolerance).
+Reports are written to `tests/perf/reports/` on the local machine. Three HTML files per scenario: `<scenario>-peak.html` for the peak/high-water view, `<scenario>-leaks.html` for the leak view, and `<scenario>-temporary.html` for the temporary-allocations view (short-lived churn). Open any in a browser. After a run, the run also reports if the scenarios were or were not all within baseline threshold (baseline +10% memory use tolerance).
 
 ## Running without Docker (if memray is supported and installed locally)
 
@@ -88,7 +88,7 @@ With `make memory-use-bench VAR=value` you set the **`make` variable** and the M
 
 | `make` variable | Forwarded as | Default | Description |
 | --- | --- | --- | --- |
-| `PERF_ENV` | `PERF_ENV` env var | `python-3.12-slim` | Target environment; selects the Dockerfile, tags report filenames (`<scenario>-<PERF_ENV>.html`), recorded in `baseline.json` `_meta`. See [Environments](#environments). |
+| `PERF_ENV` | `PERF_ENV` env var | `python-3.12-slim` | Target environment; selects the Dockerfile, tags report filenames (`<scenario>-<PERF_ENV>-<view>.html`), recorded in `baseline.json` `_meta`. See [Environments](#environments). |
 | `MEMRAY_ITERATIONS` | `MEMRAY_ITERATIONS` env var | `100` | Loop count per scenario. |
 | `MEMRAY_THRESHOLD` | `MEMRAY_THRESHOLD` env var | `1.1` | Regression multiplier (1.1 = 10% tolerance). |
 | `SCENARIO` | `--scenario` CLI arg | _(all)_ | Run a single scenario (e.g. `SCENARIO=builder_sign_jpeg`). |
@@ -162,7 +162,13 @@ make memory-use-bench MEMRAY_ITERATIONS=1000 PERF_ARGS=--update-baseline
 
 If `leaked_bytes` stays flat compared to a 100-iteration run, there is no leak. If it scales with iterations, open `tests/perf/reports/<scenario>-leaks.html` in a browser to see which function is responsible.
 
-### When to update baseline
+### Temporary allocations
+
+`<scenario>-temporary.html` shows **temporary allocations**: memory that is allocated and then freed almost immediately (memray's threshold is one allocation — a block is temporary if it is freed before more than one other allocation happens). These are not leaks — the memory is returned — but they are churn: high allocation/free turnover that costs CPU and can fragment the heap. A scenario doing lots of short-lived work can show heavy temporary allocations while `leaked_bytes` stays flat.
+
+Open the file in a browser to see which call sites are responsible. The view may be sparse or empty if a scenario does little churn, which is a valid result. Temporary allocations are not part of the baseline regression check; the graph is a debugging aid only.
+
+### When to update the baseline
 
 Update `baseline.json` after any intentional change that affects memory use:
 

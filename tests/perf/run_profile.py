@@ -10,7 +10,8 @@ Memory profiling harness using memray.
 
 For each scenario in scenarios.SCENARIOS this script:
 - Runs the scenario under `memray run --native` -> <name>.bin
-- Generates <name>.html (peak memory flamegraph)
+- Generates three flamegraph views: <name>-peak.html (high-water),
+  <name>-leaks.html (--leaks), <name>-temporary.html (--temporary-allocations)
 - Reads peak_bytes and leaked_bytes from the .bin via memray.FileReader
 - Compares against baseline.json (creates it on first run)
 - Exits non-zero if any metric exceeds baseline * threshold
@@ -73,15 +74,24 @@ SCENARIOS["{name}"]({ITERATIONS})
         sys.exit(1)
 
 
-def _generate_flamegraph(bin_path: Path, out_path: Path, leaks: bool = False) -> None:
+def _generate_flamegraph(bin_path: Path, out_path: Path, mode: str = "peak") -> None:
+    """Render one flamegraph view of a capture file.
+
+    mode:
+    - 'peak':      high-water-mark view (the default flamegraph render).
+    - 'leaks':     memory still live when tracking stopped (--leaks).
+    - 'temporary': allocations freed before more than one other allocation
+                   occurs, i.e. short-lived churn (--temporary-allocations).
+    These are mutually exclusive views, so each is a separate render.
+    """
     cmd = [sys.executable, "-m", "memray", "flamegraph", str(bin_path), "-o", str(out_path), "--force"]
-    if leaks:
-        # Default flamegraph renders the high-water-mark (peak) view.
-        # The leak view is a separate render gated behind --leaks.
+    if mode == "leaks":
         cmd.append("--leaks")
+    elif mode == "temporary":
+        # --temporary-allocations == --temporary-allocation-threshold=1
+        cmd.append("--temporary-allocations")
     # Stream memray's output instead of capturing it, so run does not look stuck
-    label = "leaks" if leaks else "peak"
-    print(f"    flamegraph ({label})...", flush=True)
+    print(f"    flamegraph ({mode})...", flush=True)
     result = subprocess.run(cmd, text=True)
     if result.returncode != 0:
         print(f"  flamegraph generation failed for {out_path.name} (exit {result.returncode})", file=sys.stderr)
@@ -192,11 +202,13 @@ def main() -> None:
             _run_scenario_under_memray(name, bin_path)
 
             env_tag = f"-{PERF_ENV}" if PERF_ENV else ""
-            report_html = REPORTS_DIR / f"{name}{env_tag}.html"
+            peak_html = REPORTS_DIR / f"{name}{env_tag}-peak.html"
             leaks_html = REPORTS_DIR / f"{name}{env_tag}-leaks.html"
-            print(f"  generating flamegraphs (peak + leaks)...")
-            _generate_flamegraph(bin_path, report_html)
-            _generate_flamegraph(bin_path, leaks_html, leaks=True)
+            temporary_html = REPORTS_DIR / f"{name}{env_tag}-temporary.html"
+            print(f"  generating flamegraphs (peak + leaks + temporary)...")
+            _generate_flamegraph(bin_path, peak_html, mode="peak")
+            _generate_flamegraph(bin_path, leaks_html, mode="leaks")
+            _generate_flamegraph(bin_path, temporary_html, mode="temporary")
 
             print(f"  reading metrics...", flush=True)
             metrics = _read_metrics(bin_path)
@@ -205,8 +217,9 @@ def main() -> None:
             print(f"  peak:   {_fmt(metrics['peak_bytes'])}")
             print(f"  leaked: {_fmt(metrics['leaked_bytes'])}")
             print(f"  allocs: {metrics['total_allocations']}")
-            print(f"  report: {report_html}")
-            print(f"  leaks:  {leaks_html}")
+            print(f"  peak report:      {peak_html}")
+            print(f"  leaks report:     {leaks_html}")
+            print(f"  temporary report: {temporary_html}")
 
             if baseline and name in baseline:
                 b = baseline[name]

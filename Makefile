@@ -124,7 +124,7 @@ memory-use-bench:
 	docker run --rm -v $(PWD):/workspace -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
 	@echo ""
 	@echo "Reports written to tests/perf/reports/"
-	@echo "Open tests/perf/reports/<scenario>.html in a browser (use the leaks toggle for leak view)"
+	@echo "Open tests/perf/reports/<scenario>-{peak,leaks,temporary}.html in a browser"
 
 .PHONY: clean-memory-perf-reports
 clean-memory-perf-reports:
