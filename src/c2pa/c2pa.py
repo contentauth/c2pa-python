@@ -1065,8 +1065,8 @@ def _to_utf8_bytes(data: Union[str, dict],
             raise C2paError.Json(f"Failed to serialize {error_context}: {e}")
     if not isinstance(data, str):
         raise C2paError.Encoding(
-            f"Expected str or dict for {error_context}, got {
-                type(data).__name__}")
+            f"Expected str or dict for {error_context}, "
+            f"got {type(data).__name__}")
     try:
         return data.encode('utf-8')
     except UnicodeError as e:
