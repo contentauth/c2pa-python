@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2025 Adobe. All rights reserved.
+# Copyright 2026 Adobe. All rights reserved.
 # This file is licensed to you under the Apache License,
 # Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 # or the MIT license (http://opensource.org/licenses/MIT),
@@ -15,28 +15,35 @@
 
 """Build the native c2pa C FFI library from a local c2pa-rs checkout.
 
-This is the offline/local counterpart to download_artifacts.py: instead of
-downloading a prebuilt library from a c2pa-rs GitHub release, it compiles the
-`c2pa-c-ffi` crate from local sources and places the resulting library where
-setup.py expects it (artifacts/{platform_id}/), so a subsequent
-`pip install -e .` picks it up.
+This is the local counterpart to download_artifacts.py: instead of
+downloading a released prebuilt library from a c2pa-rs GitHub,
+it compiles the `c2pa-c-ffi` crate from local sources and places
+the built library where setup.py expects it (artifacts/{platform_id}/),
+so a subsequent development `pip install -e .` picks it up.
 
 The path to the c2pa-rs sources is taken from the C2PA_RS_PATH environment
-variable (or the first command-line argument), mirroring the c2pa-cpp project.
+variable (or the first positional argument).
+
+Pass --clean to run a full `cargo clean` first, forcing a from-scratch rebuild.
 """
 
 import os
 import sys
 import shutil
+import argparse
 import platform
 import subprocess
 from pathlib import Path
 
 # The crate in c2pa-rs that produces libc2pa_c.{dylib,so} / c2pa_c.dll.
 FFI_PACKAGE = "c2pa-c-ffi"
+# Extra c2pa-c-ffi features to enable on top of the crate defaults
+FFI_FEATURES = "file_io"
 ROOT_ARTIFACTS_DIR = Path("artifacts")
+# Where the package loads the library from at runtime for an editable install.
+PACKAGE_LIBS_DIR = Path("src/c2pa/libs")
 
-# Library file name per OS (matches what setup.py / lib.py load at runtime).
+# Library file name per OS (matches what setup.py/lib.py load at runtime).
 LIB_NAMES = {
     "darwin": "libc2pa_c.dylib",
     "linux": "libc2pa_c.so",
@@ -72,11 +79,9 @@ def get_platform_identifier():
         raise ValueError(f"Unsupported operating system: {system}")
 
 
-def resolve_c2pa_rs_path():
+def resolve_c2pa_rs_path(cli_path=None):
     """Resolve and validate the path to the local c2pa-rs sources."""
-    raw = os.environ.get("C2PA_RS_PATH")
-    if not raw and len(sys.argv) > 1:
-        raw = sys.argv[1]
+    raw = os.environ.get("C2PA_RS_PATH") or cli_path
 
     if not raw:
         print(
@@ -102,9 +107,31 @@ def resolve_c2pa_rs_path():
     return path
 
 
+def clean_workspace(c2pa_rs_path):
+    """Remove all prior c2pa-rs build artifacts.
+    Cleans the workspace, so that local edits to the c2pa SDK crate
+    (or any dependency built from the local sources) are picked up on rebuild.
+    """
+    cmd = ["cargo", "clean"]
+    print(f"Running: {' '.join(cmd)} (cwd={c2pa_rs_path})")
+    try:
+        subprocess.run(cmd, cwd=c2pa_rs_path, check=True)
+    except FileNotFoundError:
+        print(
+            "Error: 'cargo' was not found. Install the Rust toolchain "
+            "(https://rust-lang.org/tools/install/) and ensure cargo is on PATH:\n"
+            '  export PATH="$HOME/.cargo/bin:$PATH"'
+        )
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"Error: cargo clean failed (exit code {e.returncode}).")
+        sys.exit(e.returncode)
+
+
 def run_cargo(c2pa_rs_path, extra_args=None):
     """Run a release build of the FFI crate in the c2pa-rs checkout."""
-    cmd = ["cargo", "build", "--release", "-p", FFI_PACKAGE]
+    cmd = ["cargo", "build", "--release", "-p", FFI_PACKAGE,
+           "--features", FFI_FEATURES]
     if extra_args:
         cmd += extra_args
     print(f"Running: {' '.join(cmd)} (cwd={c2pa_rs_path})")
@@ -124,7 +151,6 @@ def run_cargo(c2pa_rs_path, extra_args=None):
 
 def build_universal_macos(c2pa_rs_path):
     """Build both macOS arches and lipo them into one universal dylib.
-
     Returns the path to the universal libc2pa_c.dylib.
     """
     triples = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
@@ -169,7 +195,7 @@ def build_native(c2pa_rs_path):
 
 
 def copy_to_artifacts(lib_path, platform_id):
-    """Copy the built library into artifacts/{platform_id}/ (cleaning it first)."""
+    """Copy the built library into artifacts/{platform_id}"""
     platform_dir = ROOT_ARTIFACTS_DIR / platform_id
     if platform_dir.exists():
         shutil.rmtree(platform_dir)
@@ -181,25 +207,60 @@ def copy_to_artifacts(lib_path, platform_id):
     return dest
 
 
+def stage_into_package(lib_path):
+    """Copy the built library into src/c2pa/libs/.
+    """
+    if PACKAGE_LIBS_DIR.exists():
+        shutil.rmtree(PACKAGE_LIBS_DIR)
+    PACKAGE_LIBS_DIR.mkdir(parents=True, exist_ok=True)
+
+    dest = PACKAGE_LIBS_DIR / lib_path.name
+    shutil.copy2(lib_path, dest)
+    print(f"Copied {lib_path} -> {dest}")
+    return dest
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Build the c2pa C FFI library from a local c2pa-rs checkout."
+    )
+    parser.add_argument(
+        "c2pa_rs_path",
+        nargs="?",
+        help="Path to the local c2pa-rs sources (overridden by C2PA_RS_PATH).",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Run a full `cargo clean` first so local c2pa SDK edits are rebuilt.",
+    )
+    return parser.parse_args()
+
+
 def main():
-    c2pa_rs_path = resolve_c2pa_rs_path()
+    args = parse_args()
+    c2pa_rs_path = resolve_c2pa_rs_path(args.c2pa_rs_path)
     print(f"Using c2pa-rs sources at: {c2pa_rs_path}")
 
     system = platform.system().lower()
 
-    # Determine the target platform id, honoring the same override the
-    # download script uses.
+    # Determine the target platform id
     env_platform = os.environ.get("C2PA_LIBS_PLATFORM")
     if env_platform:
         print(f"Using platform from environment variable C2PA_LIBS_PLATFORM: {env_platform}")
         platform_id = env_platform
     elif system == "darwin":
-        # Default macOS to a universal2 build, matching c2pa-rs releases.
+        # Default macOS to a universal2 build.
         platform_id = "universal-apple-darwin"
     else:
         platform_id = get_platform_identifier()
 
     print(f"Target platform: {platform_id}")
+
+    # Optionally start from a fully clean workspace.
+    # Enabled via --clean.
+    if args.clean:
+        clean_workspace(c2pa_rs_path)
 
     if platform_id == "universal-apple-darwin":
         lib_path = build_universal_macos(c2pa_rs_path)
@@ -207,6 +268,7 @@ def main():
         lib_path = build_native(c2pa_rs_path)
 
     copy_to_artifacts(lib_path, platform_id)
+    stage_into_package(lib_path)
     print("\nLocal native library built and staged successfully.")
     print(f"  c2pa-rs:  {c2pa_rs_path}")
     print(f"  platform: {platform_id}")

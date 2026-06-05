@@ -64,7 +64,7 @@ export C2PA_RS_PATH=/path/to/c2pa-rs
 make build-from-source C2PA_RS_PATH=$C2PA_RS_PATH
 ```
 
-This builds the `c2pa-c-ffi` crate in release mode, stages the resulting library under `artifacts/`, and installs the package in editable mode, replacing any prebuilt artifacts from `make download-native-artifacts`.
+This does a clean release build of the `c2pa-c-ffi` crate (with the `file_io` feature, which the Python wrapper requires), stages the resulting library under both `artifacts/` and `src/c2pa/libs/`, and installs the package in editable mode, replacing any prebuilt artifacts from `make download-native-artifacts`.
 
 ### Note on targets for macOS
 
