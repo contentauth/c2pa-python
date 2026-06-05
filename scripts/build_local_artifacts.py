@@ -15,11 +15,10 @@
 
 """Build the native c2pa C FFI library from a local c2pa-rs checkout.
 
-This is the local counterpart to download_artifacts.py: instead of
-downloading a released prebuilt library from a c2pa-rs GitHub,
-it compiles the `c2pa-c-ffi` crate from local sources and places
-the built library where setup.py expects it (artifacts/{platform_id}/),
-so a subsequent development `pip install -e .` picks it up.
+This is the counterpart to download_artifacts.py: instead of
+downloading a released prebuilt c2pa-rs native library,
+it compiles from local sources and places the built library
+where setup.py expects it (artifacts/{platform_id}/).
 
 The path to the c2pa-rs sources is taken from the C2PA_RS_PATH environment
 variable (or the first positional argument).
@@ -35,7 +34,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-# The crate in c2pa-rs that produces libc2pa_c.{dylib,so} / c2pa_c.dll.
+# The crate in c2pa-rs that produces the native library.
 FFI_PACKAGE = "c2pa-c-ffi"
 # Extra c2pa-c-ffi features to enable on top of the crate defaults
 FFI_FEATURES = "file_io"
@@ -82,7 +81,7 @@ def resolve_c2pa_rs_path(cli_path=None):
     if not raw:
         print(
             "Error: C2PA_RS_PATH is not set.\n"
-            "Set it to the path of your local c2pa-rs checkout, for example:\n"
+            "Set it to the path of the local c2pa-rs checkout, for example:\n"
             "  export C2PA_RS_PATH=/path/to/c2pa-rs\n"
             "  make build-from-source C2PA_RS_PATH=$C2PA_RS_PATH"
         )
@@ -95,8 +94,7 @@ def resolve_c2pa_rs_path(cli_path=None):
 
     if not (path / "c2pa_c_ffi" / "Cargo.toml").is_file():
         print(
-            f"Error: {path} does not look like a c2pa-rs checkout "
-            "(missing c2pa_c_ffi/Cargo.toml)."
+            f"Error: {path} does not look like a c2pa-rs checkout."
         )
         sys.exit(1)
 
@@ -155,8 +153,6 @@ def build_universal_macos(c2pa_rs_path):
         if not lib.is_file():
             print(
                 f"Error: expected built library not found: {lib}\n"
-                f"Is the Rust target '{triple}' installed? Add it with:\n"
-                f"  rustup target add {' '.join(triples)}"
             )
             sys.exit(1)
         per_arch_libs.append(lib)
@@ -226,7 +222,7 @@ def parse_args():
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Run a full `cargo clean` first so local c2pa SDK edits are rebuilt.",
+        help="Runs `cargo clean` first so local c2pa-rs is rebuilt.",
     )
     return parser.parse_args()
 

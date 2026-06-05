@@ -95,7 +95,6 @@ publish: release
 	python3 -m twine upload dist/*
 
 # Code analysis
-# E501 (line too long) is ignored: the generated bindings have long lines.
 check-format:
 	python3 -m py_compile src/c2pa/c2pa.py
 	flake8 --extend-ignore=E501 src/c2pa/c2pa.py
@@ -108,7 +107,7 @@ format:
 download-native-artifacts:
 	python3 scripts/download_artifacts.py $(C2PA_VERSION)
 
-# Builds the native c2pa C FFI library from a local c2pa-rs checkout and installs it.
+# Builds the native library from local c2pa-rs checkout and install it.
 # Requires C2PA_RS_PATH to point at the c2pa-rs sources and a working Rust toolchain.
 # Replaces the prebuilt artifacts from download-native-artifacts.
 # --clean forces a full `cargo clean`, drop it for faster incremental rebuilds.
