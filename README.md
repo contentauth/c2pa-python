@@ -48,6 +48,14 @@ import c2pa
 
 ## Building from local c2pa-rs sources
 
+### Using a virtual environment with local builds
+
+The `make` targets honor an active virtualenv. Create a virtual environment `./.venv` and activate it before running them so commands use the project interpreter rather than the global Python interpreter:
+
+```sh
+make create-venv && source .venv/bin/activate
+```
+
 ### Build steps
 
 By default the build downloads a prebuilt native library from a [c2pa-rs](https://github.com/contentauth/c2pa-rs) release. To test the Python bindings against a local, unreleased c2pa-rs checkout, you can instead build the native library from source.
