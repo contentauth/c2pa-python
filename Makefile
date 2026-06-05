@@ -21,8 +21,8 @@ endif
 # Run Pytest tests in virtualenv: .venv/bin/pytest tests/test_unit_tests.py -v
 
 # Creates the local virtualenv at the canonical ./.venv path if it does not exist.
-# Activation must happen in your own shell (make cannot alter the parent shell):
-#   make create-venv && source .venv/bin/activate
+# Activation must happen in shell independently:
+# make create-venv && source .venv/bin/activate
 create-venv:
 	test -d .venv || python3 -m venv .venv
 	@echo "Virtualenv ready at ./.venv -- activate with: source .venv/bin/activate"
