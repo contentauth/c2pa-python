@@ -24,6 +24,7 @@ The path to the c2pa-rs sources is taken from the C2PA_RS_PATH environment
 variable (or the first positional argument).
 
 Pass --clean to run a full `cargo clean` first, forcing a from-scratch rebuild.
+Pass --debug to build the debug profile instead of the default release profile.
 """
 
 import os
@@ -120,10 +121,11 @@ def clean_workspace(c2pa_rs_path):
         sys.exit(e.returncode)
 
 
-def run_cargo(c2pa_rs_path, extra_args=None):
-    """Run a release build of the FFI crate in the c2pa-rs checkout."""
-    cmd = ["cargo", "build", "--release", "-p", FFI_PACKAGE,
-           "--features", FFI_FEATURES]
+def run_cargo(c2pa_rs_path, extra_args=None, debug=False):
+    """Build the FFI crate in the c2pa-rs checkout (release unless debug=True)."""
+    cmd = ["cargo", "build", "-p", FFI_PACKAGE, "--features", FFI_FEATURES]
+    if not debug:
+        cmd.insert(2, "--release")
     if extra_args:
         cmd += extra_args
     print(f"Running: {' '.join(cmd)} (cwd={c2pa_rs_path})")
@@ -141,15 +143,16 @@ def run_cargo(c2pa_rs_path, extra_args=None):
         sys.exit(e.returncode)
 
 
-def build_universal_macos(c2pa_rs_path):
+def build_universal_macos(c2pa_rs_path, debug=False):
     """Build both macOS arches and lipo them into one universal dylib.
     Returns the path to the universal libc2pa_c.dylib.
     """
+    profile = "debug" if debug else "release"
     triples = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
     per_arch_libs = []
     for triple in triples:
-        run_cargo(c2pa_rs_path, ["--target", triple])
-        lib = c2pa_rs_path / "target" / triple / "release" / LIB_NAMES["darwin"]
+        run_cargo(c2pa_rs_path, ["--target", triple], debug=debug)
+        lib = c2pa_rs_path / "target" / triple / profile / LIB_NAMES["darwin"]
         if not lib.is_file():
             print(
                 f"Error: expected built library not found: {lib}\n"
@@ -157,7 +160,7 @@ def build_universal_macos(c2pa_rs_path):
             sys.exit(1)
         per_arch_libs.append(lib)
 
-    universal = c2pa_rs_path / "target" / "release" / LIB_NAMES["darwin"]
+    universal = c2pa_rs_path / "target" / profile / LIB_NAMES["darwin"]
     universal.parent.mkdir(parents=True, exist_ok=True)
     lipo_cmd = ["lipo", "-create", *map(str, per_arch_libs),
                 "-output", str(universal)]
@@ -173,11 +176,12 @@ def build_universal_macos(c2pa_rs_path):
     return universal
 
 
-def build_native(c2pa_rs_path):
+def build_native(c2pa_rs_path, debug=False):
     """Build the FFI crate for the host arch. Returns the built library path."""
-    run_cargo(c2pa_rs_path)
+    profile = "debug" if debug else "release"
+    run_cargo(c2pa_rs_path, debug=debug)
     lib_name = LIB_NAMES[platform.system().lower()]
-    lib = c2pa_rs_path / "target" / "release" / lib_name
+    lib = c2pa_rs_path / "target" / profile / lib_name
     if not lib.is_file():
         print(f"Error: expected built library not found: {lib}")
         sys.exit(1)
@@ -224,6 +228,11 @@ def parse_args():
         action="store_true",
         help="Runs `cargo clean` first so local c2pa-rs is rebuilt.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Build the FFI crate in debug profile instead of release.",
+    )
     return parser.parse_args()
 
 
@@ -253,15 +262,16 @@ def main():
         clean_workspace(c2pa_rs_path)
 
     if platform_id == "universal-apple-darwin":
-        lib_path = build_universal_macos(c2pa_rs_path)
+        lib_path = build_universal_macos(c2pa_rs_path, args.debug)
     else:
-        lib_path = build_native(c2pa_rs_path)
+        lib_path = build_native(c2pa_rs_path, args.debug)
 
     copy_to_artifacts(lib_path, platform_id)
     stage_into_package(lib_path)
     print("\nLocal native library built and staged successfully.")
     print(f"  c2pa-rs:  {c2pa_rs_path}")
     print(f"  platform: {platform_id}")
+    print(f"  profile:  {'debug' if args.debug else 'release'}")
 
 
 if __name__ == "__main__":

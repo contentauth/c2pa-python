@@ -111,9 +111,10 @@ download-native-artifacts:
 # Requires C2PA_RS_PATH to point at the c2pa-rs sources and a working Rust toolchain.
 # Replaces the prebuilt artifacts from download-native-artifacts.
 # --clean forces a full `cargo clean`, drop it for faster incremental rebuilds.
+# Pass EXTRA_BUILD_ARGS="--debug" to build the debug profile (release is the default).
 # Usage: make build-from-source C2PA_RS_PATH=/path/to/c2pa-rs
 build-from-source:
-	python3 scripts/build_local_artifacts.py --clean
+	python3 scripts/build_local_artifacts.py --clean $(EXTRA_BUILD_ARGS)
 	python3 -m pip install -e .
 
 # Build API documentation with Sphinx
