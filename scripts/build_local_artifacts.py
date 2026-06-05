@@ -53,10 +53,6 @@ LIB_NAMES = {
 
 def get_platform_identifier():
     """Get the platform identifier (arch-os) for the host system.
-
-    Kept in sync with download_artifacts.get_platform_identifier(); duplicated
-    here so the local build path has no dependency on the download script's
-    third-party imports (requests).
     """
     system = platform.system().lower()
     machine = platform.machine().lower()
@@ -108,9 +104,7 @@ def resolve_c2pa_rs_path(cli_path=None):
 
 
 def clean_workspace(c2pa_rs_path):
-    """Remove all prior c2pa-rs build artifacts.
-    Cleans the workspace, so that local edits to the c2pa SDK crate
-    (or any dependency built from the local sources) are picked up on rebuild.
+    """Remove all prior c2pa-rs build artifacts (cleans workspace).
     """
     cmd = ["cargo", "clean"]
     print(f"Running: {' '.join(cmd)} (cwd={c2pa_rs_path})")
