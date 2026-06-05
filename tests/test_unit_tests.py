@@ -71,8 +71,6 @@ def parse_native_version():
     """
     Parse the expected native SDK version from c2pa-native-version.txt.
 
-    The file contains a tag like "c2pa-v0.85.2"; this returns "0.85.2".
-
     Returns:
         str: The semantic version string (e.g. "0.85.2").
     """
