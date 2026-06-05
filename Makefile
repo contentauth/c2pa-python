@@ -107,6 +107,14 @@ format:
 download-native-artifacts:
 	python3 scripts/download_artifacts.py $(C2PA_VERSION)
 
+# Builds the native c2pa C FFI library from a local c2pa-rs checkout and installs it.
+# Requires C2PA_RS_PATH to point at the c2pa-rs sources and a working Rust toolchain.
+# Replaces the prebuilt artifacts from download-native-artifacts.
+# Usage: make build-from-source C2PA_RS_PATH=/path/to/c2pa-rs
+build-from-source:
+	python3 scripts/build_local_artifacts.py
+	python3 -m pip install -e .
+
 # Build API documentation with Sphinx
 docs:
 	python3 scripts/generate_api_docs.py
