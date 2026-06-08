@@ -1,0 +1,22 @@
+FROM python:3.12.13-slim-bookworm
+
+WORKDIR /workspace
+
+# libunwind for memray native stack unwinding
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libunwind-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-install Python deps using only the requirements files (layer-cached).
+# The full project arrives via the -v mount at runtime.
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+
+RUN pip install --no-cache-dir memray==1.19.3
+
+COPY tests/perf/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "-m", "tests.perf.run_profile"]

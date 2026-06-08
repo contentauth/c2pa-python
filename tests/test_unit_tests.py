@@ -67,10 +67,25 @@ def load_test_settings_json():
     return settings_data
 
 
+def parse_native_version():
+    """
+    Parse the expected native SDK version from c2pa-native-version.txt.
+
+    Returns:
+        str: The semantic version string (e.g. "0.85.2").
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    version_path = os.path.join(repo_root, 'c2pa-native-version.txt')
+    with open(version_path, 'r') as f:
+        raw = f.read().strip()
+    # Strip the "c2pa-v" prefix to get the bare semantic version.
+    return raw.split('v', 1)[1] if 'v' in raw else raw
+
+
 class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version.
-        self.assertIn("0.85.0", sdk_version())
+        self.assertIn(parse_native_version(), sdk_version())
 
 
 class TestReader(unittest.TestCase):
