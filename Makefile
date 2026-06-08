@@ -110,3 +110,23 @@ download-native-artifacts:
 # Build API documentation with Sphinx
 docs:
 	python3 scripts/generate_api_docs.py
+
+# Memory profiling with memray (runs in Docker, reports go to tests/perf/reports/)
+# More details for usage are in tests/perf/README.md
+PERF_ENV ?= python-3.12-slim
+MEMRAY_ITERATIONS ?= 100
+MEMRAY_THRESHOLD ?= 1.1
+SCENARIO ?=
+SCENARIO_ARG := $(if $(SCENARIO),--scenario $(SCENARIO),)
+.PHONY: memory-use-bench
+memory-use-bench:
+	docker build -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
+	docker run --rm -v $(PWD):/workspace -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
+	@echo ""
+	@echo "Reports written to tests/perf/reports/"
+	@echo "Open tests/perf/reports/<scenario>-{peak,leaks,temporary}.html in a browser"
+
+.PHONY: clean-memory-perf-reports
+clean-memory-perf-reports:
+	rm -f tests/perf/reports/*.html tests/perf/reports/*.bin
+	@echo "Cleared tests/perf/reports/"
