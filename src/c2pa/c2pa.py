@@ -253,7 +253,8 @@ class ManagedResource:
         if self._lifecycle_state != LifecycleState.ACTIVE:
             raise C2paError(f"{name} is not properly initialized")
         if not self._handle:
-            raise C2paError(f"{name} has an invalid internal state (active but no handle)")
+            raise C2paError(
+                f"{name} has an invalid internal state (active but no handle)")
         _clear_error_state()
 
     def _release(self):
@@ -1011,7 +1012,11 @@ def _parse_operation_result_for_error(
     return None
 
 
-def _check_ffi_operation_result(result, fallback_msg, *, check=lambda r: not r):
+def _check_ffi_operation_result(
+        result,
+        fallback_msg,
+        *,
+        check=lambda r: not r):
     """Check an FFI native call result and raise C2paError if it indicates failure.
 
     Args:
@@ -1036,7 +1041,8 @@ def _check_ffi_operation_result(result, fallback_msg, *, check=lambda r: not r):
     return result
 
 
-def _to_utf8_bytes(data: Union[str, dict], error_context: str = "input") -> bytes:
+def _to_utf8_bytes(data: Union[str, dict],
+                   error_context: str = "input") -> bytes:
     """Convert a string or dict to UTF-8 bytes.
 
     If data is a dict, it is serialized to JSON first.
@@ -1059,8 +1065,8 @@ def _to_utf8_bytes(data: Union[str, dict], error_context: str = "input") -> byte
             raise C2paError.Json(f"Failed to serialize {error_context}: {e}")
     if not isinstance(data, str):
         raise C2paError.Encoding(
-            f"Expected str or dict for {error_context}, got {type(data).__name__}"
-        )
+            f"Expected str or dict for {error_context}, "
+            f"got {type(data).__name__}")
     try:
         return data.encode('utf-8')
     except UnicodeError as e:
@@ -1146,7 +1152,10 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         raise C2paError(f"Failed to encode settings to UTF-8: {e}")
 
     result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
-    _check_ffi_operation_result(result, "Error loading settings", check=lambda r: r != 0)
+    _check_ffi_operation_result(
+        result,
+        "Error loading settings",
+        check=lambda r: r != 0)
 
     return result
 
@@ -1219,7 +1228,8 @@ def read_ingredient_file(
     result = _lib.c2pa_read_ingredient_file(
         container._path_str, container._data_dir_str)
 
-    _check_ffi_operation_result(result, "Error reading ingredient file {}".format(path))
+    _check_ffi_operation_result(
+        result, "Error reading ingredient file {}".format(path))
 
     return _convert_to_py_string(result)
 
@@ -1258,7 +1268,8 @@ def read_file(path: Union[str, Path],
     container._data_dir_str = str(data_dir).encode('utf-8')
 
     result = _lib.c2pa_read_file(container._path_str, container._data_dir_str)
-    _check_ffi_operation_result(result, "Error during read of manifest from file {}".format(path))
+    _check_ffi_operation_result(
+        result, "Error during read of manifest from file {}".format(path))
 
     return _convert_to_py_string(result)
 
@@ -1419,7 +1430,6 @@ class Settings(ManagedResource):
     apply settings to Reader/Builder operations.
     """
 
-
     def __init__(self):
         """Create new Settings with default values."""
         super().__init__()
@@ -1516,7 +1526,6 @@ class Settings(ManagedResource):
         return self._handle
 
 
-
 class ContextBuilder:
     """Fluent builder for Context.
 
@@ -1573,7 +1582,6 @@ class Context(ManagedResource, ContextProvider):
     as it becomes included into the Context, and must not be
     used directly again after that.
     """
-
 
     def __init__(
         self,
@@ -1716,7 +1724,6 @@ class Context(ManagedResource, ContextProvider):
         """Return the raw C2paContext pointer."""
         self._ensure_valid_state()
         return self._handle
-
 
 
 class Stream:
@@ -2132,7 +2139,6 @@ class Reader(ManagedResource):
         Where `output` is either an in-memory stream or an opened file.
     """
 
-
     # Supported mimetypes cache
     _supported_mime_types_cache = None
 
@@ -2163,8 +2169,7 @@ class Reader(ManagedResource):
             C2paError: If there was an error retrieving the MIME types
         """
         result, cls._supported_mime_types_cache = _get_supported_mime_types(
-            _lib.c2pa_reader_supported_mime_types, cls._supported_mime_types_cache
-        )
+            _lib.c2pa_reader_supported_mime_types, cls._supported_mime_types_cache)
         return result
 
     @classmethod
@@ -2347,8 +2352,9 @@ class Reader(ManagedResource):
         else:
             if not isinstance(manifest_data, bytes):
                 raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
-            manifest_array = (ctypes.c_ubyte * len(manifest_data)).from_buffer_copy(
-                manifest_data)
+            manifest_array = (
+                ctypes.c_ubyte *
+                len(manifest_data)).from_buffer_copy(manifest_data)
             self._handle = (
                 _lib.c2pa_reader_from_manifest_data_and_stream(
                     format_bytes,
@@ -2358,9 +2364,9 @@ class Reader(ManagedResource):
                 )
             )
 
-        _check_ffi_operation_result(self._handle,
-            Reader._ERROR_MESSAGES['reader_error'].format("Unknown error")
-        )
+        _check_ffi_operation_result(
+            self._handle,
+            Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
 
     def _init_from_file(self, path, format_bytes,
                         manifest_data=None):
@@ -2422,10 +2428,10 @@ class Reader(ManagedResource):
             )
             try:
                 _check_ffi_operation_result(reader_ptr,
-                    Reader._ERROR_MESSAGES[
-                        'reader_error'
-                    ].format("Unknown error")
-                )
+                                            Reader._ERROR_MESSAGES[
+                                                'reader_error'
+                                            ].format("Unknown error")
+                                            )
             except Exception:
                 if reader_ptr:
                     ManagedResource._free_native_ptr(reader_ptr)
@@ -2436,8 +2442,9 @@ class Reader(ManagedResource):
                     raise TypeError(
                         Reader._ERROR_MESSAGES[
                             'manifest_error'])
-                manifest_array = (ctypes.c_ubyte * len(manifest_data)).from_buffer_copy(
-                    manifest_data)
+                manifest_array = (
+                    ctypes.c_ubyte *
+                    len(manifest_data)).from_buffer_copy(manifest_data)
                 # Consume current reader,
                 # with manifest data and stream (C FFI pattern),
                 # to create a new one (switch out)
@@ -2462,10 +2469,10 @@ class Reader(ManagedResource):
             self._handle = new_ptr
 
             _check_ffi_operation_result(new_ptr,
-                Reader._ERROR_MESSAGES[
-                    'reader_error'
-                ].format("Unknown error")
-            )
+                                        Reader._ERROR_MESSAGES[
+                                            'reader_error'
+                                        ].format("Unknown error")
+                                        )
 
             self._lifecycle_state = LifecycleState.ACTIVE
         except Exception:
@@ -2556,9 +2563,9 @@ class Reader(ManagedResource):
             if not new_ptr:
                 self._mark_consumed()
             _check_ffi_operation_result(new_ptr,
-                Reader._ERROR_MESSAGES[
-                    'fragment_error'
-                ].format("Unknown error"))
+                                        Reader._ERROR_MESSAGES[
+                                            'fragment_error'
+                                        ].format("Unknown error"))
             self._handle = new_ptr
 
         # Invalidate caches: processing a new BMFF fragment updates the native
@@ -2594,7 +2601,7 @@ class Reader(ManagedResource):
 
         result = _lib.c2pa_reader_json(self._handle)
         _check_ffi_operation_result(result,
-            "Error during manifest parsing in Reader")
+                                    "Error during manifest parsing in Reader")
 
         # Cache the result and return it
         self._manifest_json_str_cache = _convert_to_py_string(result)
@@ -2619,8 +2626,8 @@ class Reader(ManagedResource):
         self._ensure_valid_state()
 
         result = _lib.c2pa_reader_detailed_json(self._handle)
-        _check_ffi_operation_result(result,
-            "Error during detailed manifest parsing in Reader")
+        _check_ffi_operation_result(
+            result, "Error during detailed manifest parsing in Reader")
 
         return _convert_to_py_string(result)
 
@@ -2745,7 +2752,8 @@ class Reader(ManagedResource):
             result = _lib.c2pa_reader_resource_to_stream(
                 self._handle, uri_str, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
+            _check_ffi_operation_result(
+                result,
                 "Error during resource {} to stream conversion".format(uri),
                 check=lambda r: r < 0)
 
@@ -2794,7 +2802,6 @@ class Reader(ManagedResource):
 class Signer(ManagedResource):
     """High-level wrapper for C2PA Signer operations."""
 
-
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'closed_error': "Signer is closed",
@@ -2827,8 +2834,8 @@ class Signer(ManagedResource):
 
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
-        _check_ffi_operation_result(signer_ptr,
-            "Failed to create signer from configured signer_info")
+        _check_ffi_operation_result(
+            signer_ptr, "Failed to create signer from configured signer_info")
 
         return cls(signer_ptr)
 
@@ -2959,7 +2966,7 @@ class Signer(ManagedResource):
         )
 
         _check_ffi_operation_result(signer_ptr,
-            "Failed to create signer")
+                                    "Failed to create signer")
 
         # Create and return the signer instance with the callback
         signer_instance = cls(signer_ptr)
@@ -3009,15 +3016,16 @@ class Signer(ManagedResource):
 
         result = _lib.c2pa_signer_reserve_size(self._handle)
 
-        _check_ffi_operation_result(result,
-            "Failed to get reserve size", check=lambda r: r < 0)
+        _check_ffi_operation_result(
+            result,
+            "Failed to get reserve size",
+            check=lambda r: r < 0)
 
         return result
 
 
 class Builder(ManagedResource):
     """High-level wrapper for C2PA Builder operations."""
-
 
     # Supported mimetypes cache
     _supported_mime_types_cache = None
@@ -3051,8 +3059,7 @@ class Builder(ManagedResource):
             C2paError: If there was an error retrieving the MIME types
         """
         result, cls._supported_mime_types_cache = _get_supported_mime_types(
-            _lib.c2pa_builder_supported_mime_types, cls._supported_mime_types_cache
-        )
+            _lib.c2pa_builder_supported_mime_types, cls._supported_mime_types_cache)
         return result
 
     @classmethod
@@ -3125,8 +3132,8 @@ class Builder(ManagedResource):
             )
 
             _check_ffi_operation_result(builder._handle,
-                "Failed to create builder from archive"
-            )
+                                        "Failed to create builder from archive"
+                                        )
 
             builder._lifecycle_state = LifecycleState.ACTIVE
             return builder
@@ -3178,11 +3185,9 @@ class Builder(ManagedResource):
         else:
             self._handle = _lib.c2pa_builder_from_json(json_str)
 
-            _check_ffi_operation_result(self._handle,
-                Builder._ERROR_MESSAGES['builder_error'].format(
-                    "Unknown error"
-                )
-            )
+            _check_ffi_operation_result(
+                self._handle,
+                Builder._ERROR_MESSAGES['builder_error'].format("Unknown error"))
 
         self._lifecycle_state = LifecycleState.ACTIVE
 
@@ -3200,10 +3205,10 @@ class Builder(ManagedResource):
         )
         try:
             _check_ffi_operation_result(builder_ptr,
-                Builder._ERROR_MESSAGES[
-                    'builder_error'
-                ].format("Unknown error")
-            )
+                                        Builder._ERROR_MESSAGES[
+                                            'builder_error'
+                                        ].format("Unknown error")
+                                        )
         except Exception:
             if builder_ptr:
                 ManagedResource._free_native_ptr(builder_ptr)
@@ -3215,10 +3220,10 @@ class Builder(ManagedResource):
         self._handle = new_ptr
 
         _check_ffi_operation_result(new_ptr,
-            Builder._ERROR_MESSAGES[
-                    'builder_error'
-                ].format("Unknown error")
-            )
+                                    Builder._ERROR_MESSAGES[
+                                        'builder_error'
+                                    ].format("Unknown error")
+                                    )
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -3247,7 +3252,8 @@ class Builder(ManagedResource):
         url_bytes = _to_utf8_bytes(remote_url, "remote URL")
         result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
 
-        _check_ffi_operation_result(result,
+        _check_ffi_operation_result(
+            result,
             Builder._ERROR_MESSAGES['url_error'].format("Unknown error"),
             check=lambda r: r != 0)
 
@@ -3285,7 +3291,8 @@ class Builder(ManagedResource):
             ctypes.c_uint(digital_source_type),
         )
 
-        _check_ffi_operation_result(result,
+        _check_ffi_operation_result(
+            result,
             "Error setting intent for Builder: Unknown error",
             check=lambda r: r != 0)
 
@@ -3307,10 +3314,9 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_add_resource(
                 self._handle, uri_bytes, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
-                Builder._ERROR_MESSAGES['resource_error'].format(
-                    "Unknown error"
-                ),
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['resource_error'].format("Unknown error"),
                 check=lambda r: r != 0)
 
     def add_ingredient(
@@ -3375,10 +3381,9 @@ class Builder(ManagedResource):
                 )
             )
 
-            _check_ffi_operation_result(result,
-                Builder._ERROR_MESSAGES['ingredient_error'].format(
-                    "Unknown error"
-                ),
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['ingredient_error'].format("Unknown error"),
                 check=lambda r: r != 0)
 
     def add_ingredient_from_file_path(
@@ -3444,10 +3449,9 @@ class Builder(ManagedResource):
         action_str = _to_utf8_bytes(action_json, "action JSON")
         result = _lib.c2pa_builder_add_action(self._handle, action_str)
 
-        _check_ffi_operation_result(result,
-            Builder._ERROR_MESSAGES['action_error'].format(
-                "Unknown error"
-            ),
+        _check_ffi_operation_result(
+            result,
+            Builder._ERROR_MESSAGES['action_error'].format("Unknown error"),
             check=lambda r: r != 0)
 
     def to_archive(self, stream: Any) -> None:
@@ -3466,10 +3470,9 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_to_archive(
                 self._handle, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
-                Builder._ERROR_MESSAGES["archive_error"].format(
-                    "Unknown error"
-                ),
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES["archive_error"].format("Unknown error"),
                 check=lambda r: r != 0)
 
     def with_archive(self, stream: Any) -> 'Builder':
@@ -3491,7 +3494,8 @@ class Builder(ManagedResource):
 
         with Stream(stream) as stream_obj:
             try:
-                new_ptr = _lib.c2pa_builder_with_archive(self._handle, stream_obj._stream)
+                new_ptr = _lib.c2pa_builder_with_archive(
+                    self._handle, stream_obj._stream)
             except Exception as e:
                 self._mark_consumed()
                 raise C2paError(
@@ -3499,7 +3503,8 @@ class Builder(ManagedResource):
                 )
             # Old handle consumed by FFI
             self._handle = new_ptr
-            _check_ffi_operation_result(new_ptr, "Failed to load archive into builder")
+            _check_ffi_operation_result(
+                new_ptr, "Failed to load archive into builder")
 
         return self
 
@@ -3566,8 +3571,10 @@ class Builder(ManagedResource):
             self.close()
             raise C2paError(f"Error during signing: {e}")
 
-        _check_ffi_operation_result(result,
-            "Error during signing", check=lambda r: r < 0)
+        _check_ffi_operation_result(
+            result,
+            "Error during signing",
+            check=lambda r: r < 0)
 
         # Capture the manifest bytes if available
         manifest_bytes = b""
@@ -3623,7 +3630,8 @@ class Builder(ManagedResource):
                         signer=signer,
                     )
                 elif self._has_context_signer:
-                    manifest_bytes = self._sign_internal(format, source_stream, dest_stream)
+                    manifest_bytes = self._sign_internal(
+                        format, source_stream, dest_stream)
                 else:
                     raise C2paError(
                         "No signer provided. Either pass a"
@@ -3792,8 +3800,10 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
         ctypes.byref(result_bytes_ptr)
     )
 
-    _check_ffi_operation_result(result,
-        "Failed to format embeddable manifest", check=lambda r: r < 0)
+    _check_ffi_operation_result(
+        result,
+        "Failed to format embeddable manifest",
+        check=lambda r: r < 0)
 
     size = result
     try:
@@ -3924,7 +3934,7 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         )
 
         _check_ffi_operation_result(signature_ptr,
-            "Failed to sign data with Ed25519")
+                                    "Failed to sign data with Ed25519")
 
         try:
             # Ed25519 signatures are always 64 bytes

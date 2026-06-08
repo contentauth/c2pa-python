@@ -12,12 +12,12 @@ pytest-benchmark>=5.1.0
 requests>=2.0.0
 
 # Code formatting
-autopep8==2.0.4  # For automatic code formatting
+autopep8>=2.3.0
 flake8==7.3.0
 
 # Test dependencies (for callback signers)
-cryptography==47.0.0
- 
+cryptography>=47.0.0
+
 # Documentation
 Sphinx>=7.3.0
 sphinx-autoapi>=3.0.0
