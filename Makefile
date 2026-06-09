@@ -148,10 +148,15 @@ MEMRAY_ITERATIONS ?= 100
 MEMRAY_THRESHOLD ?= 1.1
 SCENARIO ?=
 SCENARIO_ARG := $(if $(SCENARIO),--scenario $(SCENARIO),)
+# In CI (GitHub Actions) we forward GITHUB_TOKEN (download_artifacts.py auth) and
+# GITHUB_STEP_SUMMARY (run_profile.py writes the values table there). The summary
+# file is a host path, so it must be bind-mounted to be writable from the
+# container. All three are empty/no-op for local dev runs.
+GH_SUMMARY_MOUNT := $(if $(GITHUB_STEP_SUMMARY),-v $(GITHUB_STEP_SUMMARY):$(GITHUB_STEP_SUMMARY),)
 .PHONY: memory-use-bench
 memory-use-bench:
 	docker build -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
-	docker run --rm -v $(PWD):/workspace -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
+	docker run --rm -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
 	@echo ""
 	@echo "Reports written to tests/perf/reports/"
 	@echo "Open tests/perf/reports/<scenario>-{peak,leaks,temporary}.html in a browser"
