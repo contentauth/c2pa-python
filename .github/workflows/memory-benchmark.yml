@@ -16,15 +16,18 @@ jobs:
     name: Memory benchmark
     # Needs to match the arch the baseline was generated on.
     runs-on: ubuntu-24.04-arm
-    # Only runs when the PR carries the `check-memory-benchmark` label.
-    if: contains(github.event.pull_request.labels.*.name, 'check-memory-benchmark')
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'check-memory-benchmark') &&
+      (
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'OWNER'
+      )
     steps:
       - uses: actions/checkout@v4
 
-      # Uses the Dockerfile environment for repeatable runs
+      # Uses the Dockerfile environment for repeatable runs.
       - name: Run memory benchmark
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make memory-use-bench
 
       # Upload all three flamegraph views per scenario (peak/leaks/temporary).
