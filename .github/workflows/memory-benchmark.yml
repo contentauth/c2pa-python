@@ -1,4 +1,4 @@
-name: Memory benchmark
+name: Python SDK memray memory benchmark
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   memory-benchmark:
-    name: Memory benchmark
+    name: Python SDK memray memory benchmark
     # Needs to match the arch the baseline was generated on.
     runs-on: ubuntu-24.04-arm
     if: |
@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Uses the Dockerfile environment for repeatable runs.
-      - name: Run memory benchmark
+      - name: Run memray memory benchmark
         run: make memory-use-bench
 
       # Upload all three flamegraph views per scenario (peak/leaks/temporary).
