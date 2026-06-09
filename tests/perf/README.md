@@ -67,6 +67,16 @@ The trailing `VAR=value` arguments (e.g. `PERF_ENV=ubuntu-24.04`, `PERF_ARGS=--u
 
 Reports are written to `tests/perf/reports/` on the local machine. Three HTML files per scenario, one per suffix (described below). Open any in a browser. After a run, the run also reports if the scenarios were or were not all within baseline threshold (baseline +10% memory use tolerance).
 
+## Running in CI
+
+The `.github/workflows/memory-benchmark.yml` workflow runs the  Docker-based benchmarks on a PR, but only when the PR has the `check-memory-benchmark` label. This runs `make memory-use-bench`, so:
+
+- A regression (peak or leaked > baseline +10%) makes the benchmark job exit non-zero.
+- A values report table is written to the job's Step Summary.
+- All three flamegraph HTML views per scenario are uploaded as the `memray-flamegraphs` artifact.
+
+The gate only acts as regression test once a `tests/perf/baseline.json` is committed on the branch. Without one, `run_profile.py` treats the run as baseline creation (exits 0, no gating).
+
 ## Report views
 
 Each scenario produces three [memray flamegraphs](https://bloomberg.github.io/memray/flamegraph.html). All three are flamegraphs of the same run. They differ only in which allocations they count.

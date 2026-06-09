@@ -1,0 +1,40 @@
+name: Memory benchmark
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: read
+
+jobs:
+  memory-benchmark:
+    name: Memory benchmark
+    # Needs to match the arch the baseline was generated on.
+    runs-on: ubuntu-24.04-arm
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'check-memory-benchmark') &&
+      (
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'OWNER'
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uses the Dockerfile environment for repeatable runs.
+      - name: Run memory benchmark
+        run: make memory-use-bench
+
+      # Upload all three flamegraph views per scenario (peak/leaks/temporary).
+      - name: Upload flamegraph reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memray-flamegraphs
+          path: tests/perf/reports/*.html
+          if-no-files-found: warn

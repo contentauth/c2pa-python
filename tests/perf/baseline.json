@@ -2,139 +2,139 @@
   "_meta": {
     "memray_version": "1.19.3",
     "python_version": "3.12.13",
-    "c2pa_native_version": "c2pa-v0.85.1",
+    "c2pa_native_version": "c2pa-v0.86.1",
     "iterations": 100,
     "perf_env": "python-3.12-slim",
     "arch": "aarch64"
   },
   "reader_jpeg_legacy": {
-    "peak_bytes": 3814421,
-    "leaked_bytes": 3266116,
-    "total_allocations": 698899
+    "peak_bytes": 3790506,
+    "leaked_bytes": 3337275,
+    "total_allocations": 694247
   },
   "reader_jpeg_with_context": {
-    "peak_bytes": 3822953,
-    "leaked_bytes": 3257471,
-    "total_allocations": 692953
+    "peak_bytes": 3784932,
+    "leaked_bytes": 3331065,
+    "total_allocations": 688204
   },
   "reader_mp4": {
-    "peak_bytes": 4876441,
-    "leaked_bytes": 3257485,
-    "total_allocations": 2112991
+    "peak_bytes": 4192391,
+    "leaked_bytes": 3331202,
+    "total_allocations": 1856171
   },
   "reader_wav": {
-    "peak_bytes": 5520266,
-    "leaked_bytes": 3267427,
-    "total_allocations": 400371
+    "peak_bytes": 4440733,
+    "leaked_bytes": 3281502,
+    "total_allocations": 386809
   },
   "builder_sign_jpeg_legacy": {
-    "peak_bytes": 7695310,
-    "leaked_bytes": 3383623,
-    "total_allocations": 522425
+    "peak_bytes": 7739038,
+    "leaked_bytes": 3438581,
+    "total_allocations": 515197
   },
   "builder_sign_jpeg_with_context": {
-    "peak_bytes": 7688236,
-    "leaked_bytes": 3376293,
-    "total_allocations": 516851
+    "peak_bytes": 7732082,
+    "leaked_bytes": 3431373,
+    "total_allocations": 509328
   },
   "builder_sign_png_legacy": {
-    "peak_bytes": 7932767,
-    "leaked_bytes": 3383648,
-    "total_allocations": 1694629
+    "peak_bytes": 7939922,
+    "leaked_bytes": 3401346,
+    "total_allocations": 1399159
   },
   "builder_sign_png_with_context": {
-    "peak_bytes": 7925490,
-    "leaked_bytes": 3376452,
-    "total_allocations": 1688908
+    "peak_bytes": 7932212,
+    "leaked_bytes": 3393558,
+    "total_allocations": 1393313
   },
   "builder_sign_jpeg_parallel_split_pool": {
-    "peak_bytes": 45764159,
-    "leaked_bytes": 3818113,
-    "total_allocations": 528785
+    "peak_bytes": 45802848,
+    "leaked_bytes": 3855293,
+    "total_allocations": 520103
   },
   "builder_sign_jpeg_parallel_split_barrier": {
-    "peak_bytes": 46225287,
-    "leaked_bytes": 3809216,
-    "total_allocations": 527412
+    "peak_bytes": 45771974,
+    "leaked_bytes": 3853543,
+    "total_allocations": 519696
   },
   "builder_sign_png_parallel_split_pool": {
-    "peak_bytes": 46002549,
-    "leaked_bytes": 3817801,
-    "total_allocations": 1700731
+    "peak_bytes": 46511069,
+    "leaked_bytes": 3831120,
+    "total_allocations": 1405010
   },
   "builder_sign_png_parallel_split_barrier": {
-    "peak_bytes": 45970433,
-    "leaked_bytes": 3812044,
-    "total_allocations": 1699396
+    "peak_bytes": 45980602,
+    "leaked_bytes": 3826012,
+    "total_allocations": 1403879
   },
   "builder_sign_gif": {
-    "peak_bytes": 14544515,
-    "leaked_bytes": 3375865,
-    "total_allocations": 7183237
+    "peak_bytes": 14556418,
+    "leaked_bytes": 3398315,
+    "total_allocations": 5573733
   },
   "builder_sign_heic": {
-    "peak_bytes": 4608484,
-    "leaked_bytes": 3376030,
-    "total_allocations": 771079
+    "peak_bytes": 4624733,
+    "leaked_bytes": 3402824,
+    "total_allocations": 733409
   },
   "builder_sign_m4a": {
-    "peak_bytes": 18849082,
-    "leaked_bytes": 3376431,
-    "total_allocations": 2273497
+    "peak_bytes": 18864770,
+    "leaked_bytes": 3402727,
+    "total_allocations": 2126542
   },
   "builder_sign_webp": {
-    "peak_bytes": 8900701,
-    "leaked_bytes": 3376432,
-    "total_allocations": 487683
+    "peak_bytes": 8911369,
+    "leaked_bytes": 3397659,
+    "total_allocations": 473589
   },
   "builder_sign_avi": {
-    "peak_bytes": 7040387,
-    "leaked_bytes": 3376267,
-    "total_allocations": 40315553
+    "peak_bytes": 7357514,
+    "leaked_bytes": 3610304,
+    "total_allocations": 34863789
   },
   "builder_sign_mp4": {
-    "peak_bytes": 6162851,
-    "leaked_bytes": 3376431,
-    "total_allocations": 1809672
+    "peak_bytes": 6202809,
+    "leaked_bytes": 3426948,
+    "total_allocations": 1595487
   },
   "builder_sign_tiff": {
-    "peak_bytes": 13124728,
-    "leaked_bytes": 3376268,
-    "total_allocations": 5139967
+    "peak_bytes": 13430248,
+    "leaked_bytes": 3661058,
+    "total_allocations": 5484643
   },
   "builder_sign_jpeg_parent_of": {
-    "peak_bytes": 14173992,
-    "leaked_bytes": 3377656,
-    "total_allocations": 1209933
+    "peak_bytes": 14244270,
+    "leaked_bytes": 3457332,
+    "total_allocations": 1194872
   },
   "builder_sign_jpeg_component_of": {
-    "peak_bytes": 14175518,
-    "leaked_bytes": 3377891,
-    "total_allocations": 1232336
+    "peak_bytes": 14246032,
+    "leaked_bytes": 3457636,
+    "total_allocations": 1217308
   },
   "builder_sign_jpeg_parent_and_component": {
-    "peak_bytes": 14530406,
-    "leaked_bytes": 3474418,
-    "total_allocations": 2160934
+    "peak_bytes": 14602066,
+    "leaked_bytes": 3560736,
+    "total_allocations": 2137378
   },
   "builder_sign_jpeg_parent_and_component_mixed_mime": {
-    "peak_bytes": 14476171,
-    "leaked_bytes": 3378735,
-    "total_allocations": 2451587
+    "peak_bytes": 14553513,
+    "leaked_bytes": 3464495,
+    "total_allocations": 2148041
   },
   "builder_sign_jpeg_two_components_same_mime": {
-    "peak_bytes": 14519270,
-    "leaked_bytes": 3473673,
-    "total_allocations": 2150782
+    "peak_bytes": 14582525,
+    "leaked_bytes": 3560177,
+    "total_allocations": 2127097
   },
   "builder_sign_jpeg_two_components_mixed_mime": {
-    "peak_bytes": 14473127,
-    "leaked_bytes": 3377445,
-    "total_allocations": 2441195
+    "peak_bytes": 14549485,
+    "leaked_bytes": 3462954,
+    "total_allocations": 2137855
   },
   "builder_sign_jpeg_archive_roundtrip": {
-    "peak_bytes": 14226832,
-    "leaked_bytes": 3426491,
-    "total_allocations": 1680290
+    "peak_bytes": 14327685,
+    "leaked_bytes": 3527329,
+    "total_allocations": 1657777
   }
 }
