@@ -69,13 +69,13 @@ Reports are written to `tests/perf/reports/` on the local machine. Three HTML fi
 
 ## Running in CI
 
-The `.github/workflows/memory-benchmark.yml` workflow runs this exact Docker harness on a PR, but **only when the PR carries the `check-memory-benchmark` label** (add it to trigger; the run starts on the `labeled` event). It runs `make memory-use-bench`, so:
+The `.github/workflows/memory-benchmark.yml` workflow runs the  Docker-based benchmarks on a PR, but only when the PR has the `check-memory-benchmark` label. This runs `make memory-use-bench`, so:
 
-- A regression (peak or leaked > baseline +10%) makes the benchmark step exit non-zero and the check go **red**.
-- A values table (peak / leaked / allocs / Δ% per scenario) is written to the job's **Step Summary** — `run_profile.py` appends it whenever `$GITHUB_STEP_SUMMARY` is set, which the Makefile forwards into the container.
-- All three flamegraph HTML views per scenario are uploaded as the **`memray-flamegraphs`** artifact, including on the failure path, so a regression can be inspected from the run.
+- A regression (peak or leaked > baseline +10%) makes the benchmark job exit non-zero.
+- A values report table is written to the job's Step Summary.
+- All three flamegraph HTML views per scenario are uploaded as the `memray-flamegraphs` artifact.
 
-The gate only bites once a `tests/perf/baseline.json` is committed on the branch. Without one, `run_profile.py` treats the run as baseline creation (exits 0, no gating).
+The gate only acts as regression test once a `tests/perf/baseline.json` is committed on the branch. Without one, `run_profile.py` treats the run as baseline creation (exits 0, no gating).
 
 ## Report views
 

@@ -205,7 +205,7 @@ def _write_github_summary(results: dict, baseline: dict) -> None:
             (peak_base and m["peak_bytes"] > peak_base * THRESHOLD)
             or (leaked_base and m["leaked_bytes"] > leaked_base * THRESHOLD)
         )
-        status = "⚠️" if regressed else "✅"
+        status = "REGRESSED" if regressed else "ok"
         lines.append(
             f"| {name} | {_fmt(m['peak_bytes'])} | {_fmt(m['leaked_bytes'])} "
             f"| {m['total_allocations']} | {_delta_pct(m['peak_bytes'], peak_base)} "

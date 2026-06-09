@@ -13,30 +13,22 @@ permissions:
 
 jobs:
   memory-benchmark:
-    name: Memory benchmark (memray)
-    runs-on: ubuntu-latest        # GitHub-hosted; Docker preinstalled
-    # Only runs when the PR carries the label. The 'labeled' trigger above lets
-    # adding the label to an open PR start the run immediately; every other PR
-    # event is a no-op for this job.
+    name: Memory benchmark
+    # aarch64 to match the arch the committed baseline.json was generated on.
+    # leaked_bytes/peak_bytes differ by arch, so the gate needs matching arch.
+    runs-on: ubuntu-24.04-arm     # GitHub-hosted ARM; Docker preinstalled
+    # Only runs when the PR carries the `check-memory-benchmark` label.
     if: contains(github.event.pull_request.labels.*.name, 'check-memory-benchmark')
     steps:
       - uses: actions/checkout@v4
 
-      # No setup-python / pip install on the host: the Docker image
-      # (python-3.12-slim-perf-Dockerfile) already has Python 3.12 + memray +
-      # deps, and entrypoint.sh downloads the native lib at container start.
-      # baseline.json comes from the repo. This is the exact path devs run
-      # locally via `make memory-use-bench`. Exits non-zero on regression
-      # (> baseline * threshold) -> the check goes red. The Makefile forwards
-      # GITHUB_TOKEN and GITHUB_STEP_SUMMARY into the container.
+      # Uses the Dockerfile environment for repeatable runs
       - name: Run memory benchmark
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make memory-use-bench
 
       # Upload all three flamegraph views per scenario (peak/leaks/temporary).
-      # if: always() so the reports are available even when the run failed on a
-      # regression -- exactly when they are most useful.
       - name: Upload flamegraph reports
         if: always()
         uses: actions/upload-artifact@v4
