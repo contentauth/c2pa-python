@@ -14,9 +14,8 @@ permissions:
 jobs:
   memory-benchmark:
     name: Memory benchmark
-    # aarch64 to match the arch the committed baseline.json was generated on.
-    # leaked_bytes/peak_bytes differ by arch, so the gate needs matching arch.
-    runs-on: ubuntu-24.04-arm     # GitHub-hosted ARM; Docker preinstalled
+    # Needs to match the arch the baseline was generated on.
+    runs-on: ubuntu-24.04-arm
     # Only runs when the PR carries the `check-memory-benchmark` label.
     if: contains(github.event.pull_request.labels.*.name, 'check-memory-benchmark')
     steps:

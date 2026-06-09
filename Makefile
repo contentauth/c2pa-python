@@ -148,10 +148,7 @@ MEMRAY_ITERATIONS ?= 100
 MEMRAY_THRESHOLD ?= 1.1
 SCENARIO ?=
 SCENARIO_ARG := $(if $(SCENARIO),--scenario $(SCENARIO),)
-# In CI (GitHub Actions) we forward GITHUB_TOKEN (download_artifacts.py auth) and
-# GITHUB_STEP_SUMMARY (run_profile.py writes the values table there). The summary
-# file is a host path, so it must be bind-mounted to be writable from the
-# container. All three are empty/no-op for local dev runs.
+# In CI, use en vars to write the report to the job run
 GH_SUMMARY_MOUNT := $(if $(GITHUB_STEP_SUMMARY),-v $(GITHUB_STEP_SUMMARY):$(GITHUB_STEP_SUMMARY),)
 .PHONY: memory-use-bench
 memory-use-bench:

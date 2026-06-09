@@ -170,7 +170,7 @@ def _fmt(n: int) -> str:
 
 
 def _delta_pct(current: int, base: int) -> str:
-    """Signed percentage change vs baseline, or '-' when no baseline entry."""
+    """Signed percentage change vs baseline, or '-' when no baseline."""
     if not base:
         return "-"
     return f"{(current - base) / base * 100:+.1f}%"
@@ -178,11 +178,6 @@ def _delta_pct(current: int, base: int) -> str:
 
 def _write_github_summary(results: dict, baseline: dict) -> None:
     """Append a values table to $GITHUB_STEP_SUMMARY when running in CI.
-
-    No-op locally (env var unset). The table is plain numbers per scenario;
-    the flamegraph HTML reports are uploaded separately as workflow artifacts.
-    A row is flagged when peak or leaked exceeds baseline * THRESHOLD, matching
-    the regression gate in main().
     """
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path or not results:
@@ -322,8 +317,7 @@ def main() -> None:
         verb = "Updated" if baseline else "Created"
         print(f"\n{verb} baseline: {BASELINE_FILE}")
 
-    # Emit the values table to the PR's Step Summary in CI. Runs on both the
-    # pass and regression paths (before the sys.exit(1) below), no-op locally.
+    # Emit the report table to the PR's Step Summary in CI.
     _write_github_summary(results, baseline)
 
     if render_failures:
