@@ -271,6 +271,19 @@ class TestReader(unittest.TestCase):
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["claim"]["dc:title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
 
+    def test_stream_read_crjson_and_parse(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader("image/jpeg", file)
+            crjson = reader.crjson()
+            self.assertTrue(crjson)
+            json.loads(crjson)
+
+    def test_stream_read_crjson_path_only(self):
+        with Reader(self.testPath) as reader:
+            crjson = reader.crjson()
+            self.assertTrue(crjson)
+            json.loads(crjson)
+
     def test_stream_read_string_stream_path_only(self):
         with Reader(self.testPath) as reader:
             json_data = reader.json()

@@ -48,6 +48,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_from_manifest_data_and_stream',
     'c2pa_reader_json',
     'c2pa_reader_detailed_json',
+    'c2pa_reader_crjson',
     'c2pa_reader_resource_to_stream',
     'c2pa_reader_from_context',
     'c2pa_reader_with_stream',
@@ -560,6 +561,9 @@ _setup_function(
         ctypes.POINTER(C2paReader)], ctypes.c_void_p)
 _setup_function(
     _lib.c2pa_reader_detailed_json, [
+        ctypes.POINTER(C2paReader)], ctypes.c_void_p)
+_setup_function(
+    _lib.c2pa_reader_crjson, [
         ctypes.POINTER(C2paReader)], ctypes.c_void_p)
 _setup_function(_lib.c2pa_reader_resource_to_stream, [ctypes.POINTER(
     C2paReader), ctypes.c_char_p, ctypes.POINTER(C2paStream)], ctypes.c_int64)
@@ -2628,6 +2632,27 @@ class Reader(ManagedResource):
         result = _lib.c2pa_reader_detailed_json(self._handle)
         _check_ffi_operation_result(
             result, "Error during detailed manifest parsing in Reader")
+
+        return _convert_to_py_string(result)
+
+    def crjson(self) -> str:
+        """Get the manifest store as a crJSON string.
+
+        crJSON is a standardized JSON format for C2PA manifest data. This
+        call yields empty JSON ("{}") when there are no Content Credentials.
+
+        Returns:
+            The manifest store as a crJSON string.
+
+        Raises:
+            C2paError: If the Reader has been closed or the underlying C
+                      call returns null.
+        """
+
+        self._ensure_valid_state()
+
+        result = _lib.c2pa_reader_crjson(self._handle)
+        _check_ffi_operation_result(result, "Error parsing crJSON")
 
         return _convert_to_py_string(result)
 
