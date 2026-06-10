@@ -3735,8 +3735,6 @@ __all__ = [
     'Builder',
     'Signer',
     'load_settings',
-    'read_file',
-    'read_ingredient_file',
     'sign_file',
     'format_embeddable',
     'version',
