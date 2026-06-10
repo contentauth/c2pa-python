@@ -3735,7 +3735,6 @@ __all__ = [
     'Builder',
     'Signer',
     'load_settings',
-    'sign_file',
     'format_embeddable',
     'version',
     'sdk_version'
