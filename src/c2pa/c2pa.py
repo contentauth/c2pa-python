@@ -242,8 +242,10 @@ class ManagedResource:
     @staticmethod
     def _free_native_ptr(ptr):
         """Free a native pointer by passing it to c2pa_free.
-        c2pa_free's argtype is c_void_p, so ctypes converts any pointer instance.
-        (ctypes.cast(ptr, c_void_p) leaves reference cycles behind on)
+
+        c2pa_free's argtype is c_void_p, so ctypes converts any pointer
+        instance directly. (ctypes.cast(ptr, c_void_p) would do the same
+        conversion but leaves a reference cycle behind on every call.)
         """
         _lib.c2pa_free(ptr)
 
@@ -902,12 +904,18 @@ def _convert_to_py_string(value) -> str:
 
     py_string = ""
 
-    # Validate pointer before reading and freeing
-    if not isinstance(value, (int, ctypes.c_void_p)) or value == 0:
+    # Validate and normalize pointer before reading and freeing.
+    if isinstance(value, ctypes.c_void_p):
+        address = value.value
+    elif isinstance(value, int):
+        address = value
+    else:
+        return ""
+    if not address:
         return ""
 
     try:
-        raw = ctypes.string_at(value)
+        raw = ctypes.string_at(address)
 
         try:
             py_string = raw.decode('utf-8', errors='strict')

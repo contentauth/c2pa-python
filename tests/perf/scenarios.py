@@ -460,7 +460,7 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
         archive = io.BytesIO()
         Builder(MANIFEST_BASE).to_archive(archive)
         archive.seek(0)
-        # from_archive() yields a context-less Builder; to keep the Context
+        # from_archive() yields a context-less Builder. To keep the Context
         # (and its signer), build with the context first, then load the archive.
         builder = Builder(MANIFEST_BASE, context=context).with_archive(archive)
         with io.BytesIO(ingredient_bytes) as ing:
@@ -472,7 +472,7 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
 
 
 def scenario_reader_error_no_manifest(iterations: int = 100) -> None:
-    """Reader on an unsigned asset: ManifestNotFound partial-init cleanup."""
+    """Reader on an unsigned asset: partial-init cleanup."""
     source_bytes = SOURCE_JPEG.read_bytes()  # A.jpg carries no manifest
     for _ in _iterate(iterations):
         try:
@@ -482,7 +482,7 @@ def scenario_reader_error_no_manifest(iterations: int = 100) -> None:
 
 
 def scenario_builder_error_invalid_manifest(iterations: int = 100) -> None:
-    """Builder with malformed manifest JSON: error string + partial init."""
+    """Error case: Builder with malformed manifest JSON."""
     for _ in _iterate(iterations):
         try:
             Builder('{"not valid json')

@@ -36,7 +36,10 @@ Both directions were profiled explicitly because they were suspected:
   `get_remote_url()`, and `resource_to_stream()` extracting the active
   manifest's JPEG thumbnail (31,608 bytes per extraction) from
   `tests/fixtures/C.jpg`. Measured: leaked 2.10 MiB at N=100 vs 2.10 MiB at
-  N=300 (delta −975 B). No growing allocation site above 4 KiB.
+  N=300 (delta −975 B). No growing allocation site above 4 KiB. (Note:
+  `get_remote_url()` on these embedded-manifest fixtures returns `None`
+  before any string conversion, so within this scenario it covers the NULL
+  branch only.)
 - `builder_add_resource_thumbnail` — per iteration: `Builder.add_resource`
   of a ~90 KB JPEG thumbnail followed by a context sign. Measured: leaked
   2.30 MiB at both N=100 and N=300 (delta −2.2 KiB). No growing site.
@@ -118,6 +121,19 @@ flat. That residual slope is profiler accounting overhead (it scales with
 the number of allocation records), not application memory; use the
 high-watermark records or RSS when judging peak behavior across different
 iteration counts.
+
+## Addendum: regression caught in adversarial re-review (2026-06-10)
+
+The first version of the `string_at` rewrite of `_convert_to_py_string` had a
+NULL-handling regression: the `value == 0` guard does not catch
+`ctypes.c_void_p(0)` (ctypes instances never compare equal to ints), and
+`ctypes.string_at(NULL)` crashes the process where the old
+`ctypes.cast(...).value` path returned `None`. Unreachable through current
+callers (all pass `int | None` from `c_void_p`-restype functions, and both
+are guarded), but the function's own type check admits `c_void_p` instances,
+so the latent crash was real. Fixed by normalizing to a raw address first
+(`value.value` for `c_void_p`) and bailing out on falsy addresses; verified
+against `None`, `0`, `c_void_p(0)`, `c_void_p(None)`, and non-pointer types.
 
 ## Also found during review (not measured as leaking, fixed by design)
 
