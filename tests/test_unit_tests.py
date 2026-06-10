@@ -23,7 +23,6 @@ from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
 import ctypes
-import toml
 import threading
 
 # Suppress deprecation warnings
@@ -2371,7 +2370,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         self.assertNotIn("B.jpg", json_data)
         output.close()
 
-    def test_write_ingredient_archive_uses_label_over_instance_id(self):
+    def test_write_ingredient_archive_matches_label_or_instance_id(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
             "assertions": [],
@@ -2386,14 +2385,17 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath, "rb") as f:
             builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
-        with self.assertRaises(Error):
-            builder.write_ingredient_archive("my-instance-id", io.BytesIO())
+        by_label = io.BytesIO()
+        builder.write_ingredient_archive("my-label", by_label)
+        self.assertGreater(len(by_label.getvalue()), 0)
+        by_label.close()
 
-        archive = io.BytesIO()
-        builder.write_ingredient_archive("my-label", archive)
+        by_instance_id = io.BytesIO()
+        builder.write_ingredient_archive("my-instance-id", by_instance_id)
+        self.assertGreater(len(by_instance_id.getvalue()), 0)
+        by_instance_id.close()
+
         builder.close()
-        self.assertGreater(len(archive.getvalue()), 0)
-        archive.close()
 
     def test_write_ingredient_archive_unknown_id_raises(self):
         manifest = {
