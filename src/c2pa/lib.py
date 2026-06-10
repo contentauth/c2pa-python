@@ -37,7 +37,8 @@ def get_platform_identifier() -> str:
     - universal-apple-darwin (for Mac universal)
     - aarch64-apple-darwin (for Mac ARM64)
     - x86_64-apple-darwin (for Mac x86_64)
-    - x86_64-pc-windows-msvc (for Windows 64-bit)
+    - x86_64-pc-windows-msvc (for Windows x64)
+    - aarch64-pc-windows-msvc (for Windows ARM64)
     - x86_64-unknown-linux-gnu (for Linux 64-bit)
     - aarch64-unknown-linux-gnu (for Linux ARM)
     """
@@ -54,6 +55,8 @@ def get_platform_identifier() -> str:
         else:
             return "universal-apple-darwin"
     elif system == "windows":
+        if _get_architecture() in [CPUArchitecture.ARM64.value, CPUArchitecture.AARCH64.value]:
+            return "aarch64-pc-windows-msvc"
         return "x86_64-pc-windows-msvc"
     elif system == "linux":
         if _get_architecture() in [CPUArchitecture.ARM64.value, CPUArchitecture.AARCH64.value]:
@@ -81,7 +84,7 @@ def _get_architecture() -> str:
     elif sys.platform == "win32":
         # win32 will cover all Windows versions
         # (the 32 is a historical quirk)
-        return platform.machine()
+        return platform.machine().lower()
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
