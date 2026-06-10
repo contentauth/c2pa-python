@@ -241,8 +241,11 @@ class ManagedResource:
 
     @staticmethod
     def _free_native_ptr(ptr):
-        """Free a native pointer by casting it to c_void_p and calling c2pa_free."""
-        _lib.c2pa_free(ctypes.cast(ptr, ctypes.c_void_p))
+        """Free a native pointer by passing it to c2pa_free.
+        c2pa_free's argtype is c_void_p, so ctypes converts any pointer instance.
+        (ctypes.cast(ptr, c_void_p) leaves reference cycles behind on)
+        """
+        _lib.c2pa_free(ptr)
 
     def _ensure_valid_state(self):
         """Raise if the resource is closed or uninitialized."""
@@ -881,33 +884,43 @@ class _StringContainer:
         self._data_dir_str = ""
 
 
+# Wrap a raw (address, length) native region in a writable memoryview
+_PyMemoryView_FromMemory = ctypes.pythonapi.PyMemoryView_FromMemory
+_PyMemoryView_FromMemory.restype = ctypes.py_object
+_PyMemoryView_FromMemory.argtypes = (
+    ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_int)
+_PyBUF_WRITE = 0x200
+
+
+def _writable_memoryview(address, length):
+    return _PyMemoryView_FromMemory(address, length, _PyBUF_WRITE)
+
+
 def _convert_to_py_string(value) -> str:
     if value is None:
         return ""
 
     py_string = ""
 
-    # Validate pointer before casting and freeing
+    # Validate pointer before reading and freeing
     if not isinstance(value, (int, ctypes.c_void_p)) or value == 0:
         return ""
 
     try:
-        ptr = ctypes.cast(value, ctypes.c_char_p)
+        raw = ctypes.string_at(value)
 
-        # Only if we got a valid pointer with valid content
-        if ptr and ptr.value is not None:
+        try:
+            py_string = raw.decode('utf-8', errors='strict')
+        except Exception:
+            py_string = ""
+        finally:
+            # Only free if we have a valid pointer
             try:
-                py_string = ptr.value.decode('utf-8', errors='strict')
+                _lib.c2pa_string_free(value)
             except Exception:
-                py_string = ""
-            finally:
-                # Only free if we have a valid pointer
-                try:
-                    _lib.c2pa_string_free(value)
-                except Exception:
-                    # Ignore clean up issues
-                    pass
-    except (ctypes.ArgumentError, TypeError, ValueError):
+                # Ignore clean up issues
+                pass
+    except (ctypes.ArgumentError, TypeError, ValueError, OSError):
         # Invalid pointer type or value
         return ""
 
@@ -995,8 +1008,7 @@ def _parse_operation_result_for_error(
         if check_error:
             error = _lib.c2pa_error()
             if error:
-                error_str = ctypes.cast(
-                    error, ctypes.c_char_p).value.decode('utf-8')
+                error_str = ctypes.string_at(error).decode('utf-8')
                 _lib.c2pa_string_free(error)
                 _raise_typed_c2pa_error(error_str)
         return None
@@ -1617,10 +1629,19 @@ class Stream:
                 readinto = getattr(stream, "readinto", None)
                 if readinto is not None:
                     # Most streams have readinto
-                    buf = (ctypes.c_char * length).from_address(
-                        ctypes.addressof(data.contents))
-                    n = readinto(buf)
-                    return n if n else 0
+                    buf = _writable_memoryview(
+                        ctypes.addressof(data.contents), length)
+                    try:
+                        n = readinto(buf)
+                    finally:
+                        # Invalidate the view:
+                        # The native buffer is only valid for
+                        # the duration of the callback...
+                        buf.release()
+                    if not n:
+                        return 0
+                    # Never report more than the buffer can hold
+                    return min(n, length)
 
                 # Fallback for streams without readinto.
                 buffer = stream.read(length)
