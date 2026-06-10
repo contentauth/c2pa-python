@@ -36,6 +36,9 @@ _PARENT_ID3   = "xmp:iid:eeeeeeee-0005-0005-0005-eeeeeeeeeeee"
 _PLACED_ID3   = "xmp:iid:ffffffff-0006-0006-0006-ffffffffffff"
 _PLACED_ID4   = "xmp:iid:11111111-0007-0007-0007-111111111111"
 _PLACED_ID5   = "xmp:iid:22222222-0008-0008-0008-222222222222"
+_ARCH_PARENT_ID = "xmp:iid:33333333-0009-0009-0009-333333333333"
+_ARCH_COMP_ID   = "xmp:iid:44444444-0010-0010-0010-444444444444"
+_ARCH_COMP_ID2  = "xmp:iid:55555555-0011-0011-0011-555555555555"
 
 MANIFEST_BASE = {
     "claim_generator": "perf_test",
@@ -463,6 +466,169 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
         builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
+# Archive scenarios: builder as working store (to_archive/with_archive) and
+# per-ingredient archives (write_ingredient_archive/add_ingredient_from_archive).
+
+def _ingredient_archive_bytes(ingredient_json: dict, mime: str, asset_bytes: bytes) -> bytes:
+    """Build a per-ingredient archive once, for reuse inside scenario loops."""
+    builder = Builder(MANIFEST_BASE)
+    with io.BytesIO(asset_bytes) as ing:
+        builder.add_ingredient(ingredient_json, mime, ing)
+    archive = io.BytesIO()
+    builder.write_ingredient_archive(ingredient_json["instance_id"], archive)
+    return archive.getvalue()
+
+
+def scenario_builder_to_archive_with_ingredient(iterations: int = 100) -> None:
+    """Serialize a builder holding one ingredient to an archive (no signing)."""
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE)
+        with io.BytesIO(ingredient_bytes) as ing:
+            builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        builder.to_archive(io.BytesIO())
+
+
+def scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive(iterations: int = 100) -> None:
+    """Add ingredient, serialize to archive, reload, sign.
+
+    Unlike scenario_builder_sign_jpeg_archive_roundtrip, the ingredient is
+    added before to_archive, so its resources travel through the archive.
+    """
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.opened",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_PARENT_ID]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        archive = io.BytesIO()
+        src_builder = Builder(manifest)
+        with io.BytesIO(ingredient_bytes) as ing:
+            src_builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        src_builder.to_archive(archive)
+        archive.seek(0)
+        builder = Builder(manifest, context=context).with_archive(archive)
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_write_ingredient_archive(iterations: int = 100) -> None:
+    """Add one ingredient and write it out as a per-ingredient archive."""
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE)
+        with io.BytesIO(ingredient_bytes) as ing:
+            builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        builder.write_ingredient_archive(_ARCH_PARENT_ID, io.BytesIO())
+
+
+def scenario_builder_sign_jpeg_add_ingredient_from_archive(iterations: int = 100) -> None:
+    """Restore one ingredient from a prebuilt archive and sign."""
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    archive_bytes = _ingredient_archive_bytes(
+        {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+        "image/jpeg", SIGNED_JPEG.read_bytes(),
+    )
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.opened",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_PARENT_ID]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        builder = Builder(manifest, context=context)
+        builder.add_ingredient_from_archive(io.BytesIO(archive_bytes))
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_ingredient_archive_roundtrip(iterations: int = 100) -> None:
+    """Write a per-ingredient archive from one builder, load into another, sign."""
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.opened",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_PARENT_ID]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        archive = io.BytesIO()
+        src_builder = Builder(MANIFEST_BASE)
+        with io.BytesIO(ingredient_bytes) as ing:
+            src_builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        src_builder.write_ingredient_archive(_ARCH_PARENT_ID, archive)
+        archive.seek(0)
+        builder = Builder(manifest, context=context)
+        builder.add_ingredient_from_archive(archive)
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_sign_jpeg_two_ingredient_archives(iterations: int = 100) -> None:
+    """Restore two ingredients (JPEG + PNG) from prebuilt archives and sign."""
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    archive1_bytes = _ingredient_archive_bytes(
+        {"relationship": "componentOf", "instance_id": _ARCH_COMP_ID},
+        "image/jpeg", SIGNED_JPEG.read_bytes(),
+    )
+    archive2_bytes = _ingredient_archive_bytes(
+        {"relationship": "componentOf", "instance_id": _ARCH_COMP_ID2},
+        "image/png", SIGNING_PNG.read_bytes(),
+    )
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.placed",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_COMP_ID, _ARCH_COMP_ID2]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        builder = Builder(manifest, context=context)
+        builder.add_ingredient_from_archive(io.BytesIO(archive1_bytes))
+        builder.add_ingredient_from_archive(io.BytesIO(archive2_bytes))
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
 # jpeg + png context variants, paired with the `_legacy` scenarios above for
 # side-by-side comparison.
 
@@ -524,6 +690,12 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
+    "builder_to_archive_with_ingredient": scenario_builder_to_archive_with_ingredient,
+    "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive,
+    "builder_write_ingredient_archive": scenario_builder_write_ingredient_archive,
+    "builder_sign_jpeg_add_ingredient_from_archive": scenario_builder_sign_jpeg_add_ingredient_from_archive,
+    "builder_ingredient_archive_roundtrip": scenario_builder_ingredient_archive_roundtrip,
+    "builder_sign_jpeg_two_ingredient_archives": scenario_builder_sign_jpeg_two_ingredient_archives,
 }
 
 
