@@ -3476,8 +3476,9 @@ class Builder(ManagedResource):
         The archive is in C2PA format.
 
         Args:
-            ingredient_id: The instance_id of the ingredient within this builder
-            stream: Writable stream to receive the archive
+            ingredient_id: Identifier of the ingredient within this builder:
+                its label if set, otherwise its instance_id
+            stream: Writable, seekable stream to receive the archive
 
         Raises:
             C2paError: If there was an error writing the archive

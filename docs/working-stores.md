@@ -818,8 +818,8 @@ with open("artwork.jpg", "rb") as src, open("signed_artwork.jpg", "w+b") as dst:
 
 The `Builder` class exposes two dedicated APIs for moving a single ingredient between builders without manual JSON manipulation:
 
-- `builder.write_ingredient_archive(ingredient_id, stream)` writes one already-registered ingredient out as a single-ingredient JUMBF archive.
-- `builder.add_ingredient_from_archive(stream)` loads one such archive into a builder.
+- `builder.write_ingredient_archive(ingredient_id, stream)` writes one already-registered ingredient out as a single-ingredient JUMBF archive. The destination stream must be writable and seekable.
+- `builder.add_ingredient_from_archive(stream)` loads one such archive into a builder. The source stream must be readable and seekable, positioned at the start of the archive.
 
 #### How `add_ingredient` and `write_ingredient_archive` interact
 

@@ -2270,6 +2270,144 @@ class TestBuilderWithSigner(unittest.TestCase):
         self.assertIn(ingredient_id, json_data)
         output.close()
 
+    def test_add_two_ingredient_archives_to_one_builder(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        archives = []
+        for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
+            archive_builder = Builder.from_json(manifest)
+            ingredient_json = {
+                "title": title,
+                "relationship": "componentOf",
+                "instance_id": instance_id,
+            }
+            with open(self.testPath, "rb") as f:
+                archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+            archive = io.BytesIO()
+            archive_builder.write_ingredient_archive(instance_id, archive)
+            archive_builder.close()
+            archive.seek(0)
+            archives.append(archive)
+
+        signing_builder = Builder.from_json(manifest)
+        for archive in archives:
+            signing_builder.add_ingredient_from_archive(archive)
+            archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        self.assertIn("B.jpg", json_data)
+        output.close()
+
+    def test_write_ingredient_archive_only_contains_requested_ingredient(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        archive_builder = Builder.from_json(manifest)
+        for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
+            ingredient_json = {
+                "title": title,
+                "relationship": "componentOf",
+                "instance_id": instance_id,
+            }
+            with open(self.testPath, "rb") as f:
+                archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive("ingredient-A", archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        self.assertNotIn("B.jpg", json_data)
+        output.close()
+
+    def test_write_ingredient_archive_uses_label_over_instance_id(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "componentOf",
+            "label": "my-label",
+            "instance_id": "my-instance-id",
+        }
+        builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        with self.assertRaises(Error):
+            builder.write_ingredient_archive("my-instance-id", io.BytesIO())
+
+        archive = io.BytesIO()
+        builder.write_ingredient_archive("my-label", archive)
+        builder.close()
+        self.assertGreater(len(archive.getvalue()), 0)
+        archive.close()
+
+    def test_write_ingredient_archive_unknown_id_raises(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "componentOf",
+            "instance_id": "ingredient-A",
+        }
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        with self.assertRaises(Error):
+            builder.write_ingredient_archive("nonexistent-id", io.BytesIO())
+        builder.close()
+
+    def test_add_ingredient_from_archive_invalid_data_raises(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        with self.assertRaises(Error):
+            builder.add_ingredient_from_archive(io.BytesIO(b"not a c2pa archive"))
+        with self.assertRaises(Error):
+            builder.add_ingredient_from_archive(io.BytesIO())
+        builder.close()
+
+    def test_ingredient_archive_methods_raise_on_closed_builder(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        builder.close()
+        with self.assertRaises(Error):
+            builder.write_ingredient_archive("ingredient-A", io.BytesIO())
+        with self.assertRaises(Error):
+            builder.add_ingredient_from_archive(io.BytesIO())
+
     def test_remote_sign(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinition)
