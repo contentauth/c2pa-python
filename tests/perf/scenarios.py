@@ -9,13 +9,15 @@ Plain functions (no pytest dependencies) that exercise the profiling scenarios.
 Each function is called N times by run_profile.py.
 """
 
+import gc
 import io
 import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from c2pa import Builder, C2paSignerInfo, Context, Reader, Signer
+from types import SimpleNamespace
+from c2pa import Builder, C2paSignerInfo, Context, Reader, Signer, Stream
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
@@ -497,6 +499,170 @@ def scenario_builder_sign_png_parallel_split_barrier(iterations: int = 100) -> N
     _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=False, launch="barrier")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Fork-safety scenarios — prove no deadlock and no parent-side memory leaks.
+# All are no-ops on Windows (no os.fork). Under memray a deadlock manifests as
+# a hung subprocess, which CI catches via overall timeout.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _fork_wait(child_fn) -> None:
+    """Fork; run child_fn() in child then _exit(0); parent waits up to 5 s."""
+    import signal
+
+    def _on_alarm(signum, frame):
+        raise TimeoutError("fork child deadlocked — 5 s alarm fired")
+
+    pid = os.fork()
+    if pid == 0:
+        child_fn()
+        os._exit(0)
+
+    old = signal.signal(signal.SIGALRM, _on_alarm)
+    try:
+        signal.alarm(5)
+        _, status = os.waitpid(pid, 0)
+        signal.alarm(0)
+    finally:
+        signal.signal(signal.SIGALRM, old)
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, (
+        f"child exited abnormally: status={status}"
+    )
+
+
+def scenario_fork_no_deadlock_reader(iterations: int = 100) -> None:
+    """Baseline: create Reader, fork, child gc.collect() + _exit, parent closes.
+    Guard fires in child (no deadlock); parent frees normally (no leak).
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        with open(SIGNED_JPEG, "rb") as f:
+            reader = Reader("image/jpeg", f)
+        _fork_wait(lambda: gc.collect())
+        reader.close()
+
+
+def scenario_fork_contended_mutex(iterations: int = 100) -> None:
+    """8 threads create/close Readers in a tight loop while the main thread
+    forks 5× per iteration (500 total forks). Maximises the probability that
+    the registry Mutex is held at the instant of fork(). If pthread_atfork
+    didn't reinit the Rust mutex the first cimpl_free in the child would
+    deadlock; the Python guard is also exercised by child GC.
+    """
+    if not hasattr(os, "fork"):
+        return
+    stop = threading.Event()
+
+    def _worker():
+        while not stop.is_set():
+            with open(SIGNED_JPEG, "rb") as f:
+                r = Reader("image/jpeg", f)
+            r.close()
+
+    threads = [threading.Thread(target=_worker, daemon=True)
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    try:
+        for _ in _iterate(iterations):
+            for _ in range(5):
+                _fork_wait(lambda: gc.collect())
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(timeout=5)
+
+
+def scenario_fork_thread_local_orphan(iterations: int = 100) -> None:
+    """Reproduces the s5cmd pattern: thread stores Reader in threading.local,
+    joins, then main forks. CPython drops absent thread-states in the child,
+    refcount-finalizing the thread-local Reader. Guard must fire before c2pa_free.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        tl = threading.local()
+
+        def _create():
+            with open(SIGNED_JPEG, "rb") as f:
+                tl.reader = Reader("image/jpeg", f)
+
+        t = threading.Thread(target=_create)
+        t.start()
+        t.join()
+        _fork_wait(lambda: gc.collect())
+
+
+def scenario_fork_gc_cycle(iterations: int = 100) -> None:
+    """Reader in a reference cycle — freed only by cyclic GC, not refcounting.
+    Child calls gc.collect(), which triggers __del__ on the Reader. Without the
+    guard this deadlocks; with it the guard returns immediately.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        with open(SIGNED_JPEG, "rb") as f:
+            reader = Reader("image/jpeg", f)
+        container = SimpleNamespace(reader=reader)
+        reader.container = container   # cycle: reader ↔ container
+        del reader, container          # refcount > 0; cycle survives until GC
+
+        _fork_wait(lambda: gc.collect())
+        gc.collect()                   # parent cleans up
+
+
+def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
+    """20 Readers created, fork, child exits immediately, parent closes all 20.
+    Primary false-positive test: if is_foreign_process() wrongly fires in the
+    parent, all 20 native frees are skipped and leaked_bytes spikes ~20x.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        readers = []
+        for _ in range(20):
+            with open(SIGNED_JPEG, "rb") as f:
+                readers.append(Reader("image/jpeg", f))
+        _fork_wait(lambda: None)       # child does nothing, exits 0
+        for r in readers:
+            r.close()
+
+
+def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
+    """Child calls sys.exit(0) — full Python shutdown: atexit, finalizers, GC.
+    Every native-handle wrapper's __del__ fires in the child. Guard must
+    survive Py_Finalize() without deadlocking.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        with open(SIGNED_JPEG, "rb") as f:
+            reader = Reader("image/jpeg", f)
+        context = Context()
+
+        def _child():
+            import sys as _sys
+            _sys.exit(0)   # full Python shutdown, not _exit
+
+        _fork_wait(_child)
+        reader.close()
+        context.close()
+
+
+def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
+    """Stream wraps a BytesIO with ctypes callbacks stored as instance attributes.
+    Both Stream.__del__ and Stream.close carry fork guards. This tests the
+    stream-specific path (separate from ManagedResource).
+    """
+    if not hasattr(os, "fork"):
+        return
+    source_bytes = SIGNED_JPEG.read_bytes()
+    for _ in _iterate(iterations):
+        stream = Stream(io.BytesIO(source_bytes))
+        _fork_wait(lambda: gc.collect())
+        stream.close()
+
+
 SCENARIOS = {
     "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
     "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
@@ -524,6 +690,13 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
+    "fork_no_deadlock_reader":             scenario_fork_no_deadlock_reader,
+    "fork_contended_mutex":                scenario_fork_contended_mutex,
+    "fork_thread_local_orphan":            scenario_fork_thread_local_orphan,
+    "fork_gc_cycle":                       scenario_fork_gc_cycle,
+    "fork_parent_frees_after_fork":        scenario_fork_parent_frees_after_fork,
+    "fork_child_sys_exit":                 scenario_fork_child_sys_exit,
+    "fork_stream_cleanup":                 scenario_fork_stream_cleanup,
 }
 
 
