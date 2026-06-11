@@ -299,3 +299,17 @@ def dynamically_load_library(
             raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib
+
+
+def record_owner_pid(obj):
+    """Stamp the PID that created this native-handle wrapper (call from __init__)."""
+    obj._owner_pid = os.getpid()
+
+
+def is_foreign_process(obj):
+    """Return True when this object is being finalized in
+    a forked child that did not create it. 
+    Callers MUST skip native frees when this returns True.
+    Defensive default: if _owner_pid was never set, returns False."""
+    owner = getattr(obj, '_owner_pid', None)
+    return owner is not None and owner != os.getpid()
