@@ -302,14 +302,21 @@ def dynamically_load_library(
 
 
 def record_owner_pid(obj):
-    """Stamp the PID that created this native-handle wrapper (call from __init__)."""
+    """Keep the PID that created this native-handle wrapper (call from __init__)."""
     obj._owner_pid = os.getpid()
 
 
 def is_foreign_process(obj):
-    """Return True when this object is being finalized in
-    a forked child that did not create it. 
-    Callers MUST skip native frees when this returns True.
-    Defensive default: if _owner_pid was never set, returns False."""
+    """Return True when this object is being finalized in a forked child that did not
+    create it. After a multithreaded fork(), native mutexes may be held by threads
+    absent in the child -> any lock() call deadlocks. Callers must skip native frees
+    when this returns True.
+
+    Skipping the free does not cause a cumulative memory leak: the child either calls exec()
+    (replacing the address space entirely) or exits shortly after fork. In both cases
+    the OS should reclaim all process memory. The skipped allocation lives only until child
+    process termination.
+
+    Defensive default: if _owner_pid was never set, returns False (no regression)."""
     owner = getattr(obj, '_owner_pid', None)
     return owner is not None and owner != os.getpid()
