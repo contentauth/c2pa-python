@@ -186,6 +186,8 @@ A memory leak grows proportionally with work done. If you sign 50 images and get
 
 The baseline captures this expected static overhead. Future runs compare against it: if `leaked_bytes` grows beyond the baseline by more than 10%, the run fails.
 
+The framework runs `gc.collect()` twice after the scenario finishes, while memray is still tracking. Without that sweep, objects sitting in not-yet-collected reference cycles would be counted in `leaked_bytes` and the number would depend on garbage collector timing rather than on actual leaks. With it, `leaked_bytes` means memory that is still allocated even though nothing in Python can reach it: true leaks plus the one-time static overhead described above.
+
 ### How to confirm no leak exists?
 
 Run with a higher iteration count than default (100) and compare:

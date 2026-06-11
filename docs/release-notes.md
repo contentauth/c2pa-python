@@ -1,5 +1,26 @@
 # Release notes
 
+## Version 0.33.0
+
+### Breaking changes
+
+Removed the deprecated file-based free functions `read_file`,
+`read_ingredient_file`, and `sign_file`, following the removal of the
+underlying `c2pa_read_file`, `c2pa_read_ingredient_file`, and `c2pa_sign_file`
+functions from the c2pa-rs C FFI. The deprecated `Builder.add_ingredient_from_file_path`
+method was removed as well.
+
+Migration:
+
+- Instead of `read_file(path, data_dir)`, use `Reader(path).json()`.
+- Instead of `read_ingredient_file(path, data_dir)`, use
+  `Builder.add_ingredient(json, format, stream)` to add the ingredient directly.
+- Instead of the `sign_file(...)` free function, use the `Builder.sign_file(source_path, dest_path, signer)` method (or `Builder.sign(...)` for stream-based signing).
+- Instead of `Builder.add_ingredient_from_file_path(json, format, filepath)`, open the
+  file and call `Builder.add_ingredient_from_stream(json, format, stream)`.
+
+The `Builder.sign_file` method and `load_settings` are unaffected and remain available.
+
 ## Version 0.6.0
 
 <!-- Get features and updates -->
