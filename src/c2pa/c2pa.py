@@ -886,16 +886,18 @@ class _StringContainer:
         self._data_dir_str = ""
 
 
-# Wrap a raw (address, length) native region in a writable memoryview
-_PyMemoryView_FromMemory = ctypes.pythonapi.PyMemoryView_FromMemory
-_PyMemoryView_FromMemory.restype = ctypes.py_object
-_PyMemoryView_FromMemory.argtypes = (
-    ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_int)
-_PyBUF_WRITE = 0x200
+if sys.implementation.name == "cpython":
+    _PyMemoryView_FromMemory = ctypes.pythonapi.PyMemoryView_FromMemory
+    _PyMemoryView_FromMemory.restype = ctypes.py_object
+    _PyMemoryView_FromMemory.argtypes = (
+        ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_int)
+    _PyBUF_WRITE = 0x200
 
-
-def _writable_memoryview(address, length):
-    return _PyMemoryView_FromMemory(address, length, _PyBUF_WRITE)
+    def _write_buf(address, length):
+        return _PyMemoryView_FromMemory(address, length, _PyBUF_WRITE)
+else:
+    def _write_buf(address, length):
+        return (ctypes.c_char * length).from_address(address)
 
 
 def _convert_to_py_string(value) -> str:
@@ -1637,19 +1639,21 @@ class Stream:
                 readinto = getattr(stream, "readinto", None)
                 if readinto is not None:
                     # Most streams have readinto
-                    buf = _writable_memoryview(
+                    buf = _write_buf(
                         ctypes.addressof(data.contents), length)
                     try:
                         n = readinto(buf)
                     finally:
-                        # Invalidate the view:
-                        # The native buffer is only valid for
-                        # the duration of the callback...
-                        buf.release()
+                        release = getattr(buf, "release", None)
+                        if release is not None:
+                            release()
                     if not n:
                         return 0
-                    # Never report more than the buffer can hold
-                    return min(n, length)
+                    if n > length:
+                        raise ValueError(
+                            f"readinto returned {n} bytes but buffer length is {length}"
+                        )
+                    return n
 
                 # Fallback for streams without readinto.
                 buffer = stream.read(length)
