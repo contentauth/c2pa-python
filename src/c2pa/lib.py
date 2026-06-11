@@ -302,7 +302,9 @@ def dynamically_load_library(
 
 
 def record_owner_pid(obj):
-    """Keep the PID that created this native-handle wrapper (call from __init__)."""
+    """Keep the PID that created this native-handle wrapper
+    (call from __init__ as needed).
+    """
     obj._owner_pid = os.getpid()
 
 

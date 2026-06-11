@@ -499,12 +499,6 @@ def scenario_builder_sign_png_parallel_split_barrier(iterations: int = 100) -> N
     _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=False, launch="barrier")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Fork-safety scenarios — prove no deadlock and no parent-side memory leaks.
-# All are no-ops on Windows (no os.fork). Under memray a deadlock manifests as
-# a hung subprocess, which CI catches via overall timeout.
-# ──────────────────────────────────────────────────────────────────────────────
-
 def _fork_wait(child_fn) -> None:
     """Fork; run child_fn() in child then _exit(0); parent waits up to 5 s."""
     import signal
@@ -529,8 +523,9 @@ def _fork_wait(child_fn) -> None:
     )
 
 
-def scenario_fork_no_deadlock_reader(iterations: int = 100) -> None:
-    """Baseline: create Reader, fork, child gc.collect() + _exit, parent closes.
+def scenario_fork_reader_collect(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    Baseline: create Reader, fork, child gc.collect() + _exit, parent closes.
     Guard fires in child (no deadlock); parent frees normally (no leak).
     """
     if not hasattr(os, "fork"):
@@ -543,7 +538,8 @@ def scenario_fork_no_deadlock_reader(iterations: int = 100) -> None:
 
 
 def scenario_fork_contended_mutex(iterations: int = 100) -> None:
-    """8 threads create/close Readers in a tight loop while the main thread
+    """Fork safety benchmark scenario:
+    8 threads create/close Readers in a tight loop while the main thread
     forks 5× per iteration (500 total forks). Maximises the probability that
     the registry Mutex is held at the instant of fork(). If pthread_atfork
     didn't reinit the Rust mutex the first cimpl_free in the child would
@@ -574,9 +570,8 @@ def scenario_fork_contended_mutex(iterations: int = 100) -> None:
 
 
 def scenario_fork_thread_local_orphan(iterations: int = 100) -> None:
-    """Reproduces the s5cmd pattern: thread stores Reader in threading.local,
-    joins, then main forks. CPython drops absent thread-states in the child,
-    refcount-finalizing the thread-local Reader. Guard must fire before c2pa_free.
+    """Fork safety benchmark scenario:
+    A thread stores Reader in threading.local, joins, then main forks.
     """
     if not hasattr(os, "fork"):
         return
@@ -594,9 +589,9 @@ def scenario_fork_thread_local_orphan(iterations: int = 100) -> None:
 
 
 def scenario_fork_gc_cycle(iterations: int = 100) -> None:
-    """Reader in a reference cycle — freed only by cyclic GC, not refcounting.
-    Child calls gc.collect(), which triggers __del__ on the Reader. Without the
-    guard this deadlocks; with it the guard returns immediately.
+    """Fork safety benchmark scenario:
+    Reader in a reference cycle, freed only by cyclic GC, not refcounting.
+    Child calls gc.collect(), which triggers __del__ on the Reader.
     """
     if not hasattr(os, "fork"):
         return
@@ -612,7 +607,8 @@ def scenario_fork_gc_cycle(iterations: int = 100) -> None:
 
 
 def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
-    """20 Readers created, fork, child exits immediately, parent closes all 20.
+    """Fork safety benchmark scenario:
+    20 Readers created, fork, child exits immediately, parent closes all 20.
     Primary false-positive test: if is_foreign_process() wrongly fires in the
     parent, all 20 native frees are skipped and leaked_bytes spikes ~20x.
     """
@@ -629,7 +625,8 @@ def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
 
 
 def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
-    """Child calls sys.exit(0) — full Python shutdown: atexit, finalizers, GC.
+    """Fork safety benchmark scenario:
+    Child calls sys.exit(0), full Python shutdown: atexit, finalizers, GC.
     Every native-handle wrapper's __del__ fires in the child. Guard must
     survive Py_Finalize() without deadlocking.
     """
@@ -650,7 +647,8 @@ def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
 
 
 def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
-    """Stream wraps a BytesIO with ctypes callbacks stored as instance attributes.
+    """Fork safety benchmark scenario:
+    Stream wraps a BytesIO with ctypes callbacks stored as instance attributes.
     Both Stream.__del__ and Stream.close carry fork guards. This tests the
     stream-specific path (separate from ManagedResource).
     """
@@ -690,13 +688,13 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
-    "fork_no_deadlock_reader":             scenario_fork_no_deadlock_reader,
-    "fork_contended_mutex":                scenario_fork_contended_mutex,
-    "fork_thread_local_orphan":            scenario_fork_thread_local_orphan,
-    "fork_gc_cycle":                       scenario_fork_gc_cycle,
-    "fork_parent_frees_after_fork":        scenario_fork_parent_frees_after_fork,
-    "fork_child_sys_exit":                 scenario_fork_child_sys_exit,
-    "fork_stream_cleanup":                 scenario_fork_stream_cleanup,
+    "fork_reader_collect": scenario_fork_reader_collect,
+    "fork_contended_mutex": scenario_fork_contended_mutex,
+    "fork_thread_local_orphan": scenario_fork_thread_local_orphan,
+    "fork_gc_cycle": scenario_fork_gc_cycle,
+    "fork_parent_frees_after_fork": scenario_fork_parent_frees_after_fork,
+    "fork_child_sys_exit": scenario_fork_child_sys_exit,
+    "fork_stream_cleanup": scenario_fork_stream_cleanup,
 }
 
 
