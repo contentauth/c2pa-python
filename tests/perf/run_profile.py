@@ -58,6 +58,11 @@ sys.path.insert(0, "{repo_root}")
 sys.path.insert(0, "{repo_root / 'src'}")
 from tests.perf.scenarios import SCENARIOS
 SCENARIOS["{name}"]({ITERATIONS})
+# Collect cycle garbage before tracking ends so leaked_bytes means
+# "still allocated but unreachable" (true leaks + one-time statics).
+import gc
+gc.collect()
+gc.collect()
 """
     cmd = [
         sys.executable, "-m", "memray", "run",

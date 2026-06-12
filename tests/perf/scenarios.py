@@ -10,12 +10,20 @@ Each function is called N times by run_profile.py.
 """
 
 import io
+import json
 import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from c2pa import Builder, C2paSignerInfo, Context, Reader, Signer
+from c2pa import (
+    Builder,
+    C2paError,
+    C2paSignerInfo,
+    Context,
+    Reader,
+    Signer,
+)
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
@@ -455,7 +463,7 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
         archive = io.BytesIO()
         Builder(MANIFEST_BASE).to_archive(archive)
         archive.seek(0)
-        # from_archive() yields a context-less Builder; to keep the Context
+        # from_archive() yields a context-less Builder. To keep the Context
         # (and its signer), build with the context first, then load the archive.
         builder = Builder(MANIFEST_BASE, context=context).with_archive(archive)
         with io.BytesIO(ingredient_bytes) as ing:
@@ -627,6 +635,44 @@ def scenario_builder_sign_jpeg_two_ingredient_archives(iterations: int = 100) ->
         builder.add_ingredient_from_archive(io.BytesIO(archive1_bytes))
         builder.add_ingredient_from_archive(io.BytesIO(archive2_bytes))
         builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+def scenario_reader_error_no_manifest(iterations: int = 100) -> None:
+    """Reader on an unsigned asset: partial-init cleanup."""
+    source_bytes = SOURCE_JPEG.read_bytes()  # A.jpg carries no manifest
+    for _ in _iterate(iterations):
+        try:
+            Reader("image/jpeg", io.BytesIO(source_bytes)).json()
+        except C2paError:
+            pass
+
+
+def scenario_builder_error_invalid_manifest(iterations: int = 100) -> None:
+    """Error case: Builder with malformed manifest JSON."""
+    for _ in _iterate(iterations):
+        try:
+            Builder('{"not valid json')
+        except C2paError:
+            pass
+
+
+def scenario_reader_string_apis(iterations: int = 100) -> None:
+    """Uncached string returns: detailed_json/crjson/remote_url/resource_to_stream."""
+    source_bytes = SIGNED_JPEG.read_bytes()
+    context = Context()
+    # Resolve a real resource URI once, outside the measured loop.
+    probe = Reader("image/jpeg", io.BytesIO(source_bytes),
+                   manifest_data=None, context=context)
+    manifests = json.loads(probe.json())
+    active = manifests["manifests"][manifests["active_manifest"]]
+    thumb_uri = active["thumbnail"]["identifier"]
+    probe.close()
+    for _ in _iterate(iterations):
+        reader = Reader("image/jpeg", io.BytesIO(source_bytes),
+                        manifest_data=None, context=context)
+        reader.detailed_json()
+        reader.crjson()
+        reader.get_remote_url()
+        reader.resource_to_stream(thumb_uri, io.BytesIO())
+        reader.close()
 
 
 # jpeg + png context variants, paired with the `_legacy` scenarios above for
@@ -696,6 +742,9 @@ SCENARIOS = {
     "builder_sign_jpeg_add_ingredient_from_archive": scenario_builder_sign_jpeg_add_ingredient_from_archive,
     "builder_ingredient_archive_roundtrip": scenario_builder_ingredient_archive_roundtrip,
     "builder_sign_jpeg_two_ingredient_archives": scenario_builder_sign_jpeg_two_ingredient_archives,
+    "reader_error_no_manifest": scenario_reader_error_no_manifest,
+    "builder_error_invalid_manifest": scenario_builder_error_invalid_manifest,
+    "reader_string_apis": scenario_reader_string_apis,
 }
 
 

@@ -32,7 +32,6 @@ from .c2pa import (
     ContextBuilder,
     ContextProvider,
     sdk_version,
-    read_ingredient_file,
     load_settings
 )  # NOQA
 
@@ -52,6 +51,5 @@ __all__ = [
     'ContextBuilder',
     'ContextProvider',
     'sdk_version',
-    'read_ingredient_file',
     'load_settings'
 ]
