@@ -541,9 +541,16 @@ def scenario_fork_contended_mutex(iterations: int = 100) -> None:
     """Fork safety benchmark scenario:
     8 threads create/close Readers in a tight loop while the main thread
     forks 5× per iteration (500 total forks). Maximises the probability that
-    the registry Mutex is held at the instant of fork(). If pthread_atfork
-    didn't reinit the Rust mutex the first cimpl_free in the child would
-    deadlock; the Python guard is also exercised by child GC.
+    the registry Mutex is held at the instant of fork(). Each fork inherits
+    a Reader created by the main thread; the child explicitly closes it
+    (then runs GC), so the PID guard is exercised on every fork — without
+    the guard the close would call into the native library and could
+    deadlock on a mutex left locked by a vanished worker thread. The parent
+    closes the same Reader after the child exits (its own PID: real free).
+
+    Note: the workers' Readers are pinned by frozen thread frames in the
+    child, so child gc.collect() alone would free nothing — hence the
+    explicit close of an inherited object.
     """
     if not hasattr(os, "fork"):
         return
@@ -562,7 +569,15 @@ def scenario_fork_contended_mutex(iterations: int = 100) -> None:
     try:
         for _ in _iterate(iterations):
             for _ in range(5):
-                _fork_wait(lambda: gc.collect())
+                with open(SIGNED_JPEG, "rb") as f:
+                    reader = Reader("image/jpeg", f)
+
+                def _child(r=reader):
+                    r.close()
+                    gc.collect()
+
+                _fork_wait(_child)
+                reader.close()
     finally:
         stop.set()
         for t in threads:

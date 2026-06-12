@@ -314,10 +314,12 @@ def is_foreign_process(obj):
     absent in the child -> any lock() call deadlocks. Callers must skip native frees
     when this returns True.
 
-    Skipping the free does not cause a cumulative memory leak: the child either calls exec()
-    (replacing the address space entirely) or exits shortly after fork. In both cases
-    the OS should reclaim all process memory. The skipped allocation lives only until child
-    process termination.
+    Skipping the free does not cause a cumulative leak. If the child calls exec() the
+    address space is replaced entirely; if it exits, the OS reclaims all process memory.
+    Even a long-lived fork child (e.g. a multiprocessing fork-start worker) leaks at most
+    the objects inherited at fork time — a one-time, bounded amount reclaimed when the
+    child terminates. Objects the child creates itself carry the child's PID and are
+    freed normally.
 
     Defensive default: if _owner_pid was never set, returns False (no regression)."""
     owner = getattr(obj, '_owner_pid', None)

@@ -163,11 +163,13 @@ class TestManagedResourceForkGuard(unittest.TestCase):
         mock_lib.c2pa_release_stream.assert_not_called()
 
     def test_foreign_pid_close_marks_closed(self):
-        """close() in forked child must set _closed=True to prevent re-entry."""
+        """close() in forked child must set _closed=True to prevent re-entry,
+        and _initialized=False so the public properties report a closed stream."""
         obj = _make_stream(pid_offset=1)
         with patch('c2pa.c2pa._lib'):
             obj.close()
         self.assertTrue(obj._closed)
+        self.assertFalse(obj._initialized)
 
 
 class TestHelpers(unittest.TestCase):

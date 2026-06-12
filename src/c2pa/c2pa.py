@@ -2001,6 +2001,7 @@ class Stream:
             return
         if is_foreign_process(self):
             self._closed = True
+            self._initialized = False
             return
 
         try:
