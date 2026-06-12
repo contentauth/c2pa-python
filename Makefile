@@ -139,7 +139,7 @@ build-from-source:
 
 # Build API documentation with Sphinx
 docs:
-	python3 scripts/generate_api_docs.py
+	$(PYTHON) scripts/generate_api_docs.py
 
 # Memory profiling with memray (runs in Docker, reports go to tests/perf/reports/)
 # More details for usage are in tests/perf/README.md
