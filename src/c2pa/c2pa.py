@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
-from .lib import dynamically_load_library
+from .lib import dynamically_load_library, record_owner_pid, is_foreign_process
 import mimetypes
 from itertools import count
 
@@ -238,6 +238,7 @@ class ManagedResource:
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
         _clear_error_state()
+        record_owner_pid(self)
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -280,6 +281,8 @@ class ManagedResource:
     def _cleanup_resources(self):
         """Release native resources idempotently."""
         try:
+            if is_foreign_process(self):
+                return
             if (
                 hasattr(self, '_lifecycle_state')
                 and self._lifecycle_state != LifecycleState.CLOSED
@@ -1768,6 +1771,7 @@ class Stream:
             raise Exception("Failed to create stream: {}".format(error))
 
         self._initialized = True
+        record_owner_pid(self)
 
     def __enter__(self):
         """Context manager entry."""
@@ -1786,6 +1790,8 @@ class Stream:
         hasn't been explicitly closed.
         """
         try:
+            if is_foreign_process(self):
+                return
             # Only cleanup if not already closed and we have a valid stream
             if hasattr(self, '_closed') and not self._closed:
                 stream = self._stream
@@ -1815,6 +1821,10 @@ class Stream:
         Multiple calls to close() are handled gracefully.
         """
         if self._closed:
+            return
+        if is_foreign_process(self):
+            self._closed = True
+            self._initialized = False
             return
 
         try:
