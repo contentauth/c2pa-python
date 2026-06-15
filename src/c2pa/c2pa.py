@@ -2899,6 +2899,7 @@ class Builder(ManagedResource):
         'url_error': "Error setting remote URL: {}",
         'resource_error': "Error adding resource: {}",
         'ingredient_error': "Error adding ingredient: {}",
+        'archive_read_error': "Error loading ingredient from archive: {}",
         'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
         'sign_error': "Error during signing: {}",
@@ -3332,7 +3333,7 @@ class Builder(ManagedResource):
                 self._handle, stream_obj._stream)
 
             _check_ffi_operation_result(result,
-                Builder._ERROR_MESSAGES["ingredient_error"].format(
+                Builder._ERROR_MESSAGES["archive_read_error"].format(
                     "Unknown error"
                 ),
                 check=lambda r: r != 0)

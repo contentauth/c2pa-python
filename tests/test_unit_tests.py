@@ -1960,7 +1960,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive = io.BytesIO()
         builder.write_ingredient_archive("ingredient-A", archive)
         builder.close()
-        self.assertGreater(archive.tell(), 0)
+        self.assertGreater(len(archive.getvalue()), 0)
         archive.close()
 
     def test_add_ingredient_from_archive_roundtrip(self):
