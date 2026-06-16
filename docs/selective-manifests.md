@@ -472,7 +472,7 @@ with open("signed_asset.jpg", "rb") as signed:
 | --- | --- | --- |
 | **Who controls it** | Caller (any string) | Caller (any string, or from XMP metadata) |
 | **Priority for linking** | Primary: checked first | Fallback: used when label is absent/empty |
-| **When to use** | JSON-defined manifests where the caller controls the ingredient definition | Programmatic workflows using XMP-based IDs |
+| **When to use** | JSON-defined manifests where the caller controls the ingredient definition | Programmatic workflows where a stable identifier persisting unchanged across rebuilds is needed |
 | **Survives signing** | SDK may reassign the actual assertion label | Unchanged |
 | **Stable across rebuilds** | The caller controls the build-time value; the post-signing label may change | Yes, always the same set value |
 
@@ -1038,6 +1038,8 @@ For the linking rules, see [Linking an archived ingredient to an action](#linkin
 > The `Builder` construction and signing in the merge workflow also support `Context`. The caller can pass `context=ctx` to `Builder()` and call `sign()` without a signer argument when the context has one. See [Context and settings](context-settings.md) for details.
 
 In some cases it is necessary to merge ingredients from multiple working stores (builder archives) into a single `Builder`. This should be a **fallback strategy**. The recommended practice is to maintain a single active working store and add ingredients incrementally (archived ingredient catalogs help with this). Merging is available when multiple working stores must be consolidated.
+
+When each source contributes a single ingredient, the dedicated single-ingredient API sidesteps this collision case: each archive holds exactly one ingredient, and `add_ingredient_from_archive` registers it on the consuming builder (see [Single-ingredient archive APIs](working-stores.md#single-ingredient-archive-apis)). The two-pass approach below remains the right tool when sources hold multiple ingredients each and a full merge is required.
 
 When merging from multiple sources, resource identifier URIs can collide. Rename identifiers with a unique suffix when needed. Use two passes: (1) collect ingredients with collision handling, build the manifest, create the builder; (2) re-read each archive and transfer resources (use original ID for `resource_to_stream()`, renamed ID for `add_resource()` when collisions occurred).
 
