@@ -6255,7 +6255,7 @@ class TestContextIntegration(TestContextAPIs):
         context.close()
 
 
-class TestStreamGCCycles(unittest.TestCase):
+class TestStreamReferences(unittest.TestCase):
 
     def test_stream_collected_after_del(self):
         """Stream must be collected by reference counting."""
