@@ -18,6 +18,7 @@ import logging
 import sys
 import os
 import warnings
+import weakref
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
@@ -1625,6 +1626,10 @@ class Stream:
 
         self._file_like_stream = file_like_stream
 
+        # Weakref breaks avoids references cycles:
+        # Stream -> ctypes_cb -> closure -> Stream.
+        _weak_self = weakref.ref(self)
+
         def read_callback(ctx, data, length):
             """Callback function for reading data from the Python stream.
 
@@ -1643,13 +1648,16 @@ class Stream:
             Returns:
                 Number of bytes read, or -1 on error
             """
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            if not s._initialized or s._closed:
                 return -1
             try:
                 if not data or length <= 0:
                     return -1
 
-                stream = self._file_like_stream
+                stream = s._file_like_stream
                 readinto = getattr(stream, "readinto", None)
                 if readinto is not None:
                     # Most streams have readinto
@@ -1700,8 +1708,11 @@ class Stream:
             Returns:
                 New position in the stream, or -1 on error
             """
-            file_stream = self._file_like_stream
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            file_stream = s._file_like_stream
+            if not s._initialized or s._closed:
                 return -1
             try:
                 # Fall back to tell() only for stream objects that do not
@@ -1729,13 +1740,16 @@ class Stream:
             Returns:
                 Number of bytes written, or -1 on error
             """
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            if not s._initialized or s._closed:
                 return -1
             try:
                 if not data or length <= 0:
                     return -1
 
-                self._file_like_stream.write(ctypes.string_at(data, length))
+                s._file_like_stream.write(ctypes.string_at(data, length))
                 return length
             except Exception:
                 return -1
@@ -1754,10 +1768,13 @@ class Stream:
             Returns:
                 0 on success, -1 on error
             """
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            if not s._initialized or s._closed:
                 return -1
             try:
-                self._file_like_stream.flush()
+                s._file_like_stream.flush()
                 return 0
             except Exception:
                 return -1
