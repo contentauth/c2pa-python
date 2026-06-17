@@ -501,7 +501,7 @@ The SDK supports two approaches for producing an ingredient archive. They share 
 | Approach | Entry point | Status |
 | --- | --- | --- |
 | Dedicated ingredient archive APIs | `add_ingredient` then `write_ingredient_archive(id, stream)` | **Recommended** |
-| Read-filter-rebuild pattern | `Builder` + `add_ingredient` + `to_archive`, then `Reader` + manual JSON | **Older pattern** |
+| Read-filter-rebuild pattern | `Builder` + `add_ingredient` + `to_archive` | **Older pattern** |
 
 For the full contract, see [Single-ingredient archive APIs](./working-stores.md#single-ingredient-archive-apis) in the working stores guide.
 
@@ -692,7 +692,7 @@ Action linking also changes between the two approaches. Legacy catalog code link
 
 #### Choosing between approaches
 
-The legacy read-filter-rebuild APIs fit when the catalog already exists as one multi-ingredient builder archive and the consumer wants a subset of it. The dedicated ingredient archive APIs fit when ingredients are produced and consumed independently: each archive holds exactly one ingredient, and the call sites stay short. Both produce the same signed output.
+The legacy read-filter-rebuild APIs fit when the catalog already exists as a single `.c2pa` builder archive that bundles all ingredients together and the consumer wants a subset—picked via `Reader` + manual JSON filtering. The dedicated ingredient archive APIs fit when ingredients are produced and consumed independently: each ingredient gets its own archive, so no Reader-based filtering is needed. Both produce the same signed output.
 
 ### Identifying ingredients in archives
 
