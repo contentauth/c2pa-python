@@ -6255,5 +6255,68 @@ class TestContextIntegration(TestContextAPIs):
         context.close()
 
 
+class TestStreamReferences(unittest.TestCase):
+
+    def test_stream_collected_after_del(self):
+        """Stream must be collected by reference counting."""
+        import gc
+        import weakref
+        gc.collect()
+        garbage_before = len(gc.garbage)
+
+        buf = io.BytesIO(b"hello world")
+        s = Stream(buf)
+        ref = weakref.ref(s)
+        del s
+
+        # Trigger gc, we want to verify it's collected
+        # collected now (1 gc call) means no gc cycle breaker needed
+        # aka ref cycle did not happen.
+        gc.collect()
+
+        self.assertIsNone(ref(), "Stream not collected")
+        self.assertEqual(len(gc.garbage), garbage_before,
+                         "Stream added objects to gc.garbage")
+
+    def test_stream_not_added_to_gc_garbage_list(self):
+        """Creating and dropping many Streams must not grow gc.garbage."""
+        import gc
+        gc.collect()
+        gc.garbage.clear()
+
+        for _ in range(20):
+            s = Stream(io.BytesIO(b"data"))
+            del s
+
+        gc.collect()
+        self.assertEqual(len(gc.garbage), 0,
+                         f"gc.garbage unexpectedly non-empty: {gc.garbage}")
+
+    def test_callbacks_return_minus_one_after_stream_collected(self):
+        """Callbacks must return -1 gracefully when the Stream has been GC'd."""
+        import gc
+        import weakref
+
+        buf = io.BytesIO(b"test")
+        s = Stream(buf)
+
+        read_cb = s._read_cb
+        seek_cb = s._seek_cb
+        write_cb = s._write_cb
+        flush_cb = s._flush_cb
+        ref = weakref.ref(s)
+        del s
+        gc.collect()
+
+        # Stream should be gone.
+        self.assertIsNone(ref(), "Stream not collected before callback test")
+
+        # All callbacks must return -1 without crashing.
+        self.assertEqual(read_cb(None, None, 0), -1)
+        self.assertEqual(seek_cb(None, 0, 0), -1)
+        self.assertEqual(write_cb(None, None, 0), -1)
+        self.assertEqual(flush_cb(None), -1)
+
+
 if __name__ == '__main__':
     unittest.main(warnings='ignore')
