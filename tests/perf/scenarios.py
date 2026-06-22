@@ -693,6 +693,32 @@ def scenario_reader_jpeg_with_context(iterations: int = 100) -> None:
     _read_file_context(SIGNED_JPEG, "image/jpeg", iterations)
 
 
+def scenario_reader_manifest_data_context(iterations: int = 100) -> None:
+    """Reader over a detached (sidecar) manifest with a Context.
+
+    Exercises c2pa_reader_with_manifest_data_and_stream, the consume-and-swap
+    FFI path (reader_from_context handle is consumed and replaced each call).
+    The manifest is signed once outside the loop; each iteration re-reads the
+    same asset + detached manifest, so flat RSS confirms no per-iteration leak
+    in the consume-and-swap path.
+    """
+    source_bytes = SOURCE_JPEG.read_bytes()
+    signer = _make_signer()
+    builder = Builder({**MANIFEST_BASE, "format": "image/jpeg"})
+    builder.set_no_embed()
+    manifest_bytes = builder.sign(
+        signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+    builder.close()
+    signer.close()
+
+    context = Context()
+    for _ in _iterate(iterations):
+        reader = Reader("image/jpeg", io.BytesIO(source_bytes),
+                        manifest_data=manifest_bytes, context=context)
+        reader.json()
+        reader.close()
+
+
 # Parallel signing variants: one shared Context across 10 threads.
 # {split, full} x {pool, barrier} x {jpeg, png}.
 
@@ -892,6 +918,7 @@ def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
 SCENARIOS = {
     "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
     "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
+    "reader_manifest_data_context": scenario_reader_manifest_data_context,
     "reader_mp4": scenario_reader_mp4,
     "reader_wav": scenario_reader_wav,
     "builder_sign_jpeg_legacy": scenario_builder_sign_jpeg_legacy,
