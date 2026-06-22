@@ -6041,6 +6041,119 @@ class TestReaderWithContext(TestContextAPIs):
         context.close()
 
 
+class TestSidecarReader(TestContextAPIs):
+    """Reader over a detached (sidecar) manifest with a Context"""
+
+    def _make_detached_manifest(self):
+        """Sign DEFAULT_TEST_FILE with no-embed, return (asset_bytes,
+        manifest_bytes) where manifest_bytes is the "detached" sidecar
+        C2PA manifest."""
+
+        signer = self._ctx_make_signer()
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            asset_bytes = f.read()
+        builder = Builder(self.test_manifest)
+        builder.set_no_embed()
+        # Output is discarded: with no-embed the asset is unchanged and the
+        # manifest is returned by sign().
+        manifest_bytes = builder.sign(
+            signer, "image/jpeg", io.BytesIO(asset_bytes), io.BytesIO())
+        builder.close()
+        signer.close()
+        self.assertIsInstance(manifest_bytes, bytes)
+        self.assertGreater(len(manifest_bytes), 0)
+        return asset_bytes, manifest_bytes
+
+    def test_reader_with_manifest_data_and_context(self):
+        asset_bytes, manifest_bytes = self._make_detached_manifest()
+        context = Context()
+        reader = Reader(
+            "image/jpeg",
+            io.BytesIO(asset_bytes),
+            manifest_bytes,
+            context=context,
+        )
+        try:
+            data = reader.json()
+            self.assertTrue(data)
+            self.assertFalse(reader.is_embedded())
+            self.assertIn("manifests", json.loads(data))
+        finally:
+            reader.close()
+            context.close()
+
+    def test_reader_manifest_data_context_invalid_manifest_raises(self):
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            asset_bytes = f.read()
+        context = Context()
+        reader = None
+        try:
+            with self.assertRaises(Error):
+                reader = Reader(
+                    "image/jpeg",
+                    io.BytesIO(asset_bytes),
+                    b"not a real manifest",
+                    context=context,
+                )
+            # The consumed-pointer error branch must leave no usable handle.
+            if reader is not None:
+                self.assertEqual(
+                    reader._lifecycle_state, LifecycleState.CLOSED)
+                self.assertIsNone(reader._handle)
+        finally:
+            if reader is not None:
+                reader.close()
+            context.close()
+
+    def test_reader_manifest_data_context_wrong_type_raises(self):
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            asset_bytes = f.read()
+        context = Context()
+        try:
+            # Non-bytes manifest_data must raise TypeError before any native
+            # reader handle is allocated (no leak on this path).
+            with self.assertRaises(TypeError):
+                Reader(
+                    "image/jpeg",
+                    io.BytesIO(asset_bytes),
+                    "manifest as str, not bytes",
+                    context=context,
+                )
+        finally:
+            context.close()
+
+    def test_reader_manifest_data_context_use_after_close_raises(self):
+        asset_bytes, manifest_bytes = self._make_detached_manifest()
+        context = Context()
+        reader = Reader(
+            "image/jpeg",
+            io.BytesIO(asset_bytes),
+            manifest_bytes,
+            context=context,
+        )
+        reader.close()
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        with self.assertRaises(Error):
+            reader.json()
+        # Idempotent close after use-after-close attempt.
+        reader.close()
+        context.close()
+
+    def test_reader_manifest_data_context_as_context_manager(self):
+        asset_bytes, manifest_bytes = self._make_detached_manifest()
+        context = Context()
+        with Reader(
+            "image/jpeg",
+            io.BytesIO(asset_bytes),
+            manifest_bytes,
+            context=context,
+        ) as reader:
+            self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+            self.assertTrue(reader.json())
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        context.close()
+
+
 class TestBuilderWithContext(TestContextAPIs):
 
     def test_contextual_builder_with_default_context(self):
