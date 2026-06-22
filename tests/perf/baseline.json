@@ -186,5 +186,10 @@
     "peak_bytes": 3382176,
     "leaked_bytes": 3210242,
     "total_allocations": 111383
+  },
+  "reader_manifest_data_context": {
+    "peak_bytes": 7575548,
+    "leaked_bytes": 3399851,
+    "total_allocations": 1414270
   }
 }
