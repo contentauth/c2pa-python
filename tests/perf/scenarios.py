@@ -9,13 +9,24 @@ Plain functions (no pytest dependencies) that exercise the profiling scenarios.
 Each function is called N times by run_profile.py.
 """
 
+import gc
 import io
+import json
 import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from c2pa import Builder, C2paSignerInfo, Context, Reader, Signer
+from types import SimpleNamespace
+from c2pa import (
+    Builder,
+    C2paError,
+    C2paSignerInfo,
+    Context,
+    Reader,
+    Signer,
+    Stream,
+)
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
@@ -36,6 +47,9 @@ _PARENT_ID3   = "xmp:iid:eeeeeeee-0005-0005-0005-eeeeeeeeeeee"
 _PLACED_ID3   = "xmp:iid:ffffffff-0006-0006-0006-ffffffffffff"
 _PLACED_ID4   = "xmp:iid:11111111-0007-0007-0007-111111111111"
 _PLACED_ID5   = "xmp:iid:22222222-0008-0008-0008-222222222222"
+_ARCH_PARENT_ID = "xmp:iid:33333333-0009-0009-0009-333333333333"
+_ARCH_COMP_ID   = "xmp:iid:44444444-0010-0010-0010-444444444444"
+_ARCH_COMP_ID2  = "xmp:iid:55555555-0011-0011-0011-555555555555"
 
 MANIFEST_BASE = {
     "claim_generator": "perf_test",
@@ -452,7 +466,7 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
         archive = io.BytesIO()
         Builder(MANIFEST_BASE).to_archive(archive)
         archive.seek(0)
-        # from_archive() yields a context-less Builder; to keep the Context
+        # from_archive() yields a context-less Builder. To keep the Context
         # (and its signer), build with the context first, then load the archive.
         builder = Builder(MANIFEST_BASE, context=context).with_archive(archive)
         with io.BytesIO(ingredient_bytes) as ing:
@@ -461,6 +475,207 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
                 "image/jpeg", ing,
             )
         builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+# Archive scenarios: builder as working store (to_archive/with_archive) and
+# per-ingredient archives (write_ingredient_archive/add_ingredient_from_archive).
+
+def _ingredient_archive_bytes(ingredient_json: dict, mime: str, asset_bytes: bytes) -> bytes:
+    """Build a per-ingredient archive once, for reuse inside scenario loops."""
+    builder = Builder(MANIFEST_BASE)
+    with io.BytesIO(asset_bytes) as ing:
+        builder.add_ingredient(ingredient_json, mime, ing)
+    archive = io.BytesIO()
+    builder.write_ingredient_archive(ingredient_json["instance_id"], archive)
+    return archive.getvalue()
+
+
+def scenario_builder_to_archive_with_ingredient(iterations: int = 100) -> None:
+    """Serialize a builder holding one ingredient to an archive (no signing)."""
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE)
+        with io.BytesIO(ingredient_bytes) as ing:
+            builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        builder.to_archive(io.BytesIO())
+
+
+def scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive(iterations: int = 100) -> None:
+    """Add ingredient, serialize to archive, reload, sign.
+
+    Unlike scenario_builder_sign_jpeg_archive_roundtrip, the ingredient is
+    added before to_archive, so its resources travel through the archive.
+    """
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.opened",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_PARENT_ID]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        archive = io.BytesIO()
+        src_builder = Builder(manifest)
+        with io.BytesIO(ingredient_bytes) as ing:
+            src_builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        src_builder.to_archive(archive)
+        archive.seek(0)
+        builder = Builder(manifest, context=context).with_archive(archive)
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_write_ingredient_archive(iterations: int = 100) -> None:
+    """Add one ingredient and write it out as a per-ingredient archive."""
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE)
+        with io.BytesIO(ingredient_bytes) as ing:
+            builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        builder.write_ingredient_archive(_ARCH_PARENT_ID, io.BytesIO())
+
+
+def scenario_builder_sign_jpeg_add_ingredient_from_archive(iterations: int = 100) -> None:
+    """Restore one ingredient from a prebuilt archive and sign."""
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    archive_bytes = _ingredient_archive_bytes(
+        {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+        "image/jpeg", SIGNED_JPEG.read_bytes(),
+    )
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.opened",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_PARENT_ID]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        builder = Builder(manifest, context=context)
+        builder.add_ingredient_from_archive(io.BytesIO(archive_bytes))
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_ingredient_archive_roundtrip(iterations: int = 100) -> None:
+    """Write a per-ingredient archive from one builder, load into another, sign."""
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.opened",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_PARENT_ID]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        archive = io.BytesIO()
+        src_builder = Builder(MANIFEST_BASE)
+        with io.BytesIO(ingredient_bytes) as ing:
+            src_builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
+                "image/jpeg", ing,
+            )
+        src_builder.write_ingredient_archive(_ARCH_PARENT_ID, archive)
+        archive.seek(0)
+        builder = Builder(manifest, context=context)
+        builder.add_ingredient_from_archive(archive)
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_sign_jpeg_two_ingredient_archives(iterations: int = 100) -> None:
+    """Restore two ingredients (JPEG + PNG) from prebuilt archives and sign."""
+    context = Context(signer=_make_signer())
+    source_bytes = SOURCE_JPEG.read_bytes()
+    archive1_bytes = _ingredient_archive_bytes(
+        {"relationship": "componentOf", "instance_id": _ARCH_COMP_ID},
+        "image/jpeg", SIGNED_JPEG.read_bytes(),
+    )
+    archive2_bytes = _ingredient_archive_bytes(
+        {"relationship": "componentOf", "instance_id": _ARCH_COMP_ID2},
+        "image/png", SIGNING_PNG.read_bytes(),
+    )
+    manifest = {
+        **MANIFEST_BASE,
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [{
+                "action": "c2pa.placed",
+                "softwareAgent": {"name": "perf_test"},
+                "parameters": {"ingredientIds": [_ARCH_COMP_ID, _ARCH_COMP_ID2]},
+                "digitalSourceType": _DST_COMPOSITE,
+            }]},
+        }],
+    }
+    for _ in _iterate(iterations):
+        builder = Builder(manifest, context=context)
+        builder.add_ingredient_from_archive(io.BytesIO(archive1_bytes))
+        builder.add_ingredient_from_archive(io.BytesIO(archive2_bytes))
+        builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+def scenario_reader_error_no_manifest(iterations: int = 100) -> None:
+    """Reader on an unsigned asset: partial-init cleanup."""
+    source_bytes = SOURCE_JPEG.read_bytes()  # A.jpg carries no manifest
+    for _ in _iterate(iterations):
+        try:
+            Reader("image/jpeg", io.BytesIO(source_bytes)).json()
+        except C2paError:
+            pass
+
+
+def scenario_builder_error_invalid_manifest(iterations: int = 100) -> None:
+    """Error case: Builder with malformed manifest JSON."""
+    for _ in _iterate(iterations):
+        try:
+            Builder('{"not valid json')
+        except C2paError:
+            pass
+
+
+def scenario_reader_string_apis(iterations: int = 100) -> None:
+    """Uncached string returns: detailed_json/crjson/remote_url/resource_to_stream."""
+    source_bytes = SIGNED_JPEG.read_bytes()
+    context = Context()
+    # Resolve a real resource URI once, outside the measured loop.
+    probe = Reader("image/jpeg", io.BytesIO(source_bytes),
+                   manifest_data=None, context=context)
+    manifests = json.loads(probe.json())
+    active = manifests["manifests"][manifests["active_manifest"]]
+    thumb_uri = active["thumbnail"]["identifier"]
+    probe.close()
+    for _ in _iterate(iterations):
+        reader = Reader("image/jpeg", io.BytesIO(source_bytes),
+                        manifest_data=None, context=context)
+        reader.detailed_json()
+        reader.crjson()
+        reader.get_remote_url()
+        reader.resource_to_stream(thumb_uri, io.BytesIO())
+        reader.close()
 
 
 # jpeg + png context variants, paired with the `_legacy` scenarios above for
@@ -497,6 +712,183 @@ def scenario_builder_sign_png_parallel_split_barrier(iterations: int = 100) -> N
     _sign_parallel(SIGNING_PNG, "image/png", iterations, per_thread_full=False, launch="barrier")
 
 
+def _fork_wait(child_fn) -> None:
+    """Fork; run child_fn() in child then _exit(0); parent waits up to 5 s."""
+    import signal
+
+    def _on_alarm(signum, frame):
+        raise TimeoutError("fork child deadlocked — 5 s alarm fired")
+
+    pid = os.fork()
+    if pid == 0:
+        child_fn()
+        os._exit(0)
+
+    old = signal.signal(signal.SIGALRM, _on_alarm)
+    try:
+        signal.alarm(5)
+        _, status = os.waitpid(pid, 0)
+        signal.alarm(0)
+    finally:
+        signal.signal(signal.SIGALRM, old)
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, (
+        f"child exited abnormally: status={status}"
+    )
+
+
+def scenario_fork_reader_collect(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    Baseline: create Reader, fork, child gc.collect() + _exit, parent closes.
+    Guard fires in child (no deadlock); parent frees normally (no leak).
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        with open(SIGNED_JPEG, "rb") as f:
+            reader = Reader("image/jpeg", f)
+        _fork_wait(lambda: gc.collect())
+        reader.close()
+
+
+def scenario_fork_contended_mutex(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    8 threads create/close Readers in a tight loop while the main thread
+    forks 5× per iteration (500 total forks). Maximises the probability that
+    the registry Mutex is held at the instant of fork(). Each fork inherits
+    a Reader created by the main thread; the child explicitly closes it
+    (then runs GC), so the PID guard is exercised on every fork — without
+    the guard the close would call into the native library and could
+    deadlock on a mutex left locked by a vanished worker thread. The parent
+    closes the same Reader after the child exits (its own PID: real free).
+
+    Note: the workers' Readers are pinned by frozen thread frames in the
+    child, so child gc.collect() alone would free nothing — hence the
+    explicit close of an inherited object.
+    """
+    if not hasattr(os, "fork"):
+        return
+    stop = threading.Event()
+
+    def _worker():
+        while not stop.is_set():
+            with open(SIGNED_JPEG, "rb") as f:
+                r = Reader("image/jpeg", f)
+            r.close()
+
+    threads = [threading.Thread(target=_worker, daemon=True)
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    try:
+        for _ in _iterate(iterations):
+            for _ in range(5):
+                with open(SIGNED_JPEG, "rb") as f:
+                    reader = Reader("image/jpeg", f)
+
+                def _child(r=reader):
+                    r.close()
+                    gc.collect()
+
+                _fork_wait(_child)
+                reader.close()
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(timeout=5)
+
+
+def scenario_fork_thread_local_orphan(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    A thread stores Reader in threading.local, joins, then main forks.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        tl = threading.local()
+
+        def _create():
+            with open(SIGNED_JPEG, "rb") as f:
+                tl.reader = Reader("image/jpeg", f)
+
+        t = threading.Thread(target=_create)
+        t.start()
+        t.join()
+        _fork_wait(lambda: gc.collect())
+
+
+def scenario_fork_gc_cycle(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    Reader in a reference cycle, freed only by cyclic GC, not refcounting.
+    Child calls gc.collect(), which triggers __del__ on the Reader.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        with open(SIGNED_JPEG, "rb") as f:
+            reader = Reader("image/jpeg", f)
+        container = SimpleNamespace(reader=reader)
+        reader.container = container   # cycle: reader ↔ container
+        del reader, container          # refcount > 0; cycle survives until GC
+
+        _fork_wait(lambda: gc.collect())
+        gc.collect()                   # parent cleans up
+
+
+def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    20 Readers created, fork, child exits immediately, parent closes all 20.
+    Primary false-positive test: if is_foreign_process() wrongly fires in the
+    parent, all 20 native frees are skipped and leaked_bytes spikes ~20x.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        readers = []
+        for _ in range(20):
+            with open(SIGNED_JPEG, "rb") as f:
+                readers.append(Reader("image/jpeg", f))
+        _fork_wait(lambda: None)       # child does nothing, exits 0
+        for r in readers:
+            r.close()
+
+
+def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    Child calls sys.exit(0), full Python shutdown: atexit, finalizers, GC.
+    Every native-handle wrapper's __del__ fires in the child. Guard must
+    survive Py_Finalize() without deadlocking.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        with open(SIGNED_JPEG, "rb") as f:
+            reader = Reader("image/jpeg", f)
+        context = Context()
+
+        def _child():
+            import sys as _sys
+            _sys.exit(0)   # full Python shutdown, not _exit
+
+        _fork_wait(_child)
+        reader.close()
+        context.close()
+
+
+def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    Stream wraps a BytesIO with ctypes callbacks stored as instance attributes.
+    Both Stream.__del__ and Stream.close carry fork guards. This tests the
+    stream-specific path (separate from ManagedResource).
+    """
+    if not hasattr(os, "fork"):
+        return
+    source_bytes = SIGNED_JPEG.read_bytes()
+    for _ in _iterate(iterations):
+        stream = Stream(io.BytesIO(source_bytes))
+        _fork_wait(lambda: gc.collect())
+        stream.close()
+
+
 SCENARIOS = {
     "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
     "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
@@ -524,6 +916,22 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
+    "builder_to_archive_with_ingredient": scenario_builder_to_archive_with_ingredient,
+    "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive,
+    "builder_write_ingredient_archive": scenario_builder_write_ingredient_archive,
+    "builder_sign_jpeg_add_ingredient_from_archive": scenario_builder_sign_jpeg_add_ingredient_from_archive,
+    "builder_ingredient_archive_roundtrip": scenario_builder_ingredient_archive_roundtrip,
+    "builder_sign_jpeg_two_ingredient_archives": scenario_builder_sign_jpeg_two_ingredient_archives,
+    "reader_error_no_manifest": scenario_reader_error_no_manifest,
+    "builder_error_invalid_manifest": scenario_builder_error_invalid_manifest,
+    "reader_string_apis": scenario_reader_string_apis,
+    "fork_reader_collect": scenario_fork_reader_collect,
+    "fork_contended_mutex": scenario_fork_contended_mutex,
+    "fork_thread_local_orphan": scenario_fork_thread_local_orphan,
+    "fork_gc_cycle": scenario_fork_gc_cycle,
+    "fork_parent_frees_after_fork": scenario_fork_parent_frees_after_fork,
+    "fork_child_sys_exit": scenario_fork_child_sys_exit,
+    "fork_stream_cleanup": scenario_fork_stream_cleanup,
 }
 
 

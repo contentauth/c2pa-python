@@ -18,11 +18,12 @@ import logging
 import sys
 import os
 import warnings
+import weakref
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
-from .lib import dynamically_load_library
+from .lib import dynamically_load_library, record_owner_pid, is_foreign_process
 import mimetypes
 from itertools import count
 
@@ -38,8 +39,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_error',
     # Legacy APIs, deprecated
     'c2pa_load_settings',
-    'c2pa_read_file',
-    'c2pa_read_ingredient_file',
     # Stream
     'c2pa_create_stream',
     'c2pa_release_stream',
@@ -67,6 +66,8 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_add_ingredient_from_stream',
     'c2pa_builder_add_action',
     'c2pa_builder_to_archive',
+    'c2pa_builder_write_ingredient_archive',
+    'c2pa_builder_add_ingredient_from_archive',
     'c2pa_builder_sign',
     'c2pa_builder_sign_context',
     'c2pa_builder_from_context',
@@ -240,11 +241,17 @@ class ManagedResource:
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
         _clear_error_state()
+        record_owner_pid(self)
 
     @staticmethod
     def _free_native_ptr(ptr):
-        """Free a native pointer by casting it to c_void_p and calling c2pa_free."""
-        _lib.c2pa_free(ctypes.cast(ptr, ctypes.c_void_p))
+        """Free a native pointer by passing it to c2pa_free.
+
+        c2pa_free's argtype is c_void_p, so ctypes converts any pointer
+        instance directly. (ctypes.cast(ptr, c_void_p) would do the same
+        conversion but leaves a reference cycle behind on every call.)
+        """
+        _lib.c2pa_free(ptr)
 
     def _ensure_valid_state(self):
         """Raise if the resource is closed or uninitialized."""
@@ -277,6 +284,8 @@ class ManagedResource:
     def _cleanup_resources(self):
         """Release native resources idempotently."""
         try:
+            if is_foreign_process(self):
+                return
             if (
                 hasattr(self, '_lifecycle_state')
                 and self._lifecycle_state != LifecycleState.CLOSED
@@ -617,6 +626,15 @@ _setup_function(_lib.c2pa_builder_add_action,
 _setup_function(_lib.c2pa_builder_to_archive,
                 [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
                 ctypes.c_int)
+_setup_function(_lib.c2pa_builder_write_ingredient_archive,
+                [ctypes.POINTER(C2paBuilder),
+                 ctypes.c_char_p,
+                 ctypes.POINTER(C2paStream)],
+                ctypes.c_int)
+_setup_function(_lib.c2pa_builder_add_ingredient_from_archive,
+                [ctypes.POINTER(C2paBuilder),
+                 ctypes.POINTER(C2paStream)],
+                ctypes.c_int)
 _setup_function(_lib.c2pa_builder_sign,
                 [ctypes.POINTER(C2paBuilder),
                  ctypes.c_char_p,
@@ -645,12 +663,6 @@ _setup_function(_lib.c2pa_signer_create,
 _setup_function(_lib.c2pa_signer_from_info,
                 [ctypes.POINTER(C2paSignerInfo)],
                 ctypes.POINTER(C2paSigner))
-_setup_function(
-    _lib.c2pa_read_file, [
-        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
-_setup_function(
-    _lib.c2pa_read_ingredient_file, [
-        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
 
 # Set up Signer function prototypes
 _setup_function(
@@ -889,33 +901,51 @@ class _StringContainer:
         self._data_dir_str = ""
 
 
+if sys.implementation.name == "cpython":
+    _PyMemoryView_FromMemory = ctypes.pythonapi.PyMemoryView_FromMemory
+    _PyMemoryView_FromMemory.restype = ctypes.py_object
+    _PyMemoryView_FromMemory.argtypes = (
+        ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_int)
+    _PyBUF_WRITE = 0x200
+
+    def _write_buf(address, length):
+        return _PyMemoryView_FromMemory(address, length, _PyBUF_WRITE)
+else:
+    def _write_buf(address, length):
+        return (ctypes.c_char * length).from_address(address)
+
+
 def _convert_to_py_string(value) -> str:
     if value is None:
         return ""
 
     py_string = ""
 
-    # Validate pointer before casting and freeing
-    if not isinstance(value, (int, ctypes.c_void_p)) or value == 0:
+    # Validate and normalize pointer before reading and freeing.
+    if isinstance(value, ctypes.c_void_p):
+        address = value.value
+    elif isinstance(value, int):
+        address = value
+    else:
+        return ""
+    if not address:
         return ""
 
     try:
-        ptr = ctypes.cast(value, ctypes.c_char_p)
+        raw = ctypes.string_at(address)
 
-        # Only if we got a valid pointer with valid content
-        if ptr and ptr.value is not None:
+        try:
+            py_string = raw.decode('utf-8', errors='strict')
+        except Exception:
+            py_string = ""
+        finally:
+            # Only free if we have a valid pointer
             try:
-                py_string = ptr.value.decode('utf-8', errors='strict')
+                _lib.c2pa_string_free(value)
             except Exception:
-                py_string = ""
-            finally:
-                # Only free if we have a valid pointer
-                try:
-                    _lib.c2pa_string_free(value)
-                except Exception:
-                    # Ignore clean up issues
-                    pass
-    except (ctypes.ArgumentError, TypeError, ValueError):
+                # Ignore clean up issues
+                pass
+    except (ctypes.ArgumentError, TypeError, ValueError, OSError):
         # Invalid pointer type or value
         return ""
 
@@ -1003,8 +1033,7 @@ def _parse_operation_result_for_error(
         if check_error:
             error = _lib.c2pa_error()
             if error:
-                error_str = ctypes.cast(
-                    error, ctypes.c_char_p).value.decode('utf-8')
+                error_str = ctypes.string_at(error).decode('utf-8')
                 _lib.c2pa_string_free(error)
                 _raise_typed_c2pa_error(error_str)
         return None
@@ -1189,208 +1218,6 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
             raise C2paError.NotSupported(
                 f"Could not determine MIME type for file: {path}")
         return mime_type
-
-
-def read_ingredient_file(
-        path: Union[str, Path], data_dir: Union[str, Path]) -> str:
-    """Read a file as C2PA ingredient (deprecated).
-    This creates the JSON string that would be used as the ingredient JSON.
-
-    .. deprecated:: 0.11.0
-        This function is deprecated and will be removed in a future version.
-        To read C2PA metadata, use the :class:`c2pa.c2pa.Reader` class.
-        To add ingredients to a manifest,
-        use :meth:`c2pa.c2pa.Builder.add_ingredient` instead.
-
-    Args:
-        path: Path to the file to read
-        data_dir: Directory to write binary resources to
-
-    Returns:
-        The ingredient as a JSON string
-
-    Raises:
-        C2paError: If there was an error reading the file
-    """
-    warnings.warn(
-        "The read_ingredient_file function is deprecated and will be "
-        "removed in a future version. Please use Reader(path).json() for "
-        "reading C2PA metadata instead, or "
-        "Builder.add_ingredient(json, format, stream) to add ingredients "
-        "to a manifest.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    _clear_error_state()
-
-    container = _StringContainer()
-
-    container._path_str = str(path).encode('utf-8')
-    container._data_dir_str = str(data_dir).encode('utf-8')
-
-    result = _lib.c2pa_read_ingredient_file(
-        container._path_str, container._data_dir_str)
-
-    _check_ffi_operation_result(
-        result, "Error reading ingredient file {}".format(path))
-
-    return _convert_to_py_string(result)
-
-
-def read_file(path: Union[str, Path],
-              data_dir: Union[str, Path]) -> str:
-    """Read a C2PA manifest from a file (deprecated).
-
-    .. deprecated:: 0.10.0
-        This function is deprecated and will be removed in a future version.
-        To read C2PA metadata, use the :class:`c2pa.c2pa.Reader` class.
-
-    Args:
-        path: Path to the file to read
-        data_dir: Directory to write binary resources to
-
-    Returns:
-        The manifest as a JSON string
-
-    Raises:
-        C2paError: If there was an error reading the file
-    """
-    warnings.warn(
-        "The read_file function is deprecated and will be removed in a "
-        "future version. Please use the Reader class for reading C2PA "
-        "metadata instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    _clear_error_state()
-
-    container = _StringContainer()
-
-    container._path_str = str(path).encode('utf-8')
-    container._data_dir_str = str(data_dir).encode('utf-8')
-
-    result = _lib.c2pa_read_file(container._path_str, container._data_dir_str)
-    _check_ffi_operation_result(
-        result, "Error during read of manifest from file {}".format(path))
-
-    return _convert_to_py_string(result)
-
-
-@overload
-def sign_file(
-    source_path: Union[str, Path],
-    dest_path: Union[str, Path],
-    manifest: str,
-    signer_info: C2paSignerInfo,
-    return_manifest_as_bytes: bool = False
-) -> Union[str, bytes]:
-    """Sign a file with a C2PA manifest using signer info.
-    """
-    ...
-
-
-@overload
-def sign_file(
-    source_path: Union[str, Path],
-    dest_path: Union[str, Path],
-    manifest: str,
-    signer: 'Signer',
-    return_manifest_as_bytes: bool = False
-) -> Union[str, bytes]:
-    """Sign a file with a C2PA manifest using a signer.
-    """
-    ...
-
-
-def sign_file(
-    source_path: Union[str, Path],
-    dest_path: Union[str, Path],
-    manifest: str,
-    signer_or_info: Union[C2paSignerInfo, 'Signer'],
-    return_manifest_as_bytes: bool = False
-) -> Union[str, bytes]:
-    """Sign a file with a C2PA manifest (deprecated).
-    For now, this function is left here to provide a backwards-compatible API.
-
-    .. deprecated:: 0.13.0
-        This function is deprecated and will be removed in a future version.
-        Use :meth:`Builder.sign` instead.
-
-    Args:
-        source_path: Path to the source file. We will attempt
-              to guess the mimetype of the source file based on
-              the extension.
-        dest_path: Path to write the signed file to
-        manifest: The manifest JSON string
-        signer_or_info: Either a signer configuration or a signer object
-        return_manifest_as_bytes: If True, return manifest bytes instead
-        of JSON string
-
-    Returns:
-        The signed manifest as a JSON string or bytes, depending
-        on return_manifest_as_bytes
-
-    Raises:
-        C2paError: If there was an error signing the file
-        C2paError.Encoding: If any of the string inputs contain
-          invalid UTF-8 characters
-        C2paError.NotSupported: If the file type cannot be determined
-    """
-
-    warnings.warn(
-        "The sign_file function is deprecated and will be removed in a "
-        "future version. Please use the Builder object and Builder.sign() "
-        "instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    _clear_error_state()
-
-    try:
-        # Determine if we have a signer or signer info
-        if isinstance(signer_or_info, C2paSignerInfo):
-            signer = Signer.from_info(signer_or_info)
-            own_signer = True
-        else:
-            signer = signer_or_info
-            own_signer = False
-
-        # Create a builder from the manifest
-        builder = Builder(manifest)
-
-        manifest_bytes = builder.sign_file(
-            source_path,
-            dest_path,
-            signer
-        )
-
-        if return_manifest_as_bytes:
-            return manifest_bytes
-        else:
-            # Read the signed manifest from the destination file
-            with Reader(dest_path) as reader:
-                return reader.json()
-
-    except Exception as e:
-        # Clean up destination file if it exists and there was an error
-        if os.path.exists(dest_path):
-            try:
-                os.remove(dest_path)
-            except OSError:
-                logger.warning("Failed to remove destination file")
-                pass  # Ignore cleanup errors
-
-        # Re-raise the error
-        raise C2paError(f"Error signing file: {str(e)}") from e
-    finally:
-        # Ensure resources are cleaned up
-        if 'builder' in locals():
-            builder.close()
-        if 'signer' in locals() and own_signer:
-            signer.close()
 
 
 class ContextProvider(ABC):
@@ -1799,6 +1626,10 @@ class Stream:
 
         self._file_like_stream = file_like_stream
 
+        # Weakref breaks avoids references cycles:
+        # Stream -> ctypes_cb -> closure -> Stream.
+        _weak_self = weakref.ref(self)
+
         def read_callback(ctx, data, length):
             """Callback function for reading data from the Python stream.
 
@@ -1817,20 +1648,34 @@ class Stream:
             Returns:
                 Number of bytes read, or -1 on error
             """
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            if not s._initialized or s._closed:
                 return -1
             try:
                 if not data or length <= 0:
                     return -1
 
-                stream = self._file_like_stream
+                stream = s._file_like_stream
                 readinto = getattr(stream, "readinto", None)
                 if readinto is not None:
                     # Most streams have readinto
-                    buf = (ctypes.c_char * length).from_address(
-                        ctypes.addressof(data.contents))
-                    n = readinto(buf)
-                    return n if n else 0
+                    buf = _write_buf(
+                        ctypes.addressof(data.contents), length)
+                    try:
+                        n = readinto(buf)
+                    finally:
+                        release = getattr(buf, "release", None)
+                        if release is not None:
+                            release()
+                    if not n:
+                        return 0
+                    if n > length:
+                        raise ValueError(
+                            f"readinto returned {n} bytes but buffer length is {length}"
+                        )
+                    return n
 
                 # Fallback for streams without readinto.
                 buffer = stream.read(length)
@@ -1863,8 +1708,11 @@ class Stream:
             Returns:
                 New position in the stream, or -1 on error
             """
-            file_stream = self._file_like_stream
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            file_stream = s._file_like_stream
+            if not s._initialized or s._closed:
                 return -1
             try:
                 # Fall back to tell() only for stream objects that do not
@@ -1892,13 +1740,16 @@ class Stream:
             Returns:
                 Number of bytes written, or -1 on error
             """
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            if not s._initialized or s._closed:
                 return -1
             try:
                 if not data or length <= 0:
                     return -1
 
-                self._file_like_stream.write(ctypes.string_at(data, length))
+                s._file_like_stream.write(ctypes.string_at(data, length))
                 return length
             except Exception:
                 return -1
@@ -1917,10 +1768,13 @@ class Stream:
             Returns:
                 0 on success, -1 on error
             """
-            if not self._initialized or self._closed:
+            s = _weak_self()
+            if s is None:
+                return -1
+            if not s._initialized or s._closed:
                 return -1
             try:
-                self._file_like_stream.flush()
+                s._file_like_stream.flush()
                 return 0
             except Exception:
                 return -1
@@ -1945,6 +1799,7 @@ class Stream:
             raise Exception("Failed to create stream: {}".format(error))
 
         self._initialized = True
+        record_owner_pid(self)
 
     def __enter__(self):
         """Context manager entry."""
@@ -1963,6 +1818,8 @@ class Stream:
         hasn't been explicitly closed.
         """
         try:
+            if is_foreign_process(self):
+                return
             # Only cleanup if not already closed and we have a valid stream
             if hasattr(self, '_closed') and not self._closed:
                 stream = self._stream
@@ -1992,6 +1849,10 @@ class Stream:
         Multiple calls to close() are handled gracefully.
         """
         if self._closed:
+            return
+        if is_foreign_process(self):
+            self._closed = True
+            self._initialized = False
             return
 
         try:
@@ -3065,6 +2926,7 @@ class Builder(ManagedResource):
         'url_error': "Error setting remote URL: {}",
         'resource_error': "Error adding resource: {}",
         'ingredient_error': "Error adding ingredient: {}",
+        'archive_read_error': "Error loading ingredient from archive: {}",
         'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
         'sign_error': "Error during signing: {}",
@@ -3411,52 +3273,6 @@ class Builder(ManagedResource):
                 Builder._ERROR_MESSAGES['ingredient_error'].format("Unknown error"),
                 check=lambda r: r != 0)
 
-    def add_ingredient_from_file_path(
-            self,
-            ingredient_json: Union[str, dict],
-            format: str,
-            filepath: Union[str, Path]):
-        """Add an ingredient from a file path to the builder (deprecated).
-        This is a legacy method.
-
-        .. deprecated:: 0.13.0
-           This method is deprecated and will be removed in a future version.
-           Use :meth:`add_ingredient` with a file stream instead.
-
-        Args:
-            ingredient_json: The JSON ingredient definition
-                (either a JSON string or a dictionary)
-            format: The MIME type or extension of the ingredient
-            filepath: The path to the file containing the ingredient data
-              (can be a string or Path object)
-
-        Raises:
-            C2paError: If there was an error adding the ingredient
-            C2paError.Encoding: If the ingredient JSON or format
-              contains invalid UTF-8 characters
-            FileNotFoundError: If the file at the specified path does not exist
-        """
-        warnings.warn(
-            "add_ingredient_from_file_path is deprecated and will "
-            "be removed in a future version. Use add_ingredient "
-            "with a file stream instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        try:
-            # Convert Path object to string if necessary
-            filepath_str = str(filepath)
-
-            # Does the stream handling to use add_ingredient_from_stream
-            with open(filepath_str, 'rb') as file_stream:
-                self.add_ingredient_from_stream(
-                    ingredient_json, format, file_stream)
-        except FileNotFoundError as e:
-            raise C2paError.FileNotFound(f"File not found: {filepath}") from e
-        except Exception as e:
-            raise C2paError.Other(f"Could not add ingredient: {e}") from e
-
     def add_action(self, action_json: Union[str, dict]) -> None:
         """Add an action to the builder, that will be placed
         in the actions assertion array in the generated manifest.
@@ -3498,6 +3314,55 @@ class Builder(ManagedResource):
             _check_ffi_operation_result(
                 result,
                 Builder._ERROR_MESSAGES["archive_error"].format("Unknown error"),
+                check=lambda r: r != 0)
+
+    def write_ingredient_archive(self, ingredient_id: str, stream: Any) -> None:
+        """Write a single-ingredient archive for the named ingredient.
+        The archive is in C2PA format.
+
+        Args:
+            ingredient_id: Identifier of the ingredient within this builder;
+                matched against the ingredient's label or instance_id
+            stream: Writable, seekable stream to receive the archive
+
+        Raises:
+            C2paError: If there was an error writing the archive
+        """
+        self._ensure_valid_state()
+
+        ingredient_id_str = _to_utf8_bytes(ingredient_id, "ingredient_id")
+
+        with Stream(stream) as stream_obj:
+            result = _lib.c2pa_builder_write_ingredient_archive(
+                self._handle, ingredient_id_str, stream_obj._stream)
+
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES["archive_error"].format(
+                    "Unknown error"
+                ),
+                check=lambda r: r != 0)
+
+    def add_ingredient_from_archive(self, stream: Any) -> None:
+        """Add an ingredient from a per-ingredient archive stream.
+        The archive must be in C2PA format, as written by
+        write_ingredient_archive.
+
+        Args:
+            stream: Readable, seekable stream containing the ingredient archive
+
+        Raises:
+            C2paError: If there was an error reading the archive
+        """
+        self._ensure_valid_state()
+
+        with Stream(stream) as stream_obj:
+            result = _lib.c2pa_builder_add_ingredient_from_archive(
+                self._handle, stream_obj._stream)
+
+            _check_ffi_operation_result(result,
+                Builder._ERROR_MESSAGES["archive_read_error"].format(
+                    "Unknown error"
+                ),
                 check=lambda r: r != 0)
 
     def with_archive(self, stream: Any) -> 'Builder':
@@ -3991,9 +3856,6 @@ __all__ = [
     'Builder',
     'Signer',
     'load_settings',
-    'read_file',
-    'read_ingredient_file',
-    'sign_file',
     'format_embeddable',
     'version',
     'sdk_version'

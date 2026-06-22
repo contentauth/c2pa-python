@@ -23,7 +23,6 @@ from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
 import ctypes
-import toml
 import threading
 
 # Suppress deprecation warnings
@@ -31,7 +30,7 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, read_ingredient_file, read_file, sign_file, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
 
 
 PROJECT_PATH = os.getcwd()
@@ -1944,6 +1943,500 @@ class TestBuilderWithSigner(unittest.TestCase):
         # With trust configuration loaded, validation should return "Trusted"
         self.assertIsNotNone(result.get('validation_state'))
         self.assertEqual(result.get('validation_state'), "Trusted")
+
+    def test_write_ingredient_archive_produces_readable_archive(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "A.jpg",
+            "relationship": "componentOf",
+            "instance_id": "ingredient-A",
+        }
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        builder.write_ingredient_archive("ingredient-A", archive)
+        builder.close()
+        self.assertGreater(len(archive.getvalue()), 0)
+        archive.close()
+
+    def test_add_ingredient_from_archive_roundtrip(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "A.jpg",
+            "relationship": "componentOf",
+            "instance_id": "catalog:ingredient-A",
+        }
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        builder.write_ingredient_archive("catalog:ingredient-A", archive)
+        builder.close()
+
+        archive.seek(0)
+        builder2 = Builder.from_json(manifest)
+        builder2.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            builder2.sign(self.signer, "image/jpeg", f, output)
+        builder2.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        output.close()
+
+    def test_add_ingredient_from_archive_preserves_instance_id(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
+            "assertions": [],
+        }
+        archive_builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "parentOf",
+            "instance_id": "my-ingredient",
+        }
+        with open(self.testPath, "rb") as f:
+            archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive("my-ingredient", archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("photo.jpg", json_data)
+        output.close()
+
+    def test_add_ingredient_from_archive_preserves_instance_id_component_of(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        archive_builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "componentOf",
+            "instance_id": "my-ingredient",
+        }
+        with open(self.testPath, "rb") as f:
+            archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive("my-ingredient", archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("photo.jpg", json_data)
+        self.assertIn("componentOf", json_data)
+        output.close()
+
+    def test_add_ingredient_from_archive_preserves_instance_id_input_to(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        archive_builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "inputTo",
+            "instance_id": "my-ingredient",
+        }
+        with open(self.testPath, "rb") as f:
+            archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive("my-ingredient", archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("photo.jpg", json_data)
+        self.assertIn("inputTo", json_data)
+        output.close()
+
+    def test_add_ingredient_from_archive_roundtrip_parent_of(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "A.jpg",
+            "relationship": "parentOf",
+            "instance_id": "catalog:ingredient-A",
+        }
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        builder.write_ingredient_archive("catalog:ingredient-A", archive)
+        builder.close()
+
+        archive.seek(0)
+        builder2 = Builder.from_json(manifest)
+        builder2.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            builder2.sign(self.signer, "image/jpeg", f, output)
+        builder2.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        self.assertIn("parentOf", json_data)
+        output.close()
+
+    def test_add_ingredient_from_archive_roundtrip_input_to(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "A.jpg",
+            "relationship": "inputTo",
+            "instance_id": "catalog:ingredient-A",
+        }
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        builder.write_ingredient_archive("catalog:ingredient-A", archive)
+        builder.close()
+
+        archive.seek(0)
+        builder2 = Builder.from_json(manifest)
+        builder2.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            builder2.sign(self.signer, "image/jpeg", f, output)
+        builder2.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        self.assertIn("inputTo", json_data)
+        output.close()
+
+    def test_ingredient_from_archive_linked_to_opened_action(self):
+        ingredient_id = "xmp:iid:archive-parent-001"
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "parameters": {"ingredientIds": [ingredient_id]},
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        archive_builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            archive_builder.add_ingredient(
+                {"title": "photo.jpg", "relationship": "parentOf", "instance_id": ingredient_id},
+                "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive(ingredient_id, archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("c2pa.opened", json_data)
+        self.assertIn(ingredient_id, json_data)
+        output.close()
+
+    def test_ingredient_from_archive_linked_to_placed_action(self):
+        ingredient_id = "xmp:iid:archive-component-001"
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {"ingredientIds": [ingredient_id]},
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        archive_builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            archive_builder.add_ingredient(
+                {"title": "photo.jpg", "relationship": "componentOf", "instance_id": ingredient_id},
+                "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive(ingredient_id, archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("c2pa.placed", json_data)
+        self.assertIn(ingredient_id, json_data)
+        output.close()
+
+    def test_ingredient_from_archive_linked_to_edited_action(self):
+        ingredient_id = "xmp:iid:archive-input-001"
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.edited",
+                                "parameters": {"ingredientIds": [ingredient_id]},
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        archive_builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            archive_builder.add_ingredient(
+                {"title": "photo.jpg", "relationship": "inputTo", "instance_id": ingredient_id},
+                "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive(ingredient_id, archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("c2pa.edited", json_data)
+        self.assertIn(ingredient_id, json_data)
+        output.close()
+
+    def test_add_two_ingredient_archives_to_one_builder(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        archives = []
+        for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
+            archive_builder = Builder.from_json(manifest)
+            ingredient_json = {
+                "title": title,
+                "relationship": "componentOf",
+                "instance_id": instance_id,
+            }
+            with open(self.testPath, "rb") as f:
+                archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+            archive = io.BytesIO()
+            archive_builder.write_ingredient_archive(instance_id, archive)
+            archive_builder.close()
+            archive.seek(0)
+            archives.append(archive)
+
+        signing_builder = Builder.from_json(manifest)
+        for archive in archives:
+            signing_builder.add_ingredient_from_archive(archive)
+            archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        self.assertIn("B.jpg", json_data)
+        output.close()
+
+    def test_write_ingredient_archive_only_contains_requested_ingredient(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        archive_builder = Builder.from_json(manifest)
+        for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
+            ingredient_json = {
+                "title": title,
+                "relationship": "componentOf",
+                "instance_id": instance_id,
+            }
+            with open(self.testPath, "rb") as f:
+                archive_builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        archive = io.BytesIO()
+        archive_builder.write_ingredient_archive("ingredient-A", archive)
+        archive_builder.close()
+
+        archive.seek(0)
+        signing_builder = Builder.from_json(manifest)
+        signing_builder.add_ingredient_from_archive(archive)
+        archive.close()
+
+        output = io.BytesIO()
+        with open(self.testPath, "rb") as f:
+            signing_builder.sign(self.signer, "image/jpeg", f, output)
+        signing_builder.close()
+
+        output.seek(0)
+        reader = Reader("image/jpeg", output)
+        json_data = reader.json()
+        self.assertIn("A.jpg", json_data)
+        self.assertNotIn("B.jpg", json_data)
+        output.close()
+
+    def test_write_ingredient_archive_matches_label_or_instance_id(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "componentOf",
+            "label": "my-label",
+            "instance_id": "my-instance-id",
+        }
+        builder = Builder.from_json(manifest)
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+
+        by_label = io.BytesIO()
+        builder.write_ingredient_archive("my-label", by_label)
+        self.assertGreater(len(by_label.getvalue()), 0)
+        by_label.close()
+
+        by_instance_id = io.BytesIO()
+        builder.write_ingredient_archive("my-instance-id", by_instance_id)
+        self.assertGreater(len(by_instance_id.getvalue()), 0)
+        by_instance_id.close()
+
+        builder.close()
+
+    def test_write_ingredient_archive_unknown_id_raises(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        ingredient_json = {
+            "title": "photo.jpg",
+            "relationship": "componentOf",
+            "instance_id": "ingredient-A",
+        }
+        with open(self.testPath, "rb") as f:
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
+        with self.assertRaises(Error):
+            builder.write_ingredient_archive("nonexistent-id", io.BytesIO())
+        builder.close()
+
+    def test_add_ingredient_from_archive_invalid_data_raises(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        with self.assertRaises(Error):
+            builder.add_ingredient_from_archive(io.BytesIO(b"not a c2pa archive"))
+        with self.assertRaises(Error):
+            builder.add_ingredient_from_archive(io.BytesIO())
+        builder.close()
+
+    def test_ingredient_archive_methods_raise_on_closed_builder(self):
+        manifest = {
+            "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
+            "assertions": [],
+        }
+        builder = Builder.from_json(manifest)
+        builder.close()
+        with self.assertRaises(Error):
+            builder.write_ingredient_archive("ingredient-A", io.BytesIO())
+        with self.assertRaises(Error):
+            builder.add_ingredient_from_archive(io.BytesIO())
 
     def test_remote_sign(self):
         with open(self.testPath, "rb") as file:
@@ -4787,9 +5280,6 @@ class TestStream(unittest.TestCase):
 class TestLegacyAPI(unittest.TestCase):
     def setUp(self):
         # Filter specific deprecation warnings for legacy API tests
-        warnings.filterwarnings("ignore", message="The read_file function is deprecated")
-        warnings.filterwarnings("ignore", message="The sign_file function is deprecated")
-        warnings.filterwarnings("ignore", message="The read_ingredient_file function is deprecated")
         warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
         warnings.filterwarnings("ignore", message="The create_signer_from_info function is deprecated")
         warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
@@ -4862,489 +5352,6 @@ class TestLegacyAPI(unittest.TestCase):
         """Clean up temporary files after each test."""
         if os.path.exists(self.temp_data_dir):
             shutil.rmtree(self.temp_data_dir)
-
-    def test_read_ingredient_file(self):
-        """Test reading a C2PA ingredient from a file."""
-        # Test reading ingredient from file with data_dir
-        temp_data_dir = os.path.join(self.data_dir, "temp_data")
-        os.makedirs(temp_data_dir, exist_ok=True)
-
-        ingredient_json_with_dir = read_ingredient_file(self.testPath, temp_data_dir)
-
-        # Verify some fields
-        ingredient_data = json.loads(ingredient_json_with_dir)
-        self.assertEqual(ingredient_data["title"], DEFAULT_TEST_FILE_NAME)
-        self.assertEqual(ingredient_data["format"], "image/jpeg")
-        self.assertIn("thumbnail", ingredient_data)
-
-    def test_read_ingredient_file_who_has_no_manifest(self):
-        """Test reading a C2PA ingredient from a file."""
-        # Test reading ingredient from file with data_dir
-        temp_data_dir = os.path.join(self.data_dir, "temp_data")
-        os.makedirs(temp_data_dir, exist_ok=True)
-
-        # Load settings first, before they need to be used
-        load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
-
-        ingredient_json_with_dir = read_ingredient_file(self.testPath2, temp_data_dir)
-
-        # Verify some fields
-        ingredient_data = json.loads(ingredient_json_with_dir)
-        self.assertEqual(ingredient_data["title"], INGREDIENT_TEST_FILE_NAME)
-        self.assertEqual(ingredient_data["format"], "image/jpeg")
-        self.assertNotIn("thumbnail", ingredient_data)
-
-        # Reset setting
-        load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
-
-    def test_compare_read_ingredient_file_with_builder_added_ingredient(self):
-        """Test reading a C2PA ingredient from a file."""
-        # Test reading ingredient from file with data_dir
-        temp_data_dir = os.path.join(self.data_dir, "temp_data")
-        os.makedirs(temp_data_dir, exist_ok=True)
-
-        ingredient_json_with_dir = read_ingredient_file(self.testPath2, temp_data_dir)
-
-        # Ingredient fields from read_ingredient_file
-        ingredient_data = json.loads(ingredient_json_with_dir)
-
-        # Compare with ingredient added by Builder
-        builder = Builder.from_json(self.manifestDefinition)
-        # Only the title is needed (filename), since title not extracted or guessed from filename
-        ingredient_json = '{ "title" : "A.jpg" }'
-        with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/jpeg", f)
-
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-
-            # Get ingredient fields from signed manifest
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-            active_manifest_id = manifest_data["active_manifest"]
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-            only_ingredient = active_manifest["ingredients"][0]
-
-            self.assertEqual(ingredient_data["title"], only_ingredient["title"])
-            self.assertEqual(ingredient_data["format"], only_ingredient["format"])
-            self.assertEqual(ingredient_data["document_id"], only_ingredient["document_id"])
-            self.assertEqual(ingredient_data["instance_id"], only_ingredient["instance_id"])
-            self.assertEqual(ingredient_data["relationship"], only_ingredient["relationship"])
-
-    def test_read_file(self):
-        """Test reading a C2PA ingredient from a file."""
-        temp_data_dir = os.path.join(self.data_dir, "temp_data")
-        os.makedirs(temp_data_dir, exist_ok=True)
-
-        # self.testPath has C2PA metadata to read
-        file_json_with_dir = read_file(self.testPath, temp_data_dir)
-
-        # Parse the JSON and verify specific fields
-        file_data = json.loads(file_json_with_dir)
-        expected_manifest_id = "contentauth:urn:uuid:c85a2b90-f1a0-4aa4-b17f-f938b475804e"
-
-        # Verify some fields
-        self.assertEqual(file_data["active_manifest"], expected_manifest_id)
-        self.assertIn("manifests", file_data)
-        self.assertIn(expected_manifest_id, file_data["manifests"])
-
-    def test_sign_file(self):
-        """Test signing a file with C2PA manifest."""
-        # Set up test paths
-        temp_data_dir = os.path.join(self.data_dir, "temp_data")
-        os.makedirs(temp_data_dir, exist_ok=True)
-        output_path = os.path.join(temp_data_dir, "signed_output.jpg")
-
-        # Load test certificates and key
-        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
-            certs = cert_file.read()
-        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
-            key = key_file.read()
-
-        # Create signer info
-        signer_info = C2paSignerInfo(
-            alg=b"es256",
-            sign_cert=certs,
-            private_key=key,
-            ta_url=b"http://timestamp.digicert.com"
-        )
-
-        # Create a simple manifest
-        manifest = {
-            "claim_generator": "python_internals_test",
-            "claim_generator_info": [{
-                "name": "python_internals_test",
-                "version": "0.0.1",
-            }],
-            # Claim version has become mandatory for signing v1 claims
-            "claim_version": 1,
-            "format": "image/jpeg",
-            "title": "Python Test Signed Image",
-            "ingredients": [],
-            "assertions": [
-                {
-                    "label": "c2pa.actions",
-                    "data": {
-                        "actions": [
-                            {
-                                "action": "c2pa.opened"
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
-
-        # Convert manifest to JSON string
-        manifest_json = json.dumps(manifest)
-
-        try:
-            sign_file(
-                self.testPath,
-                output_path,
-                manifest_json,
-                signer_info
-            )
-
-        finally:
-            # Clean up
-            if os.path.exists(output_path):
-                os.remove(output_path)
-
-    def test_sign_file_does_not_exist_errors(self):
-        """Test signing a file with C2PA manifest."""
-        # Set up test paths
-        temp_data_dir = os.path.join(self.data_dir, "temp_data")
-        os.makedirs(temp_data_dir, exist_ok=True)
-        output_path = os.path.join(temp_data_dir, "signed_output.jpg")
-
-        # Load test certificates and key
-        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
-            certs = cert_file.read()
-        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
-            key = key_file.read()
-
-        # Create signer info
-        signer_info = C2paSignerInfo(
-            alg=b"es256",
-            sign_cert=certs,
-            private_key=key,
-            ta_url=b"http://timestamp.digicert.com"
-        )
-
-        # Create a simple manifest
-        manifest = {
-            "claim_generator": "python_internals_test",
-            "claim_generator_info": [{
-                "name": "python_internals_test",
-                "version": "0.0.1",
-            }],
-            # Claim version has become mandatory for signing v1 claims
-            "claim_version": 1,
-            "format": "image/jpeg",
-            "title": "Python Test Signed Image",
-            "ingredients": [],
-            "assertions": [
-                {
-                    "label": "c2pa.actions",
-                    "data": {
-                        "actions": [
-                            {
-                                "action": "c2pa.opened"
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
-
-        # Convert manifest to JSON string
-        manifest_json = json.dumps(manifest)
-
-        try:
-            with self.assertRaises(Error):
-              sign_file(
-                  "this-file-does-not-exist",
-                  output_path,
-                  manifest_json,
-                  signer_info
-              )
-
-        finally:
-            # Clean up
-            if os.path.exists(output_path):
-                os.remove(output_path)
-
-    def test_builder_sign_with_ingredient_from_file(self):
-        """Test Builder class operations with an ingredient added from file path."""
-
-        builder = Builder.from_json(self.manifestDefinition)
-
-        # Test adding ingredient from file path
-        ingredient_json = '{"title": "Test Ingredient From File"}'
-        # Suppress the specific deprecation warning for this test, as this is a legacy method
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath3)
-
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertTrue(len(active_manifest["ingredients"]) > 0)
-
-            # Verify the first ingredient's title matches what we set
-            first_ingredient = active_manifest["ingredients"][0]
-            self.assertEqual(first_ingredient["title"], "Test Ingredient From File")
-
-        builder.close()
-
-    def test_builder_sign_with_ingredient_dict_from_file(self):
-        """Test Builder class operations with an ingredient added from file path using a dictionary."""
-
-        builder = Builder.from_json(self.manifestDefinition)
-
-        # Test adding ingredient from file path with a dictionary
-        ingredient_dict = {"title": "Test Ingredient From File"}
-        # Suppress the specific deprecation warning for this test, as this is a legacy method
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            builder.add_ingredient_from_file_path(ingredient_dict, "image/jpeg", self.testPath3)
-
-        with open(self.testPath2, "rb") as file:
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_data = reader.json()
-            manifest_data = json.loads(json_data)
-
-            # Verify active manifest exists
-            self.assertIn("active_manifest", manifest_data)
-            active_manifest_id = manifest_data["active_manifest"]
-
-            # Verify active manifest object exists
-            self.assertIn("manifests", manifest_data)
-            self.assertIn(active_manifest_id, manifest_data["manifests"])
-            active_manifest = manifest_data["manifests"][active_manifest_id]
-
-            # Verify ingredients array exists in active manifest
-            self.assertIn("ingredients", active_manifest)
-            self.assertIsInstance(active_manifest["ingredients"], list)
-            self.assertTrue(len(active_manifest["ingredients"]) > 0)
-
-            # Verify the first ingredient's title matches what we set
-            first_ingredient = active_manifest["ingredients"][0]
-            self.assertEqual(first_ingredient["title"], "Test Ingredient From File")
-
-        builder.close()
-
-    def test_builder_add_ingredient_from_file_path(self):
-        """Test Builder class add_ingredient_from_file_path method."""
-
-        # Suppress the specific deprecation warning for this test, as this is a legacy method
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-
-            builder = Builder.from_json(self.manifestDefinition)
-
-            # Test adding ingredient from file path
-            ingredient_json = '{"test": "ingredient_from_file_path"}'
-            builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", self.testPath)
-
-            builder.close()
-
-    def test_builder_add_ingredient_from_file_path_not_found(self):
-        """Test Builder class add_ingredient_from_file_path method."""
-
-        # Suppress the specific deprecation warning for this test, as this is a legacy method
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-
-            builder = Builder.from_json(self.manifestDefinition)
-
-            # Test adding ingredient from file path
-            ingredient_json = '{"test": "ingredient_from_file_path"}'
-
-            with self.assertRaises(Error.FileNotFound):
-                builder.add_ingredient_from_file_path(ingredient_json, "image/jpeg", "this-file-path-does-not-exist")
-
-    def test_sign_file_using_callback_signer_overloads(self):
-        """Test signing a file using the sign_file function with a Signer object."""
-        # Create a temporary directory for the test
-        temp_dir = tempfile.mkdtemp()
-
-        try:
-            # Create a temporary output file path
-            output_path = os.path.join(temp_dir, "signed_output_callback.jpg")
-
-            # Create signer with callback
-            signer = Signer.from_callback(
-                callback=self.callback_signer_es256,
-                alg=SigningAlg.ES256,
-                certs=self.certs.decode('utf-8'),
-                tsa_url="http://timestamp.digicert.com"
-            )
-
-            # Overload that returns a JSON string
-            result_json = sign_file(
-                self.testPath,
-                output_path,
-                self.manifestDefinition,
-                signer,
-                False
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path))
-
-            # Verify the result is JSON
-            self.assertIsInstance(result_json, str)
-            self.assertGreater(len(result_json), 0)
-
-            manifest_data = json.loads(result_json)
-            self.assertIn("manifests", manifest_data)
-            self.assertIn("active_manifest", manifest_data)
-
-            output_path_bytes = os.path.join(temp_dir, "signed_output_callback_bytes.jpg")
-            # Overload that returns bytes
-            result_bytes = sign_file(
-                self.testPath,
-                output_path_bytes,
-                self.manifestDefinition,
-                signer,
-                True
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path_bytes))
-
-            # Verify the result is bytes
-            self.assertIsInstance(result_bytes, bytes)
-            self.assertGreater(len(result_bytes), 0)
-
-            # Read the signed file and verify the manifest contains expected content
-            with open(output_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
-                file_manifest_json = reader.json()
-                self.assertIn("Python Test", file_manifest_json)
-
-        finally:
-            shutil.rmtree(temp_dir)
-
-    def test_sign_file_overloads(self):
-        """Test that the overloaded sign_file function works with both parameter types."""
-        # Create a temporary directory for the test
-        temp_dir = tempfile.mkdtemp()
-        try:
-            # Test with C2paSignerInfo
-            output_path_1 = os.path.join(temp_dir, "signed_output_1.jpg")
-
-            # Load test certificates and key
-            with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
-                certs = cert_file.read()
-            with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
-                key = key_file.read()
-
-            # Create signer info
-            signer_info = C2paSignerInfo(
-                alg=b"es256",
-                sign_cert=certs,
-                private_key=key,
-                ta_url=b"http://timestamp.digicert.com"
-            )
-
-            # Test with C2paSignerInfo parameter - JSON return
-            result_1 = sign_file(
-                self.testPath,
-                output_path_1,
-                self.manifestDefinition,
-                signer_info,
-                False
-            )
-
-            self.assertIsInstance(result_1, str)
-            self.assertTrue(os.path.exists(output_path_1))
-
-            # Test with C2paSignerInfo parameter - bytes return
-            output_path_1_bytes = os.path.join(temp_dir, "signed_output_1_bytes.jpg")
-            result_1_bytes = sign_file(
-                self.testPath,
-                output_path_1_bytes,
-                self.manifestDefinition,
-                signer_info,
-                True
-            )
-
-            self.assertIsInstance(result_1_bytes, bytes)
-            self.assertTrue(os.path.exists(output_path_1_bytes))
-
-            # Test with Signer object
-            output_path_2 = os.path.join(temp_dir, "signed_output_2.jpg")
-
-            # Create a signer from the signer info
-            signer = Signer.from_info(signer_info)
-
-            # Test with Signer parameter - JSON return
-            result_2 = sign_file(
-                self.testPath,
-                output_path_2,
-                self.manifestDefinition,
-                signer,
-                False
-            )
-
-            self.assertIsInstance(result_2, str)
-            self.assertTrue(os.path.exists(output_path_2))
-
-            # Test with Signer parameter - bytes return
-            output_path_2_bytes = os.path.join(temp_dir, "signed_output_2_bytes.jpg")
-            result_2_bytes = sign_file(
-                self.testPath,
-                output_path_2_bytes,
-                self.manifestDefinition,
-                signer,
-                True
-            )
-
-            self.assertIsInstance(result_2_bytes, bytes)
-            self.assertTrue(os.path.exists(output_path_2_bytes))
-
-            # Both JSON results should be similar (same manifest structure)
-            manifest_1 = json.loads(result_1)
-            manifest_2 = json.loads(result_2)
-
-            self.assertIn("manifests", manifest_1)
-            self.assertIn("manifests", manifest_2)
-            self.assertIn("active_manifest", manifest_1)
-            self.assertIn("active_manifest", manifest_2)
-
-            # Both bytes results should be non-empty
-            self.assertGreater(len(result_1_bytes), 0)
-            self.assertGreater(len(result_2_bytes), 0)
-
-        finally:
-            # Clean up the temporary directory
-            shutil.rmtree(temp_dir)
 
     def test_sign_file_callback_signer_reports_error(self):
         """Test signing a file using the sign_file method with a callback that reports an error."""
@@ -6739,6 +6746,69 @@ class TestContextIntegration(TestContextAPIs):
             reader.close()
         builder.close()
         context.close()
+
+
+class TestStreamReferences(unittest.TestCase):
+
+    def test_stream_collected_after_del(self):
+        """Stream must be collected by reference counting."""
+        import gc
+        import weakref
+        gc.collect()
+        garbage_before = len(gc.garbage)
+
+        buf = io.BytesIO(b"hello world")
+        s = Stream(buf)
+        ref = weakref.ref(s)
+        del s
+
+        # Trigger gc, we want to verify it's collected
+        # collected now (1 gc call) means no gc cycle breaker needed
+        # aka ref cycle did not happen.
+        gc.collect()
+
+        self.assertIsNone(ref(), "Stream not collected")
+        self.assertEqual(len(gc.garbage), garbage_before,
+                         "Stream added objects to gc.garbage")
+
+    def test_stream_not_added_to_gc_garbage_list(self):
+        """Creating and dropping many Streams must not grow gc.garbage."""
+        import gc
+        gc.collect()
+        gc.garbage.clear()
+
+        for _ in range(20):
+            s = Stream(io.BytesIO(b"data"))
+            del s
+
+        gc.collect()
+        self.assertEqual(len(gc.garbage), 0,
+                         f"gc.garbage unexpectedly non-empty: {gc.garbage}")
+
+    def test_callbacks_return_minus_one_after_stream_collected(self):
+        """Callbacks must return -1 gracefully when the Stream has been GC'd."""
+        import gc
+        import weakref
+
+        buf = io.BytesIO(b"test")
+        s = Stream(buf)
+
+        read_cb = s._read_cb
+        seek_cb = s._seek_cb
+        write_cb = s._write_cb
+        flush_cb = s._flush_cb
+        ref = weakref.ref(s)
+        del s
+        gc.collect()
+
+        # Stream should be gone.
+        self.assertIsNone(ref(), "Stream not collected before callback test")
+
+        # All callbacks must return -1 without crashing.
+        self.assertEqual(read_cb(None, None, 0), -1)
+        self.assertEqual(seek_cb(None, 0, 0), -1)
+        self.assertEqual(write_cb(None, None, 0), -1)
+        self.assertEqual(flush_cb(None), -1)
 
 
 if __name__ == '__main__':

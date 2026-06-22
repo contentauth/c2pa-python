@@ -299,3 +299,28 @@ def dynamically_load_library(
             raise RuntimeError(f"Could not find {c2pa_lib_name} in any of the search paths")
 
     return c2pa_lib
+
+
+def record_owner_pid(obj):
+    """Keep the PID that created this native-handle wrapper
+    (call from __init__ as needed).
+    """
+    obj._owner_pid = os.getpid()
+
+
+def is_foreign_process(obj):
+    """Return True when this object is being finalized in a forked child that did not
+    create it. After a multithreaded fork(), native mutexes may be held by threads
+    absent in the child -> any lock() call deadlocks. Callers must skip native frees
+    when this returns True.
+
+    Skipping the free does not cause a cumulative leak. If the child calls exec() the
+    address space is replaced entirely; if it exits, the OS reclaims all process memory.
+    Even a long-lived fork child (e.g. a multiprocessing fork-start worker) leaks at most
+    the objects inherited at fork time — a one-time, bounded amount reclaimed when the
+    child terminates. Objects the child creates itself carry the child's PID and are
+    freed normally.
+
+    Defensive default: if _owner_pid was never set, returns False (no regression)."""
+    owner = getattr(obj, '_owner_pid', None)
+    return owner is not None and owner != os.getpid()

@@ -2,139 +2,189 @@
   "_meta": {
     "memray_version": "1.19.3",
     "python_version": "3.12.13",
-    "c2pa_native_version": "c2pa-v0.86.1",
-    "iterations": 100,
+    "c2pa_native_version": "c2pa-v0.88.0",
+    "iterations": 250,
     "perf_env": "python-3.12-slim",
     "arch": "aarch64"
   },
   "reader_jpeg_legacy": {
-    "peak_bytes": 3790506,
-    "leaked_bytes": 3337275,
-    "total_allocations": 694247
+    "peak_bytes": 3762136,
+    "leaked_bytes": 3262031,
+    "total_allocations": 1660100
   },
   "reader_jpeg_with_context": {
-    "peak_bytes": 3784932,
-    "leaked_bytes": 3331065,
-    "total_allocations": 688204
+    "peak_bytes": 3756118,
+    "leaked_bytes": 3254069,
+    "total_allocations": 1646550
   },
   "reader_mp4": {
-    "peak_bytes": 4192391,
-    "leaked_bytes": 3331202,
-    "total_allocations": 1856171
+    "peak_bytes": 4208976,
+    "leaked_bytes": 3253426,
+    "total_allocations": 4963836
   },
   "reader_wav": {
-    "peak_bytes": 4440733,
-    "leaked_bytes": 3281502,
-    "total_allocations": 386809
+    "peak_bytes": 4431268,
+    "leaked_bytes": 3263354,
+    "total_allocations": 888612
   },
   "builder_sign_jpeg_legacy": {
-    "peak_bytes": 7739038,
-    "leaked_bytes": 3438581,
-    "total_allocations": 515197
+    "peak_bytes": 7694334,
+    "leaked_bytes": 3377383,
+    "total_allocations": 1250156
   },
   "builder_sign_jpeg_with_context": {
-    "peak_bytes": 7732082,
-    "leaked_bytes": 3431373,
-    "total_allocations": 509328
+    "peak_bytes": 7687683,
+    "leaked_bytes": 3370546,
+    "total_allocations": 1235555
   },
   "builder_sign_png_legacy": {
-    "peak_bytes": 7939922,
-    "leaked_bytes": 3401346,
-    "total_allocations": 1399159
+    "peak_bytes": 7933540,
+    "leaked_bytes": 3377209,
+    "total_allocations": 4502325
   },
   "builder_sign_png_with_context": {
-    "peak_bytes": 7932212,
-    "leaked_bytes": 3393558,
-    "total_allocations": 1393313
+    "peak_bytes": 7924904,
+    "leaked_bytes": 3370312,
+    "total_allocations": 4487743
   },
   "builder_sign_jpeg_parallel_split_pool": {
-    "peak_bytes": 45802848,
-    "leaked_bytes": 3855293,
-    "total_allocations": 520103
+    "peak_bytes": 45790186,
+    "leaked_bytes": 3770876,
+    "total_allocations": 1247400
   },
   "builder_sign_jpeg_parallel_split_barrier": {
-    "peak_bytes": 45771974,
-    "leaked_bytes": 3853543,
-    "total_allocations": 519696
+    "peak_bytes": 45758269,
+    "leaked_bytes": 3769617,
+    "total_allocations": 1246063
   },
   "builder_sign_png_parallel_split_pool": {
-    "peak_bytes": 46511069,
-    "leaked_bytes": 3831120,
-    "total_allocations": 1405010
+    "peak_bytes": 42884934,
+    "leaked_bytes": 3806845,
+    "total_allocations": 4499456
   },
   "builder_sign_png_parallel_split_barrier": {
-    "peak_bytes": 45980602,
-    "leaked_bytes": 3826012,
-    "total_allocations": 1403879
+    "peak_bytes": 45995848,
+    "leaked_bytes": 3805431,
+    "total_allocations": 4498202
   },
   "builder_sign_gif": {
-    "peak_bytes": 14556418,
-    "leaked_bytes": 3398315,
-    "total_allocations": 5573733
+    "peak_bytes": 14545704,
+    "leaked_bytes": 3369959,
+    "total_allocations": 19592169
   },
   "builder_sign_heic": {
-    "peak_bytes": 4624733,
-    "leaked_bytes": 3402824,
-    "total_allocations": 733409
+    "peak_bytes": 4609675,
+    "leaked_bytes": 3369960,
+    "total_allocations": 1865279
   },
   "builder_sign_m4a": {
-    "peak_bytes": 18864770,
-    "leaked_bytes": 3402727,
-    "total_allocations": 2126542
+    "peak_bytes": 18848657,
+    "leaked_bytes": 3369911,
+    "total_allocations": 6143845
   },
   "builder_sign_webp": {
-    "peak_bytes": 8911369,
-    "leaked_bytes": 3397659,
-    "total_allocations": 473589
+    "peak_bytes": 8901476,
+    "leaked_bytes": 3369960,
+    "total_allocations": 1108971
   },
   "builder_sign_avi": {
-    "peak_bytes": 7357514,
-    "leaked_bytes": 3610304,
-    "total_allocations": 34863789
+    "peak_bytes": 7041162,
+    "leaked_bytes": 3369959,
+    "total_allocations": 105383089
   },
   "builder_sign_mp4": {
-    "peak_bytes": 6202809,
-    "leaked_bytes": 3426948,
-    "total_allocations": 1595487
+    "peak_bytes": 6163626,
+    "leaked_bytes": 3369959,
+    "total_allocations": 4502723
   },
   "builder_sign_tiff": {
-    "peak_bytes": 13430248,
-    "leaked_bytes": 3661058,
-    "total_allocations": 5484643
+    "peak_bytes": 13123408,
+    "leaked_bytes": 3369960,
+    "total_allocations": 13221796
   },
   "builder_sign_jpeg_parent_of": {
-    "peak_bytes": 14244270,
-    "leaked_bytes": 3457332,
-    "total_allocations": 1194872
+    "peak_bytes": 14175499,
+    "leaked_bytes": 3370412,
+    "total_allocations": 3049271
   },
   "builder_sign_jpeg_component_of": {
-    "peak_bytes": 14246032,
-    "leaked_bytes": 3457636,
-    "total_allocations": 1217308
+    "peak_bytes": 14176177,
+    "leaked_bytes": 3370939,
+    "total_allocations": 3105680
   },
   "builder_sign_jpeg_parent_and_component": {
-    "peak_bytes": 14602066,
-    "leaked_bytes": 3560736,
-    "total_allocations": 2137378
+    "peak_bytes": 14521625,
+    "leaked_bytes": 3466959,
+    "total_allocations": 5528187
   },
   "builder_sign_jpeg_parent_and_component_mixed_mime": {
-    "peak_bytes": 14553513,
-    "leaked_bytes": 3464495,
-    "total_allocations": 2148041
+    "peak_bytes": 14476222,
+    "leaked_bytes": 3370421,
+    "total_allocations": 6500129
   },
   "builder_sign_jpeg_two_components_same_mime": {
-    "peak_bytes": 14582525,
-    "leaked_bytes": 3560177,
-    "total_allocations": 2127097
+    "peak_bytes": 14584523,
+    "leaked_bytes": 3506901,
+    "total_allocations": 5502714
   },
   "builder_sign_jpeg_two_components_mixed_mime": {
-    "peak_bytes": 14549485,
-    "leaked_bytes": 3462954,
-    "total_allocations": 2137855
+    "peak_bytes": 14473585,
+    "leaked_bytes": 3370669,
+    "total_allocations": 6474343
   },
   "builder_sign_jpeg_archive_roundtrip": {
-    "peak_bytes": 14327685,
-    "leaked_bytes": 3527329,
-    "total_allocations": 1657777
+    "peak_bytes": 14206327,
+    "leaked_bytes": 3389587,
+    "total_allocations": 4247160
+  },
+  "reader_error_no_manifest": {
+    "peak_bytes": 3474039,
+    "leaked_bytes": 3232411,
+    "total_allocations": 303795
+  },
+  "builder_error_invalid_manifest": {
+    "peak_bytes": 3271093,
+    "leaked_bytes": 3211670,
+    "total_allocations": 120613
+  },
+  "reader_string_apis": {
+    "peak_bytes": 3888863,
+    "leaked_bytes": 3254426,
+    "total_allocations": 2806719
+  },
+  "fork_reader_collect": {
+    "peak_bytes": 3760272,
+    "leaked_bytes": 3261839,
+    "total_allocations": 1615850
+  },
+  "fork_contended_mutex": {
+    "peak_bytes": 7585897,
+    "leaked_bytes": 3392170,
+    "total_allocations": 82616370
+  },
+  "fork_thread_local_orphan": {
+    "peak_bytes": 3845601,
+    "leaked_bytes": 3348583,
+    "total_allocations": 1681204
+  },
+  "fork_gc_cycle": {
+    "peak_bytes": 3760522,
+    "leaked_bytes": 3261588,
+    "total_allocations": 1620079
+  },
+  "fork_parent_frees_after_fork": {
+    "peak_bytes": 5959081,
+    "leaked_bytes": 3260442,
+    "total_allocations": 30560082
+  },
+  "fork_child_sys_exit": {
+    "peak_bytes": 3760808,
+    "leaked_bytes": 3261849,
+    "total_allocations": 1624602
+  },
+  "fork_stream_cleanup": {
+    "peak_bytes": 3382176,
+    "leaked_bytes": 3210242,
+    "total_allocations": 111383
   }
 }
