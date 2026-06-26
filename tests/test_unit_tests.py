@@ -431,6 +431,27 @@ class TestReader(unittest.TestCase):
             shutil.copyfile(unsigned, no_ext)
             self.assertIsNone(Reader.try_create(no_ext))
 
+    def test_sub_magic_length_stream_raises(self):
+        # Fewer bytes than a full magic signature cannot be detected.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b"\xff\xd8\xff"))
+
+    def test_preseeked_stream_is_rewound(self):
+        # Detection rewinds the stream
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        stream = io.BytesIO(data)
+        stream.seek(len(data) // 2)
+        with Reader("", stream) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_dng_extension_with_jpeg_bytes_corrected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dng = os.path.join(tmp, "fake.dng")
+            shutil.copyfile(self.testPath, fake_dng)
+            with Reader(fake_dng) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
     def test_stream_read_filepath_as_stream_and_parse(self):
         with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())

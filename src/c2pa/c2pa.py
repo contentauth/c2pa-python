@@ -1973,14 +1973,16 @@ def _validate_and_encode_format(
 ) -> bytes:
     """Validate a MIME type / format string and encode it to UTF-8 bytes.
 
-    An empty string is treated as a request for native format auto-detection:
-    it skips the supported-types check and encodes to empty bytes, letting the
-    native library infer the format from the asset's magic bytes. A non-empty
-    format is still validated against the supported list.
+    A blank format (empty or whitespace-only) is treated as a request for
+    native format auto-detection: it skips the supported-types check and
+    encodes to empty bytes, letting the native library infer the format from
+    the asset's magic bytes. A non-empty format is still validated against the
+    supported list.
 
     Args:
         format_str: The MIME type or format string to validate. Pass an empty
-            string to request auto-detection from the asset's bytes.
+            or whitespace-only string to request auto-detection from the
+            asset's bytes.
         supported_types: List of supported MIME types
         class_name: Name of the calling class (for error messages)
 
@@ -1991,7 +1993,9 @@ def _validate_and_encode_format(
         C2paError.NotSupported: If a non-empty format is not supported
         C2paError.Encoding: If the string contains invalid UTF-8 characters
     """
-    if format_str and format_str.lower() not in supported_types:
+    if not format_str.strip():
+        return b""
+    if format_str.lower() not in supported_types:
         raise C2paError.NotSupported(
             f"{class_name} does not support {format_str}")
     try:
