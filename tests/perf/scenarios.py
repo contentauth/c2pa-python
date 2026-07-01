@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,6 +77,11 @@ MANIFEST_BASE = {
 # Scenario name for progress output, set per-run by run_profile.py via the env.
 _SCENARIO = os.environ.get("PERF_SCENARIO", "")
 
+# When set (by the --timing pass in run_profile.py), _iterate records the wall
+# time of each iteration's loop body and writes the samples to this path on
+# exhaustion. Unset for the memray pass and normal runs, so they pay nothing.
+_TIMING_OUT = os.environ.get("PERF_TIMING_OUT", "")
+
 
 def _iterate(n: int):
     """Yield range(n), printing a progress line to stderr ~every 10%.
@@ -84,15 +90,31 @@ def _iterate(n: int):
     high iteration counts looks hung. The print is gated to ~10 lines total so
     it stays readable at N=100 and N=100000 alike, and writes to stderr so it
     never lands in the captured/parsed metrics output.
+
+    When PERF_TIMING_OUT is set, each iteration's loop-body wall time is timed
+    and the per-iteration seconds are written (JSON list) to that path once the
+    generator is exhausted. A generator resumes its post-`yield` code when the
+    caller requests the next item, so stamping before `yield` and diffing after
+    the resume measures the caller's loop body, not this function's own work.
     """
     step = max(1, n // 10)
     label = f"{_SCENARIO}: " if _SCENARIO else ""
+    timing = bool(_TIMING_OUT)
+    samples: list[float] = []
     for i in range(n):
         if i % step == 0:
             print(f"  {label}iter {i}/{n} ({i * 100 // n if n else 100}%)",
                   file=sys.stderr, flush=True)
-        yield i
+        if timing:
+            start = time.perf_counter()
+            yield i
+            samples.append(time.perf_counter() - start)
+        else:
+            yield i
     print(f"  {label}iter {n}/{n} (100%)", file=sys.stderr, flush=True)
+    if timing:
+        with open(_TIMING_OUT, "w", encoding="utf-8") as fh:
+            json.dump(samples, fh)
 
 
 def _make_signer() -> Signer:

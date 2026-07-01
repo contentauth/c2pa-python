@@ -2,13 +2,18 @@ FROM python:3.10.20-slim-bookworm
 
 WORKDIR /workspace
 
-# libunwind for memray native stack unwinding.
-# python3-dbg + libc6-dbg supply the debug symbols memray needs to resolve
-# native (C) frames; without them --native flamegraphs warn "No debug
-# information was found for the Python interpreter" and show unnamed frames.
+# libunwind for memray native stack unwinding; libc6-dbg gives memray the glibc
+# debug symbols to name libc native frames.
+# NOTE: no python3-dbg here. The python:3.x-slim base ships its OWN interpreter
+# at /usr/local (built by python.org, stripped), while Debian's python3-dbg is
+# for the distro python (a different 3.11 build), so it cannot resolve this
+# interpreter. That mismatch leaves the harmless "No debug information was found
+# for the Python interpreter" warning on --native runs: interpreter C frames go
+# unnamed, but all metrics (peak/leaked/allocs) are unaffected. Resolving it
+# would mean changing the base image (see ubuntu-*-perf-Dockerfile, which use
+# the distro python and so can use python3-dbg).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libunwind-dev \
-    python3-dbg \
     libc6-dbg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
