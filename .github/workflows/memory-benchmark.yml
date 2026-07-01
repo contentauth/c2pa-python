@@ -26,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build the perf image.
+      - name: Build memray perf image
+        run: make perf-image-rebuild
+
       # Uses the Dockerfile environment for repeatable runs.
       - name: Run memray memory benchmark
         run: make memory-use-bench
