@@ -2,9 +2,14 @@ FROM python:3.10.20-slim-bookworm
 
 WORKDIR /workspace
 
-# libunwind for memray native stack unwinding
+# libunwind for memray native stack unwinding.
+# python3-dbg + libc6-dbg supply the debug symbols memray needs to resolve
+# native (C) frames; without them --native flamegraphs warn "No debug
+# information was found for the Python interpreter" and show unnamed frames.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libunwind-dev \
+    python3-dbg \
+    libc6-dbg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

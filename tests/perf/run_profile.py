@@ -197,8 +197,8 @@ def _write_github_summary(results: dict, baseline: dict) -> None:
         f"Iterations: {ITERATIONS} · threshold: +{(THRESHOLD - 1) * 100:.0f}%"
         f"{f' · env: {PERF_ENV}' if PERF_ENV else ''}",
         "",
-        "| scenario | peak | leaked | allocs | peak Δ% | leaked Δ% | status |",
-        "|----------|------|--------|--------|---------|-----------|--------|",
+        "| scenario | peak | allocs | peak Δ% | memory used Δ% | status |",
+        "|----------|------|--------|---------|----------------|--------|",
     ]
     for name, m in results.items():
         b = baseline.get(name, {}) if baseline else {}
@@ -210,7 +210,7 @@ def _write_github_summary(results: dict, baseline: dict) -> None:
         )
         status = "REGRESSED" if regressed else "ok"
         lines.append(
-            f"| {name} | {_fmt(m['peak_bytes'])} | {_fmt(m['leaked_bytes'])} "
+            f"| {name} | {_fmt(m['peak_bytes'])} "
             f"| {m['total_allocations']} | {_delta_pct(m['peak_bytes'], peak_base)} "
             f"| {_delta_pct(m['leaked_bytes'], leaked_base)} | {status} |"
         )
