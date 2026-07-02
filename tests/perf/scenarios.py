@@ -104,6 +104,14 @@ def _make_signer() -> Signer:
         private_key=key,
         ta_url=b"http://timestamp.digicert.com",
     )
+    # Each sign call blocks on a round-trip to the timestamp authority. The
+    # CPU harness sets PERF_DISABLE_TSA=1 so its timings measure code, not
+    # network; the memory harness leaves it unset (TSA on). The native lib
+    # treats a NULL ta_url as "no timestamping" (an empty string is rejected
+    # as an invalid URL), and the C2paSignerInfo constructor only accepts
+    # str/bytes, so the field is nulled after construction.
+    if os.environ.get("PERF_DISABLE_TSA") == "1":
+        info.ta_url = None
     return Signer.from_info(info)
 
 

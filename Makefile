@@ -62,10 +62,6 @@ test:
 	$(PYTHON) ./tests/test_unit_tests.py
 	$(PYTHON) ./tests/test_unit_tests_threaded.py
 
-# Runs benchmarks in the venv
-benchmark:
-	$(PYTHON) -m pytest tests/benchmark.py -v
-
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
 test-local-wheel-build:
@@ -141,11 +137,17 @@ build-from-source:
 docs:
 	$(PYTHON) scripts/generate_api_docs.py
 
-# Memory profiling with memray (runs in Docker, reports go to tests/perf/reports/)
-# More details for usage are in tests/perf/README.md
+# Performance benchmarks (run in Docker):
+# - memory (memray): reports go to tests/perf/memory/reports/, docs in tests/perf/memory/README.md
+# - cpu (py-spy): reports go to tests/perf/cpu/reports/, docs in tests/perf/cpu/README.md
 PERF_ENV ?= python-3.12-slim
 MEMRAY_ITERATIONS ?= 100
 MEMRAY_THRESHOLD ?= 1.1
+CPU_ITERATIONS ?= 100
+CPU_THRESHOLD ?= 1.25
+CPU_MODE ?= all
+CPU_REPEATS ?= 0
+PYSPY_RATE ?= 100
 SCENARIO ?=
 SCENARIO_ARG := $(if $(SCENARIO),--scenario $(SCENARIO),)
 # In CI, use en vars to write the report to the job run
@@ -156,23 +158,36 @@ GH_SUMMARY_MOUNT := $(if $(GITHUB_STEP_SUMMARY),-v $(GITHUB_STEP_SUMMARY):$(GITH
 # change (use perf-image-rebuild for that).
 .PHONY: perf-image
 perf-image:
-	@docker image inspect c2pa-memray-$(PERF_ENV) >/dev/null 2>&1 || \
-		docker build -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
+	@docker image inspect c2pa-perf-$(PERF_ENV) >/dev/null 2>&1 || \
+		docker build -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-perf-$(PERF_ENV) .
 
-# Force a clean rebuild of the memray perf Docker image
+# Force a clean rebuild of the perf Docker image (shared by memory and cpu benchmarks)
 .PHONY: perf-image-rebuild
 perf-image-rebuild:
-	docker build --no-cache --pull -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
+	docker build --no-cache --pull -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-perf-$(PERF_ENV) .
 
 # Runs memory benchmarks. Pre-requisite: Docker image built using `make perf-image-rebuild`.
 .PHONY: memory-use-bench
 memory-use-bench:
-	docker run --rm -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
+	docker run --rm -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-perf-$(PERF_ENV) python -m tests.perf.memory.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
 	@echo ""
-	@echo "Reports written to tests/perf/reports/"
-	@echo "Open tests/perf/reports/<scenario>-{peak,leaks,temporary}.html in a browser"
+	@echo "Reports written to tests/perf/memory/reports/"
+	@echo "Open tests/perf/memory/reports/<scenario>-{peak,leaks,temporary}.html in a browser"
 
 .PHONY: clean-memory-perf-reports
 clean-memory-perf-reports:
-	rm -f tests/perf/reports/*.html tests/perf/reports/*.bin
-	@echo "Cleared tests/perf/reports/"
+	rm -f tests/perf/memory/reports/*.html tests/perf/memory/reports/*.bin
+	@echo "Cleared tests/perf/memory/reports/"
+
+# Runs CPU benchmarks (timing metrics+py-spy flamegraphs).
+# Pre-requisite: Docker image built using `make perf-image-rebuild`.
+.PHONY: cpu-bench
+cpu-bench:
+	docker run --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e CPU_ITERATIONS=$(CPU_ITERATIONS) -e CPU_THRESHOLD=$(CPU_THRESHOLD) -e CPU_REPEATS=$(CPU_REPEATS) -e PERF_DISABLE_TSA -e PYSPY_RATE=$(PYSPY_RATE) -e PYSPY_FORMAT -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-perf-$(PERF_ENV) python -m tests.perf.cpu.run_profile --mode $(CPU_MODE) $(SCENARIO_ARG) $(PERF_ARGS)
+	@echo ""
+	@echo "Reports written to tests/perf/cpu/reports/"
+
+.PHONY: clean-cpu-perf-reports
+clean-cpu-perf-reports:
+	rm -f tests/perf/cpu/reports/*.svg tests/perf/cpu/reports/*.speedscope.json
+	@echo "Cleared tests/perf/cpu/reports/"

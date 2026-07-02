@@ -1,0 +1,67 @@
+name: Python SDK py-spy CPU benchmark
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: read
+
+jobs:
+  # Timing and profiling run as parallel jobs on separate runners so py-spy
+  # sampling never contends with the timed run.
+  cpu-timing:
+    name: CPU benchmark timing
+    # Needs to match the arch the baseline was generated on.
+    runs-on: ubuntu-24.04-arm
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'check-cpu-benchmark') &&
+      (
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'OWNER'
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the perf image (shared with the memory benchmark).
+      - name: Build perf image
+        run: make perf-image-rebuild
+
+      # Uses the Dockerfile environment for repeatable runs. Report-only:
+      # baseline deltas land in this job's step summary, exit code stays 0.
+      - name: Run CPU timing benchmark
+        run: make cpu-bench CPU_MODE=timing
+
+  cpu-profile:
+    name: CPU benchmark flamegraphs
+    runs-on: ubuntu-24.04-arm
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'check-cpu-benchmark') &&
+      (
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'OWNER'
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build perf image
+        run: make perf-image-rebuild
+
+      - name: Run py-spy CPU profiles
+        run: make cpu-bench CPU_MODE=profile
+
+      - name: Upload CPU flamegraphs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyspy-cpu-flamegraphs
+          path: |
+            tests/perf/cpu/reports/*.svg
+            tests/perf/cpu/reports/*.speedscope.json
+          if-no-files-found: warn

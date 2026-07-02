@@ -20,7 +20,7 @@ For each scenario in scenarios.SCENARIOS this script:
   scenarios, so it is informational, not a gate.
 
 Usage:
-    python -m tests.perf.run_profile [--update-baseline]
+    python -m tests.perf.memory.run_profile [--update-baseline]
 
 Environment variables:
 - MEMRAY_ITERATIONS: number of times each scenario loops (default: 100)
@@ -44,6 +44,7 @@ import memray
 from tests.perf.scenarios import SCENARIO_NAMES
 
 HERE = Path(__file__).parent
+REPO_ROOT = HERE.parent.parent.parent
 REPORTS_DIR = HERE / "reports"
 BASELINE_FILE = HERE / "baseline.json"
 
@@ -54,7 +55,7 @@ PERF_ENV = os.environ.get("PERF_ENV", "")
 
 def _run_scenario_under_memray(name: str, bin_path: Path) -> None:
     """Spawn a subprocess that runs one scenario under memray --native."""
-    repo_root = HERE.parent.parent
+    repo_root = REPO_ROOT
     script = f"""
 import sys
 sys.path.insert(0, "{repo_root}")
@@ -156,7 +157,7 @@ def _build_meta() -> dict:
     """
     native_version = ""
     try:
-        native_version = (HERE.parent.parent / "c2pa-native-version.txt").read_text().strip()
+        native_version = (REPO_ROOT / "c2pa-native-version.txt").read_text().strip()
     except OSError:
         pass
     return {

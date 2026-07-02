@@ -124,5 +124,7 @@ src/c2pa/libs/
 !tests/fixtures/*.key
 
 # Memory profiling reports
-tests/perf/reports/*.html
-tests/perf/reports/*.bin
+tests/perf/memory/reports/*.html
+tests/perf/memory/reports/*.bin
+tests/perf/cpu/reports/*.svg
+tests/perf/cpu/reports/*.speedscope.json

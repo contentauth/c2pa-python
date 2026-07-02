@@ -22,10 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-RUN pip3 install --no-cache-dir --break-system-packages memray==1.19.3 requests==2.34.2
+RUN pip3 install --no-cache-dir --break-system-packages memray==1.19.3 py-spy==0.4.2 requests==2.34.2
 
 COPY tests/perf/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "-m", "tests.perf.run_profile"]
+CMD ["python", "-m", "tests.perf.memory.run_profile"]

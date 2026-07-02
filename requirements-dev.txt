@@ -6,7 +6,6 @@ toml==0.10.2  # For reading pyproject.toml files
 
 # Testing dependencies
 pytest>=8.1.0
-pytest-benchmark>=5.1.0
 
 # for downloading the library artifacts
 requests>=2.0.0

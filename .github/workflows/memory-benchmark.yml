@@ -40,5 +40,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: memray-flamegraphs
-          path: tests/perf/reports/*.html
+          path: tests/perf/memory/reports/*.html
           if-no-files-found: warn

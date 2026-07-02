@@ -1,0 +1,225 @@
+{
+  "_meta": {
+    "pyspy_version": "0.4.2",
+    "python_version": "3.12.13",
+    "c2pa_native_version": "c2pa-v0.89.0",
+    "iterations": 100,
+    "perf_env": "python-3.12-slim",
+    "arch": "aarch64"
+  },
+  "reader_jpeg_legacy": {
+    "wall_seconds": 0.2208,
+    "cpu_seconds": 0.2163,
+    "children_cpu_seconds": 0.0
+  },
+  "reader_jpeg_with_context": {
+    "wall_seconds": 0.2208,
+    "cpu_seconds": 0.2165,
+    "children_cpu_seconds": 0.0
+  },
+  "reader_manifest_data_context": {
+    "wall_seconds": 0.0957,
+    "cpu_seconds": 0.0968,
+    "children_cpu_seconds": 0.0
+  },
+  "reader_mp4": {
+    "wall_seconds": 0.4446,
+    "cpu_seconds": 0.4392,
+    "children_cpu_seconds": 0.0
+  },
+  "reader_wav": {
+    "wall_seconds": 0.1413,
+    "cpu_seconds": 0.1272,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_legacy": {
+    "wall_seconds": 1.4077,
+    "cpu_seconds": 1.4082,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_with_context": {
+    "wall_seconds": 1.3963,
+    "cpu_seconds": 1.3971,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_png_legacy": {
+    "wall_seconds": 1.8313,
+    "cpu_seconds": 1.8313,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_png_with_context": {
+    "wall_seconds": 1.7863,
+    "cpu_seconds": 1.7869,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_parallel_split_pool": {
+    "wall_seconds": 0.3109,
+    "cpu_seconds": 2.0177,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_parallel_split_barrier": {
+    "wall_seconds": 0.3068,
+    "cpu_seconds": 2.0781,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_png_parallel_split_pool": {
+    "wall_seconds": 0.6139,
+    "cpu_seconds": 2.8088,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_png_parallel_split_barrier": {
+    "wall_seconds": 0.6298,
+    "cpu_seconds": 2.8269,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_gif": {
+    "wall_seconds": 34.1958,
+    "cpu_seconds": 34.1939,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_heic": {
+    "wall_seconds": 0.1297,
+    "cpu_seconds": 0.1358,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_m4a": {
+    "wall_seconds": 0.3892,
+    "cpu_seconds": 0.395,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_webp": {
+    "wall_seconds": 2.0344,
+    "cpu_seconds": 2.0337,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_avi": {
+    "wall_seconds": 1.6515,
+    "cpu_seconds": 1.6517,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_mp4": {
+    "wall_seconds": 0.212,
+    "cpu_seconds": 0.2177,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_tiff": {
+    "wall_seconds": 3.422,
+    "cpu_seconds": 3.4215,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_parent_of": {
+    "wall_seconds": 3.7998,
+    "cpu_seconds": 3.8144,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_component_of": {
+    "wall_seconds": 3.8204,
+    "cpu_seconds": 3.8368,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_parent_and_component": {
+    "wall_seconds": 8.2377,
+    "cpu_seconds": 5.8484,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_parent_and_component_mixed_mime": {
+    "wall_seconds": 5.512,
+    "cpu_seconds": 5.5281,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_two_components_same_mime": {
+    "wall_seconds": 8.0985,
+    "cpu_seconds": 5.8208,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_two_components_mixed_mime": {
+    "wall_seconds": 5.5014,
+    "cpu_seconds": 5.5182,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_archive_roundtrip": {
+    "wall_seconds": 3.8633,
+    "cpu_seconds": 3.8827,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_to_archive_with_ingredient": {
+    "wall_seconds": 2.3895,
+    "cpu_seconds": 2.4024,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": {
+    "wall_seconds": 4.1713,
+    "cpu_seconds": 4.2044,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_write_ingredient_archive": {
+    "wall_seconds": 2.3881,
+    "cpu_seconds": 2.401,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_add_ingredient_from_archive": {
+    "wall_seconds": 1.7888,
+    "cpu_seconds": 1.8066,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_ingredient_archive_roundtrip": {
+    "wall_seconds": 4.1485,
+    "cpu_seconds": 4.181,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_sign_jpeg_two_ingredient_archives": {
+    "wall_seconds": 1.8626,
+    "cpu_seconds": 1.8852,
+    "children_cpu_seconds": 0.0
+  },
+  "reader_error_no_manifest": {
+    "wall_seconds": 0.0096,
+    "cpu_seconds": 0.0079,
+    "children_cpu_seconds": 0.0
+  },
+  "builder_error_invalid_manifest": {
+    "wall_seconds": 0.0028,
+    "cpu_seconds": 0.0016,
+    "children_cpu_seconds": 0.0
+  },
+  "reader_string_apis": {
+    "wall_seconds": 0.3259,
+    "cpu_seconds": 0.3286,
+    "children_cpu_seconds": 0.0
+  },
+  "fork_reader_collect": {
+    "wall_seconds": 0.559,
+    "cpu_seconds": 0.2634,
+    "children_cpu_seconds": 0.2941
+  },
+  "fork_contended_mutex": {
+    "wall_seconds": 7.2526,
+    "cpu_seconds": 24.1507,
+    "children_cpu_seconds": 2.1624
+  },
+  "fork_thread_local_orphan": {
+    "wall_seconds": 0.577,
+    "cpu_seconds": 0.2764,
+    "children_cpu_seconds": 0.3
+  },
+  "fork_gc_cycle": {
+    "wall_seconds": 0.694,
+    "cpu_seconds": 0.3994,
+    "children_cpu_seconds": 0.2928
+  },
+  "fork_parent_frees_after_fork": {
+    "wall_seconds": 4.5677,
+    "cpu_seconds": 4.4903,
+    "children_cpu_seconds": 0.038
+  },
+  "fork_child_sys_exit": {
+    "wall_seconds": 1.0942,
+    "cpu_seconds": 0.28,
+    "children_cpu_seconds": 0.8111
+  },
+  "fork_stream_cleanup": {
+    "wall_seconds": 0.2973,
+    "cpu_seconds": 0.02,
+    "children_cpu_seconds": 0.2834
+  }
+}
