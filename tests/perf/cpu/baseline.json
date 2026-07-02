@@ -8,168 +8,168 @@
     "arch": "aarch64"
   },
   "reader_jpeg_legacy": {
-    "wall_seconds": 0.2208,
-    "cpu_seconds": 0.2163,
+    "wall_seconds": 0.2247,
+    "cpu_seconds": 0.2198,
     "children_cpu_seconds": 0.0
   },
   "reader_jpeg_with_context": {
-    "wall_seconds": 0.2208,
-    "cpu_seconds": 0.2165,
+    "wall_seconds": 0.2264,
+    "cpu_seconds": 0.2216,
     "children_cpu_seconds": 0.0
   },
   "reader_manifest_data_context": {
-    "wall_seconds": 0.0957,
-    "cpu_seconds": 0.0968,
+    "wall_seconds": 0.0965,
+    "cpu_seconds": 0.0977,
     "children_cpu_seconds": 0.0
   },
   "reader_mp4": {
-    "wall_seconds": 0.4446,
-    "cpu_seconds": 0.4392,
+    "wall_seconds": 0.4531,
+    "cpu_seconds": 0.4476,
     "children_cpu_seconds": 0.0
   },
   "reader_wav": {
-    "wall_seconds": 0.1413,
-    "cpu_seconds": 0.1272,
+    "wall_seconds": 0.1409,
+    "cpu_seconds": 0.1266,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_legacy": {
-    "wall_seconds": 1.4077,
-    "cpu_seconds": 1.4082,
+    "wall_seconds": 1.4478,
+    "cpu_seconds": 1.4483,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_with_context": {
-    "wall_seconds": 1.3963,
-    "cpu_seconds": 1.3971,
+    "wall_seconds": 1.4488,
+    "cpu_seconds": 1.4493,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_png_legacy": {
-    "wall_seconds": 1.8313,
-    "cpu_seconds": 1.8313,
+    "wall_seconds": 1.8338,
+    "cpu_seconds": 1.8343,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_png_with_context": {
-    "wall_seconds": 1.7863,
-    "cpu_seconds": 1.7869,
+    "wall_seconds": 1.8371,
+    "cpu_seconds": 1.8377,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_parallel_split_pool": {
-    "wall_seconds": 0.3109,
-    "cpu_seconds": 2.0177,
+    "wall_seconds": 0.3059,
+    "cpu_seconds": 2.0522,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_parallel_split_barrier": {
-    "wall_seconds": 0.3068,
-    "cpu_seconds": 2.0781,
+    "wall_seconds": 0.3052,
+    "cpu_seconds": 2.06,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_png_parallel_split_pool": {
-    "wall_seconds": 0.6139,
-    "cpu_seconds": 2.8088,
+    "wall_seconds": 0.6215,
+    "cpu_seconds": 2.8177,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_png_parallel_split_barrier": {
-    "wall_seconds": 0.6298,
-    "cpu_seconds": 2.8269,
+    "wall_seconds": 0.627,
+    "cpu_seconds": 2.8222,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_gif": {
-    "wall_seconds": 34.1958,
-    "cpu_seconds": 34.1939,
+    "wall_seconds": 34.1829,
+    "cpu_seconds": 34.1822,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_heic": {
-    "wall_seconds": 0.1297,
-    "cpu_seconds": 0.1358,
+    "wall_seconds": 0.1322,
+    "cpu_seconds": 0.138,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_m4a": {
-    "wall_seconds": 0.3892,
-    "cpu_seconds": 0.395,
+    "wall_seconds": 0.4129,
+    "cpu_seconds": 0.4182,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_webp": {
-    "wall_seconds": 2.0344,
-    "cpu_seconds": 2.0337,
+    "wall_seconds": 2.0369,
+    "cpu_seconds": 2.0369,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_avi": {
-    "wall_seconds": 1.6515,
-    "cpu_seconds": 1.6517,
+    "wall_seconds": 1.6338,
+    "cpu_seconds": 1.6347,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_mp4": {
-    "wall_seconds": 0.212,
-    "cpu_seconds": 0.2177,
+    "wall_seconds": 0.2142,
+    "cpu_seconds": 0.2207,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_tiff": {
-    "wall_seconds": 3.422,
-    "cpu_seconds": 3.4215,
+    "wall_seconds": 3.4209,
+    "cpu_seconds": 3.4216,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_parent_of": {
-    "wall_seconds": 3.7998,
-    "cpu_seconds": 3.8144,
+    "wall_seconds": 3.8125,
+    "cpu_seconds": 3.8276,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_component_of": {
-    "wall_seconds": 3.8204,
-    "cpu_seconds": 3.8368,
+    "wall_seconds": 3.8186,
+    "cpu_seconds": 3.8342,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_parent_and_component": {
-    "wall_seconds": 8.2377,
-    "cpu_seconds": 5.8484,
+    "wall_seconds": 7.295,
+    "cpu_seconds": 5.8927,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_parent_and_component_mixed_mime": {
-    "wall_seconds": 5.512,
-    "cpu_seconds": 5.5281,
+    "wall_seconds": 5.5439,
+    "cpu_seconds": 5.5601,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_two_components_same_mime": {
-    "wall_seconds": 8.0985,
-    "cpu_seconds": 5.8208,
+    "wall_seconds": 7.2159,
+    "cpu_seconds": 5.8835,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_two_components_mixed_mime": {
-    "wall_seconds": 5.5014,
-    "cpu_seconds": 5.5182,
+    "wall_seconds": 5.5449,
+    "cpu_seconds": 5.5602,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_archive_roundtrip": {
-    "wall_seconds": 3.8633,
-    "cpu_seconds": 3.8827,
+    "wall_seconds": 3.8909,
+    "cpu_seconds": 3.9107,
     "children_cpu_seconds": 0.0
   },
   "builder_to_archive_with_ingredient": {
-    "wall_seconds": 2.3895,
-    "cpu_seconds": 2.4024,
+    "wall_seconds": 2.4093,
+    "cpu_seconds": 2.4227,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": {
-    "wall_seconds": 4.1713,
-    "cpu_seconds": 4.2044,
+    "wall_seconds": 4.2106,
+    "cpu_seconds": 4.2444,
     "children_cpu_seconds": 0.0
   },
   "builder_write_ingredient_archive": {
-    "wall_seconds": 2.3881,
-    "cpu_seconds": 2.401,
+    "wall_seconds": 2.408,
+    "cpu_seconds": 2.4205,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_add_ingredient_from_archive": {
-    "wall_seconds": 1.7888,
-    "cpu_seconds": 1.8066,
+    "wall_seconds": 1.799,
+    "cpu_seconds": 1.8156,
     "children_cpu_seconds": 0.0
   },
   "builder_ingredient_archive_roundtrip": {
-    "wall_seconds": 4.1485,
-    "cpu_seconds": 4.181,
+    "wall_seconds": 4.1928,
+    "cpu_seconds": 4.2245,
     "children_cpu_seconds": 0.0
   },
   "builder_sign_jpeg_two_ingredient_archives": {
-    "wall_seconds": 1.8626,
-    "cpu_seconds": 1.8852,
+    "wall_seconds": 1.8996,
+    "cpu_seconds": 1.922,
     "children_cpu_seconds": 0.0
   },
   "reader_error_no_manifest": {
@@ -178,48 +178,48 @@
     "children_cpu_seconds": 0.0
   },
   "builder_error_invalid_manifest": {
-    "wall_seconds": 0.0028,
+    "wall_seconds": 0.0029,
     "cpu_seconds": 0.0016,
     "children_cpu_seconds": 0.0
   },
   "reader_string_apis": {
-    "wall_seconds": 0.3259,
-    "cpu_seconds": 0.3286,
+    "wall_seconds": 0.3305,
+    "cpu_seconds": 0.3332,
     "children_cpu_seconds": 0.0
   },
   "fork_reader_collect": {
-    "wall_seconds": 0.559,
-    "cpu_seconds": 0.2634,
-    "children_cpu_seconds": 0.2941
+    "wall_seconds": 0.5732,
+    "cpu_seconds": 0.2697,
+    "children_cpu_seconds": 0.302
   },
   "fork_contended_mutex": {
-    "wall_seconds": 7.2526,
-    "cpu_seconds": 24.1507,
-    "children_cpu_seconds": 2.1624
+    "wall_seconds": 7.4983,
+    "cpu_seconds": 24.5089,
+    "children_cpu_seconds": 2.213
   },
   "fork_thread_local_orphan": {
-    "wall_seconds": 0.577,
-    "cpu_seconds": 0.2764,
-    "children_cpu_seconds": 0.3
+    "wall_seconds": 0.5863,
+    "cpu_seconds": 0.2787,
+    "children_cpu_seconds": 0.3075
   },
   "fork_gc_cycle": {
-    "wall_seconds": 0.694,
-    "cpu_seconds": 0.3994,
-    "children_cpu_seconds": 0.2928
+    "wall_seconds": 0.7053,
+    "cpu_seconds": 0.4032,
+    "children_cpu_seconds": 0.3003
   },
   "fork_parent_frees_after_fork": {
-    "wall_seconds": 4.5677,
-    "cpu_seconds": 4.4903,
-    "children_cpu_seconds": 0.038
+    "wall_seconds": 4.5946,
+    "cpu_seconds": 4.5223,
+    "children_cpu_seconds": 0.0401
   },
   "fork_child_sys_exit": {
-    "wall_seconds": 1.0942,
-    "cpu_seconds": 0.28,
-    "children_cpu_seconds": 0.8111
+    "wall_seconds": 1.1108,
+    "cpu_seconds": 0.2825,
+    "children_cpu_seconds": 0.8249
   },
   "fork_stream_cleanup": {
-    "wall_seconds": 0.2973,
-    "cpu_seconds": 0.02,
-    "children_cpu_seconds": 0.2834
+    "wall_seconds": 0.3052,
+    "cpu_seconds": 0.0209,
+    "children_cpu_seconds": 0.2905
   }
 }
