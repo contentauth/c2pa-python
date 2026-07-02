@@ -65,7 +65,7 @@ The `cpu-bench` target runs the container with `--cap-add SYS_PTRACE --security-
 
 ## Interpreting the flamegraphs
 
-Profiles show Python frames only. Time spent inside the Rust `libc2pa_c` library is attributed to the Python frame that made the FFI call. Fast scenarios can produce thin profiles: raising `PYSPY_RATE` or `CPU_ITERATIONS` will lead to getting more samples.
+Profiles show Python frames only. Time spent inside the Rust `libc2pa_c` library is attributed to the Python frame that made the C FFI call. Fast scenarios can produce thin profiles: raising `PYSPY_RATE` or `CPU_ITERATIONS` will lead to getting more samples.
 
 ## Reading the CI/CD report
 
