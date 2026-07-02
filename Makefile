@@ -62,10 +62,6 @@ test:
 	$(PYTHON) ./tests/test_unit_tests.py
 	$(PYTHON) ./tests/test_unit_tests_threaded.py
 
-# Runs benchmarks in the venv
-benchmark:
-	$(PYTHON) -m pytest tests/benchmark.py -v
-
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
 test-local-wheel-build:
@@ -148,10 +144,26 @@ MEMRAY_ITERATIONS ?= 100
 MEMRAY_THRESHOLD ?= 1.1
 SCENARIO ?=
 SCENARIO_ARG := $(if $(SCENARIO),--scenario $(SCENARIO),)
+# In CI, use en vars to write the report to the job run
+GH_SUMMARY_MOUNT := $(if $(GITHUB_STEP_SUMMARY),-v $(GITHUB_STEP_SUMMARY):$(GITHUB_STEP_SUMMARY),)
+# Build the perf Docker image only if it is missing. The repo is bind-mounted at
+# run time and the Dockerfile only COPYs requirements*.txt, so latest Python code
+# is picked up without a rebuild; rebuild is only needed when deps/Dockerfile
+# change (use perf-image-rebuild for that).
+.PHONY: perf-image
+perf-image:
+	@docker image inspect c2pa-memray-$(PERF_ENV) >/dev/null 2>&1 || \
+		docker build -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
+
+# Force a clean rebuild of the memray perf Docker image
+.PHONY: perf-image-rebuild
+perf-image-rebuild:
+	docker build --no-cache --pull -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
+
+# Runs memory benchmarks. Pre-requisite: Docker image built using `make perf-image-rebuild`.
 .PHONY: memory-use-bench
 memory-use-bench:
-	docker build -f tests/perf/Dockerfiles/$(PERF_ENV)-perf-Dockerfile -t c2pa-memray-$(PERF_ENV) .
-	docker run --rm -v $(PWD):/workspace -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
+	docker run --rm -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e MEMRAY_ITERATIONS=$(MEMRAY_ITERATIONS) -e MEMRAY_THRESHOLD=$(MEMRAY_THRESHOLD) -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-memray-$(PERF_ENV) python -m tests.perf.run_profile $(SCENARIO_ARG) $(PERF_ARGS)
 	@echo ""
 	@echo "Reports written to tests/perf/reports/"
 	@echo "Open tests/perf/reports/<scenario>-{peak,leaks,temporary}.html in a browser"
