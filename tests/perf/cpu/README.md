@@ -82,6 +82,56 @@ Run with `--update-baseline` on. Single-scenario updates merge into the existing
 
 Without a committed `baseline.json`, a run creates one and reports no deltas.
 
+## Reading the CI/CD report
+
+The step summary table compares each scenario's current metrics against `baseline.json`, showing deltas (Δ) as percentages. Rows exceeding the drift threshold (default +25%) are marked with `drift` status in the rightmost column.
+
+### Table columns
+
+| Column | Meaning |
+| --- | --- |
+| `scenario` | Scenario name. |
+| `wall` | Wall-clock time (seconds), across all iterations. |
+| `cpu` | CPU time (seconds), process-wide; excludes I/O, sleep, time in child processes. |
+| `cpu/iter` | Per-iteration CPU cost (cpu ÷ iterations). |
+| `child cpu` | CPU burned in forked child processes (`fork_*` scenarios). Parent CPU time does not include this. |
+| `wall Δ%` | Wall-clock drift: `(current - baseline) / baseline × 100`. Exceeds threshold → marked `drift`. |
+| `cpu Δ%` | CPU time drift (same calculation). Informational only; does not trigger drift. |
+| `status` | `ok` if within threshold; `drift` if over +25%. Informational; never fails the run. |
+
+### Common sources of large drifts (>25%)
+
+**Hardware mismatch**: Baseline generated on aarch64 ARM CPU; new run on x86_64 or different CPU generation. Check baseline `_meta.arch` (e.g., `aarch64`); if it doesn't match your runner's `platform.machine()`, re-baseline.
+
+**Native library version mismatch**: `_meta.c2pa_native_version` changed (e.g., c2pa-v0.89.0 → c2pa-v0.90.0). Native library performance can shift between releases, especially for asset hashing (GIF parsing, ingredient re-encoding). Re-baseline with `make cpu-bench PERF_ARGS=--update-baseline`.
+
+**CI runner contention**: Shared runners see ±10–20% wall-clock variance as normal. Burst load (other jobs, system activity) can push drifts to 50–80%. A single run with high drift is often temporary; re-run to confirm.
+
+**TSA re-enabled**: By default, CPU runs disable timestamp-authority network calls (`PERF_DISABLE_TSA=1`). If re-enabled (`PERF_DISABLE_TSA=0`), signing scenarios add unpredictable network latency (typically +5–10 seconds per run, high variance). This looks like a CPU regression but is external latency.
+
+### When drifts indicate a real problem
+
+**Both `cpu_seconds` and `wall_seconds` drift together (same direction/magnitude)**, and the environment matches the baseline (`_meta.arch` = `platform.machine()`, native lib version unchanged) is a possible real CPU regression. Compare the scenario's logic against recent code changes.
+
+**Only `wall_seconds` drifts; `cpu_seconds` is stable** is due to I/O contention or CI runner load, not a CPU regression.
+
+**Only `cpu_seconds` drifts; `wall_seconds` is stable** should be rare, likely a measurement artifact or GC timing variation in a single run.
+
+### When to update the baseline
+
+**Native library upgrade**: `c2pa-native-version.txt` changed.
+
+**Environment change**: Different `PERF_ENV`, CPU architecture, or Python version.
+
+**Parameter change**: Modified `CPU_ITERATIONS` (e.g., from 100 to 200).
+
+Command:
+```bash
+make cpu-bench PERF_ARGS=--update-baseline
+```
+
+This rewrites `baseline.json` with current metrics and metadata (`_meta`). Commit the updated baseline alongside your code changes.
+
 ## CI
 
 `.github/workflows/cpu-benchmark.yml` runs on PRs labeled `check-cpu-benchmark`, on `ubuntu-24.04-arm` to match the baseline arch.
