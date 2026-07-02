@@ -144,7 +144,6 @@ PERF_ENV ?= python-3.12-slim
 MEMRAY_ITERATIONS ?= 100
 MEMRAY_THRESHOLD ?= 1.1
 CPU_ITERATIONS ?= 100
-CPU_THRESHOLD ?= 1.25
 CPU_MODE ?= all
 CPU_REPEATS ?= 0
 PYSPY_RATE ?= 100
@@ -183,7 +182,7 @@ clean-memory-perf-reports:
 # Pre-requisite: Docker image built using `make perf-image-rebuild`.
 .PHONY: cpu-bench
 cpu-bench:
-	docker run --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e CPU_ITERATIONS=$(CPU_ITERATIONS) -e CPU_THRESHOLD=$(CPU_THRESHOLD) -e CPU_REPEATS=$(CPU_REPEATS) -e PERF_DISABLE_TSA -e PYSPY_RATE=$(PYSPY_RATE) -e PYSPY_FORMAT -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-perf-$(PERF_ENV) python -m tests.perf.cpu.run_profile --mode $(CPU_MODE) $(SCENARIO_ARG) $(PERF_ARGS)
+	docker run --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e CPU_ITERATIONS=$(CPU_ITERATIONS) -e CPU_REPEATS=$(CPU_REPEATS) -e PERF_DISABLE_TSA -e PYSPY_RATE=$(PYSPY_RATE) -e PYSPY_FORMAT -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-perf-$(PERF_ENV) python -m tests.perf.cpu.run_profile --mode $(CPU_MODE) $(SCENARIO_ARG) $(PERF_ARGS)
 	@echo ""
 	@echo "Reports written to tests/perf/cpu/reports/"
 

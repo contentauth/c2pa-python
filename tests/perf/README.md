@@ -20,7 +20,7 @@ Each framework focuses on different indicators:
 - **`memory/`** tracks memory usage, not time: peak RSS, leaks, temporary-allocation churn. Catches a change that holds more memory at once or leaks with iteration count, even if it runs just as fast.
 - **`cpu/`** tracks time, not memory usage: wall/CPU seconds plus a flamegraph of where cycles go. Catches a slowdown and the call site causing it, even if memory use is unchanged.
 
-Both run inside the Docker perf image (`../Dockerfiles/`), with a fixed Python version, fixed OS, fixed dependency set, and no other host processes competing for CPU/memory. That isolation is why they carry a committed `baseline.json`: same environment every run, so a delta means the code changed, not that the host did.
+Both run inside the Docker perf image (`../Dockerfiles/`), with a fixed Python version, fixed OS, and fixed dependency set. `memory/` carries a committed `baseline.json` and gates CI on it: memory measurements don't depend on host CPU allocation, so a delta reliably means the code changed. `cpu/` does not: CI runs on shared/burstable runner vCPUs, so timings vary with host load in a way memory doesn't, and no committed baseline is meaningful there — it reports raw numbers only. See [cpu/README.md](cpu/README.md#why-theres-no-baseline-or-drift-gate) for details.
 
 ## Quickstart
 
