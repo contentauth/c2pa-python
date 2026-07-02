@@ -62,10 +62,6 @@ test:
 	$(PYTHON) ./tests/test_unit_tests.py
 	$(PYTHON) ./tests/test_unit_tests_threaded.py
 
-# Runs benchmarks in the venv
-benchmark:
-	$(PYTHON) -m pytest tests/benchmark.py -v
-
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation
 test-local-wheel-build:
