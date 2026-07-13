@@ -11,7 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-# c2pa-python v0.36.0
+# Version: 0.36.0
 
 import ctypes
 import enum
