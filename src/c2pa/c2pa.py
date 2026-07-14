@@ -11,6 +11,8 @@
 # specific language governing permissions and limitations under
 # each license.
 
+# Version: 0.36.0
+
 import ctypes
 import enum
 import json
