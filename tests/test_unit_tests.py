@@ -5575,6 +5575,7 @@ class TestContextAPIs(unittest.TestCase):
                 "data": {
                     "actions": [{
                         "action": "c2pa.created",
+                        "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
                     }]
                 }
             }
