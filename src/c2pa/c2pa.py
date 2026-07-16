@@ -11,6 +11,8 @@
 # specific language governing permissions and limitations under
 # each license.
 
+# Version: 0.36.0
+
 import ctypes
 import enum
 import json
@@ -2285,6 +2287,9 @@ class Reader(ManagedResource):
         if not context.is_valid:
             raise C2paError("Context is not valid")
 
+        if manifest_data is not None and not isinstance(manifest_data, bytes):
+            raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
+
         # Determine format and open stream
         supported = Reader.get_supported_mime_types()
 
@@ -2325,10 +2330,6 @@ class Reader(ManagedResource):
                 raise
 
             if manifest_data is not None:
-                if not isinstance(manifest_data, bytes):
-                    raise TypeError(
-                        Reader._ERROR_MESSAGES[
-                            'manifest_error'])
                 manifest_array = (
                     ctypes.c_ubyte *
                     len(manifest_data)).from_buffer_copy(manifest_data)
@@ -2344,14 +2345,15 @@ class Reader(ManagedResource):
                         len(manifest_data),
                     )
                 )
-                # reader_ptr has been invalidated(consumed)
             else:
                 # Consume reader with stream
                 new_ptr = _lib.c2pa_reader_with_stream(
                     reader_ptr, format_bytes,
                     self._own_stream._stream,
                 )
-                # reader_ptr has been invalidated(consumed)
+
+            # reader_ptr has been consumed by the FFI call.
+            reader_ptr = None
 
             self._handle = new_ptr
 

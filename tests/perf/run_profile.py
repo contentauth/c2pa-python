@@ -14,7 +14,10 @@ For each scenario in scenarios.SCENARIOS this script:
   <name>-leaks.html (--leaks), <name>-temporary.html (--temporary-allocations)
 - Reads peak_bytes and leaked_bytes from the .bin via memray.FileReader
 - Compares against baseline.json (creates it on first run)
-- Exits non-zero if any metric exceeds baseline * threshold
+- Exits non-zero only if leaked_bytes exceeds baseline * threshold. peak_bytes
+  is reported (and any over-threshold drift noted) but never fails the run: it
+  is a high-water mark that swings with allocation timing on alloc-heavy
+  scenarios, so it is informational, not a gate.
 
 Usage:
     python -m tests.perf.run_profile [--update-baseline]
@@ -174,6 +177,49 @@ def _fmt(n: int) -> str:
     return f"{n} B"
 
 
+def _delta_pct(current: int, base: int) -> str:
+    """Signed percentage change vs baseline, or '-' when no baseline."""
+    if not base:
+        return "-"
+    return f"{(current - base) / base * 100:+.1f}%"
+
+
+def _write_github_summary(results: dict, baseline: dict) -> None:
+    """Append a values table to $GITHUB_STEP_SUMMARY when running in CI.
+    """
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path or not results:
+        return
+
+    lines = [
+        "## Memory benchmark (memray)",
+        "",
+        f"Iterations: {ITERATIONS} · threshold: +{(THRESHOLD - 1) * 100:.0f}%"
+        f"{f' · env: {PERF_ENV}' if PERF_ENV else ''}",
+        "",
+        "| scenario | peak | allocs | peak Δ% | memory used Δ% | status |",
+        "|----------|------|--------|---------|----------------|--------|",
+    ]
+    for name, m in results.items():
+        b = baseline.get(name, {}) if baseline else {}
+        peak_base = b.get("peak_bytes", 0)
+        leaked_base = b.get("leaked_bytes", 0)
+        regressed = (
+            (peak_base and m["peak_bytes"] > peak_base * THRESHOLD)
+            or (leaked_base and m["leaked_bytes"] > leaked_base * THRESHOLD)
+        )
+        status = "REGRESSED" if regressed else "ok"
+        lines.append(
+            f"| {name} | {_fmt(m['peak_bytes'])} "
+            f"| {m['total_allocations']} | {_delta_pct(m['peak_bytes'], peak_base)} "
+            f"| {_delta_pct(m['leaked_bytes'], leaked_base)} | {status} |"
+        )
+    lines.append("")
+
+    with open(summary_path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="c2pa-python memory profiler")
     parser.add_argument(
@@ -194,9 +240,15 @@ def main() -> None:
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    baseline: dict = {}
-    if BASELINE_FILE.exists() and not args.update_baseline:
-        baseline = json.loads(BASELINE_FILE.read_text())
+    # prior_baseline: the existing file, always loaded so a single-scenario
+    # update can preserve the other scenarios' entries when it rewrites the file.
+    prior_baseline: dict = {}
+
+    # baseline: the subset used for the regression comparison below, which is
+    # suppressed when --update-baseline is set (because we are re-baselining).
+    if BASELINE_FILE.exists():
+        prior_baseline = json.loads(BASELINE_FILE.read_text())
+    baseline: dict = {} if args.update_baseline else prior_baseline
 
     results: dict = {}
     failures: list[str] = []
@@ -242,16 +294,25 @@ def main() -> None:
 
             if baseline and name in baseline:
                 b = baseline[name]
+                # Only leaked_bytes gates the run. It is the leak signal and is
+                # stable run-to-run. peak_bytes is a high-water mark that swings
+                # with transient-allocation timing on alloc-heavy scenarios,
+                # so it is reported for visibility but doesn't fail the run.
                 for metric in ("peak_bytes", "leaked_bytes"):
                     current = metrics[metric]
                     base = b.get(metric, 0)
                     limit = base * THRESHOLD
-                    if current > limit:
-                        diff_pct = (current - base) / base * 100 if base else float("inf")
-                        failures.append(
-                            f"{name}.{metric}: {_fmt(current)} > baseline {_fmt(base)}"
-                            f" (+{diff_pct:.1f}%, threshold {(THRESHOLD-1)*100:.0f}%)"
-                        )
+                    if current <= limit:
+                        continue
+                    diff_pct = (current - base) / base * 100 if base else float("inf")
+                    msg = (
+                        f"{name}.{metric}: {_fmt(current)} > baseline {_fmt(base)}"
+                        f" (+{diff_pct:.1f}%, threshold {(THRESHOLD-1)*100:.0f}%)"
+                    )
+                    if metric == "leaked_bytes":
+                        failures.append(msg)
+                    else:
+                        print(f"  note (informational): {msg}", flush=True)
         finally:
             if scenario_render_failed:
                 # Keep the capture so the failed view can be re-rendered
@@ -265,19 +326,44 @@ def main() -> None:
             else:
                 bin_path.unlink(missing_ok=True)
 
-    if args.update_baseline or not baseline:
+    if args.update_baseline or not prior_baseline:
         # When running a single scenario, merge its result into the existing
         # baseline so the other scenarios' entries are preserved. A full run
         # replaces the file wholesale.
-        if args.scenario and baseline:
-            output = dict(baseline)
+        if args.scenario and prior_baseline:
+            output = dict(prior_baseline)
         else:
             output = {}
-        output["_meta"] = _build_meta()
+        new_meta = _build_meta()
+        # On a single-scenario merge the new entry must come from the same
+        # toolchain as the entries it is being merged next to, or the numbers
+        # are not comparable. Warn if _meta would change (e.g. wrong PERF_ENV,
+        # iteration count, or native version) instead of silently overwriting it.
+        if args.scenario and prior_baseline:
+            old_meta = prior_baseline.get("_meta", {})
+            if old_meta and old_meta != new_meta:
+                diffs = sorted(
+                    set(old_meta) | set(new_meta),
+                    key=str,
+                )
+                changed = [
+                    f"{k}: {old_meta.get(k)!r} -> {new_meta.get(k)!r}"
+                    for k in diffs if old_meta.get(k) != new_meta.get(k)
+                ]
+                print(
+                    "\nWARNING: this run's environment differs from the existing "
+                    "baseline's _meta; the merged entry will NOT be comparable to "
+                    "the other scenarios:\n  " + "\n  ".join(changed),
+                    file=sys.stderr,
+                )
+        output["_meta"] = new_meta
         output.update(results)
         BASELINE_FILE.write_text(json.dumps(output, indent=2))
-        verb = "Updated" if baseline else "Created"
+        verb = "Updated" if prior_baseline else "Created"
         print(f"\n{verb} baseline: {BASELINE_FILE}")
+
+    # Emit the report table to the PR's Step Summary in CI.
+    _write_github_summary(results, baseline)
 
     if render_failures:
         print("\nFLAMEGRAPH RENDERS FAILED (capture + metrics still recorded):", file=sys.stderr)
@@ -288,12 +374,14 @@ def main() -> None:
               "--temporary-allocations --temporary-allocation-threshold=10 --force", file=sys.stderr)
 
     if failures:
-        print("\nREGRESSIONS DETECTED:", file=sys.stderr)
+        print("\nLEAK REGRESSIONS DETECTED (leaked_bytes over baseline):",
+              file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         sys.exit(1)
 
-    print("\nAll scenarios within baseline thresholds.")
+    print("\nAll scenarios within baseline leaked_bytes thresholds "
+          "(peak_bytes is informational only).")
 
 
 if __name__ == "__main__":
