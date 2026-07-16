@@ -221,5 +221,25 @@
     "peak_bytes": 3402893,
     "leaked_bytes": 3230663,
     "total_allocations": 93141
+  },
+  "builder_from_archive_roundtrip": {
+    "peak_bytes": 14258579,
+    "leaked_bytes": 3436798,
+    "total_allocations": 1593617
+  },
+  "signer_construction": {
+    "peak_bytes": 3307608,
+    "leaked_bytes": 3243306,
+    "total_allocations": 117601
+  },
+  "builder_with_archive_swap": {
+    "peak_bytes": 3635924,
+    "leaked_bytes": 3305070,
+    "total_allocations": 395447
+  },
+  "reader_with_fragment_swap": {
+    "peak_bytes": 3733349,
+    "leaked_bytes": 3306787,
+    "total_allocations": 1936244
   }
 }

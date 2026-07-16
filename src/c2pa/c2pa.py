@@ -230,8 +230,13 @@ class ManagedResource:
     for native resources (e.g. pointers).
 
     Subclasses must:
-      - Set `self._handle` to the native pointer after creation.
-      - Set `self._lifecycle_state = LifecycleState.ACTIVE` once initialized.
+      - Call `_activate(handle)` once the native pointer is created and
+        validated, which takes ownership of it and marks the resource ACTIVE.
+        Never assign `self._handle` or `self._lifecycle_state` directly.
+      - Call `_swap_handle(new_handle)` instead when an FFI call consumed the
+        current handle and returned a replacement.
+      - Call `_mark_consumed()` when an FFI call took ownership of the handle
+        without returning a replacement.
       - Override `_release()` to free class-specific resources
         (streams, caches, callbacks, etc.), called before the
         native pointer is freed.
@@ -287,18 +292,84 @@ class ManagedResource:
         """Attach a native handle (and any extra instance attrs) to self and
         mark it ACTIVE.
 
-        Caller must guarantee `handle` is non-null and that ownership is
-        being transferred here (exactly one activation per handle).
+        Ownership of `handle` transfers here: this object frees it on close.
+        Only an UNINITIALIZED resource can be activated, so a handle can never
+        be activated twice (which would leak the one being replaced) and a
+        CLOSED resource can never be resurrected (which would free its handle
+        a second time).
+
+        Any attribute the subclass's `_release()` reads must be passed in
+        `extra_attrs` when __init__ did not already set it, otherwise
+        `_release()` raises during cleanup.
+
+        Args:
+            handle: Non-null native pointer to take ownership of
+            **extra_attrs: Instance attributes to set before activating
+
+        Raises:
+            C2paError: If the handle is null or the resource is not
+                UNINITIALIZED
         """
+        name = type(self).__name__
+        # Guards run before any mutation: a rejected activation must leave
+        # the object exactly as it was.
+        if not handle:
+            raise C2paError(f"{name}: cannot activate a null handle")
+        if self._lifecycle_state != LifecycleState.UNINITIALIZED:
+            raise C2paError(
+                f"{name}: already activated "
+                f"({self._lifecycle_state.name})")
+
         for attr, value in extra_attrs.items():
             setattr(self, attr, value)
         self._handle = handle
         self._lifecycle_state = LifecycleState.ACTIVE
 
+    def _swap_handle(self, new_handle):
+        """Replace the handle after an FFI call consumed the old one and
+        returned a replacement (the consume-and-return pattern, e.g.
+        c2pa_builder_with_archive / c2pa_reader_with_fragment).
+
+        The old pointer is already owned and freed by the callee, so it is
+        deliberately NOT freed here; doing so would be a double-free.
+
+        A null return from such a call is ambiguous (the callee may have
+        failed validation before taking ownership, or failed the operation
+        after), so callers must not call this with a null replacement. Treat
+        that case as consumed via `_mark_consumed()` instead: risking a leak
+        on a path Python cannot reach beats freeing a pointer whose address
+        may have been recycled.
+
+        Args:
+            new_handle: Non-null native pointer returned by the FFI call
+
+        Raises:
+            C2paError: If the resource is not ACTIVE or new_handle is null
+        """
+        name = type(self).__name__
+        if self._lifecycle_state != LifecycleState.ACTIVE:
+            raise C2paError(
+                f"{name}: cannot swap the handle of a resource that is not "
+                f"active ({self._lifecycle_state.name})")
+        if not new_handle:
+            raise C2paError(f"{name}: cannot swap in a null handle")
+
+        self._handle = new_handle
+
     @classmethod
     def _wrap_native_handle(cls, handle, **extra_attrs):
         """Build a brand-new instance around an already-valid, already-owned
         native handle, bypassing __init__ entirely.
+
+        Because __init__ is bypassed, every attribute the subclass's
+        `_release()` reads must be passed in `extra_attrs`.
+
+        Args:
+            handle: Non-null native pointer to take ownership of
+            **extra_attrs: Instance attributes to set before activating
+
+        Raises:
+            C2paError: If the handle is null
         """
         obj = object.__new__(cls)
         ManagedResource.__init__(obj)
@@ -315,7 +386,17 @@ class ManagedResource:
                 and self._lifecycle_state != LifecycleState.CLOSED
             ):
                 self._lifecycle_state = LifecycleState.CLOSED
-                self._release()
+                # A failing _release() must not skip the free below:
+                # that would strand the native handle on an object already
+                # marked CLOSED, making it unreachable and unfreeable.
+                try:
+                    self._release()
+                except Exception:
+                    logger.error(
+                        "Failed to release %s resources",
+                        type(self).__name__,
+                        exc_info=True,
+                    )
                 if hasattr(self, '_handle') and self._handle:
                     try:
                         ManagedResource._free_native_ptr(self._handle)
@@ -1297,8 +1378,7 @@ class Settings(ManagedResource):
                 ManagedResource._free_native_ptr(ptr)
             raise
 
-        self._handle = ptr
-        self._lifecycle_state = LifecycleState.ACTIVE
+        self._activate(ptr)
 
     @classmethod
     def from_json(cls, json_str: str) -> 'Settings':
@@ -1464,7 +1544,7 @@ class Context(ManagedResource, ContextProvider):
             _check_ffi_operation_result(
                 ptr, "Failed to create Context"
             )
-            self._handle = ptr
+            self._activate(ptr)
         else:
             # Use ContextBuilder for settings/signer
             builder_ptr = _lib.c2pa_context_builder_new()
@@ -1484,33 +1564,33 @@ class Context(ManagedResource, ContextProvider):
 
                 if signer is not None:
                     signer._ensure_valid_state()
+                    # c2pa_context_builder_set_signer takes ownership of the
+                    # signer pointer immediately (Box::from_raw), on its error
+                    # path as well as on success. The Signer is therefore
+                    # consumed below on any result; leaving it owning a freed
+                    # pointer would make any later use of it a use-after-free.
+                    self._signer_callback_cb = signer._callback_cb
                     result = (
                         _lib.c2pa_context_builder_set_signer(
                             builder_ptr, signer._handle,
                         )
                     )
+                    signer._mark_consumed()
                     if result != 0:
                         _parse_operation_result_for_error(None)
+                    self._has_signer = True
 
                 # Build consumes builder_ptr
                 ptr = (
                     _lib.c2pa_context_builder_build(builder_ptr)
                 )
                 builder_ptr = None
-                self._handle = ptr
 
                 _check_ffi_operation_result(
                     ptr, "Failed to build Context"
                 )
 
-                # Build succeeded, consume the Signer.
-                # Keep its callback ref alive on this Context,
-                # then mark it so it won't double-free the
-                # pointer the Context now owns.
-                if signer is not None:
-                    self._signer_callback_cb = signer._callback_cb
-                    signer._mark_consumed()
-                    self._has_signer = True
+                self._activate(ptr)
             except Exception:
                 # Free builder if build was not reached
                 if builder_ptr is not None:
@@ -1519,8 +1599,6 @@ class Context(ManagedResource, ContextProvider):
                     except Exception:
                         pass
                 raise
-
-        self._lifecycle_state = LifecycleState.ACTIVE
 
     def _release(self):
         """Release Context-specific resources."""
@@ -2224,11 +2302,11 @@ class Reader(ManagedResource):
             with Stream(stream) as stream_obj:
                 self._create_reader(
                     format_bytes, stream_obj, manifest_data)
-                self._lifecycle_state = LifecycleState.ACTIVE
 
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
-        """Create a Reader from a Stream.
+        """Create a native reader from a Stream and activate this Reader
+        around it.
 
         Args:
             format_bytes: UTF-8 encoded format/MIME type
@@ -2236,7 +2314,7 @@ class Reader(ManagedResource):
             manifest_data: Optional manifest bytes
         """
         if manifest_data is None:
-            self._handle = _lib.c2pa_reader_from_stream(
+            ptr = _lib.c2pa_reader_from_stream(
                 format_bytes, stream_obj._stream)
         else:
             if not isinstance(manifest_data, bytes):
@@ -2244,7 +2322,7 @@ class Reader(ManagedResource):
             manifest_array = (
                 ctypes.c_ubyte *
                 len(manifest_data)).from_buffer_copy(manifest_data)
-            self._handle = (
+            ptr = (
                 _lib.c2pa_reader_from_manifest_data_and_stream(
                     format_bytes,
                     stream_obj._stream,
@@ -2254,8 +2332,10 @@ class Reader(ManagedResource):
             )
 
         _check_ffi_operation_result(
-            self._handle,
+            ptr,
             Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
+
+        self._activate(ptr)
 
     def _init_from_file(self, path, format_bytes,
                         manifest_data=None):
@@ -2270,7 +2350,6 @@ class Reader(ManagedResource):
             self._backing_file = open(path, 'rb')
             self._own_stream = Stream(self._backing_file)
             self._create_reader(format_bytes, self._own_stream, manifest_data)
-            self._lifecycle_state = LifecycleState.ACTIVE
         except C2paError:
             self._close_streams()
             raise
@@ -2352,10 +2431,9 @@ class Reader(ManagedResource):
                     self._own_stream._stream,
                 )
 
-            # reader_ptr has been consumed by the FFI call.
+            # reader_ptr has been consumed by the FFI call (freed by it even
+            # on failure), so there is nothing to free on the error path.
             reader_ptr = None
-
-            self._handle = new_ptr
 
             _check_ffi_operation_result(new_ptr,
                                         Reader._ERROR_MESSAGES[
@@ -2363,7 +2441,7 @@ class Reader(ManagedResource):
                                         ].format("Unknown error")
                                         )
 
-            self._lifecycle_state = LifecycleState.ACTIVE
+            self._activate(new_ptr)
         except Exception:
             self._close_streams()
             raise
@@ -2449,13 +2527,15 @@ class Reader(ManagedResource):
                 frag_obj._stream,
             )
 
+            # c2pa_reader_with_fragment consumed the old handle. A null return
+            # leaves no replacement to take ownership of.
             if not new_ptr:
                 self._mark_consumed()
             _check_ffi_operation_result(new_ptr,
                                         Reader._ERROR_MESSAGES[
                                             'fragment_error'
                                         ].format("Unknown error"))
-            self._handle = new_ptr
+            self._swap_handle(new_ptr)
 
         # Invalidate caches: processing a new BMFF fragment updates the native
         # reader's state, which can change the manifest data it returns.
@@ -3083,13 +3163,13 @@ class Builder(ManagedResource):
         if context is not None:
             self._init_from_context(context, json_str)
         else:
-            self._handle = _lib.c2pa_builder_from_json(json_str)
+            ptr = _lib.c2pa_builder_from_json(json_str)
 
             _check_ffi_operation_result(
-                self._handle,
+                ptr,
                 Builder._ERROR_MESSAGES['builder_error'].format("Unknown error"))
 
-        self._lifecycle_state = LifecycleState.ACTIVE
+            self._activate(ptr)
 
     def _init_from_context(self, context, json_str):
         """Initialize Builder from a ContextProvider.
@@ -3114,16 +3194,18 @@ class Builder(ManagedResource):
                 ManagedResource._free_native_ptr(builder_ptr)
             raise
 
-        # Consume-and-return: builder_ptr is consumed,
-        # new_ptr is the valid pointer going forward
+        # Consume-and-return: builder_ptr is consumed (freed by the FFI even
+        # on failure), new_ptr is the valid pointer going forward. Nothing to
+        # free here on the error path.
         new_ptr = _lib.c2pa_builder_with_definition(builder_ptr, json_str)
-        self._handle = new_ptr
 
         _check_ffi_operation_result(new_ptr,
                                     Builder._ERROR_MESSAGES[
                                         'builder_error'
                                     ].format("Unknown error")
                                     )
+
+        self._activate(new_ptr)
 
     def set_no_embed(self):
         """Set the no-embed flag.
@@ -3404,10 +3486,13 @@ class Builder(ManagedResource):
                 raise C2paError(
                     f"Error loading archive: {e}"
                 )
-            # Old handle consumed by FFI
-            self._handle = new_ptr
+            # c2pa_builder_with_archive consumed the old handle. A null return
+            # leaves no replacement to take ownership of.
+            if not new_ptr:
+                self._mark_consumed()
             _check_ffi_operation_result(
                 new_ptr, "Failed to load archive into builder")
+            self._swap_handle(new_ptr)
 
         return self
 

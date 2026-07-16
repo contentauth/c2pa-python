@@ -36,6 +36,8 @@ SIGNED_JPEG = FIXTURES_DIR / "C.jpg"
 CLOUD_JPEG = FIXTURES_DIR / "cloud.jpg"
 SOURCE_JPEG = FIXTURES_DIR / "A.jpg"
 SIGNING_PNG = SIGNING_FIXTURES_DIR / "sample1.png"
+DASH_INIT_MP4 = FIXTURES_DIR / "dashinit.mp4"
+DASH_FRAGMENT = FIXTURES_DIR / "dash1.m4s"
 
 _DST_COMPOSITE = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
 
@@ -475,6 +477,49 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
                 "image/jpeg", ing,
             )
         builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+def scenario_builder_with_archive_swap(iterations: int = 100) -> None:
+    """Loop Builder.with_archive(), the consume-and-return FFI path.
+
+    c2pa_builder_with_archive consumes the old native handle and returns a
+    replacement, so the Python side swaps the pointer without freeing the
+    consumed one. Freeing it would be a double-free, and failing to adopt the
+    replacement would leak. The other builder scenarios never swap a live
+    handle, so neither mistake would show up there.
+    """
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.with_archive(io.BytesIO(archive_bytes))
+        builder.close()
+
+
+def scenario_reader_with_fragment_swap(iterations: int = 100) -> None:
+    """Loop Reader.with_fragment(), the other consume-and-return FFI path.
+
+    Same ownership hand-off as with_archive: c2pa_reader_with_fragment eats
+    the old reader handle and returns a new one.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    for _ in _iterate(iterations):
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            reader.with_fragment(
+                "video/mp4",
+                io.BytesIO(init_bytes),
+                io.BytesIO(fragment_bytes),
+            )
+        except C2paError:
+            # A failed call consumed the old handle just as a successful one
+            # would, so the scenario measures both outcomes.
+            pass
+        finally:
+            reader.close()
 
 
 def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
@@ -978,6 +1023,8 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
     "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
+    "builder_with_archive_swap": scenario_builder_with_archive_swap,
+    "reader_with_fragment_swap": scenario_reader_with_fragment_swap,
     "builder_to_archive_with_ingredient": scenario_builder_to_archive_with_ingredient,
     "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive,
     "builder_write_ingredient_archive": scenario_builder_write_ingredient_archive,

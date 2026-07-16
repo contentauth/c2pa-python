@@ -30,7 +30,8 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+import c2pa.c2pa as c2pa_module
 
 
 PROJECT_PATH = os.getcwd()
@@ -6922,6 +6923,275 @@ class TestStreamReferences(unittest.TestCase):
         self.assertEqual(seek_cb(None, 0, 0), -1)
         self.assertEqual(write_cb(None, None, 0), -1)
         self.assertEqual(flush_cb(None), -1)
+
+
+class _FakeHandleResource(ManagedResource):
+    """ManagedResource with a fake integer handle, for lifecycle tests that
+    must not touch the native library."""
+
+
+class _CallbackHoldingResource(ManagedResource):
+    """Mimics Signer: its _release() reads an attribute that must have been
+    supplied by __init__ or by _activate's extra_attrs."""
+
+    def _release(self):
+        if self._callback_cb:
+            self._callback_cb = None
+
+
+class TestManagedResourceLifecycle(unittest.TestCase):
+    """Lifecycle primitives: _activate, _swap_handle, _wrap_native_handle.
+
+    These use fake integer handles and record calls to _free_native_ptr
+    instead of freeing anything, so a mistake here cannot crash the process.
+    """
+
+    def setUp(self):
+        self.freed = []
+        self._real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
+
+    def tearDown(self):
+        ManagedResource._free_native_ptr = self._real_free
+
+    # _cleanup_resources: a failing _release() must not strand the handle
+
+    def test_release_failure_still_frees_handle(self):
+        res = _CallbackHoldingResource()
+        # _callback_cb is never set, so _release() raises AttributeError.
+        res._activate(0xBBBB)
+
+        res.close()
+
+        self.assertEqual(self.freed, [0xBBBB],
+                         "handle leaked when _release() raised")
+        self.assertIsNone(res._handle)
+
+    def test_release_failure_is_logged(self):
+        res = _CallbackHoldingResource()
+        res._activate(0xBBBB)
+
+        with self.assertLogs('c2pa', level='ERROR') as captured:
+            res.close()
+
+        self.assertTrue(
+            any('Failed to release' in line for line in captured.output),
+            f"_release() failure was not logged: {captured.output}")
+
+    # _activate guards
+
+    def test_activate_rejects_null_handle(self):
+        res = _FakeHandleResource()
+
+        with self.assertRaises(Error) as ctx:
+            res._activate(None)
+
+        self.assertIn("null handle", str(ctx.exception))
+        self.assertEqual(res._lifecycle_state, LifecycleState.UNINITIALIZED)
+
+    def test_activate_rejects_double_activation(self):
+        res = _FakeHandleResource()
+        res._activate(0x1111)
+
+        with self.assertRaises(Error) as ctx:
+            res._activate(0x2222)
+
+        self.assertIn("already activated", str(ctx.exception))
+        # The first handle is still owned, and is freed exactly once.
+        self.assertEqual(res._handle, 0x1111)
+        res.close()
+        self.assertEqual(self.freed, [0x1111])
+
+    def test_activate_rejects_reactivation_after_close(self):
+        res = _FakeHandleResource()
+        res._activate(0x3333)
+        res.close()
+        self.freed.clear()
+
+        with self.assertRaises(Error):
+            res._activate(0x4444)
+
+        # Staying CLOSED is what prevents a second free of the handle.
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+        self.assertEqual(self.freed, [])
+
+    def test_activate_does_not_mutate_on_rejection(self):
+        res = _FakeHandleResource()
+        res._activate(0x5555)
+
+        with self.assertRaises(Error):
+            res._activate(0x6666, _extra='should not be set')
+
+        self.assertFalse(hasattr(res, '_extra'),
+                         "rejected activation still set extra_attrs")
+
+    # _swap_handle
+
+    def test_swap_handle_does_not_free_consumed_handle(self):
+        res = _FakeHandleResource()
+        res._activate(0xAAA1)
+
+        res._swap_handle(0xAAA2)
+
+        # The FFI already owns and frees the old pointer, so freeing it here
+        # would be a double-free.
+        self.assertEqual(self.freed, [])
+        self.assertEqual(res._handle, 0xAAA2)
+
+        res.close()
+        self.assertEqual(self.freed, [0xAAA2])
+
+    def test_swap_handle_requires_active_resource(self):
+        uninitialized = _FakeHandleResource()
+        with self.assertRaises(Error) as ctx:
+            uninitialized._swap_handle(0x1)
+        self.assertIn("not active", str(ctx.exception))
+
+        closed = _FakeHandleResource()
+        closed._activate(0x2)
+        closed.close()
+        with self.assertRaises(Error):
+            closed._swap_handle(0x3)
+
+    def test_swap_handle_rejects_null_replacement(self):
+        res = _FakeHandleResource()
+        res._activate(0x7777)
+
+        with self.assertRaises(Error) as ctx:
+            res._swap_handle(None)
+
+        self.assertIn("null handle", str(ctx.exception))
+        self.assertEqual(res._handle, 0x7777)
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    # _wrap_native_handle
+
+    def test_wrap_native_handle_sets_extra_attrs_and_bypasses_init(self):
+        seen = []
+
+        class Probe(ManagedResource):
+            def __init__(self):
+                raise AssertionError("__init__ must be bypassed")
+
+            def _release(self):
+                seen.append(self._tag)
+
+        obj = Probe._wrap_native_handle(0xC0DE, _tag='from extra_attrs')
+
+        self.assertEqual(obj._tag, 'from extra_attrs')
+        self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(obj.is_valid)
+        # ManagedResource.__init__ still ran, so fork-safety is intact.
+        self.assertTrue(hasattr(obj, '_owner_pid'))
+
+        obj.close()
+        self.assertEqual(seen, ['from extra_attrs'],
+                         "_release() could not see the extra attrs")
+
+    def test_wrap_native_handle_rejects_null(self):
+        with self.assertRaises(Error):
+            _FakeHandleResource._wrap_native_handle(None)
+
+    def test_close_after_wrap_is_idempotent(self):
+        obj = _FakeHandleResource._wrap_native_handle(0xD00D)
+
+        obj.close()
+        obj.close()
+
+        self.assertEqual(self.freed, [0xD00D], "handle freed more than once")
+
+
+class TestNativeHandleOwnership(unittest.TestCase):
+    """Ownership hand-offs between Python and the native library, driven by
+    fault injection at the FFI boundary."""
+
+    def setUp(self):
+        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
+
+    def _make_signer(self):
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
+            certs = f.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as f:
+            key = f.read()
+        return Signer.from_info(C2paSignerInfo(
+            b"es256", certs, key, b"http://timestamp.digicert.com"))
+
+    def test_signer_init_rejects_null_pointer(self):
+        with self.assertRaises(Error):
+            Signer(None)
+
+    def test_builder_from_archive_wraps_handle(self):
+        archive = io.BytesIO()
+        Builder({"claim_generator": "test", "format": "image/jpeg"}).to_archive(
+            archive)
+
+        builder = Builder.from_archive(io.BytesIO(archive.getvalue()))
+
+        self.assertTrue(builder.is_valid)
+        self.assertIsNone(builder._context)
+        self.assertFalse(builder._has_context_signer)
+        builder.close()
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_context_build_failure_consumes_signer(self):
+        # c2pa_context_builder_set_signer takes ownership of the signer
+        # pointer immediately, so a later build failure must still leave the
+        # Signer consumed. Otherwise it holds a pointer the native side has
+        # already freed.
+        signer = self._make_signer()
+        real_build = c2pa_module._lib.c2pa_context_builder_build
+        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        try:
+            with self.assertRaises(Error):
+                Context(signer=signer)
+        finally:
+            c2pa_module._lib.c2pa_context_builder_build = real_build
+
+        self.assertIsNone(signer._handle,
+                          "Signer still holds a pointer the native side freed")
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+
+        # Nothing left to free, so close() must be a no-op.
+        freed = []
+        real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(freed.append)
+        try:
+            signer.close()
+        finally:
+            ManagedResource._free_native_ptr = real_free
+        self.assertEqual(freed, [])
+
+    def test_context_with_signer_consumes_it_on_success(self):
+        signer = self._make_signer()
+
+        context = Context(signer=signer)
+
+        self.assertTrue(context.is_valid)
+        self.assertIsNone(signer._handle)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        self.assertTrue(context.has_signer)
+        context.close()
+
+    def test_construction_failure_leaves_nothing_to_free(self):
+        # A failed FFI construction must not leave a half-constructed object
+        # holding a handle. Activation happens after the check, so _handle is
+        # never set.
+        real_new = c2pa_module._lib.c2pa_context_new
+        c2pa_module._lib.c2pa_context_new = lambda: None
+        try:
+            with self.assertRaises(Error):
+                Context()
+        finally:
+            c2pa_module._lib.c2pa_context_new = real_new
+
+        real_json = c2pa_module._lib.c2pa_builder_from_json
+        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
+        try:
+            with self.assertRaises(Error):
+                Builder({"claim_generator": "test"})
+        finally:
+            c2pa_module._lib.c2pa_builder_from_json = real_json
 
 
 if __name__ == '__main__':
