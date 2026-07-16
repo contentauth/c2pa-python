@@ -281,6 +281,28 @@ class ManagedResource:
         self._handle = None
         self._lifecycle_state = LifecycleState.CLOSED
 
+    def _activate(self, handle, **extra_attrs):
+        """Attach a native handle (and any extra instance attrs) to self and
+        mark it ACTIVE.
+
+        Caller must guarantee `handle` is non-null and that ownership is
+        being transferred here (exactly one activation per handle).
+        """
+        for attr, value in extra_attrs.items():
+            setattr(self, attr, value)
+        self._handle = handle
+        self._lifecycle_state = LifecycleState.ACTIVE
+
+    @classmethod
+    def _wrap_native_handle(cls, handle, **extra_attrs):
+        """Build a brand-new instance around an already-valid, already-owned
+        native handle, bypassing __init__ entirely.
+        """
+        obj = object.__new__(cls)
+        ManagedResource.__init__(obj)
+        obj._activate(handle, **extra_attrs)
+        return obj
+
     def _cleanup_resources(self):
         """Release native resources idempotently."""
         try:
@@ -2876,13 +2898,10 @@ class Signer(ManagedResource):
         """
         super().__init__()
 
-        self._callback_cb = None
-
         if not signer_ptr:
             raise C2paError("Invalid signer pointer: pointer is null")
 
-        self._handle = signer_ptr
-        self._lifecycle_state = LifecycleState.ACTIVE
+        self._activate(signer_ptr, _callback_cb=None)
 
     def _release(self):
         """Release Signer-specific resources (callback reference)."""
@@ -3005,25 +3024,17 @@ class Builder(ManagedResource):
             C2paError: If there was an error creating the builder
                 from archive
         """
-        # Handle builder._handle lifecycle somewhat manually
-        builder = object.__new__(cls)
-        ManagedResource.__init__(builder)
-        builder._context = None
-        builder._has_context_signer = False
-
         stream_obj = Stream(stream)
 
         try:
-            builder._handle = (
-                _lib.c2pa_builder_from_archive(stream_obj._stream)
-            )
+            handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
-            _check_ffi_operation_result(builder._handle,
+            _check_ffi_operation_result(handle,
                                         "Failed to create builder from archive"
                                         )
 
-            builder._lifecycle_state = LifecycleState.ACTIVE
-            return builder
+            return cls._wrap_native_handle(
+                handle, _context=None, _has_context_signer=False)
         finally:
             stream_obj.close()
 

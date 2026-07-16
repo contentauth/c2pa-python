@@ -477,6 +477,28 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
         builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
+def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
+    """Loop Builder.from_archive() itself (context-less alternate constructor),
+    then sign. Regression guard for the classmethod's native-handle wrapping.
+    """
+    signer = _make_signer()
+    source_bytes = SOURCE_JPEG.read_bytes()
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    archive_bytes = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive_bytes)
+    archive_bytes = archive_bytes.getvalue()
+    for _ in _iterate(iterations):
+        # from_archive() yields a context-less Builder, so sign() needs an
+        # explicit signer (no Context to pull one from).
+        builder = Builder.from_archive(io.BytesIO(archive_bytes))
+        with io.BytesIO(ingredient_bytes) as ing:
+            builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _PARENT_ID},
+                "image/jpeg", ing,
+            )
+        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
 # Archive scenarios: builder as working store (to_archive/with_archive) and
 # per-ingredient archives (write_ingredient_archive/add_ingredient_from_archive).
 
@@ -676,6 +698,18 @@ def scenario_reader_string_apis(iterations: int = 100) -> None:
         reader.get_remote_url()
         reader.resource_to_stream(thumb_uri, io.BytesIO())
         reader.close()
+
+
+def scenario_signer_construction(iterations: int = 100) -> None:
+    """Loop Signer.from_info()/__init__ construction and teardown.
+
+    Every other scenario calls _make_signer() once outside its loop, so
+    repeated Signer construction/destruction has no coverage elsewhere.
+    Regression guard for Signer.__init__'s native-handle activation.
+    """
+    for _ in _iterate(iterations):
+        signer = _make_signer()
+        signer.close()
 
 
 # jpeg + png context variants, paired with the `_legacy` scenarios above for
@@ -916,6 +950,7 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
+    "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
     "builder_to_archive_with_ingredient": scenario_builder_to_archive_with_ingredient,
     "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive,
     "builder_write_ingredient_archive": scenario_builder_write_ingredient_archive,
@@ -925,6 +960,7 @@ SCENARIOS = {
     "reader_error_no_manifest": scenario_reader_error_no_manifest,
     "builder_error_invalid_manifest": scenario_builder_error_invalid_manifest,
     "reader_string_apis": scenario_reader_string_apis,
+    "signer_construction": scenario_signer_construction,
     "fork_reader_collect": scenario_fork_reader_collect,
     "fork_contended_mutex": scenario_fork_contended_mutex,
     "fork_thread_local_orphan": scenario_fork_thread_local_orphan,
