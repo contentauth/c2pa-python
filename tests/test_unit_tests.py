@@ -11,9 +11,12 @@
 # specific language governing permissions and limitations under
 # each license.
 
+import gc
+import inspect
 import os
 import io
 import json
+import re
 import unittest
 import ctypes
 import warnings
@@ -7309,12 +7312,29 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._lib.c2pa_builder_from_json = real_json
 
+def _ptr_addr(ptr):
+    """Address a ctypes pointer points at, or None for a null pointer.
+
+    ctypes pointers compare by identity, not by value: two pointer objects
+    for the same address are unequal. Compare addresses instead.
+    """
+    if not ptr:
+        return None
+    return ctypes.cast(ptr, ctypes.c_void_p).value
+
+
 class TestManagedResourceObjects(TestContextAPIs):
     """Tests native resource handling management when managed manually.
     """
 
     def _instrument_frees(self):
-        """Record frees instead of performing them, and restore on teardown."""
+        """Record frees instead of performing them, and restore on teardown.
+
+        This patches the base class, so every ManagedResource freed while the
+        patch is installed lands in the list, including objects the garbage
+        collector reclaims mid-test. Ask _free_count() about one handle rather
+        than asserting on the length of the list.
+        """
         freed = []
         real_free = ManagedResource._free_native_ptr
         ManagedResource._free_native_ptr = staticmethod(freed.append)
@@ -7322,6 +7342,12 @@ class TestManagedResourceObjects(TestContextAPIs):
             lambda: setattr(
                 ManagedResource, '_free_native_ptr', real_free))
         return freed
+
+    def _free_count(self, freed, handle):
+        """How many times `handle` was freed, ignoring unrelated frees."""
+        target = _ptr_addr(handle)
+        self.assertIsNotNone(target, "cannot count frees of a null handle")
+        return sum(1 for ptr in freed if _ptr_addr(ptr) == target)
 
     def _make_archive(self, manifest=None):
         archive = io.BytesIO()
@@ -7476,8 +7502,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.addCleanup(context.close)
         builder = Builder(self.test_manifest, context=context)
         original_handle = builder._handle
-        # The helper closes a temporary Builder,
-        # whose free would otherwise be counted here.
         archive = self._make_archive()
 
         # Instrument across the swap so a free of the consumed pointer is recorded.
@@ -7485,15 +7509,16 @@ class TestManagedResourceObjects(TestContextAPIs):
         builder.with_archive(archive)
         swapped_handle = builder._handle
 
-        self.assertEqual(freed, [], "the swap freed the consumed pointer")
+        self.assertEqual(self._free_count(freed, original_handle), 0,
+                         "the swap freed the consumed pointer")
 
         builder.close()
         builder.close()
 
         # Only the replacement is ours to free: the original was consumed by
         # the FFI call that returned it.
-        self.assertEqual(freed, [swapped_handle])
-        self.assertNotIn(original_handle, freed)
+        self.assertEqual(self._free_count(freed, swapped_handle), 1)
+        self.assertEqual(self._free_count(freed, original_handle), 0)
 
     def test_repeated_swaps_on_one_builder(self):
         # Each with_archive consumes the handle the previous one returned, so
@@ -7533,18 +7558,22 @@ class TestManagedResourceObjects(TestContextAPIs):
 
     def test_consumed_signer_close_frees_nothing(self):
         signer = self._ctx_make_signer()
+        # Captured before the context consumes it: close() nulls the handle,
+        # so afterwards there is no pointer left to identify the free by.
+        signer_handle = signer._handle
         context = Context(signer=signer)
         self.addCleanup(context.close)
 
         freed = self._instrument_frees()
         signer.close()
 
-        self.assertEqual(freed, [],
+        self.assertEqual(self._free_count(freed, signer_handle), 0,
                          "closing a consumed Signer freed a pointer the "
                          "context now owns")
 
     def test_builder_with_archive_null_return_consumes_self(self):
         builder = Builder(self.test_manifest)
+        consumed_handle = builder._handle
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
         try:
@@ -7560,13 +7589,15 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         freed = self._instrument_frees()
         builder.close()
-        self.assertEqual(freed, [])
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle the FFI already consumed")
 
     def test_reader_with_fragment_null_return_consumes_self(self):
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
+        consumed_handle = reader._handle
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
@@ -7584,7 +7615,136 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         freed = self._instrument_frees()
         reader.close()
-        self.assertEqual(freed, [])
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle the FFI already consumed")
+
+    # Backfilling a pointer minted by a direct FFI call. Builder.from_archive
+    # is the only production caller of _wrap_native_handle, so these are the
+    # only tests that drive the primitive as the generic entry point it is.
+
+    def _raw_builder_handle(self):
+        manifest = json.dumps(
+            {"claim_generator": "raw_ffi_test", "format": "image/jpeg"}
+        ).encode("utf-8")
+        handle = c2pa_module._lib.c2pa_builder_from_json(manifest)
+        self.assertTrue(handle, "the FFI did not return a builder pointer")
+        return handle
+
+    def test_wrap_raw_ffi_builder_pointer(self):
+        builder = Builder._wrap_native_handle(
+            self._raw_builder_handle(),
+            _context=None, _has_context_signer=False)
+
+        self.assertTrue(builder.is_valid)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(builder._owner_pid, os.getpid())
+
+        archive = io.BytesIO()
+        builder.to_archive(archive)
+        self.assertTrue(archive.getvalue())
+
+        builder.close()
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
+
+    def test_wrap_raw_ffi_settings_pointer(self):
+        handle = c2pa_module._lib.c2pa_settings_new()
+        self.assertTrue(handle)
+
+        settings = Settings._wrap_native_handle(handle)
+        try:
+            self.assertTrue(settings.is_valid)
+            self.assertEqual(settings._owner_pid, os.getpid())
+            settings.set("version_major", "1")
+        finally:
+            settings.close()
+
+    def test_wrap_raw_ffi_context_pointer(self):
+        handle = c2pa_module._lib.c2pa_context_new()
+        self.assertTrue(handle)
+
+        context = Context._wrap_native_handle(
+            handle, _has_signer=False, _signer_callback_cb=None)
+        try:
+            self.assertTrue(context.is_valid)
+            self.assertEqual(context._owner_pid, os.getpid())
+            # Handing the wrapped pointer back to the FFI proves it is live.
+            builder = Builder(self.test_manifest, context=context)
+            self.assertTrue(builder.is_valid)
+            builder.close()
+        finally:
+            context.close()
+
+    def test_wrapped_raw_pointer_freed_exactly_once(self):
+        handle = self._raw_builder_handle()
+        freed = self._instrument_frees()
+
+        builder = Builder._wrap_native_handle(
+            handle, _context=None, _has_context_signer=False)
+        builder.close()
+        builder.close()
+        del builder
+        gc.collect()
+
+        self.assertEqual(self._free_count(freed, handle), 1,
+                         "wrapped handle not freed exactly once")
+
+    def test_wrap_supplies_defaults_without_extra_attrs(self):
+        # _init_attrs() runs on the wrap path, so a caller that passes no
+        # extra_attrs still gets an instance the rest of the class can read.
+        builder = Builder._wrap_native_handle(self._raw_builder_handle())
+        self.addCleanup(builder.close)
+
+        self.assertIsNone(builder._context)
+        self.assertFalse(builder._has_context_signer)
+
+    def test_wrap_extra_attrs_override_defaults(self):
+        context = Context()
+        self.addCleanup(context.close)
+
+        builder = Builder._wrap_native_handle(
+            self._raw_builder_handle(), _context=context)
+        self.addCleanup(builder.close)
+
+        self.assertIs(builder._context, context)
+        # Untouched by the override, so still the default.
+        self.assertFalse(builder._has_context_signer)
+
+    def test_init_attrs_covers_what_init_sets(self):
+        # Anything __init__ sets but _init_attrs() misses is absent on a
+        # wrapped instance, which is the trap _init_attrs() exists to close.
+        for cls in (Builder, Context, Reader):
+            with self.subTest(cls=cls.__name__):
+                defaulted = set(re.findall(
+                    r"self\.(_[a-z][a-z0-9_]*)\s*=",
+                    inspect.getsource(cls._init_attrs)))
+                assigned = set(re.findall(
+                    r"self\.(_[a-z][a-z0-9_]*)\s*=",
+                    inspect.getsource(cls.__init__)))
+                self.assertEqual(
+                    assigned - defaulted, set(),
+                    f"{cls.__name__}.__init__ sets attributes that "
+                    f"_init_attrs() does not default")
+
+    def test_from_archive_frees_handle_when_wrap_fails(self):
+        # The wrap raising means no Python object took ownership, so
+        # from_archive still holds the handle and has to free it.
+        archive = self._make_archive()  # closes a Builder; keep it off the count
+        freed = self._instrument_frees()
+        real_wrap = Builder._wrap_native_handle
+
+        def _boom(*args, **kwargs):
+            raise Error("wrap failed")
+
+        Builder._wrap_native_handle = _boom
+        try:
+            with self.assertRaises(Error):
+                Builder.from_archive(archive)
+        finally:
+            Builder._wrap_native_handle = real_wrap
+
+        self.assertEqual(len(freed), 1,
+                         "from_archive leaked the handle when the wrap failed")
 
 
 if __name__ == '__main__':

@@ -237,7 +237,7 @@ class ManagedResource:
 
     Subclasses must:
       - Call `_activate(handle)` once the native pointer is created and
-        validated, which takes ownership of it and marks the resource ACTIVE.
+        validated, which takes ownership of it and marks the resource active.
         Never assign `self._handle` or `self._lifecycle_state` directly.
       - Call `_swap_handle(new_handle)` instead when an FFI call consumed the
         current handle and returned a replacement.
@@ -246,9 +246,21 @@ class ManagedResource:
       - Override `_release()` to free class-specific resources
         (streams, caches, callbacks, etc.), called before the
         native pointer is freed.
+      - Override `_init_attrs()` to set the class's own attributes to their
+        defaults, and call it from `__init__`. `_wrap_native_handle` calls it
+        too, so an instance built around an existing handle is never missing
+        the attributes the rest of the class reads.
 
     The native pointer is freed automatically via `_free_native_ptr`.
     """
+
+    def _init_attrs(self):
+        """Set this class's own attributes to their defaults.
+
+        Called by __init__ and by _wrap_native_handle, which bypasses
+        __init__. Keeping the defaults here means an instance built around an
+        existing handle is never missing what the rest of the class reads.
+        """
 
     def __init__(self):
         self._lifecycle_state = LifecycleState.UNINITIALIZED
@@ -371,14 +383,17 @@ class ManagedResource:
         """Build a brand-new instance around an already-valid,
         already-owned native handle, bypassing __init__ entirely.
 
-        Because __init__ is bypassed, every attribute the subclass's
-        `_release()` reads must be passed in `extra_attrs`.
-        The lifecycle attributes are still off limits there,
-        and the instance is stamped with the creating process either way.
+        __init__ is bypassed, so `_init_attrs()` supplies the class's own
+        defaults; `extra_attrs` is only for overriding them. The lifecycle
+        attributes are off limits there, and the instance is stamped with the
+        creating process either way.
+
+        Ownership of `handle` only transfers once this returns. If it raises,
+        the caller still owns the pointer and must free it.
 
         Args:
             handle: Non-null native pointer to take ownership of
-            **extra_attrs: Instance attributes to set before activating
+            **extra_attrs: Instance attributes overriding the defaults
 
         Raises:
             C2paError: If the handle is null, or extra_attrs names a
@@ -387,6 +402,7 @@ class ManagedResource:
         obj = object.__new__(cls)
         # Stamps _owner_pid, which the fork guard relies on.
         ManagedResource.__init__(obj)
+        obj._init_attrs()
         obj._activate(handle, **extra_attrs)
         return obj
 
@@ -1549,8 +1565,7 @@ class Context(ManagedResource, ContextProvider):
             C2paError: If creation fails
         """
         super().__init__()
-        self._has_signer = False
-        self._signer_callback_cb = None
+        self._init_attrs()
 
         if settings is None and signer is None:
             # Simple default context
@@ -1613,6 +1628,10 @@ class Context(ManagedResource, ContextProvider):
                     except Exception:
                         pass
                 raise
+
+    def _init_attrs(self):
+        self._has_signer = False
+        self._signer_callback_cb = None
 
     def _release(self):
         """Release Context-specific resources."""
@@ -2262,20 +2281,7 @@ class Reader(ManagedResource):
               contain invalid UTF-8 characters
         """
         super().__init__()
-
-        self._own_stream = None
-
-        # This is used to keep track of a file
-        # we may have opened ourselves, and that we need to close later
-        self._backing_file = None
-
-        # Caches for manifest JSON string and parsed data.
-        # These are invalidated when with_fragment() is called, because each
-        # new BMFF fragment can refine or update the manifest content as the
-        # reader progressively builds its understanding of the fragmented stream.
-        # They are also cleared on close() to release memory.
-        self._manifest_json_str_cache = None
-        self._manifest_data_cache = None
+        self._init_attrs()
 
         self._context = context
 
@@ -2459,6 +2465,22 @@ class Reader(ManagedResource):
         except Exception:
             self._close_streams()
             raise
+
+    def _init_attrs(self):
+        self._own_stream = None
+
+        # Tracks a file we opened ourselves and must close later.
+        self._backing_file = None
+
+        # Caches for manifest JSON string and parsed data.
+        # These are invalidated when with_fragment() is called, because each
+        # new BMFF fragment can refine or update the manifest content as the
+        # reader progressively builds its understanding of the fragmented
+        # stream. They are also cleared on close() to release memory.
+        self._manifest_json_str_cache = None
+        self._manifest_data_cache = None
+
+        self._context = None
 
     def _close_streams(self):
         """Close owned stream and backing file if present."""
@@ -3129,8 +3151,14 @@ class Builder(ManagedResource):
                                         "Failed to create builder from archive"
                                         )
 
-            return cls._wrap_native_handle(
-                handle, _context=None, _has_context_signer=False)
+            try:
+                # A builder from an archive carries no context, which is what
+                # _init_attrs() already defaults to.
+                return cls._wrap_native_handle(handle)
+            except Exception:
+                # No instance took ownership, so the handle is still ours.
+                ManagedResource._free_native_ptr(handle)
+                raise
         finally:
             stream_obj.close()
 
@@ -3164,6 +3192,7 @@ class Builder(ManagedResource):
             C2paError.Json: If the manifest JSON cannot be serialized
         """
         super().__init__()
+        self._init_attrs()
 
         self._context = context
         self._has_context_signer = (
@@ -3220,6 +3249,10 @@ class Builder(ManagedResource):
                                     )
 
         self._activate(new_ptr)
+
+    def _init_attrs(self):
+        self._context = None
+        self._has_context_signer = False
 
     def set_no_embed(self):
         """Set the no-embed flag.
