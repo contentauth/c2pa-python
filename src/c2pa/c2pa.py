@@ -224,6 +224,12 @@ class LifecycleState(enum.IntEnum):
     CLOSED = 2
 
 
+# Attributes that make up the lifecycle state itself, which _activate sets
+# from its own arguments and must never accept from a caller's extra_attrs.
+_RESERVED_ACTIVATION_ATTRS = frozenset(
+    {'_handle', '_lifecycle_state', '_owner_pid'})
+
+
 class ManagedResource:
     """Base class for objects that hold a native (C FFI) resource.
     This is an internal base class that provides lifecycle management
@@ -300,13 +306,19 @@ class ManagedResource:
         `extra_attrs` when __init__ did not already set it, otherwise
         `_release()` raises during cleanup.
 
+        `extra_attrs` cannot carry the lifecycle attributes themselves.
+        `_owner_pid` in particular records the process that created the
+        handle, and overwriting it would let a forked child free a pointer
+        its parent still owns.
+
         Args:
             handle: Non-null native pointer to take ownership of
             **extra_attrs: Instance attributes to set before activating
 
         Raises:
-            C2paError: If the handle is null
-                or the resource is not uninitialized
+            C2paError: If the handle is null,
+                the resource is not uninitialized,
+                or extra_attrs names a lifecycle attribute
         """
         name = type(self).__name__
         # A rejected activation must leave the object as it was.
@@ -316,6 +328,11 @@ class ManagedResource:
             raise C2paError(
                 f"{name}: already activated "
                 f"({self._lifecycle_state.name})")
+        reserved = _RESERVED_ACTIVATION_ATTRS.intersection(extra_attrs)
+        if reserved:
+            raise C2paError(
+                f"{name}: cannot set lifecycle attributes via extra_attrs: "
+                f"{', '.join(sorted(reserved))}")
 
         for attr, value in extra_attrs.items():
             setattr(self, attr, value)
@@ -356,15 +373,19 @@ class ManagedResource:
 
         Because __init__ is bypassed, every attribute the subclass's
         `_release()` reads must be passed in `extra_attrs`.
+        The lifecycle attributes are still off limits there,
+        and the instance is stamped with the creating process either way.
 
         Args:
             handle: Non-null native pointer to take ownership of
             **extra_attrs: Instance attributes to set before activating
 
         Raises:
-            C2paError: If the handle is null
+            C2paError: If the handle is null, or extra_attrs names a
+                lifecycle attribute
         """
         obj = object.__new__(cls)
+        # Stamps _owner_pid, which the fork guard relies on.
         ManagedResource.__init__(obj)
         obj._activate(handle, **extra_attrs)
         return obj
@@ -2298,8 +2319,8 @@ class Reader(ManagedResource):
 
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
-        """Create a native reader from a Stream and activate this Reader
-        around it.
+        """Create a native reader from a Stream
+        and activate this Reader around it.
 
         Args:
             format_bytes: UTF-8 encoded format/MIME type

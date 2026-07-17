@@ -6939,8 +6939,20 @@ class _CallbackHoldingResource(ManagedResource):
             self._callback_cb = None
 
 
+class _ReleaseRecordingResource(ManagedResource):
+    """Records _release() calls for test asserts."""
+
+    def __init__(self):
+        super().__init__()
+        self.release_calls = 0
+
+    def _release(self):
+        self.release_calls += 1
+
+
 class TestManagedResourceLifecycle(unittest.TestCase):
-    """Lifecycle primitives: _activate, _swap_handle, _wrap_native_handle.
+    """Lifecycle primitives (_activate, _swap_handle, _wrap_native_handle)
+    and the _owner_pid stamp that governs which process may free a handle.
 
     These use fake integer handles and record calls to _free_native_ptr
     instead of freeing anything, so a mistake here cannot crash the process.
@@ -6953,6 +6965,12 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def tearDown(self):
         ManagedResource._free_native_ptr = self._real_free
+
+    def _free_counts(self):
+        counts = {}
+        for handle in self.freed:
+            counts[handle] = counts.get(handle, 0) + 1
+        return counts
 
     # _cleanup_resources: a failing _release() must not strand the handle
 
@@ -7100,6 +7118,389 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         obj.close()
 
         self.assertEqual(self.freed, [0xD00D], "handle freed more than once")
+
+    def test_every_construction_path_records_owner_pid(self):
+        pid = os.getpid()
+
+        plain = _FakeHandleResource()
+        self.assertEqual(plain._owner_pid, pid)
+
+        activated = _FakeHandleResource()
+        activated._activate(0xA1)
+        self.assertEqual(activated._owner_pid, pid)
+
+        wrapped = _FakeHandleResource._wrap_native_handle(0xA2)
+        self.assertEqual(wrapped._owner_pid, pid)
+
+        # A swap keeps the original stamp:
+        # the replacement handle was allocated by the same process
+        # that created the object.
+        wrapped._swap_handle(0xA3)
+        self.assertEqual(wrapped._owner_pid, pid)
+
+    def test_activate_rejects_reserved_extra_attrs(self):
+        for attr, value in (
+            ('_owner_pid', os.getpid() + 1),
+            ('_handle', 0xDEAD),
+            ('_lifecycle_state', LifecycleState.CLOSED),
+        ):
+            with self.subTest(attr=attr):
+                res = _FakeHandleResource()
+                stamp = res._owner_pid
+
+                with self.assertRaises(Error) as ctx:
+                    res._activate(0xB1, **{attr: value})
+
+                self.assertIn(attr, str(ctx.exception))
+                self.assertEqual(res._owner_pid, stamp)
+                self.assertEqual(
+                    res._lifecycle_state, LifecycleState.UNINITIALIZED)
+                self.assertIsNone(res._handle)
+
+    def test_wrap_native_handle_rejects_reserved_extra_attrs(self):
+        with self.assertRaises(Error):
+            _FakeHandleResource._wrap_native_handle(
+                0xB2, _owner_pid=os.getpid() + 1)
+
+    def test_foreign_child_skips_free_for_wrapped_and_swapped(self):
+        wrapped = _FakeHandleResource._wrap_native_handle(0xC1)
+        wrapped._owner_pid = os.getpid() + 1
+        wrapped.close()
+
+        swapped = _FakeHandleResource()
+        swapped._activate(0xC2)
+        swapped._swap_handle(0xC3)
+        swapped._owner_pid = os.getpid() + 1
+        swapped.close()
+
+        self.assertEqual(self.freed, [],
+                         "forked child freed a pointer its parent still owns")
+        # The parent still owns these handles,
+        # so the child must not mark the objects dead either.
+        self.assertEqual(wrapped._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(swapped._handle, 0xC3)
+
+    def test_owning_process_frees_wrapped_and_swapped_exactly_once(self):
+        wrapped = _FakeHandleResource._wrap_native_handle(0xC4)
+        wrapped.close()
+        wrapped.close()
+
+        swapped = _FakeHandleResource()
+        swapped._activate(0xC5)
+        swapped._swap_handle(0xC6)
+        swapped.close()
+
+        # 0xC5 was consumed by the (simulated) FFI swap,
+        # so only the replacement is ours to free.
+        self.assertEqual(self._free_counts(), {0xC4: 1, 0xC6: 1})
+
+    def test_foreign_child_skips_release(self):
+        foreign = _ReleaseRecordingResource()
+        foreign._activate(0xD1)
+        foreign._owner_pid = os.getpid() + 1
+        foreign.close()
+        self.assertEqual(foreign.release_calls, 0)
+
+        owned = _ReleaseRecordingResource()
+        owned._activate(0xD2)
+        owned.close()
+        self.assertEqual(owned.release_calls, 1)
+
+    def test_consumed_resource_frees_nothing_in_either_process(self):
+        owned = _FakeHandleResource()
+        owned._activate(0xE1)
+        owned._mark_consumed()
+        owned.close()
+
+        foreign = _FakeHandleResource()
+        foreign._activate(0xE2)
+        foreign._mark_consumed()
+        foreign._owner_pid = os.getpid() + 1
+        foreign.close()
+
+        self.assertEqual(self.freed, [])
+
+
+class TestManagedResourceObjects(TestContextAPIs):
+    """Tests native resource handling management when managed manually.
+    """
+
+    def _instrument_frees(self):
+        """Record frees instead of performing them, and restore on teardown."""
+        freed = []
+        real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(freed.append)
+        self.addCleanup(
+            lambda: setattr(
+                ManagedResource, '_free_native_ptr', real_free))
+        return freed
+
+    def _make_archive(self, manifest=None):
+        archive = io.BytesIO()
+        builder = Builder(manifest or self.test_manifest)
+        try:
+            builder.to_archive(archive)
+        finally:
+            builder.close()
+        archive.seek(0)
+        return archive
+
+    # Activation: every public constructor stamps the creating process
+
+    def test_settings_activation_paths(self):
+        pid = os.getpid()
+        for label, factory in (
+            ("Settings()", lambda: Settings()),
+            ("from_json", lambda: Settings.from_json('{"version_major": 1}')),
+            ("from_dict", lambda: Settings.from_dict({"version_major": 1})),
+        ):
+            with self.subTest(path=label):
+                settings = factory()
+                try:
+                    self.assertTrue(settings.is_valid)
+                    self.assertEqual(settings._owner_pid, pid)
+                finally:
+                    settings.close()
+
+    def test_context_activation_paths(self):
+        pid = os.getpid()
+        settings = Settings.from_dict({"version_major": 1})
+        try:
+            for label, factory in (
+                # No settings and no signer takes the c2pa_context_new path.
+                ("Context()", lambda: Context()),
+                # Anything else goes through the ContextBuilder path.
+                ("Context(settings)", lambda: Context(settings)),
+                ("from_dict", lambda: Context.from_dict({"version_major": 1})),
+                ("builder()",
+                 lambda: Context.builder().with_settings(settings).build()),
+            ):
+                with self.subTest(path=label):
+                    context = factory()
+                    try:
+                        self.assertTrue(context.is_valid)
+                        self.assertEqual(context._owner_pid, pid)
+                    finally:
+                        context.close()
+        finally:
+            settings.close()
+
+    def test_reader_activation_paths(self):
+        pid = os.getpid()
+        context = Context()
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as f:
+                from_stream = Reader("image/jpeg", f)
+            self.addCleanup(from_stream.close)
+            self.assertEqual(from_stream._owner_pid, pid)
+
+            from_path = Reader(DEFAULT_TEST_FILE)
+            self.addCleanup(from_path.close)
+            self.assertEqual(from_path._owner_pid, pid)
+
+            with open(DEFAULT_TEST_FILE, "rb") as f:
+                with_context = Reader(DEFAULT_TEST_FILE, context=context)
+            self.addCleanup(with_context.close)
+            self.assertEqual(with_context._owner_pid, pid)
+
+            with open(DEFAULT_TEST_FILE, "rb") as f:
+                created = Reader.try_create("image/jpeg", f)
+            self.addCleanup(created.close)
+            self.assertEqual(created._owner_pid, pid)
+        finally:
+            context.close()
+
+    def test_builder_activation_paths(self):
+        pid = os.getpid()
+        context = Context()
+        try:
+            plain = Builder(self.test_manifest)
+            self.addCleanup(plain.close)
+            self.assertEqual(plain._owner_pid, pid)
+
+            from_json = Builder.from_json(self.test_manifest)
+            self.addCleanup(from_json.close)
+            self.assertEqual(from_json._owner_pid, pid)
+
+            with_context = Builder(self.test_manifest, context=context)
+            self.addCleanup(with_context.close)
+            self.assertEqual(with_context._owner_pid, pid)
+
+            # from_archive is the only caller of _wrap_native_handle,
+            # which bypasses __init__ entirely
+            wrapped = Builder.from_archive(self._make_archive())
+            self.addCleanup(wrapped.close)
+            self.assertEqual(wrapped._owner_pid, pid)
+            self.assertIsNone(wrapped._context)
+            self.assertFalse(wrapped._has_context_signer)
+        finally:
+            context.close()
+
+    def test_signer_activation_paths(self):
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+        self.assertTrue(signer.is_valid)
+        self.assertEqual(signer._owner_pid, os.getpid())
+
+        callback_signer = self._ctx_make_callback_signer()
+        self.addCleanup(callback_signer.close)
+        self.assertEqual(callback_signer._owner_pid, os.getpid())
+
+    # Swapping: the two public consume-and-return APIs
+
+    def test_builder_with_archive_swaps_the_handle(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        original_handle = builder._handle
+        original_stamp = builder._owner_pid
+
+        result = builder.with_archive(self._make_archive())
+
+        self.assertIs(result, builder, "with_archive should return self")
+        self.assertNotEqual(builder._handle, original_handle,
+                            "the native handle was not replaced")
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        # The replacement came from this process, so the stamp still applies.
+        self.assertEqual(builder._owner_pid, original_stamp)
+        self.assertEqual(builder._owner_pid, os.getpid())
+        builder.close()
+
+    def test_reader_with_fragment_swaps_the_handle(self):
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        context = Context()
+        self.addCleanup(context.close)
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init, context=context)
+        self.addCleanup(reader.close)
+        original_handle = reader._handle
+
+        # The Reader consumed the first handle, so the init stream is reopened.
+        with open(init_path, "rb") as init, open(fragment_path, "rb") as frag:
+            result = reader.with_fragment("video/mp4", init, frag)
+
+        self.assertIs(result, reader, "with_fragment should return self")
+        self.assertNotEqual(reader._handle, original_handle,
+                            "the native handle was not replaced")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(reader._owner_pid, os.getpid())
+
+    def test_swapped_builder_is_freed_exactly_once(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        original_handle = builder._handle
+        # The helper closes a temporary Builder,
+        # whose free would otherwise be counted here.
+        archive = self._make_archive()
+
+        # Instrument across the swap so a free of the consumed pointer is recorded.
+        freed = self._instrument_frees()
+        builder.with_archive(archive)
+        swapped_handle = builder._handle
+
+        self.assertEqual(freed, [], "the swap freed the consumed pointer")
+
+        builder.close()
+        builder.close()
+
+        # Only the replacement is ours to free: the original was consumed by
+        # the FFI call that returned it.
+        self.assertEqual(freed, [swapped_handle])
+        self.assertNotIn(original_handle, freed)
+
+    def test_repeated_swaps_on_one_builder(self):
+        # Each with_archive consumes the handle the previous one returned, so
+        # a chain of swaps is where a wrong swap surfaces: keeping the
+        # consumed pointer makes the next call raise UntrackedPointer from
+        # the native registry.
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        self.addCleanup(builder.close)
+
+        seen = [builder._handle]
+        for _ in range(5):
+            builder.with_archive(self._make_archive())
+            self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+            seen.append(builder._handle)
+
+        self.assertTrue(builder.is_valid)
+        self.assertEqual(builder._owner_pid, os.getpid())
+
+    def test_context_consumes_signer_but_not_settings(self):
+        settings = Settings.from_dict({"version_major": 1})
+        signer = self._ctx_make_signer()
+
+        context = Context(settings=settings, signer=signer)
+        self.addCleanup(context.close)
+
+        # The signer pointer moved to the native context builder.
+        self.assertIsNone(signer._handle)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        self.assertTrue(context.has_signer)
+
+        # Settings are copied, not consumed, so the caller still owns them.
+        self.assertTrue(settings.is_valid)
+        self.assertEqual(settings._owner_pid, os.getpid())
+        settings.close()
+
+    def test_consumed_signer_close_frees_nothing(self):
+        signer = self._ctx_make_signer()
+        context = Context(signer=signer)
+        self.addCleanup(context.close)
+
+        freed = self._instrument_frees()
+        signer.close()
+
+        self.assertEqual(freed, [],
+                         "closing a consumed Signer freed a pointer the "
+                         "context now owns")
+
+    def test_builder_with_archive_null_return_consumes_self(self):
+        builder = Builder(self.test_manifest)
+        real_call = c2pa_module._lib.c2pa_builder_with_archive
+        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        try:
+            with self.assertRaises(Error):
+                builder.with_archive(self._make_archive())
+        finally:
+            c2pa_module._lib.c2pa_builder_with_archive = real_call
+
+        # The FFI consumed the old handle and returned no replacement,
+        # so there is nothing left for this object to own...
+        self.assertIsNone(builder._handle)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        builder.close()
+        self.assertEqual(freed, [])
+
+    def test_reader_with_fragment_null_return_consumes_self(self):
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        reader.close()
+        self.assertEqual(freed, [])
 
 
 class TestNativeHandleOwnership(unittest.TestCase):

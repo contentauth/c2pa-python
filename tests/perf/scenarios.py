@@ -979,6 +979,157 @@ def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
         context.close()
 
 
+def _fork_contended_over(make_object, iterations):
+    """Fork over an object built by make_object() while 8 threads churn
+    Readers, so the registry Mutex is likely held at the instant of fork().
+
+    The child closes the inherited object. Without the PID guard that close
+    calls into the native library and can block forever on a mutex left
+    locked by a thread that fork() did not clone, which _fork_wait's alarm
+    reports as a timeout. The parent closes afterwards for the real free.
+    """
+    if not hasattr(os, "fork"):
+        return
+    stop = threading.Event()
+
+    def _worker():
+        while not stop.is_set():
+            with open(SIGNED_JPEG, "rb") as f:
+                r = Reader("image/jpeg", f)
+            r.close()
+
+    threads = [threading.Thread(target=_worker, daemon=True)
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    try:
+        for _ in _iterate(iterations):
+            for _ in range(5):
+                obj = make_object()
+
+                def _child(o=obj):
+                    o.close()
+                    gc.collect()
+
+                _fork_wait(_child)
+                obj.close()
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(timeout=5)
+
+
+def scenario_fork_contended_mutex_swap(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    fork over a Builder whose handle came from with_archive(), under the same
+    thread contention as fork_contended_mutex. That scenario only ever forks
+    over handles that came straight from a constructor, so a swapped-in
+    handle losing its stamp would go unnoticed there.
+    """
+    if not hasattr(os, "fork"):
+        return
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+
+    def _make():
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.with_archive(io.BytesIO(archive_bytes))
+        return builder
+
+    _fork_contended_over(_make, iterations)
+
+
+def scenario_fork_contended_mutex_wrap(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    fork over a Builder built by from_archive(), under thread contention.
+    from_archive is the only path that bypasses __init__, so it is the one
+    most likely to be missing the PID stamp the child's close() depends on.
+    """
+    if not hasattr(os, "fork"):
+        return
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+
+    _fork_contended_over(
+        lambda: Builder.from_archive(io.BytesIO(archive_bytes)), iterations)
+
+
+def scenario_fork_consumed_signer(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    the parent builds a Context that consumed a Signer, then forks. The child
+    closes both. The consumed Signer holds no handle, so it must be inert in
+    either process, and the Context must be skipped by the PID guard.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        signer = _make_signer()
+        context = Context(signer=signer)
+
+        def _child(c=context, s=signer):
+            s.close()
+            c.close()
+            gc.collect()
+
+        _fork_wait(_child)
+        signer.close()
+        context.close()
+
+
+def scenario_swap_chain_churn(iterations: int = 100) -> None:
+    """Loop with_archive() repeatedly on one Builder, so a chain of handles
+    is consumed and replaced on a single live object. Every other scenario
+    swaps a given object at most once.
+
+    This one is a crash and allocation-churn guard rather than a leak gate.
+    Only one Builder is closed however many times the loop runs, so a
+    close-path leak here is O(1) and invisible against the interpreter's
+    allocation floor. What a broken swap does instead is fail loudly: keeping
+    the consumed pointer makes the next call raise UntrackedPointer from the
+    native registry, and freeing it makes the free itself fail. total_allocations
+    still tracks the churn.
+    """
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+    builder = Builder(MANIFEST_BASE, context=context)
+    for _ in _iterate(iterations):
+        builder.with_archive(io.BytesIO(archive_bytes))
+    builder.close()
+    context.close()
+
+
+def scenario_fork_swap_cleanup(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    the handle a Builder owns at fork time came from with_archive(), which
+    consumed the original and returned a replacement. The child must skip the
+    free on the swapped-in handle just as it would on an original one, and the
+    parent must still free it exactly once afterwards. The other fork
+    scenarios only ever fork over handles that came straight from a
+    constructor.
+    """
+    if not hasattr(os, "fork"):
+        return
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.with_archive(io.BytesIO(archive_bytes))
+
+        def _child(b=builder):
+            b.close()
+            gc.collect()
+
+        _fork_wait(_child)
+        builder.close()
+
+
 def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
     """Fork safety benchmark scenario:
     Stream wraps a BytesIO with ctypes callbacks stored as instance attributes.
@@ -1042,6 +1193,11 @@ SCENARIOS = {
     "fork_parent_frees_after_fork": scenario_fork_parent_frees_after_fork,
     "fork_child_sys_exit": scenario_fork_child_sys_exit,
     "fork_stream_cleanup": scenario_fork_stream_cleanup,
+    "fork_swap_cleanup": scenario_fork_swap_cleanup,
+    "fork_contended_mutex_swap": scenario_fork_contended_mutex_swap,
+    "fork_contended_mutex_wrap": scenario_fork_contended_mutex_wrap,
+    "fork_consumed_signer": scenario_fork_consumed_signer,
+    "swap_chain_churn": scenario_swap_chain_churn,
 }
 
 

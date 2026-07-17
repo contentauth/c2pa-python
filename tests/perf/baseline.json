@@ -241,5 +241,30 @@
     "peak_bytes": 3733349,
     "leaked_bytes": 3306787,
     "total_allocations": 1936244
+  },
+  "fork_swap_cleanup": {
+    "peak_bytes": 3639043,
+    "leaked_bytes": 3308397,
+    "total_allocations": 401032
+  },
+  "swap_chain_churn": {
+    "peak_bytes": 3650097,
+    "leaked_bytes": 3319300,
+    "total_allocations": 379064
+  },
+  "fork_consumed_signer": {
+    "peak_bytes": 3321464,
+    "leaked_bytes": 3258207,
+    "total_allocations": 130030
+  },
+  "fork_contended_mutex_swap": {
+    "peak_bytes": 7281970,
+    "leaked_bytes": 3443799,
+    "total_allocations": 18799685
+  },
+  "fork_contended_mutex_wrap": {
+    "peak_bytes": 7268578,
+    "leaked_bytes": 3442991,
+    "total_allocations": 17791158
   }
 }

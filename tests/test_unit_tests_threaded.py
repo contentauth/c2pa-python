@@ -2911,5 +2911,161 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
                     self.assertNotEqual(current_manifest["active_manifest"], thread_manifest_data[other_thread_id]["active_manifest"])
 
 
+class TestManagedResourceCrossThread(unittest.TestCase):
+    """Tests cross-thread resources handling, especially closing/releasind.
+    """
+
+    def setUp(self):
+        self.freed = []
+        self._real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
+
+    def tearDown(self):
+        ManagedResource._free_native_ptr = self._real_free
+
+    def _free_counts(self):
+        counts = {}
+        for handle in self.freed:
+            counts[handle] = counts.get(handle, 0) + 1
+        return counts
+
+    def test_cross_thread_create_and_close_frees_exactly_once(self):
+        count = 300
+        pid = os.getpid()
+
+        def create(index):
+            res = _ConcreteResource()
+            res._activate(0x10000 + index)
+            return res
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            created = list(pool.map(create, range(count)))
+
+        # Created on worker threads, closed on the main thread.
+        for res in created:
+            self.assertEqual(res._owner_pid, pid)
+            self.assertFalse(is_foreign_process(res))
+            res.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            made_on_main = []
+            for index in range(count):
+                res = _ConcreteResource()
+                res._activate(0x20000 + index)
+                made_on_main.append(res)
+            # Created on the main thread, closed on worker threads.
+            list(pool.map(lambda r: r.close(), made_on_main))
+
+        expected = {0x10000 + i: 1 for i in range(count)}
+        expected.update({0x20000 + i: 1 for i in range(count)})
+        # Restrict to this test's handles: resources dropped by other tests in
+        # the class can be collected at any point and land in self.freed.
+        counts = {handle: value
+                  for handle, value in self._free_counts().items()
+                  if handle in expected}
+        self.assertEqual(counts, expected)
+
+    def test_third_thread_gc_of_dropped_reference_frees_exactly_once(self):
+        import gc
+
+        def make_and_drop(index):
+            res = _ConcreteResource()
+            res._activate(0x30000 + index)
+            # Reference dies here; __del__ may run on this thread or later.
+            return index
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(make_and_drop, range(200)))
+
+        gc.collect()
+
+        # Count only this test's handles: resources dropped by other tests in
+        # the class can be collected at any point and land in self.freed.
+        counts = {handle: count
+                  for handle, count in self._free_counts().items()
+                  if 0x30000 <= handle < 0x30000 + 200}
+        self.assertEqual(len(counts), 200,
+                         "dropped resources were not all freed")
+        self.assertEqual(set(counts.values()), {1},
+                         "a dropped resource was freed more than once")
+
+
+class TestSettingsAsContextAcrossThreads(unittest.TestCase):
+    """Tests Settings handed between threads and reused as the basis
+    for Contexts, using real native handles.
+    """
+
+    def setUp(self):
+        self.manifest = {
+            "claim_generator": "threaded_stamp_test",
+            "format": "image/jpeg",
+            "assertions": [],
+        }
+
+    def test_settings_relayed_across_threads_stays_usable(self):
+        settings = Settings()
+        pid = os.getpid()
+        results = []
+        errors = []
+
+        def build_context_and_builder():
+            try:
+                context = Context(settings=settings)
+                builder = Builder(self.manifest, context=context)
+                results.append((
+                    builder._owner_pid, context._owner_pid, builder.is_valid))
+                builder.close()
+                context.close()
+            except Exception as exc:
+                errors.append(exc)
+
+        # Sequential hand-off: each thread owns the Settings for its turn.
+        for _ in range(8):
+            thread = threading.Thread(target=build_context_and_builder)
+            thread.start()
+            thread.join()
+
+        settings.close()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 8)
+        for builder_pid, context_pid, valid in results:
+            self.assertEqual(builder_pid, pid)
+            self.assertEqual(context_pid, pid)
+            self.assertTrue(valid)
+        self.assertEqual(settings._owner_pid, pid)
+
+    def test_context_created_on_one_thread_closed_on_another(self):
+        created = []
+        errors = []
+
+        def create():
+            try:
+                created.append(Context())
+            except Exception as exc:
+                errors.append(exc)
+
+        def close_all():
+            try:
+                for context in created:
+                    context.close()
+            except Exception as exc:
+                errors.append(exc)
+
+        maker = threading.Thread(target=create)
+        maker.start()
+        maker.join()
+
+        closer = threading.Thread(target=close_all)
+        closer.start()
+        closer.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(created), 1)
+        for context in created:
+            self.assertEqual(context._lifecycle_state, LifecycleState.CLOSED)
+            self.assertIsNone(context._handle)
+
+
 if __name__ == '__main__':
     unittest.main()
