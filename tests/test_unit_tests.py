@@ -6925,40 +6925,39 @@ class TestStreamReferences(unittest.TestCase):
         self.assertEqual(flush_cb(None), -1)
 
 
-class _FakeHandleResource(ManagedResource):
-    """ManagedResource with a fake integer handle, for lifecycle tests that
-    must not touch the native library."""
-
-
-class _CallbackHoldingResource(ManagedResource):
-    """Mimics Signer: its _release() reads an attribute that must have been
-    supplied by __init__ or by _activate's extra_attrs."""
-
-    def _release(self):
-        if self._callback_cb:
-            self._callback_cb = None
-
-
-class _ReleaseRecordingResource(ManagedResource):
-    """Records _release() calls for test asserts."""
-
-    def __init__(self):
-        super().__init__()
-        self.release_calls = 0
-
-    def _release(self):
-        self.release_calls += 1
-
-
 class TestManagedResourceLifecycle(unittest.TestCase):
-    """Lifecycle primitives (_activate, _swap_handle, _wrap_native_handle)
-    and the _owner_pid stamp that governs which process may free a handle.
+    """Lifecycle primitives (_activate, _swap_handle, _wrap_native_handle),
+    the _owner_pid stamp that governs which process may free a handle, and
+    the ownership hand-offs between Python and the native library.
 
-    These use fake integer handles and record calls to _free_native_ptr
-    instead of freeing anything, so a mistake here cannot crash the process.
+    setUp records frees instead of performing them, so a miscount reads as a
+    leak or a double-free rather than a crash. Tests holding real handles
+    call _use_real_frees() first.
     """
 
+    class _FakeHandleResource(ManagedResource):
+        """Concrete subclass with no resources of its own."""
+
+    class _CallbackHoldingResource(ManagedResource):
+        """Mimics Signer: its _release() reads an attribute that must have
+        been supplied by __init__ or by _activate's extra_attrs."""
+
+        def _release(self):
+            if self._callback_cb:
+                self._callback_cb = None
+
+    class _ReleaseRecordingResource(ManagedResource):
+        """Records _release() calls for test asserts."""
+
+        def __init__(self):
+            super().__init__()
+            self.release_calls = 0
+
+        def _release(self):
+            self.release_calls += 1
+
     def setUp(self):
+        self.data_dir = FIXTURES_DIR
         self.freed = []
         self._real_free = ManagedResource._free_native_ptr
         ManagedResource._free_native_ptr = staticmethod(self.freed.append)
@@ -6972,10 +6971,22 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             counts[handle] = counts.get(handle, 0) + 1
         return counts
 
+    def _use_real_frees(self):
+        """Undo setUp's recorder, so native handles are really freed."""
+        ManagedResource._free_native_ptr = self._real_free
+
+    def _make_signer(self):
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
+            certs = f.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as f:
+            key = f.read()
+        return Signer.from_info(C2paSignerInfo(
+            b"es256", certs, key, b"http://timestamp.digicert.com"))
+
     # _cleanup_resources: a failing _release() must not strand the handle
 
     def test_release_failure_still_frees_handle(self):
-        res = _CallbackHoldingResource()
+        res = self._CallbackHoldingResource()
         # _callback_cb is never set, so _release() raises AttributeError.
         res._activate(0xBBBB)
 
@@ -6986,7 +6997,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertIsNone(res._handle)
 
     def test_release_failure_is_logged(self):
-        res = _CallbackHoldingResource()
+        res = self._CallbackHoldingResource()
         res._activate(0xBBBB)
 
         with self.assertLogs('c2pa', level='ERROR') as captured:
@@ -6999,7 +7010,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     # _activate guards
 
     def test_activate_rejects_null_handle(self):
-        res = _FakeHandleResource()
+        res = self._FakeHandleResource()
 
         with self.assertRaises(Error) as ctx:
             res._activate(None)
@@ -7008,7 +7019,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(res._lifecycle_state, LifecycleState.UNINITIALIZED)
 
     def test_activate_rejects_double_activation(self):
-        res = _FakeHandleResource()
+        res = self._FakeHandleResource()
         res._activate(0x1111)
 
         with self.assertRaises(Error) as ctx:
@@ -7021,7 +7032,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [0x1111])
 
     def test_activate_rejects_reactivation_after_close(self):
-        res = _FakeHandleResource()
+        res = self._FakeHandleResource()
         res._activate(0x3333)
         res.close()
         self.freed.clear()
@@ -7035,7 +7046,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [])
 
     def test_activate_does_not_mutate_on_rejection(self):
-        res = _FakeHandleResource()
+        res = self._FakeHandleResource()
         res._activate(0x5555)
 
         with self.assertRaises(Error):
@@ -7047,7 +7058,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     # _swap_handle
 
     def test_swap_handle_does_not_free_consumed_handle(self):
-        res = _FakeHandleResource()
+        res = self._FakeHandleResource()
         res._activate(0xAAA1)
 
         res._swap_handle(0xAAA2)
@@ -7061,19 +7072,19 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [0xAAA2])
 
     def test_swap_handle_requires_active_resource(self):
-        uninitialized = _FakeHandleResource()
+        uninitialized = self._FakeHandleResource()
         with self.assertRaises(Error) as ctx:
             uninitialized._swap_handle(0x1)
         self.assertIn("not active", str(ctx.exception))
 
-        closed = _FakeHandleResource()
+        closed = self._FakeHandleResource()
         closed._activate(0x2)
         closed.close()
         with self.assertRaises(Error):
             closed._swap_handle(0x3)
 
     def test_swap_handle_rejects_null_replacement(self):
-        res = _FakeHandleResource()
+        res = self._FakeHandleResource()
         res._activate(0x7777)
 
         with self.assertRaises(Error) as ctx:
@@ -7109,10 +7120,10 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def test_wrap_native_handle_rejects_null(self):
         with self.assertRaises(Error):
-            _FakeHandleResource._wrap_native_handle(None)
+            self._FakeHandleResource._wrap_native_handle(None)
 
     def test_close_after_wrap_is_idempotent(self):
-        obj = _FakeHandleResource._wrap_native_handle(0xD00D)
+        obj = self._FakeHandleResource._wrap_native_handle(0xD00D)
 
         obj.close()
         obj.close()
@@ -7122,14 +7133,14 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     def test_every_construction_path_records_owner_pid(self):
         pid = os.getpid()
 
-        plain = _FakeHandleResource()
+        plain = self._FakeHandleResource()
         self.assertEqual(plain._owner_pid, pid)
 
-        activated = _FakeHandleResource()
+        activated = self._FakeHandleResource()
         activated._activate(0xA1)
         self.assertEqual(activated._owner_pid, pid)
 
-        wrapped = _FakeHandleResource._wrap_native_handle(0xA2)
+        wrapped = self._FakeHandleResource._wrap_native_handle(0xA2)
         self.assertEqual(wrapped._owner_pid, pid)
 
         # A swap keeps the original stamp:
@@ -7145,7 +7156,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             ('_lifecycle_state', LifecycleState.CLOSED),
         ):
             with self.subTest(attr=attr):
-                res = _FakeHandleResource()
+                res = self._FakeHandleResource()
                 stamp = res._owner_pid
 
                 with self.assertRaises(Error) as ctx:
@@ -7159,15 +7170,15 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def test_wrap_native_handle_rejects_reserved_extra_attrs(self):
         with self.assertRaises(Error):
-            _FakeHandleResource._wrap_native_handle(
+            self._FakeHandleResource._wrap_native_handle(
                 0xB2, _owner_pid=os.getpid() + 1)
 
     def test_foreign_child_skips_free_for_wrapped_and_swapped(self):
-        wrapped = _FakeHandleResource._wrap_native_handle(0xC1)
+        wrapped = self._FakeHandleResource._wrap_native_handle(0xC1)
         wrapped._owner_pid = os.getpid() + 1
         wrapped.close()
 
-        swapped = _FakeHandleResource()
+        swapped = self._FakeHandleResource()
         swapped._activate(0xC2)
         swapped._swap_handle(0xC3)
         swapped._owner_pid = os.getpid() + 1
@@ -7181,11 +7192,11 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(swapped._handle, 0xC3)
 
     def test_owning_process_frees_wrapped_and_swapped_exactly_once(self):
-        wrapped = _FakeHandleResource._wrap_native_handle(0xC4)
+        wrapped = self._FakeHandleResource._wrap_native_handle(0xC4)
         wrapped.close()
         wrapped.close()
 
-        swapped = _FakeHandleResource()
+        swapped = self._FakeHandleResource()
         swapped._activate(0xC5)
         swapped._swap_handle(0xC6)
         swapped.close()
@@ -7195,24 +7206,24 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self._free_counts(), {0xC4: 1, 0xC6: 1})
 
     def test_foreign_child_skips_release(self):
-        foreign = _ReleaseRecordingResource()
+        foreign = self._ReleaseRecordingResource()
         foreign._activate(0xD1)
         foreign._owner_pid = os.getpid() + 1
         foreign.close()
         self.assertEqual(foreign.release_calls, 0)
 
-        owned = _ReleaseRecordingResource()
+        owned = self._ReleaseRecordingResource()
         owned._activate(0xD2)
         owned.close()
         self.assertEqual(owned.release_calls, 1)
 
     def test_consumed_resource_frees_nothing_in_either_process(self):
-        owned = _FakeHandleResource()
+        owned = self._FakeHandleResource()
         owned._activate(0xE1)
         owned._mark_consumed()
         owned.close()
 
-        foreign = _FakeHandleResource()
+        foreign = self._FakeHandleResource()
         foreign._activate(0xE2)
         foreign._mark_consumed()
         foreign._owner_pid = os.getpid() + 1
@@ -7220,6 +7231,83 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         self.assertEqual(self.freed, [])
 
+    def test_signer_init_rejects_null_pointer(self):
+        with self.assertRaises(Error):
+            Signer(None)
+
+    def test_builder_from_archive_wraps_handle(self):
+        self._use_real_frees()
+        archive = io.BytesIO()
+        Builder({"claim_generator": "test", "format": "image/jpeg"}).to_archive(
+            archive)
+
+        builder = Builder.from_archive(io.BytesIO(archive.getvalue()))
+
+        self.assertTrue(builder.is_valid)
+        self.assertIsNone(builder._context)
+        self.assertFalse(builder._has_context_signer)
+        builder.close()
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_context_build_failure_consumes_signer(self):
+        # c2pa_context_builder_set_signer takes ownership of the signer
+        # pointer immediately, so a later build failure must still leave the
+        # Signer consumed. Otherwise it holds a pointer the native side has
+        # already freed.
+        self._use_real_frees()
+        signer = self._make_signer()
+        real_build = c2pa_module._lib.c2pa_context_builder_build
+        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        try:
+            with self.assertRaises(Error):
+                Context(signer=signer)
+        finally:
+            c2pa_module._lib.c2pa_context_builder_build = real_build
+
+        self.assertIsNone(signer._handle,
+                          "Signer still holds a pointer the native side freed")
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+
+        # Nothing left to free, so close() must be a no-op.
+        freed = []
+        real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(freed.append)
+        try:
+            signer.close()
+        finally:
+            ManagedResource._free_native_ptr = real_free
+        self.assertEqual(freed, [])
+
+    def test_context_with_signer_consumes_it_on_success(self):
+        self._use_real_frees()
+        signer = self._make_signer()
+
+        context = Context(signer=signer)
+
+        self.assertTrue(context.is_valid)
+        self.assertIsNone(signer._handle)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        self.assertTrue(context.has_signer)
+        context.close()
+
+    def test_construction_failure_leaves_nothing_to_free(self):
+        # Activation happens after the null check, so a failed construction
+        # leaves no handle on the object for __del__ to find.
+        real_new = c2pa_module._lib.c2pa_context_new
+        c2pa_module._lib.c2pa_context_new = lambda: None
+        try:
+            with self.assertRaises(Error):
+                Context()
+        finally:
+            c2pa_module._lib.c2pa_context_new = real_new
+
+        real_json = c2pa_module._lib.c2pa_builder_from_json
+        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
+        try:
+            with self.assertRaises(Error):
+                Builder({"claim_generator": "test"})
+        finally:
+            c2pa_module._lib.c2pa_builder_from_json = real_json
 
 class TestManagedResourceObjects(TestContextAPIs):
     """Tests native resource handling management when managed manually.
@@ -7244,8 +7332,6 @@ class TestManagedResourceObjects(TestContextAPIs):
             builder.close()
         archive.seek(0)
         return archive
-
-    # Activation: every public constructor stamps the creating process
 
     def test_settings_activation_paths(self):
         pid = os.getpid()
@@ -7345,8 +7431,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         callback_signer = self._ctx_make_callback_signer()
         self.addCleanup(callback_signer.close)
         self.assertEqual(callback_signer._owner_pid, os.getpid())
-
-    # Swapping: the two public consume-and-return APIs
 
     def test_builder_with_archive_swaps_the_handle(self):
         context = Context()
@@ -7501,98 +7585,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         freed = self._instrument_frees()
         reader.close()
         self.assertEqual(freed, [])
-
-
-class TestNativeHandleOwnership(unittest.TestCase):
-    """Ownership hand-offs between Python and the native library, driven by
-    fault injection at the FFI boundary."""
-
-    def setUp(self):
-        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
-
-    def _make_signer(self):
-        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
-            certs = f.read()
-        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as f:
-            key = f.read()
-        return Signer.from_info(C2paSignerInfo(
-            b"es256", certs, key, b"http://timestamp.digicert.com"))
-
-    def test_signer_init_rejects_null_pointer(self):
-        with self.assertRaises(Error):
-            Signer(None)
-
-    def test_builder_from_archive_wraps_handle(self):
-        archive = io.BytesIO()
-        Builder({"claim_generator": "test", "format": "image/jpeg"}).to_archive(
-            archive)
-
-        builder = Builder.from_archive(io.BytesIO(archive.getvalue()))
-
-        self.assertTrue(builder.is_valid)
-        self.assertIsNone(builder._context)
-        self.assertFalse(builder._has_context_signer)
-        builder.close()
-        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
-
-    def test_context_build_failure_consumes_signer(self):
-        # c2pa_context_builder_set_signer takes ownership of the signer
-        # pointer immediately, so a later build failure must still leave the
-        # Signer consumed. Otherwise it holds a pointer the native side has
-        # already freed.
-        signer = self._make_signer()
-        real_build = c2pa_module._lib.c2pa_context_builder_build
-        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
-        try:
-            with self.assertRaises(Error):
-                Context(signer=signer)
-        finally:
-            c2pa_module._lib.c2pa_context_builder_build = real_build
-
-        self.assertIsNone(signer._handle,
-                          "Signer still holds a pointer the native side freed")
-        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
-
-        # Nothing left to free, so close() must be a no-op.
-        freed = []
-        real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(freed.append)
-        try:
-            signer.close()
-        finally:
-            ManagedResource._free_native_ptr = real_free
-        self.assertEqual(freed, [])
-
-    def test_context_with_signer_consumes_it_on_success(self):
-        signer = self._make_signer()
-
-        context = Context(signer=signer)
-
-        self.assertTrue(context.is_valid)
-        self.assertIsNone(signer._handle)
-        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
-        self.assertTrue(context.has_signer)
-        context.close()
-
-    def test_construction_failure_leaves_nothing_to_free(self):
-        # A failed FFI construction must not leave a half-constructed object
-        # holding a handle. Activation happens after the check, so _handle is
-        # never set.
-        real_new = c2pa_module._lib.c2pa_context_new
-        c2pa_module._lib.c2pa_context_new = lambda: None
-        try:
-            with self.assertRaises(Error):
-                Context()
-        finally:
-            c2pa_module._lib.c2pa_context_new = real_new
-
-        real_json = c2pa_module._lib.c2pa_builder_from_json
-        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
-        try:
-            with self.assertRaises(Error):
-                Builder({"claim_generator": "test"})
-        finally:
-            c2pa_module._lib.c2pa_builder_from_json = real_json
 
 
 if __name__ == '__main__':
