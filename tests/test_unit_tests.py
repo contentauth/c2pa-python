@@ -7713,7 +7713,7 @@ class TestManagedResourceObjects(TestContextAPIs):
     def test_init_attrs_covers_what_init_sets(self):
         # Anything __init__ sets but _init_attrs() misses is absent on a
         # wrapped instance, which is the trap _init_attrs() exists to close.
-        for cls in (Builder, Context, Reader):
+        for cls in (Builder, Context, Reader, Signer):
             with self.subTest(cls=cls.__name__):
                 defaulted = set(re.findall(
                     r"self\.(_[a-z][a-z0-9_]*)\s*=",
@@ -7725,6 +7725,64 @@ class TestManagedResourceObjects(TestContextAPIs):
                     assigned - defaulted, set(),
                     f"{cls.__name__}.__init__ sets attributes that "
                     f"_init_attrs() does not default")
+
+    def test_init_attrs_overrides_chain_to_super(self):
+        # A subclass of these would silently lose the parent's defaults if
+        # the chain were broken.
+        for cls in (Builder, Context, Reader, Signer):
+            with self.subTest(cls=cls.__name__):
+                self.assertIn(
+                    "super()._init_attrs()",
+                    inspect.getsource(cls._init_attrs),
+                    f"{cls.__name__}._init_attrs() does not chain to super()")
+
+    def test_wrap_raw_ffi_signer_pointer(self):
+        # Signer._release() reads _callback_cb, so a wrap that skipped the
+        # defaults would fail during cleanup rather than at the wrap.
+        freed = self._instrument_frees()
+
+        signer = Signer._wrap_native_handle(0xABCD)
+        self.assertIsNone(signer._callback_cb)
+        self.assertEqual(signer._owner_pid, os.getpid())
+
+        # Cleanup swallows a failing _release(), so the error log is the only
+        # way to see one.
+        with self.assertNoLogs("c2pa", level="ERROR"):
+            signer.close()
+
+        self.assertEqual(freed, [0xABCD])
+
+    def test_signer_release_clears_callback(self):
+        signer = self._ctx_make_callback_signer()
+        self.assertIsNotNone(signer._callback_cb)
+
+        signer.close()
+
+        self.assertIsNone(signer._callback_cb)
+
+    def test_builder_release_clears_context(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+
+        builder.close()
+
+        self.assertIsNone(builder._context,
+                          "closed Builder still pins its Context")
+        # The Builder does not own the Context, so it must not close it.
+        self.assertTrue(context.is_valid)
+
+    def test_reader_close_closes_backing_file(self):
+        # _close_streams reads the attrs _init_attrs() defaults, so this is
+        # the regression guard for reading them directly.
+        reader = Reader(DEFAULT_TEST_FILE)
+        backing_file = reader._backing_file
+        self.assertIsNotNone(backing_file)
+
+        reader.close()
+
+        self.assertTrue(backing_file.closed, "Reader left its file open")
+        self.assertIsNone(reader._backing_file)
 
     def test_from_archive_frees_handle_when_wrap_fails(self):
         # The wrap raising means no Python object took ownership, so

@@ -314,9 +314,8 @@ class ManagedResource:
         Only an uninitialized resource can be activated, so a handle can never
         be activated twice and a closed resource can never be reopened.
 
-        Any attribute the subclass's `_release()` reads must be passed in
-        `extra_attrs` when __init__ did not already set it, otherwise
-        `_release()` raises during cleanup.
+        `extra_attrs` overrides the defaults `_init_attrs()` already supplied,
+        so it is only for values that differ from them.
 
         `extra_attrs` cannot carry the lifecycle attributes themselves.
         `_owner_pid` in particular records the process that created the
@@ -1630,6 +1629,7 @@ class Context(ManagedResource, ContextProvider):
                 raise
 
     def _init_attrs(self):
+        super()._init_attrs()
         self._has_signer = False
         self._signer_callback_cb = None
 
@@ -2467,6 +2467,7 @@ class Reader(ManagedResource):
             raise
 
     def _init_attrs(self):
+        super()._init_attrs()
         self._own_stream = None
 
         # Tracks a file we opened ourselves and must close later.
@@ -2484,14 +2485,14 @@ class Reader(ManagedResource):
 
     def _close_streams(self):
         """Close owned stream and backing file if present."""
-        if getattr(self, '_own_stream', None):
+        if self._own_stream:
             try:
                 self._own_stream.close()
             except Exception:
                 logger.error("Failed to close Reader stream")
             finally:
                 self._own_stream = None
-        if getattr(self, '_backing_file', None):
+        if self._backing_file:
             try:
                 self._backing_file.close()
             except Exception:
@@ -3015,11 +3016,18 @@ class Signer(ManagedResource):
             C2paError: If the signer pointer is invalid
         """
         super().__init__()
+        self._init_attrs()
 
         if not signer_ptr:
             raise C2paError("Invalid signer pointer: pointer is null")
 
-        self._activate(signer_ptr, _callback_cb=None)
+        self._activate(signer_ptr)
+
+    def _init_attrs(self):
+        super()._init_attrs()
+        # from_callback() replaces this with the real callback, which has to
+        # outlive the signer that calls it.
+        self._callback_cb = None
 
     def _release(self):
         """Release Signer-specific resources (callback reference)."""
@@ -3251,8 +3259,14 @@ class Builder(ManagedResource):
         self._activate(new_ptr)
 
     def _init_attrs(self):
+        super()._init_attrs()
         self._context = None
         self._has_context_signer = False
+
+    def _release(self):
+        """Release the Builder's reference to its Context."""
+        # The Context is not ours to close, only to stop pinning.
+        self._context = None
 
     def set_no_embed(self):
         """Set the no-embed flag.
