@@ -299,9 +299,26 @@ class ManagedResource:
 
     def _mark_consumed(self):
         """Mark as consumed by an FFI call that took ownership
-        of native resources e.g. pointers. This means we should not
-        call clean-up here anymore, and leave it to the new owner.
+        of native resources e.g. pointers. The new owner frees the handle,
+        but this class's own resources are still ours to let go of, and
+        marking the resource closed means _cleanup_resources will not do it
+        later.
         """
+        if is_foreign_process(self):
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
+        # Callers raise straight after consuming, so a failing _release()
+        # here would mask the error they are reporting.
+        try:
+            self._release()
+        except Exception:
+            logger.error(
+                "Failed to release %s resources",
+                type(self).__name__,
+                exc_info=True,
+            )
 
         self._handle = None
         self._lifecycle_state = LifecycleState.CLOSED
@@ -1986,6 +2003,11 @@ class Stream:
         if self._closed:
             return
         if is_foreign_process(self):
+            # Unlike ManagedResource, which leaves a child's copy active
+            # because the parent still owns the pointer, a Stream's callbacks
+            # are bound to the parent's objects.
+            # The child's copy can never be used, so mark it closed
+            # and let the parent free it.
             self._closed = True
             self._initialized = False
             return
@@ -2501,7 +2523,13 @@ class Reader(ManagedResource):
                 self._backing_file = None
 
     def _release(self):
-        """Release Reader-specific resources (stream, backing file)."""
+        """Release Reader-specific resources (caches, stream, backing file).
+
+        Every teardown path runs this, including _mark_consumed(), which
+        close() never gets a chance to follow.
+        """
+        self._manifest_json_str_cache = None
+        self._manifest_data_cache = None
         self._close_streams()
 
     def _get_cached_manifest_data(self) -> Optional[dict]:
@@ -2583,11 +2611,6 @@ class Reader(ManagedResource):
 
         return self
 
-    def close(self):
-        """Release the reader resources."""
-        self._manifest_json_str_cache = None
-        self._manifest_data_cache = None
-        super().close()
 
     def json(self) -> str:
         """Get the manifest store as a JSON string.

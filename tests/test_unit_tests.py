@@ -7234,6 +7234,41 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         self.assertEqual(self.freed, [])
 
+    # Consuming a handle hands the native pointer to a new owner,
+    # but the Python-side resources are still ours to let go of.
+
+    def test_mark_consumed_releases_python_resources(self):
+        res = self._ReleaseRecordingResource()
+        res._activate(0xF1)
+
+        res._mark_consumed()
+
+        self.assertEqual(res.release_calls, 1)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+        self.assertEqual(self.freed, [])
+
+    def test_mark_consumed_swallows_failing_release(self):
+        res = self._CallbackHoldingResource()
+        res._activate(0xF2)
+
+        with self.assertLogs("c2pa", level="ERROR"):
+            res._mark_consumed()
+
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+
+    def test_mark_consumed_in_foreign_process_skips_release(self):
+        res = self._ReleaseRecordingResource()
+        res._activate(0xF3)
+        res._owner_pid = os.getpid() + 1
+
+        res._mark_consumed()
+
+        self.assertEqual(res.release_calls, 0)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+
     def test_signer_init_rejects_null_pointer(self):
         with self.assertRaises(Error):
             Signer(None)
@@ -7772,10 +7807,64 @@ class TestManagedResourceObjects(TestContextAPIs):
         # The Builder does not own the Context, so it must not close it.
         self.assertTrue(context.is_valid)
 
+    def test_consumed_reader_closes_backing_file(self):
+        # A failed with_fragment consumes the reader.
+        # # Reader(path) opened the backing file itself,
+        # so nothing else will ever close it.
+        reader = Reader(DEFAULT_TEST_FILE)
+        backing_file = reader._backing_file
+        self.assertFalse(backing_file.closed)
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as main, \
+                    open(DEFAULT_TEST_FILE, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("image/jpeg", main, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertTrue(backing_file.closed,
+                        "consumed Reader leaked its backing file")
+
+    def test_consumed_builder_releases_context(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        archive = self._make_archive()
+
+        real_call = c2pa_module._lib.c2pa_builder_with_archive
+        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        try:
+            with self.assertRaises(Error):
+                builder.with_archive(archive)
+        finally:
+            c2pa_module._lib.c2pa_builder_with_archive = real_call
+
+        self.assertIsNone(builder._context,
+                          "consumed Builder still pins its Context")
+        self.assertTrue(context.is_valid)
+
+    def test_context_takes_callback_before_consuming_signer(self):
+        # Consuming the signer releases its callback reference,
+        # so the Context has to take it first or the callback dies with the signer.
+        signer = self._ctx_make_callback_signer()
+        callback = signer._callback_cb
+        self.assertIsNotNone(callback)
+
+        context = Context(signer=signer)
+        self.addCleanup(context.close)
+
+        self.assertIs(context._signer_callback_cb, callback)
+        self.assertIsNone(signer._callback_cb)
+
     def test_reader_close_closes_backing_file(self):
         # _close_streams reads the attrs _init_attrs() defaults, so this is
         # the regression guard for reading them directly.
         reader = Reader(DEFAULT_TEST_FILE)
+        reader.json()
         backing_file = reader._backing_file
         self.assertIsNotNone(backing_file)
 
@@ -7783,6 +7872,45 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         self.assertTrue(backing_file.closed, "Reader left its file open")
         self.assertIsNone(reader._backing_file)
+        self.assertIsNone(reader._manifest_json_str_cache)
+        self.assertIsNone(reader._manifest_data_cache)
+
+    def test_consumed_reader_clears_caches(self):
+        # Consuming marks the reader closed, so close() will not run later.
+        # Anything cleanup owes the object has to happen at consume time.
+        reader = Reader(DEFAULT_TEST_FILE)
+        reader.json()
+        self.assertIsNotNone(reader._manifest_json_str_cache)
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as main, \
+                    open(DEFAULT_TEST_FILE, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("image/jpeg", main, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIsNone(reader._manifest_json_str_cache,
+                          "consumed Reader kept its manifest cache")
+        self.assertIsNone(reader._manifest_data_cache)
+
+    def test_reader_del_clears_caches(self):
+        # __del__ goes through _cleanup_resources, not close(), so cache
+        # clearing has to live somewhere both paths reach.
+        reader = Reader(DEFAULT_TEST_FILE)
+        reader.json()
+        self.assertIsNotNone(reader._manifest_json_str_cache)
+
+        # __del__ runs _cleanup_resources directly, so drive that rather than
+        # dropping the reference: the assertions need the object afterwards.
+        reader._cleanup_resources()
+
+        self.assertIsNone(reader._manifest_json_str_cache,
+                          "cleanup left the manifest cache alive")
+        self.assertIsNone(reader._manifest_data_cache)
 
     def test_from_archive_frees_handle_when_wrap_fails(self):
         # The wrap raising means no Python object took ownership, so
