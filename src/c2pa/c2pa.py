@@ -224,12 +224,6 @@ class LifecycleState(enum.IntEnum):
     CLOSED = 2
 
 
-# Attributes that make up the lifecycle state itself, which _activate sets
-# from its own arguments and must never accept from a caller's extra_attrs.
-_RESERVED_ACTIVATION_ATTRS = frozenset(
-    {'_handle', '_lifecycle_state', '_owner_pid'})
-
-
 class ManagedResource:
     """Base class for objects that hold a native (C FFI) resource.
     This is an internal base class that provides lifecycle management
@@ -323,30 +317,19 @@ class ManagedResource:
         self._handle = None
         self._lifecycle_state = LifecycleState.CLOSED
 
-    def _activate(self, handle, **extra_attrs):
-        """Attach a native handle (and any extra instance attrs) to self
-        and mark it active. Attaching activates it.
+    def _activate(self, handle):
+        """Attach a native handle to self and mark it active.
 
         Ownership of `handle` transfers here: this object frees it on close.
         Only an uninitialized resource can be activated, so a handle can never
         be activated twice and a closed resource can never be reopened.
 
-        `extra_attrs` overrides the defaults `_init_attrs()` already supplied,
-        so it is only for values that differ from them.
-
-        `extra_attrs` cannot carry the lifecycle attributes themselves.
-        `_owner_pid` in particular records the process that created the
-        handle, and overwriting it would let a forked child free a pointer
-        its parent still owns.
-
         Args:
             handle: Non-null native pointer to take ownership of
-            **extra_attrs: Instance attributes to set before activating
 
         Raises:
             C2paError: If the handle is null,
-                the resource is not uninitialized,
-                or extra_attrs names a lifecycle attribute
+                or the resource is not uninitialized
         """
         name = type(self).__name__
         # A rejected activation must leave the object as it was.
@@ -356,14 +339,7 @@ class ManagedResource:
             raise C2paError(
                 f"{name}: already activated "
                 f"({self._lifecycle_state.name})")
-        reserved = _RESERVED_ACTIVATION_ATTRS.intersection(extra_attrs)
-        if reserved:
-            raise C2paError(
-                f"{name}: cannot set lifecycle attributes via extra_attrs: "
-                f"{', '.join(sorted(reserved))}")
 
-        for attr, value in extra_attrs.items():
-            setattr(self, attr, value)
         self._handle = handle
         self._lifecycle_state = LifecycleState.ACTIVE
 
@@ -395,31 +371,27 @@ class ManagedResource:
         self._handle = new_handle
 
     @classmethod
-    def _wrap_native_handle(cls, handle, **extra_attrs):
+    def _wrap_native_handle(cls, handle):
         """Build a brand-new instance around an already-valid,
         already-owned native handle, bypassing __init__ entirely.
 
         __init__ is bypassed, so `_init_attrs()` supplies the class's own
-        defaults; `extra_attrs` is only for overriding them. The lifecycle
-        attributes are off limits there, and the instance is stamped with the
-        creating process either way.
+        defaults and the instance is stamped with the creating process.
 
         Ownership of `handle` only transfers once this returns. If it raises,
         the caller still owns the pointer and must free it.
 
         Args:
             handle: Non-null native pointer to take ownership of
-            **extra_attrs: Instance attributes overriding the defaults
 
         Raises:
-            C2paError: If the handle is null, or extra_attrs names a
-                lifecycle attribute
+            C2paError: If the handle is null
         """
         obj = object.__new__(cls)
         # Stamps _owner_pid, which the fork guard relies on.
         ManagedResource.__init__(obj)
         obj._init_attrs()
-        obj._activate(handle, **extra_attrs)
+        obj._activate(handle)
         return obj
 
     def _cleanup_resources(self):

@@ -6942,8 +6942,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         """Concrete subclass with no resources of its own."""
 
     class _CallbackHoldingResource(ManagedResource):
-        """Mimics Signer: its _release() reads an attribute that must have
-        been supplied by __init__ or by _activate's extra_attrs."""
+        """Mimics Signer: its _release() reads an attribute that _init_attrs()
+        is responsible for defaulting."""
 
         def _release(self):
             if self._callback_cb:
@@ -7053,10 +7053,11 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         res._activate(0x5555)
 
         with self.assertRaises(Error):
-            res._activate(0x6666, _extra='should not be set')
+            res._activate(0x6666)
 
-        self.assertFalse(hasattr(res, '_extra'),
-                         "rejected activation still set extra_attrs")
+        self.assertEqual(res._handle, 0x5555,
+                         "rejected activation replaced the handle")
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
 
     # _swap_handle
 
@@ -7099,27 +7100,31 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     # _wrap_native_handle
 
-    def test_wrap_native_handle_sets_extra_attrs_and_bypasses_init(self):
+    def test_wrap_native_handle_bypasses_init(self):
         seen = []
 
         class Probe(ManagedResource):
             def __init__(self):
                 raise AssertionError("__init__ must be bypassed")
 
+            def _init_attrs(self):
+                super()._init_attrs()
+                self._tag = 'from _init_attrs'
+
             def _release(self):
                 seen.append(self._tag)
 
-        obj = Probe._wrap_native_handle(0xC0DE, _tag='from extra_attrs')
+        obj = Probe._wrap_native_handle(0xC0DE)
 
-        self.assertEqual(obj._tag, 'from extra_attrs')
+        self.assertEqual(obj._tag, 'from _init_attrs')
         self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
         self.assertTrue(obj.is_valid)
         # ManagedResource.__init__ still ran, so fork-safety is intact.
         self.assertTrue(hasattr(obj, '_owner_pid'))
 
         obj.close()
-        self.assertEqual(seen, ['from extra_attrs'],
-                         "_release() could not see the extra attrs")
+        self.assertEqual(seen, ['from _init_attrs'],
+                         "_release() could not see the class's own attrs")
 
     def test_wrap_native_handle_rejects_null(self):
         with self.assertRaises(Error):
@@ -7151,30 +7156,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         # that created the object.
         wrapped._swap_handle(0xA3)
         self.assertEqual(wrapped._owner_pid, pid)
-
-    def test_activate_rejects_reserved_extra_attrs(self):
-        for attr, value in (
-            ('_owner_pid', os.getpid() + 1),
-            ('_handle', 0xDEAD),
-            ('_lifecycle_state', LifecycleState.CLOSED),
-        ):
-            with self.subTest(attr=attr):
-                res = self._FakeHandleResource()
-                stamp = res._owner_pid
-
-                with self.assertRaises(Error) as ctx:
-                    res._activate(0xB1, **{attr: value})
-
-                self.assertIn(attr, str(ctx.exception))
-                self.assertEqual(res._owner_pid, stamp)
-                self.assertEqual(
-                    res._lifecycle_state, LifecycleState.UNINITIALIZED)
-                self.assertIsNone(res._handle)
-
-    def test_wrap_native_handle_rejects_reserved_extra_attrs(self):
-        with self.assertRaises(Error):
-            self._FakeHandleResource._wrap_native_handle(
-                0xB2, _owner_pid=os.getpid() + 1)
 
     def test_foreign_child_skips_free_for_wrapped_and_swapped(self):
         wrapped = self._FakeHandleResource._wrap_native_handle(0xC1)
@@ -7666,9 +7647,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         return handle
 
     def test_wrap_raw_ffi_builder_pointer(self):
-        builder = Builder._wrap_native_handle(
-            self._raw_builder_handle(),
-            _context=None, _has_context_signer=False)
+        builder = Builder._wrap_native_handle(self._raw_builder_handle())
 
         self.assertTrue(builder.is_valid)
         self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
@@ -7698,8 +7677,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         handle = c2pa_module._lib.c2pa_context_new()
         self.assertTrue(handle)
 
-        context = Context._wrap_native_handle(
-            handle, _has_signer=False, _signer_callback_cb=None)
+        context = Context._wrap_native_handle(handle)
         try:
             self.assertTrue(context.is_valid)
             self.assertEqual(context._owner_pid, os.getpid())
@@ -7714,8 +7692,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         handle = self._raw_builder_handle()
         freed = self._instrument_frees()
 
-        builder = Builder._wrap_native_handle(
-            handle, _context=None, _has_context_signer=False)
+        builder = Builder._wrap_native_handle(handle)
         builder.close()
         builder.close()
         del builder
@@ -7724,25 +7701,13 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertEqual(self._free_count(freed, handle), 1,
                          "wrapped handle not freed exactly once")
 
-    def test_wrap_supplies_defaults_without_extra_attrs(self):
-        # _init_attrs() runs on the wrap path, so a caller that passes no
-        # extra_attrs still gets an instance the rest of the class can read.
+    def test_wrap_supplies_defaults(self):
+        # _init_attrs() runs on the wrap path, so an instance built around a
+        # raw handle still has everything the rest of the class reads.
         builder = Builder._wrap_native_handle(self._raw_builder_handle())
         self.addCleanup(builder.close)
 
         self.assertIsNone(builder._context)
-        self.assertFalse(builder._has_context_signer)
-
-    def test_wrap_extra_attrs_override_defaults(self):
-        context = Context()
-        self.addCleanup(context.close)
-
-        builder = Builder._wrap_native_handle(
-            self._raw_builder_handle(), _context=context)
-        self.addCleanup(builder.close)
-
-        self.assertIs(builder._context, context)
-        # Untouched by the override, so still the default.
         self.assertFalse(builder._has_context_signer)
 
     def test_init_attrs_covers_what_init_sets(self):
