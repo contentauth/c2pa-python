@@ -289,14 +289,12 @@ class ManagedResource:
         self._lifecycle_state = LifecycleState.CLOSED
 
     def _activate(self, handle, **extra_attrs):
-        """Attach a native handle (and any extra instance attrs) to self and
-        mark it ACTIVE.
+        """Attach a native handle (and any extra instance attrs) to self
+        and mark it active. Attaching activates it.
 
         Ownership of `handle` transfers here: this object frees it on close.
-        Only an UNINITIALIZED resource can be activated, so a handle can never
-        be activated twice (which would leak the one being replaced) and a
-        CLOSED resource can never be resurrected (which would free its handle
-        a second time).
+        Only an uninitialized resource can be activated, so a handle can never
+        be activated twice and a closed resource can never be reopened.
 
         Any attribute the subclass's `_release()` reads must be passed in
         `extra_attrs` when __init__ did not already set it, otherwise
@@ -307,12 +305,11 @@ class ManagedResource:
             **extra_attrs: Instance attributes to set before activating
 
         Raises:
-            C2paError: If the handle is null or the resource is not
-                UNINITIALIZED
+            C2paError: If the handle is null
+                or the resource is not uninitialized
         """
         name = type(self).__name__
-        # Guards run before any mutation: a rejected activation must leave
-        # the object exactly as it was.
+        # A rejected activation must leave the object as it was.
         if not handle:
             raise C2paError(f"{name}: cannot activate a null handle")
         if self._lifecycle_state != LifecycleState.UNINITIALIZED:
@@ -327,18 +324,14 @@ class ManagedResource:
 
     def _swap_handle(self, new_handle):
         """Replace the handle after an FFI call consumed the old one and
-        returned a replacement (the consume-and-return pattern, e.g.
-        c2pa_builder_with_archive / c2pa_reader_with_fragment).
+        returned a replacement.
 
-        The old pointer is already owned and freed by the callee, so it is
-        deliberately NOT freed here; doing so would be a double-free.
+        The old pointer is already owned and freed by the callee,
+        so it is not freed here.
 
         A null return from such a call is ambiguous (the callee may have
         failed validation before taking ownership, or failed the operation
-        after), so callers must not call this with a null replacement. Treat
-        that case as consumed via `_mark_consumed()` instead: risking a leak
-        on a path Python cannot reach beats freeing a pointer whose address
-        may have been recycled.
+        after), so callers must not call this with a null replacement.
 
         Args:
             new_handle: Non-null native pointer returned by the FFI call
@@ -358,8 +351,8 @@ class ManagedResource:
 
     @classmethod
     def _wrap_native_handle(cls, handle, **extra_attrs):
-        """Build a brand-new instance around an already-valid, already-owned
-        native handle, bypassing __init__ entirely.
+        """Build a brand-new instance around an already-valid,
+        already-owned native handle, bypassing __init__ entirely.
 
         Because __init__ is bypassed, every attribute the subclass's
         `_release()` reads must be passed in `extra_attrs`.
