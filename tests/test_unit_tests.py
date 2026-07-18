@@ -6960,6 +6960,24 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         def _release(self):
             self.release_calls += 1
 
+    class _ExtenderResource(ManagedResource):
+        """A downstream extender that owns a raw handle and wraps it via
+        _wrap_native_handle. It carries several attributes of its own, all
+        defaulted in _init_attrs (not __init__), and _release reads them, so a
+        missing attribute would surface as an AttributeError on teardown.
+        """
+
+        def _init_attrs(self):
+            super()._init_attrs()
+            self.label = "extender"
+            self.buffer = []
+            self.released = False
+
+        def _release(self):
+            # Reads attributes _init_attrs is responsible for defaulting.
+            self.buffer.append(self.label)
+            self.released = True
+
     def setUp(self):
         self.data_dir = FIXTURES_DIR
         self.freed = []
@@ -7251,6 +7269,40 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(res._handle)
 
+    def test_extender_wraps_handle_fully_built(self):
+        obj = self._ExtenderResource._wrap_native_handle(0xE0)
+
+        # Every attribute _init_attrs defaults is present,
+        # even thoug __init__ never ran.
+        self.assertEqual(obj.label, "extender")
+        self.assertEqual(obj.buffer, [])
+        self.assertFalse(obj.released)
+        self.assertTrue(obj.is_valid)
+        self.assertEqual(obj._owner_pid, os.getpid())
+
+        # _release reads those attributes, so a missing one would raise here.
+        obj.close()
+        obj.close()
+
+        self.assertTrue(obj.released)
+        self.assertEqual(obj.buffer, ["extender"])
+        self.assertEqual(self.freed, [0xE0], "wrapped handle freed once")
+
+    def test_extender_foreign_teardown_skips_native_free(self):
+        obj = self._ExtenderResource._wrap_native_handle(0xE1)
+        # Stamp a foreign owner:
+        # teardown runs in a process that did not create the handle,
+        # so it must not free the pointer or release.
+        obj._owner_pid = os.getpid() + 1
+
+        obj.close()
+
+        self.assertEqual(self.freed, [],
+                         "forked child freed a handle its parent still owns")
+        self.assertFalse(obj.released, "foreign teardown ran _release")
+        self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(obj._handle, 0xE1)
+
     def test_signer_init_rejects_null_pointer(self):
         with self.assertRaises(Error):
             Signer(None)
@@ -7272,8 +7324,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     def test_context_build_failure_consumes_signer(self):
         # c2pa_context_builder_set_signer takes ownership of the signer
         # pointer immediately, so a later build failure must still leave the
-        # Signer consumed. Otherwise it holds a pointer the native side has
-        # already freed.
+        # Signer consumed.
+        # Otherwise it holds a pointer the native side has already freed.
         self._use_real_frees()
         signer = self._make_signer()
         real_build = c2pa_module._lib.c2pa_context_builder_build

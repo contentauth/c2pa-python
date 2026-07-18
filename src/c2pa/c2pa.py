@@ -292,11 +292,15 @@ class ManagedResource:
         """
 
     def _mark_consumed(self):
-        """Mark as consumed by an FFI call that took ownership
-        of native resources e.g. pointers. The new owner frees the handle,
-        but this class's own resources are still ours to let go of, and
-        marking the resource closed means _cleanup_resources will not do it
-        later.
+        """Mark as consumed by an FFI call that took ownership of the native
+        handle.
+
+        Ownership contract: the native pointer is now owned elsewhere, so this
+        does not free it. It releases only Python-side resources (via
+        `_release()`: callback refs, streams, caches) and marks the resource
+        closed. Marking it closed stops `_cleanup_resources` from freeing the
+        now foreign-owned pointer later; releasing here means those Python
+        resources are not stranded until garbage collection.
         """
         if is_foreign_process(self):
             self._handle = None
@@ -347,12 +351,16 @@ class ManagedResource:
         """Replace the handle after an FFI call consumed the old one and
         returned a replacement.
 
-        The old pointer is already owned and freed by the callee,
-        so it is not freed here.
+        Ownership contract: the caller guarantees the callee has already
+        consumed and freed the old pointer. This method never frees the old
+        pointer; it only rebinds `self._handle` to the replacement. Calling it
+        when the old pointer was not consumed leaks that pointer.
 
         A null return from such a call is ambiguous (the callee may have
         failed validation before taking ownership, or failed the operation
         after), so callers must not call this with a null replacement.
+
+        Requires the resource to be active.
 
         Args:
             new_handle: Non-null native pointer returned by the FFI call
@@ -378,8 +386,13 @@ class ManagedResource:
         __init__ is bypassed, so `_init_attrs()` supplies the class's own
         defaults and the instance is stamped with the creating process.
 
-        Ownership of `handle` only transfers once this returns. If it raises,
-        the caller still owns the pointer and must free it.
+        Everything an instance needs besides the native handle must be set in
+        `_init_attrs()`, not `__init__` — `_wrap_native_handle` never runs
+        `__init__`. An attribute a subclass sets only in `__init__` will be
+        missing (or left at its `_init_attrs` default) on a wrapped instance.
+
+        Ownership of `handle` transfers only on successful return. If this
+        raises, the caller still owns the pointer and must free it.
 
         Args:
             handle: Non-null native pointer to take ownership of
@@ -2565,13 +2578,14 @@ class Reader(ManagedResource):
             )
 
             # c2pa_reader_with_fragment consumed the old handle. A null return
-            # leaves no replacement to take ownership of.
+            # leaves no replacement to take ownership of: mark consumed, then
+            # raise. _swap_handle is only reached when new_ptr is non-null.
             if not new_ptr:
                 self._mark_consumed()
-            _check_ffi_operation_result(new_ptr,
-                                        Reader._ERROR_MESSAGES[
-                                            'fragment_error'
-                                        ].format("Unknown error"))
+                _check_ffi_operation_result(new_ptr,
+                                            Reader._ERROR_MESSAGES[
+                                                'fragment_error'
+                                            ].format("Unknown error"))
             self._swap_handle(new_ptr)
 
         # Invalidate caches: processing a new BMFF fragment updates the native
@@ -3543,11 +3557,12 @@ class Builder(ManagedResource):
                     f"Error loading archive: {e}"
                 )
             # c2pa_builder_with_archive consumed the old handle. A null return
-            # leaves no replacement to take ownership of.
+            # leaves no replacement to take ownership of: mark consumed, then
+            # raise. _swap_handle is only reached when new_ptr is non-null.
             if not new_ptr:
                 self._mark_consumed()
-            _check_ffi_operation_result(
-                new_ptr, "Failed to load archive into builder")
+                _check_ffi_operation_result(
+                    new_ptr, "Failed to load archive into builder")
             self._swap_handle(new_ptr)
 
         return self
