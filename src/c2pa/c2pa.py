@@ -2591,7 +2591,7 @@ class Reader(ManagedResource):
                 )
             except Exception as e:
                 # The callee consumes the old handle before it can fail, so
-                # treat it as consumed and let go of resources.
+                # treated as consumed to let go of resources.
                 self._mark_consumed()
                 raise C2paError(
                     Reader._ERROR_MESSAGES['fragment_error'].format(e))
