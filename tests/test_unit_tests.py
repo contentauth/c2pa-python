@@ -7189,10 +7189,19 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         self.assertEqual(self.freed, [],
                          "forked child freed a pointer its parent still owns")
-        # The parent still owns these handles,
-        # so the child must not mark the objects dead either.
-        self.assertEqual(wrapped._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertEqual(swapped._handle, 0xC3)
+        # The child must not free a pointer the parent still owns.
+        # The child does mark its own copies closed and nulls their handles,
+        # which is safe (the parent holds a separate copy) and
+        # stops the child from reusing a parent-owned handle.
+        self.assertEqual(wrapped._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(wrapped._handle)
+        self.assertEqual(swapped._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(swapped._handle)
+
+        # A second foreign teardown is a no-op: still nothing freed.
+        wrapped.close()
+        swapped.close()
+        self.assertEqual(self.freed, [])
 
     def test_owning_process_frees_wrapped_and_swapped_exactly_once(self):
         wrapped = self._FakeHandleResource._wrap_native_handle(0xC4)
@@ -7292,7 +7301,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         obj = self._ExtenderResource._wrap_native_handle(0xE1)
         # Stamp a foreign owner:
         # teardown runs in a process that did not create the handle,
-        # so it must not free the pointer or release.
+        # so it must not free the pointer or run _release (which could touch
+        # native streams and deadlock after a multithreaded fork).
         obj._owner_pid = os.getpid() + 1
 
         obj.close()
@@ -7300,8 +7310,18 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [],
                          "forked child freed a handle its parent still owns")
         self.assertFalse(obj.released, "foreign teardown ran _release")
-        self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertEqual(obj._handle, 0xE1)
+        # The child marks its own copy closed and nulls the handle: safe (the
+        # parent holds a separate copy) and it stops the child reusing a
+        # parent-owned handle.
+        self.assertEqual(obj._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(obj._handle)
+
+        # A second foreign teardown stays a no-op, and any operation on the
+        # now-closed child copy fails loudly instead of reaching native code.
+        obj.close()
+        self.assertEqual(self.freed, [])
+        with self.assertRaises(Error):
+            obj._ensure_valid_state()
 
     def test_signer_init_rejects_null_pointer(self):
         with self.assertRaises(Error):
@@ -7671,6 +7691,38 @@ class TestManagedResourceObjects(TestContextAPIs):
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        reader.close()
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle the FFI already consumed")
+
+    def test_reader_with_fragment_ffi_raise_consumes_self(self):
+        # If the ctypes call itself raises (not a null return), the callee has
+        # already consumed the old handle, so with_fragment must mark self
+        # consumed rather than leave a dangling pointer that close() would
+        # double-free.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        consumed_handle = reader._handle
+
+        def _raise(*_args):
+            raise RuntimeError("boom")
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = _raise
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:

@@ -36,7 +36,7 @@ def read_c2pa_data(media_path: str):
         # All objects using this context will have trust configured.
         with c2pa.Context(settings) as context:
             with c2pa.Reader(media_path, context=context) as reader:
-                print(reader.detailed_json())
+                print(reader.crjson())
     except Exception as e:
         print(f"Error reading C2PA data from {media_path}: {e}")
         sys.exit(1)

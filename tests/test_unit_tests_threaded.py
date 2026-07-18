@@ -96,12 +96,17 @@ class TestManagedResourceForkGuard(unittest.TestCase):
             obj._cleanup_resources()
         mock_free.assert_called_once()
 
-    def test_foreign_pid_leaves_state_unchanged(self):
-        """Guard returns early; lifecycle state stays ACTIVE (not CLOSED)."""
+    def test_foreign_pid_marks_closed_without_free(self):
+        """A foreign child skips the native free but marks its own copy closed
+        and nulls the handle, so the child cannot reuse a parent-owned handle.
+        The parent holds a separate copy and frees it independently.
+        """
         obj = _make_resource(pid_offset=1)
-        with patch('c2pa.c2pa._lib'):
+        with patch.object(ManagedResource, '_free_native_ptr') as mock_free:
             obj._cleanup_resources()
-        self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
+        mock_free.assert_not_called()
+        self.assertEqual(obj._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(obj._handle)
 
     def test_double_cleanup_is_idempotent(self):
         """Second call is a no-op after successful first cleanup."""

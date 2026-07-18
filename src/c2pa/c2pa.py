@@ -291,6 +291,23 @@ class ManagedResource:
         The default implementation does nothing.
         """
 
+    def _safe_release(self):
+        """Run _release(), logging (never raising) if it fails.
+
+        Shared by _mark_consumed and _cleanup_resources so the try/except/log
+        wrapper lives in one place. Each caller keeps its own lifecycle-state
+        transition, because the two paths deliberately order the CLOSED flip
+        differently relative to this call (see each call site).
+        """
+        try:
+            self._release()
+        except Exception:
+            logger.error(
+                "Failed to release %s resources",
+                type(self).__name__,
+                exc_info=True,
+            )
+
     def _mark_consumed(self):
         """Mark as consumed by an FFI call that took ownership of the native
         handle.
@@ -309,14 +326,7 @@ class ManagedResource:
 
         # Callers raise straight after consuming, so a failing _release()
         # here would mask the error they are reporting.
-        try:
-            self._release()
-        except Exception:
-            logger.error(
-                "Failed to release %s resources",
-                type(self).__name__,
-                exc_info=True,
-            )
+        self._safe_release()
 
         self._handle = None
         self._lifecycle_state = LifecycleState.CLOSED
@@ -411,6 +421,15 @@ class ManagedResource:
         """Release native resources idempotently."""
         try:
             if is_foreign_process(self):
+                # A forked child holds a separate copy of this object and the
+                # parent still owns the real handle and frees it. Mark this
+                # copy closed and null its handle so the child cannot mistake
+                # it for usable or free it, but do not free here.
+                # Mutating this copy does not touch the parent's.
+                if hasattr(self, '_handle'):
+                    self._handle = None
+                if hasattr(self, '_lifecycle_state'):
+                    self._lifecycle_state = LifecycleState.CLOSED
                 return
             if (
                 hasattr(self, '_lifecycle_state')
@@ -420,14 +439,7 @@ class ManagedResource:
                 # A failing _release() must not skip the free below:
                 # that would strand the native handle on an object already
                 # marked CLOSED, making it unreachable and unfreeable.
-                try:
-                    self._release()
-                except Exception:
-                    logger.error(
-                        "Failed to release %s resources",
-                        type(self).__name__,
-                        exc_info=True,
-                    )
+                self._safe_release()
                 if hasattr(self, '_handle') and self._handle:
                     try:
                         ManagedResource._free_native_ptr(self._handle)
@@ -2570,12 +2582,19 @@ class Reader(ManagedResource):
         )
 
         with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
-            new_ptr = _lib.c2pa_reader_with_fragment(
-                self._handle,
-                format_bytes,
-                main_obj._stream,
-                frag_obj._stream,
-            )
+            try:
+                new_ptr = _lib.c2pa_reader_with_fragment(
+                    self._handle,
+                    format_bytes,
+                    main_obj._stream,
+                    frag_obj._stream,
+                )
+            except Exception as e:
+                # The callee consumes the old handle before it can fail, so
+                # treat it as consumed and let go of resources.
+                self._mark_consumed()
+                raise C2paError(
+                    Reader._ERROR_MESSAGES['fragment_error'].format(e))
 
             # c2pa_reader_with_fragment consumed the old handle. A null return
             # leaves no replacement to take ownership of: mark consumed, then

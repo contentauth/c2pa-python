@@ -40,7 +40,7 @@ print(version)
 print("\nReading existing C2PA metadata:")
 with open(fixtures_dir + "C.jpg", "rb") as file:
     with c2pa.Reader("image/jpeg", file) as reader:
-        print(reader.json())
+        print(reader.crjson())
 
 # Create a signer from certificate and key files
 with open(fixtures_dir + "es256_certs.pem", "rb") as cert_file:
@@ -103,7 +103,7 @@ with open(output_dir + "C_signed.jpg", "rb") as file:
         # The validation state will depend on loaded trust settings.
         # Without loaded trust settings,
         # the manifest validation_state will be "Invalid".
-        print(reader.json())
+        print(reader.crjson())
 
 print("\nExample completed successfully!")
 

@@ -957,6 +957,37 @@ def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
             r.close()
 
 
+def scenario_fork_child_closes_then_parent_frees(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    20 Readers created, fork, the CHILD closes all 20 inherited Readers (and
+    runs GC so any __del__ fires) before exiting, then the parent closes its
+    own 20 copies. Exercises the child-side path where _cleanup_resources marks
+    the child's copy CLOSED and nulls the handle while skipping the native free
+    — the branch scenario_fork_parent_frees_after_fork never hits (its child
+    does nothing). Two invariants: the child must exit cleanly (no deadlock via
+    the 5 s alarm, no crash from a child-side double-free), and the parent must
+    still free all 20 (leaked_bytes stays at baseline — the child's state
+    mutation does not suppress the parent's frees, since the copies are
+    independent post-fork).
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        readers = []
+        for _ in range(20):
+            with open(SIGNED_JPEG, "rb") as f:
+                readers.append(Reader("image/jpeg", f))
+
+        def _child():
+            for r in readers:
+                r.close()      # foreign teardown: mark closed, skip native free
+            gc.collect()
+
+        _fork_wait(_child)
+        for r in readers:
+            r.close()          # parent's own copies: real free
+
+
 def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
     """Fork safety benchmark scenario:
     Child calls sys.exit(0), full Python shutdown: atexit, finalizers, GC.
@@ -1191,6 +1222,8 @@ SCENARIOS = {
     "fork_thread_local_orphan": scenario_fork_thread_local_orphan,
     "fork_gc_cycle": scenario_fork_gc_cycle,
     "fork_parent_frees_after_fork": scenario_fork_parent_frees_after_fork,
+    "fork_child_closes_then_parent_frees":
+        scenario_fork_child_closes_then_parent_frees,
     "fork_child_sys_exit": scenario_fork_child_sys_exit,
     "fork_stream_cleanup": scenario_fork_stream_cleanup,
     "fork_swap_cleanup": scenario_fork_swap_cleanup,
