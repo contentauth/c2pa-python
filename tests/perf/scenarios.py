@@ -9,6 +9,7 @@ Plain functions (no pytest dependencies) that exercise the profiling scenarios.
 Each function is called N times by run_profile.py.
 """
 
+import ctypes
 import gc
 import io
 import json
@@ -27,6 +28,7 @@ from c2pa import (
     Signer,
     Stream,
 )
+import c2pa.c2pa as c2pa_module
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
@@ -544,6 +546,148 @@ def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
         builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
+# Consume-and-return failure paths.
+#
+# These calls take ownership partway through their body, so a null return is
+# ambiguous and getting it wrong leaks one handle per call. The success paths
+# are covered above; these loop the failure paths, where the leak would be.
+
+def _untracked_reader_handle():
+    """A pointer the native registry does not know about.
+
+    A never-allocated buffer, so it is rejected like a stale handle without
+    allocating a real Reader per call, which would swamp the measurement.
+    Freed handles are unusable here: recycled addresses become tracked again.
+    """
+    buf = ctypes.create_string_buffer(64)
+    return ctypes.cast(buf, ctypes.POINTER(c2pa_module.C2paReader)), buf
+
+
+def scenario_reader_with_fragment_pre_consume_rejection(
+        iterations: int = 100) -> None:
+    """Loop the rejection that precedes the ownership transfer.
+
+    The handle is still ours, so treating this as consumed drops a pointer
+    the registry still holds and leaked_bytes climbs with iterations.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    for _ in _iterate(iterations):
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        real_handle = reader._handle
+        # Keep the buffer alive: the cast pointer does not own it, and an
+        # early collection would hand the FFI a dangling address.
+        bogus, _buf = _untracked_reader_handle()
+        reader._handle = bogus
+        try:
+            reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
+                                 io.BytesIO(fragment_bytes))
+            raise AssertionError("pre-consume rejection did not raise")
+        except C2paError as e:
+            # Fail loudly: without these the scenario still runs when the
+            # ownership logic regresses, and a rejection that stops being
+            # recognised looks identical to a pass.
+            if not any(tag in str(e) for tag in
+                       c2pa_module.ManagedResource._PRE_CONSUME_ERROR_TAGS):
+                raise AssertionError(
+                    f"expected a pre-consume rejection, got: {e}") from e
+            if reader._handle is None:
+                raise AssertionError(
+                    "handle was dropped on a pre-consume rejection; the "
+                    "native side never took ownership, so this leaks") from e
+        finally:
+            # Restore before close() so the real handle is freed exactly once.
+            reader._handle = real_handle
+            reader.close()
+
+
+def scenario_builder_with_archive_post_consume_failure(
+        iterations: int = 100) -> None:
+    """Loop a failure after the ownership transfer.
+
+    The control: if the fix over-corrected into retaining handles the native
+    side already dropped, this scenario double-frees or leaks.
+    """
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE)
+        try:
+            builder.with_archive(io.BytesIO(b"not a valid archive"))
+            raise AssertionError("post-consume failure did not raise")
+        except C2paError:
+            pass
+        finally:
+            builder.close()
+
+
+def scenario_with_fragment_marshalling_error(iterations: int = 100) -> None:
+    """Loop a failure that never reaches native code.
+
+    Nothing was consumed, so the reader must stay usable. The old blanket
+    except marked it consumed here, leaking on what is only a type error.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    for _ in _iterate(iterations):
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            reader.with_fragment("video/mp4", object(), object())
+            raise AssertionError("marshalling error did not raise")
+        except (C2paError, TypeError, ctypes.ArgumentError):
+            pass
+        finally:
+            # Must still be usable: nothing was handed over.
+            reader.json()
+            reader.close()
+
+
+def scenario_with_fragment_mixed_outcomes(iterations: int = 100) -> None:
+    """Interleave success, pre-consume rejection and post-consume failure.
+
+    Each path leaves a different state behind, so running them in sequence
+    catches a stale error being read as the current call's.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    for i in _iterate(iterations):
+        phase = i % 3
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            if phase == 0:
+                reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
+                                     io.BytesIO(fragment_bytes))
+            elif phase == 1:
+                real_handle = reader._handle
+                bogus, _buf = _untracked_reader_handle()
+                reader._handle = bogus
+                try:
+                    reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
+                                         io.BytesIO(fragment_bytes))
+                    raise AssertionError(
+                        "pre-consume rejection did not raise")
+                except C2paError as e:
+                    # A stale error from the phase before must not be read as
+                    # this call's; the rejection would stop being recognised.
+                    if not any(
+                            tag in str(e) for tag in c2pa_module
+                            .ManagedResource._PRE_CONSUME_ERROR_TAGS):
+                        raise AssertionError(
+                            f"expected a pre-consume rejection, got: {e}"
+                        ) from e
+                    if reader._handle is None:
+                        raise AssertionError(
+                            "handle dropped on a pre-consume rejection"
+                        ) from e
+                finally:
+                    reader._handle = real_handle
+            else:
+                try:
+                    reader.with_fragment("video/mp4", io.BytesIO(b"garbage"),
+                                         io.BytesIO(b"garbage"))
+                except C2paError:
+                    pass
+        finally:
+            reader.close()
+
+
 # Archive scenarios: builder as working store (to_archive/with_archive) and
 # per-ingredient archives (write_ingredient_archive/add_ingredient_from_archive).
 
@@ -743,6 +887,64 @@ def scenario_reader_string_apis(iterations: int = 100) -> None:
         reader.get_remote_url()
         reader.resource_to_stream(thumb_uri, io.BytesIO())
         reader.close()
+
+
+def scenario_builder_from_context_construction(iterations: int = 100) -> None:
+    """Loop Builder(context=...) construction, the consume-and-swap path.
+
+    c2pa_builder_from_context hands back a handle that
+    c2pa_builder_with_definition then consumes and replaces. The Builder
+    adopts the first handle before that call so _consume_and_swap can own the
+    swap, which means a mis-sequenced swap leaks the replacement or frees the
+    consumed pointer twice. The other context builder scenarios sign a full
+    asset per iteration, so a one-handle regression here would sit under their
+    noise. This one only constructs and closes.
+
+    scenario_reader_manifest_data_context is the Reader-side equivalent.
+    """
+    context = Context()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.close()
+
+
+def scenario_sign_interrupted(iterations: int = 100) -> None:
+    """Loop a sign that is interrupted partway through the FFI call.
+
+    _sign_internal catches BaseException so the Builder is closed even when
+    the interrupt is not an Exception subclass. Narrowing that back to
+    Exception leaks the whole Builder per iteration, since close() is skipped
+    and the handle outlives the object.
+    """
+    source_bytes = SOURCE_JPEG.read_bytes()
+    signer = _make_signer()
+    real_sign = c2pa_module._lib.c2pa_builder_sign
+
+    def _interrupt(*args):
+        raise KeyboardInterrupt
+
+    c2pa_module._lib.c2pa_builder_sign = _interrupt
+    try:
+        for _ in _iterate(iterations):
+            builder = Builder(MANIFEST_BASE)
+            try:
+                builder.sign(signer, "image/jpeg",
+                             io.BytesIO(source_bytes), io.BytesIO())
+            except C2paError:
+                # The wrapper re-raises the interrupt as C2paError, having
+                # closed the Builder first. Anything else means the handler
+                # stopped catching it.
+                pass
+            else:
+                raise AssertionError("interrupted sign did not raise")
+            if (builder._lifecycle_state
+                    is not c2pa_module.LifecycleState.CLOSED):
+                raise AssertionError(
+                    "interrupted sign left the Builder open; its handle "
+                    "leaks once per iteration")
+    finally:
+        c2pa_module._lib.c2pa_builder_sign = real_sign
+        signer.close()
 
 
 def scenario_signer_construction(iterations: int = 100) -> None:
@@ -1207,6 +1409,13 @@ SCENARIOS = {
     "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
     "builder_with_archive_swap": scenario_builder_with_archive_swap,
     "reader_with_fragment_swap": scenario_reader_with_fragment_swap,
+    "with_fragment_pre_consume_rejection":
+        scenario_reader_with_fragment_pre_consume_rejection,
+    "with_archive_post_consume_failure":
+        scenario_builder_with_archive_post_consume_failure,
+    "with_fragment_marshalling_error":
+        scenario_with_fragment_marshalling_error,
+    "with_fragment_mixed_outcomes": scenario_with_fragment_mixed_outcomes,
     "builder_to_archive_with_ingredient": scenario_builder_to_archive_with_ingredient,
     "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive,
     "builder_write_ingredient_archive": scenario_builder_write_ingredient_archive,
@@ -1217,6 +1426,9 @@ SCENARIOS = {
     "builder_error_invalid_manifest": scenario_builder_error_invalid_manifest,
     "reader_string_apis": scenario_reader_string_apis,
     "signer_construction": scenario_signer_construction,
+    "builder_from_context_construction":
+        scenario_builder_from_context_construction,
+    "sign_interrupted": scenario_sign_interrupted,
     "fork_reader_collect": scenario_fork_reader_collect,
     "fork_contended_mutex": scenario_fork_contended_mutex,
     "fork_thread_local_orphan": scenario_fork_thread_local_orphan,

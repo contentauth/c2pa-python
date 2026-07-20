@@ -259,7 +259,6 @@ class ManagedResource:
     def __init__(self):
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
-        _clear_error_state()
         record_owner_pid(self)
 
     @staticmethod
@@ -282,7 +281,6 @@ class ManagedResource:
         if not self._handle:
             raise C2paError(
                 f"{name} has an invalid internal state (active but no handle)")
-        _clear_error_state()
 
     def _release(self):
         """Override to free class-specific resources (streams, caches, etc.).
@@ -293,11 +291,6 @@ class ManagedResource:
 
     def _safe_release(self):
         """Run _release(), logging (never raising) if it fails.
-
-        Shared by _mark_consumed and _cleanup_resources so the try/except/log
-        wrapper lives in one place. Each caller keeps its own lifecycle-state
-        transition, because the two paths deliberately order the CLOSED flip
-        differently relative to this call (see each call site).
         """
         try:
             self._release()
@@ -387,6 +380,70 @@ class ManagedResource:
             raise C2paError(f"{name}: cannot swap in a null handle")
 
         self._handle = new_handle
+
+    # Errors set by native lib, hinting at the cause of the error
+    # These errors here means the pointer got somehow rejected by the lib,
+    # so it is still ours to deal with.
+    _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
+
+    def _consume_and_swap(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle and returns a replacement.
+
+        The native lib takes ownership partway through the call,
+        so a null return can be ambiguous.
+        The native error tells the cases apart:
+        - a pointer rejection (`_PRE_CONSUME_ERROR_TAGS`) precedes the
+          transfer, so the handle is still ours and is kept;
+        - any other error means it was taken, then the operation failed;
+        - a null with no error cannot be placed, so the handle is dropped
+          anyway: leaking is recoverable, double-freeing is not. No native
+          path does this, so it only appears under mocks.
+
+        The error is read without clearing it first.
+        The slot is sticky: c2pa_error() peeks and nothing empties it.
+
+        Args:
+            ffi_call: Callable taking the current handle, returning the
+                replacement or null.
+            error_message: Format string with one placeholder, used when the
+                native layer offers no error of its own.
+
+        Raises:
+            C2paError: If the call fails, typed by native error when one.
+        """
+        try:
+            new_ptr = ffi_call(self._handle)
+        except ctypes.ArgumentError:
+            # Marshalling failed, so the call never reached the native side
+            # and the handle is untouched.
+            raise
+        except BaseException as e:
+            self._mark_consumed()
+            raise C2paError(error_message.format(e)) from e
+
+        if new_ptr:
+            self._swap_handle(new_ptr)
+            return
+
+        error = _read_native_error()
+        if error:
+            if any(tag in error
+                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
+                # Rejected before ownership transferred, so the handle is
+                # still ours: keep it and let normal cleanup free it.
+                logger.warning(
+                    "%s: native call rejected the handle before taking "
+                    "ownership (%s); handle retained",
+                    type(self).__name__,
+                    error)
+                _raise_typed_c2pa_error(error)
+
+            # Ownership transferred and then the operation failed.
+            self._mark_consumed()
+            _raise_typed_c2pa_error(error)
+
+        self._mark_consumed()
+        raise C2paError(error_message.format("Unknown error"))
 
     @classmethod
     def _wrap_native_handle(cls, handle):
@@ -566,18 +623,25 @@ class C2paStream(ctypes.Structure):
     ]
 
 
-def _clear_error_state():
-    """Clear any existing error state from the C library.
+def _read_native_error() -> Optional[str]:
+    """Read the last error from the native library, or None if unset.
 
-    This function should be called at the beginning of object initialization
-    and before any operations that could potentially raise an error,
-    to ensure that stale error states from previous operations don't interfere
-    with new objects being created, or independent function calls.
+    Peeks: the error stays in the native slot,
+    until the next error overwrites it.
+
+    With no error set the native side still returns an owned pointer to an
+    empty string, so the pointer alone does not tell us whether there is an
+    error. Only a non-empty message counts as one; the empty string still
+    has to be freed.
     """
     error = _lib.c2pa_error()
-    if error:
-        # Free the error to clear the state
+    if not error:
+        return None
+    try:
+        message = ctypes.string_at(error).decode('utf-8')
+    finally:
         _lib.c2pa_string_free(error)
+    return message or None
 
 
 class C2paSignerInfo(ctypes.Structure):
@@ -600,7 +664,6 @@ class C2paSignerInfo(ctypes.Structure):
             private_key: The private key as a string
             ta_url: The timestamp authority URL as bytes
         """
-        _clear_error_state()
 
         if sign_cert is None:
             raise ValueError("sign_cert must be set")
@@ -1010,6 +1073,24 @@ class _C2paVerify(C2paError):
     pass
 
 
+class _C2paUntrackedPointer(C2paError):
+    """Exception raised when the native layer does not recognize a pointer.
+
+    Raised when a consume-and-return call rejects the handle it was given
+    before taking ownership of it, so the caller still owns that handle.
+    """
+    pass
+
+
+class _C2paWrongPointerType(C2paError):
+    """Exception raised when a pointer is tracked under a different type.
+
+    Like _C2paUntrackedPointer, this is rejected before ownership transfer,
+    so the caller still owns the handle it passed in.
+    """
+    pass
+
+
 # Attach exception subclasses to C2paError for backward compatibility
 # Preserves behavior for exception catching like except C2paError.ManifestNotFound,
 # also reduces imports (think of it as an alias of sorts)
@@ -1028,6 +1109,8 @@ C2paError.RemoteManifest = _C2paRemoteManifest
 C2paError.ResourceNotFound = _C2paResourceNotFound
 C2paError.Signature = _C2paSignature
 C2paError.Verify = _C2paVerify
+C2paError.UntrackedPointer = _C2paUntrackedPointer
+C2paError.WrongPointerType = _C2paWrongPointerType
 
 
 class _StringContainer:
@@ -1152,6 +1235,10 @@ def _raise_typed_c2pa_error(error_str: str) -> None:
             raise C2paError.Signature(error_str)
         elif error_type == "Verify":
             raise C2paError.Verify(error_str)
+        elif error_type == "UntrackedPointer":
+            raise C2paError.UntrackedPointer(error_str)
+        elif error_type == "WrongPointerType":
+            raise C2paError.WrongPointerType(error_str)
     # If no recognized error type, raise base C2paError
     raise C2paError(error_str)
 
@@ -1179,10 +1266,8 @@ def _parse_operation_result_for_error(
     """
     if not result:  # pragma: no cover
         if check_error:
-            error = _lib.c2pa_error()
-            if error:
-                error_str = ctypes.string_at(error).decode('utf-8')
-                _lib.c2pa_string_free(error)
+            error_str = _read_native_error()
+            if error_str:
                 _raise_typed_c2pa_error(error_str)
         return None
 
@@ -1314,7 +1399,6 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         DeprecationWarning,
         stacklevel=2,
     )
-    _clear_error_state()
 
     # Convert to JSON string as necessary
     try:
@@ -1416,7 +1500,7 @@ class Settings(ManagedResource):
         ptr = _lib.c2pa_settings_new()
         try:
             _check_ffi_operation_result(ptr, "Failed to create Settings")
-        except Exception:
+        except BaseException:
             if ptr:
                 ManagedResource._free_native_ptr(ptr)
             raise
@@ -1608,15 +1692,18 @@ class Context(ManagedResource, ContextProvider):
                     signer._ensure_valid_state()
                     # c2pa_context_builder_set_signer takes ownership of the
                     # signer pointer immediately (Box::from_raw), on its error
-                    # path as well as on success. The Signer is therefore
-                    # consumed below on any result; leaving it owning a freed
-                    # pointer would make any later use of it a use-after-free.
+                    # path as well as on success.
                     self._signer_callback_cb = signer._callback_cb
-                    result = (
-                        _lib.c2pa_context_builder_set_signer(
-                            builder_ptr, signer._handle,
+                    try:
+                        result = (
+                            _lib.c2pa_context_builder_set_signer(
+                                builder_ptr, signer._handle,
+                            )
                         )
-                    )
+                    except ctypes.ArgumentError:
+                        # Marshalling failed, so the call never reached the
+                        # native side and the signer was never taken.
+                        raise
                     signer._mark_consumed()
                     if result != 0:
                         _parse_operation_result_for_error(None)
@@ -1633,7 +1720,7 @@ class Context(ManagedResource, ContextProvider):
                 )
 
                 self._activate(ptr)
-            except Exception:
+            except BaseException:
                 # Free builder if build was not reached
                 if builder_ptr is not None:
                     try:
@@ -1935,7 +2022,6 @@ class Stream:
         self._flush_cb = FlushCallback(flush_callback)
 
         # Create the stream
-        _clear_error_state()
         self._stream = _lib.c2pa_create_stream(
             None,
             self._read_cb,
@@ -1944,8 +2030,9 @@ class Stream:
             self._flush_cb
         )
         if not self._stream:
-            error = _parse_operation_result_for_error(_lib.c2pa_error())
-            raise Exception("Failed to create stream: {}".format(error))
+            error = _read_native_error()
+            raise C2paError(
+                "Failed to create stream: {}".format(error or "Unknown error"))
 
         self._initialized = True
         record_owner_pid(self)
@@ -2078,15 +2165,14 @@ def _get_supported_mime_types(ffi_func, cache):
     if cache is not None:
         return list(cache), cache
 
-    _clear_error_state()
     count = ctypes.c_size_t()
     arr = ffi_func(ctypes.byref(count))
 
     if not arr:
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
-        if error:
-            raise C2paError(f"Failed to get supported MIME types: {error}")
-        return [], cache
+        error = _read_native_error()
+        raise C2paError(
+            "Failed to get supported MIME types: "
+            f"{error or 'Unknown error'}")
 
     if count.value <= 0:
         try:
@@ -2442,10 +2528,15 @@ class Reader(ManagedResource):
                                                 'reader_error'
                                             ].format("Unknown error")
                                             )
-            except Exception:
+            except BaseException:
                 if reader_ptr:
                     ManagedResource._free_native_ptr(reader_ptr)
                 raise
+
+            # Adopt the handle before the consuming call: _consume_and_swap
+            # needs an ACTIVE resource, and from here on normal cleanup owns
+            # the pointer whichever way the call goes.
+            self._activate(reader_ptr)
 
             if manifest_data is not None:
                 manifest_array = (
@@ -2454,34 +2545,26 @@ class Reader(ManagedResource):
                 # Consume current reader,
                 # with manifest data and stream (C FFI pattern),
                 # to create a new one (switch out)
-                new_ptr = (
-                    _lib.c2pa_reader_with_manifest_data_and_stream(
-                        reader_ptr,
-                        format_bytes,
-                        self._own_stream._stream,
-                        manifest_array,
-                        len(manifest_data),
-                    )
-                )
+                self._consume_and_swap(
+                    lambda handle: (
+                        _lib.c2pa_reader_with_manifest_data_and_stream(
+                            handle,
+                            format_bytes,
+                            self._own_stream._stream,
+                            manifest_array,
+                            len(manifest_data),
+                        )
+                    ),
+                    Reader._ERROR_MESSAGES['reader_error'])
             else:
                 # Consume reader with stream
-                new_ptr = _lib.c2pa_reader_with_stream(
-                    reader_ptr, format_bytes,
-                    self._own_stream._stream,
-                )
-
-            # reader_ptr has been consumed by the FFI call (freed by it even
-            # on failure), so there is nothing to free on the error path.
-            reader_ptr = None
-
-            _check_ffi_operation_result(new_ptr,
-                                        Reader._ERROR_MESSAGES[
-                                            'reader_error'
-                                        ].format("Unknown error")
-                                        )
-
-            self._activate(new_ptr)
-        except Exception:
+                self._consume_and_swap(
+                    lambda handle: _lib.c2pa_reader_with_stream(
+                        handle, format_bytes,
+                        self._own_stream._stream,
+                    ),
+                    Reader._ERROR_MESSAGES['reader_error'])
+        except BaseException:
             self._close_streams()
             raise
 
@@ -2582,30 +2665,14 @@ class Reader(ManagedResource):
         )
 
         with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
-            try:
-                new_ptr = _lib.c2pa_reader_with_fragment(
-                    self._handle,
+            self._consume_and_swap(
+                lambda handle: _lib.c2pa_reader_with_fragment(
+                    handle,
                     format_bytes,
                     main_obj._stream,
                     frag_obj._stream,
-                )
-            except Exception as e:
-                # The callee consumes the old handle before it can fail, so
-                # treated as consumed to let go of resources.
-                self._mark_consumed()
-                raise C2paError(
-                    Reader._ERROR_MESSAGES['fragment_error'].format(e))
-
-            # c2pa_reader_with_fragment consumed the old handle. A null return
-            # leaves no replacement to take ownership of: mark consumed, then
-            # raise. _swap_handle is only reached when new_ptr is non-null.
-            if not new_ptr:
-                self._mark_consumed()
-                _check_ffi_operation_result(new_ptr,
-                                            Reader._ERROR_MESSAGES[
-                                                'fragment_error'
-                                            ].format("Unknown error"))
-            self._swap_handle(new_ptr)
+                ),
+                Reader._ERROR_MESSAGES['fragment_error'])
 
         # Invalidate caches: processing a new BMFF fragment updates the native
         # reader's state, which can change the manifest data it returns.
@@ -2615,7 +2682,6 @@ class Reader(ManagedResource):
         self._manifest_data_cache = None
 
         return self
-
 
     def json(self) -> str:
         """Get the manifest store as a JSON string.
@@ -2883,10 +2949,6 @@ class Signer(ManagedResource):
         Raises:
             C2paError: If there was an error creating the signer
         """
-        # Native libs plumbing:
-        # Clear any stale error state from previous operations
-        _clear_error_state()
-
         signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
         _check_ffi_operation_result(
@@ -3004,10 +3066,6 @@ class Signer(ManagedResource):
                 cls._ERROR_MESSAGES['encoding_error'].format(
                     str(e)))
 
-        # Native libs plumbing:
-        # Clear any stale error state from previous operations
-        _clear_error_state()
-
         # Create the callback object using the callback function
         callback_cb = SignerCallback(wrapped_callback)
 
@@ -3102,6 +3160,7 @@ class Builder(ManagedResource):
         'archive_read_error': "Error loading ingredient from archive: {}",
         'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
+        'archive_load_error': "Failed to load archive into builder: {}",
         'sign_error': "Error during signing: {}",
         'encoding_error': "Invalid UTF-8 characters in manifest: {}",
         'json_error': "Failed to serialize manifest JSON: {}"
@@ -3188,10 +3247,9 @@ class Builder(ManagedResource):
                                         )
 
             try:
-                # A builder from an archive carries no context, which is what
-                # _init_attrs() already defaults to.
+                # A builder from an archive here carries no context.
                 return cls._wrap_native_handle(handle)
-            except Exception:
+            except BaseException:
                 # No instance took ownership, so the handle is still ours.
                 ManagedResource._free_native_ptr(handle)
                 raise
@@ -3268,23 +3326,20 @@ class Builder(ManagedResource):
                                             'builder_error'
                                         ].format("Unknown error")
                                         )
-        except Exception:
+        except BaseException:
             if builder_ptr:
                 ManagedResource._free_native_ptr(builder_ptr)
             raise
 
-        # Consume-and-return: builder_ptr is consumed (freed by the FFI even
-        # on failure), new_ptr is the valid pointer going forward. Nothing to
-        # free here on the error path.
-        new_ptr = _lib.c2pa_builder_with_definition(builder_ptr, json_str)
+        # Adopt the handle before the consuming call: _consume_and_swap needs
+        # an ACTIVE resource, and from here on normal cleanup owns the pointer
+        # whichever way the call goes.
+        self._activate(builder_ptr)
 
-        _check_ffi_operation_result(new_ptr,
-                                    Builder._ERROR_MESSAGES[
-                                        'builder_error'
-                                    ].format("Unknown error")
-                                    )
-
-        self._activate(new_ptr)
+        self._consume_and_swap(
+            lambda handle: _lib.c2pa_builder_with_definition(
+                handle, json_str),
+            Builder._ERROR_MESSAGES['builder_error'])
 
     def _init_attrs(self):
         super()._init_attrs()
@@ -3567,22 +3622,10 @@ class Builder(ManagedResource):
         self._ensure_valid_state()
 
         with Stream(stream) as stream_obj:
-            try:
-                new_ptr = _lib.c2pa_builder_with_archive(
-                    self._handle, stream_obj._stream)
-            except Exception as e:
-                self._mark_consumed()
-                raise C2paError(
-                    f"Error loading archive: {e}"
-                )
-            # c2pa_builder_with_archive consumed the old handle. A null return
-            # leaves no replacement to take ownership of: mark consumed, then
-            # raise. _swap_handle is only reached when new_ptr is non-null.
-            if not new_ptr:
-                self._mark_consumed()
-                _check_ffi_operation_result(
-                    new_ptr, "Failed to load archive into builder")
-            self._swap_handle(new_ptr)
+            self._consume_and_swap(
+                lambda handle: _lib.c2pa_builder_with_archive(
+                    handle, stream_obj._stream),
+                Builder._ERROR_MESSAGES['archive_load_error'])
 
         return self
 
@@ -3645,9 +3688,11 @@ class Builder(ManagedResource):
             # Closing here ensures resources clean up,
             # and single use/single sign done by a Builder.
             self.close()
-        except Exception as e:
+        except BaseException as e:
+            # BaseException, not Exception: a KeyboardInterrupt mid-sign must
+            # still close the Builder rather than leaving its handle live.
             self.close()
-            raise C2paError(f"Error during signing: {e}")
+            raise C2paError(f"Error during signing: {e}") from e
 
         _check_ffi_operation_result(
             result,
@@ -3863,8 +3908,6 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     Raises:
         C2paError: If there was an error converting the manifest
     """
-    _clear_error_state()
-
     format_str = format.encode('utf-8')
     manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
         manifest_bytes
@@ -3980,8 +4023,6 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
         C2paError: If there was an error signing the data
         C2paError.Encoding: If the private key contains invalid UTF-8 chars
     """
-    _clear_error_state()
-
     if not data:
         raise C2paError("Data to sign cannot be empty")
 

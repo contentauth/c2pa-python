@@ -7688,6 +7688,10 @@ class TestManagedResourceObjects(TestContextAPIs):
             reader = Reader("video/mp4", init)
         consumed_handle = reader._handle
 
+        # The mock sets no error, which no native path does. Plant an
+        # operation-style one so a stale tag from another test is not read.
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked null return")
+
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
@@ -7738,6 +7742,408 @@ class TestManagedResourceObjects(TestContextAPIs):
         reader.close()
         self.assertEqual(self._free_count(freed, consumed_handle), 0,
                          "close() freed a handle the FFI already consumed")
+
+    # Consume-and-return ownership: the native call takes the handle partway
+    # through its body, so a null return does not say on its own whether the
+    # handle was consumed. These pin the classification down.
+
+    @staticmethod
+    def _is_pre_consume_rejection(error_message):
+        """True if this native error means ownership never transferred."""
+        if not error_message:
+            return False
+        return any(tag in error_message
+                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS)
+
+    def _stale_reader_handle(self):
+        """A freed, untracked pointer, captured before close() nulls it.
+
+        Take a fresh one per call: recycled addresses become tracked again.
+        """
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        with open(init_path, "rb") as init:
+            victim = Reader("video/mp4", init)
+        stale = ctypes.cast(victim._handle,
+                            ctypes.POINTER(c2pa_module.C2paReader))
+        victim.close()
+        return stale
+
+    @staticmethod
+    def _untracked_reader_handle():
+        """A pointer the native registry never handed out.
+
+        Rejected like a stale handle, but not a freed address, so it cannot
+        be recycled and start passing the registry lookup.
+        """
+        buf = ctypes.create_string_buffer(64)
+        return (ctypes.cast(buf, ctypes.POINTER(c2pa_module.C2paReader)),
+                buf)
+
+    def test_with_fragment_pre_consume_rejection_keeps_handle(self):
+        # Rejected before Box::from_raw, so nothing was consumed and the
+        # handle is still ours. Dropping it here would leak it.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        reader._handle = self._stale_reader_handle()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+
+        self.assertIn("UntrackedPointer", str(caught.exception))
+        # Ownership never transferred, so the resource stays usable.
+        self.assertIsNotNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(reader.json())
+        reader.close()
+
+    def test_with_fragment_pre_consume_rejection_does_not_leak(self):
+        # A handle dropped on this path leaks one reader per call.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        for _ in range(25):
+            with open(init_path, "rb") as init:
+                reader = Reader("video/mp4", init)
+            real_handle = reader._handle
+            reader._handle = self._stale_reader_handle()
+            try:
+                with open(init_path, "rb") as init, \
+                        open(fragment_path, "rb") as frag:
+                    with self.assertRaises(Error):
+                        reader.with_fragment("video/mp4", init, frag)
+            finally:
+                reader._handle = real_handle
+            # Still owns a working handle every time round, so nothing
+            # leaked: a dropped handle would leave the reader closed.
+            self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+            self.assertTrue(reader.json())
+            reader.close()
+
+    def test_with_archive_post_consume_failure_consumes_handle(self):
+        # Ownership taken, then the operation failed: the handle is gone,
+        # so close() must not free it again.
+        builder = Builder(json.dumps(
+            {"claim_generator_info": [{"name": "test", "version": "0.1"}],
+             "assertions": []}))
+        consumed_handle = builder._handle
+
+        with self.assertRaises(Error):
+            builder.with_archive(io.BytesIO(b"not a valid archive"))
+
+        self.assertIsNone(builder._handle)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        builder.close()
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle the FFI already consumed")
+
+    def test_with_fragment_marshalling_error_keeps_handle(self):
+        # Never reaches native code, so nothing was consumed. The old
+        # blanket except marked it consumed here and leaked the handle.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        def _bad_marshalling(*_args):
+            raise ctypes.ArgumentError("wrong argument type")
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = _bad_marshalling
+        try:
+            with open(init_path, "rb") as init, \
+                    open(init_path, "rb") as frag:
+                with self.assertRaises(ctypes.ArgumentError):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIs(reader._handle, real_handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(reader.json(),
+                        "a marshalling failure never reached the FFI, so "
+                        "the reader must still be usable")
+
+        reader.close()
+
+    def test_unknown_failure_drops_handle_without_freeing(self):
+        # Ownership unknowable, so the handle is let go rather than freed.
+        # Needs a mock: every real null return sets an error.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        consumed_handle = reader._handle
+        # Not a pre-consume tag, so the mocked failure reads as unplaceable.
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked null return")
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        # Unplaceable, so the handle is let go rather than freed twice.
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        reader.close()
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle of unknown ownership")
+
+    def test_pre_consume_rejection_is_typed(self):
+        # Rejections arrive wrapped as "Other: UntrackedPointer: 0x...".
+        self.assertTrue(self._is_pre_consume_rejection(
+            "Other: UntrackedPointer: 0x600001234567"))
+        self.assertTrue(self._is_pre_consume_rejection(
+            "Other: WrongPointerType: 0x600001234567"))
+        self.assertFalse(self._is_pre_consume_rejection(
+            "Verify: invalid JUMBF header"))
+        self.assertFalse(self._is_pre_consume_rejection(None))
+        self.assertFalse(self._is_pre_consume_rejection(""))
+
+    def test_pre_consume_tags_still_match_the_native_wording(self):
+        # Classification keys on error text (the numeric code is not
+        # exported), so a native rename would silently misjudge ownership.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        reader._handle = self._stale_reader_handle()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+
+        message = str(caught.exception)
+        self.assertTrue(
+            self._is_pre_consume_rejection(message),
+            f"the native rejection wording changed and no longer matches "
+            f"_PRE_CONSUME_ERROR_TAGS; ownership will be misjudged: "
+            f"{message!r}")
+        reader.close()
+
+    def test_stale_handle_is_actually_rejected_every_time(self):
+        # A handle that stopped being rejected would quietly measure the
+        # success path. Uses the never-allocated buffer: freed addresses get
+        # recycled and start passing the registry lookup.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        for _ in range(25):
+            with open(init_path, "rb") as init:
+                reader = Reader("video/mp4", init)
+            real_handle = reader._handle
+            bogus, _buf = self._untracked_reader_handle()
+            reader._handle = bogus
+            try:
+                with open(init_path, "rb") as init, \
+                        open(fragment_path, "rb") as frag:
+                    with self.assertRaises(Error) as caught:
+                        reader.with_fragment("video/mp4", init, frag)
+                self.assertTrue(
+                    self._is_pre_consume_rejection(
+                        str(caught.exception)),
+                    "the bogus handle was not rejected, so this stopped "
+                    "exercising the pre-consume path")
+            finally:
+                reader._handle = real_handle
+                reader.close()
+
+    def test_perf_scenario_bogus_handle_is_rejected(self):
+        # The perf scenarios use a plain buffer so looping does not swamp
+        # the measurement. It still has to produce a real rejection.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        bogus, _buf = self._untracked_reader_handle()
+        reader._handle = bogus
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+
+        self.assertTrue(
+            self._is_pre_consume_rejection(str(caught.exception)),
+            "the perf scenarios' bogus handle is no longer rejected, so "
+            "with_fragment_pre_consume_rejection measures nothing")
+        # Handle kept, so the reader still works and frees normally.
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(reader.json())
+        reader.close()
+
+    def test_every_null_return_sets_its_own_error(self):
+        # Reading the slot without clearing it is only sound because every
+        # null return sets an error. Check each path reports its own.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        # Leave a recognisable error behind, so anything stale shows up.
+        try:
+            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
+        except Error:
+            pass
+        self.assertIn("NotSupported", c2pa_module._read_native_error() or "")
+
+        # Pre-consume rejection: reports UntrackedPointer, not NotSupported.
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+        reader._handle = self._stale_reader_handle()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+        self.assertIn("UntrackedPointer", str(caught.exception))
+        self.assertNotIn("NotSupported", str(caught.exception))
+        reader.close()
+
+        # Post-consume failure: reports the operation error, not the
+        # UntrackedPointer left by the step above.
+        builder = Builder(json.dumps(
+            {"claim_generator_info": [{"name": "test", "version": "0.1"}],
+             "assertions": []}))
+        with self.assertRaises(Error) as caught:
+            builder.with_archive(io.BytesIO(b"not a valid archive"))
+        self.assertNotIn("UntrackedPointer", str(caught.exception))
+        builder.close()
+
+    def test_pre_consume_classification_holds_across_threads(self):
+        # The error slot is thread-local, so concurrent calls do not mask
+        # each other's errors and misjudge ownership.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        init_bytes = open(init_path, "rb").read()
+        frag_bytes = open(fragment_path, "rb").read()
+        problems = []
+
+        def worker():
+            for _ in range(10):
+                reader = Reader("video/mp4", io.BytesIO(init_bytes))
+                real_handle = reader._handle
+                # A never-allocated buffer, not a freed pointer: with several
+                # threads churning the allocator, a freed address gets reused
+                # and starts passing the registry lookup, which would end the
+                # iteration in a real consume instead of a rejection.
+                bogus, _buf = self._untracked_reader_handle()
+                reader._handle = bogus
+                try:
+                    reader.with_fragment("video/mp4",
+                                         io.BytesIO(init_bytes),
+                                         io.BytesIO(frag_bytes))
+                    problems.append("rejection did not raise")
+                except Error as e:
+                    if not self._is_pre_consume_rejection(str(e)):
+                        problems.append(f"misclassified: {str(e)[:60]}")
+                finally:
+                    reader._handle = real_handle
+                    if reader._lifecycle_state != LifecycleState.ACTIVE:
+                        problems.append("handle dropped on a rejection")
+                    reader.close()
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(problems, [],
+                         "ownership was misjudged under concurrency")
+
+    def test_reading_the_native_error_does_not_empty_the_slot(self):
+        # c2pa_error() peeks, so nothing Python can call empties the slot.
+        # _consume_and_swap depends on this.
+        try:
+            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
+        except Error:
+            pass
+
+        first = c2pa_module._read_native_error()
+        self.assertTrue(first, "expected a native error to have been set")
+
+        self.assertEqual(
+            c2pa_module._read_native_error(), first,
+            "reading emptied the native slot; the comments in "
+            "_consume_and_swap about a persistent error are now wrong")
+
+    def test_read_native_error_returns_none_for_an_empty_message(self):
+        # c2pa_error() returns an owned pointer to "" when no error is set,
+        # never NULL, so the pointer cannot be the "is there an error" test.
+        original = c2pa_module._lib.c2pa_error
+        empty = ctypes.create_string_buffer(b"")
+
+        try:
+            c2pa_module._lib.c2pa_error = lambda: ctypes.cast(
+                empty, ctypes.c_void_p).value
+            self.assertIsNone(
+                c2pa_module._read_native_error(),
+                "an empty native message must read as None, otherwise "
+                "callers' 'if error:' checks are only accidentally right")
+        finally:
+            c2pa_module._lib.c2pa_error = original
+
+    def test_mocked_null_without_error_is_a_known_limitation(self):
+        # A null with no error of its own is the case that breaks: the slot
+        # still holds whatever came before. No native path does this, so it
+        # is pinned here rather than defended in _consume_and_swap.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        c2pa_module._lib.c2pa_error_set_last(
+            b"UntrackedPointer: 0xdeadbeef")
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+            # Nothing clears the slot, so a planted tag would follow other
+            # tests around and change how their failures are classified.
+            c2pa_module._lib.c2pa_error_set_last(
+                b"Other: cleared by test teardown")
+
+        # The stale tag wins, so the handle is kept. Safe here (the mock
+        # consumed nothing), and the reader is still usable.
+        self.assertIsNotNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        reader.close()
 
     # Backfilling a pointer minted by a direct FFI call. Builder.from_archive
     # is the only production caller of _wrap_native_handle, so these are the
@@ -8001,6 +8407,252 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         self.assertEqual(len(freed), 1,
                          "from_archive leaked the handle when the wrap failed")
+
+    # Interrupt paths.
+    #
+    # These handlers catch BaseException rather than Exception, so a
+    # KeyboardInterrupt arriving mid-call still runs the cleanup. Catching
+    # Exception would let the interrupt escape past the free/close.
+
+    def test_interrupted_context_build_frees_builder_ptr(self):
+        # An interrupt between c2pa_context_builder_new and the build call
+        # leaves builder_ptr owned by nobody but this frame.
+        freed = self._instrument_frees()
+        real_build = c2pa_module._lib.c2pa_context_builder_build
+
+        def _interrupt(ptr):
+            raise KeyboardInterrupt
+
+        c2pa_module._lib.c2pa_context_builder_build = _interrupt
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                Context(signer=self._ctx_make_signer())
+        finally:
+            c2pa_module._lib.c2pa_context_builder_build = real_build
+
+        self.assertEqual(len(freed), 1,
+                         "interrupted Context build leaked the context "
+                         "builder pointer")
+
+    def test_interrupted_sign_closes_builder(self):
+        # sign() borrows the Builder and closes it afterwards. An interrupt
+        # must not skip that close, or the handle outlives the object.
+        builder = Builder(self.test_manifest)
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+        with open(os.path.join(FIXTURES_DIR, "C.jpg"), "rb") as f:
+            source_bytes = f.read()
+
+        real_sign = c2pa_module._lib.c2pa_builder_sign
+
+        def _interrupt(*args):
+            raise KeyboardInterrupt
+
+        c2pa_module._lib.c2pa_builder_sign = _interrupt
+        try:
+            # With `except Exception` the KeyboardInterrupt escapes unhandled
+            # and self.close() never runs; the BaseException handler catches
+            # it and re-raises it wrapped, having closed the Builder first.
+            with self.assertRaises(Error):
+                builder.sign(signer, "image/jpeg",
+                             io.BytesIO(source_bytes), io.BytesIO())
+        finally:
+            c2pa_module._lib.c2pa_builder_sign = real_sign
+
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED,
+                         "interrupted sign left the Builder open")
+        self.assertIsNone(builder._handle)
+
+    def test_sign_failure_chains_the_original_exception(self):
+        # The wrapper re-raises as C2paError; losing __cause__ hides which
+        # call actually failed.
+        builder = Builder(self.test_manifest)
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+
+        sentinel = RuntimeError("native call blew up")
+        real_sign = c2pa_module._lib.c2pa_builder_sign
+
+        def _boom(*args):
+            raise sentinel
+
+        c2pa_module._lib.c2pa_builder_sign = _boom
+        try:
+            with self.assertRaises(Error) as ctx:
+                builder.sign(signer, "image/jpeg",
+                             io.BytesIO(b"x"), io.BytesIO())
+        finally:
+            c2pa_module._lib.c2pa_builder_sign = real_sign
+
+        self.assertIs(ctx.exception.__cause__, sentinel,
+                      "signing error dropped the original exception")
+
+    def test_marshalling_error_on_set_signer_leaves_signer_owned(self):
+        # ctypes.ArgumentError means the call never reached the native side,
+        # so the signer was never taken and must keep owning its handle.
+        #
+        # This passes with or without the explicit ArgumentError re-raise at
+        # the call site, because a bare re-raise matches what happens with no
+        # handler at all. It pins the invariant against a future edit
+        # that adds work between the FFI call and _mark_consumed(), which would
+        # otherwise start marking an untaken signer as consumed.
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+        real_set = c2pa_module._lib.c2pa_context_builder_set_signer
+
+        def _bad_marshal(builder_ptr, signer_ptr):
+            raise ctypes.ArgumentError("bad argument type")
+
+        c2pa_module._lib.c2pa_context_builder_set_signer = _bad_marshal
+        try:
+            with self.assertRaises(ctypes.ArgumentError):
+                Context(signer=signer)
+        finally:
+            c2pa_module._lib.c2pa_context_builder_set_signer = real_set
+
+        self.assertIsNotNone(
+            signer._handle,
+            "a signer the native side never took was marked consumed")
+        self.assertEqual(signer._lifecycle_state, LifecycleState.ACTIVE)
+
+
+class TestErrorPlumbing(unittest.TestCase):
+    """Covers the error helpers themselves, which had no direct tests."""
+
+    def _set_native_error(self, text):
+        c2pa_module._lib.c2pa_error_set_last(text.encode('utf-8'))
+
+    def test_every_error_tag_maps_to_its_typed_subclass(self):
+        # The wire text is "Tag: message"; each tag gets its own subclass so
+        # callers can catch precisely.
+        tags = [
+            "Assertion", "AssertionNotFound", "Decoding", "Encoding",
+            "FileNotFound", "Io", "Json", "Manifest", "ManifestNotFound",
+            "NotSupported", "Other", "RemoteManifest", "ResourceNotFound",
+            "Signature", "Verify", "UntrackedPointer", "WrongPointerType",
+        ]
+        for tag in tags:
+            with self.subTest(tag=tag):
+                expected = getattr(Error, tag)
+                with self.assertRaises(expected):
+                    c2pa_module._raise_typed_c2pa_error(f"{tag}: detail")
+
+    def test_unmapped_tag_falls_back_to_base_error(self):
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._raise_typed_c2pa_error("Nonsense: detail")
+        # Base class only: no subclass should claim an unknown tag.
+        self.assertIs(type(ctx.exception), Error)
+
+    def test_check_ffi_operation_result_raises_with_native_message(self):
+        self._set_native_error("Io: disk exploded")
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(None, "fallback text")
+        self.assertIn("disk exploded", str(ctx.exception))
+
+    def test_check_ffi_operation_result_uses_fallback_when_slot_empty(self):
+        # The slot is sticky and thread-local, so a fresh thread is the only
+        # way to observe it unset.
+        captured = []
+
+        def run():
+            try:
+                c2pa_module._check_ffi_operation_result(None, "fallback text")
+            except BaseException as e:      # noqa: BLE001 - reported below
+                captured.append(e)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+
+        self.assertEqual(len(captured), 1, "expected a raise on failure")
+        self.assertIsInstance(captured[0], Error)
+        self.assertIn("fallback text", str(captured[0]))
+
+    def test_check_ffi_operation_result_passes_success_through(self):
+        self.assertEqual(
+            c2pa_module._check_ffi_operation_result(42, "unused"), 42)
+
+    def test_stream_creation_failure_reports_a_real_message(self):
+        # Regression: used to raise bare Exception("...: None"), because
+        # _parse_operation_result_for_error never returns a message.
+        real = c2pa_module._lib.c2pa_create_stream
+        c2pa_module._lib.c2pa_create_stream = lambda *a: None
+        try:
+            # With an error set, the message must carry it.
+            self._set_native_error("Io: stream refused")
+            with self.assertRaises(Error) as ctx:
+                c2pa_module.Stream(io.BytesIO(b"x"))
+            self.assertIn("stream refused", str(ctx.exception))
+
+            # With the slot unset, the old code raised bare Exception.
+            captured = []
+
+            def run():
+                try:
+                    c2pa_module.Stream(io.BytesIO(b"x"))
+                except BaseException as e:   # noqa: BLE001 - reported below
+                    captured.append(e)
+
+            t = threading.Thread(target=run)
+            t.start()
+            t.join()
+
+            self.assertEqual(len(captured), 1, "expected a raise on failure")
+            self.assertIsInstance(
+                captured[0], Error,
+                "stream failure must raise C2paError, not bare Exception")
+            self.assertNotIn("None", str(captured[0]))
+        finally:
+            c2pa_module._lib.c2pa_create_stream = real
+
+    def test_supported_mime_types_raises_instead_of_returning_empty(self):
+        # Regression: `if error:` was always False, so a native failure
+        # returned an empty list instead of raising. Only visible with the
+        # slot unset, hence the fresh thread.
+        captured = []
+
+        def run():
+            try:
+                captured.append(
+                    c2pa_module._get_supported_mime_types(
+                        lambda count: None, None))
+            except BaseException as e:      # noqa: BLE001 - reported below
+                captured.append(e)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+
+        self.assertIsInstance(
+            captured[0], Error,
+            "a failed MIME lookup returned data instead of raising")
+
+    def test_supported_mime_types_reports_the_native_message(self):
+        self._set_native_error("Io: mime lookup failed")
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._get_supported_mime_types(lambda count: None, None)
+        self.assertIn("mime lookup failed", str(ctx.exception))
+
+
+class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
+    """Each surface that lost a _clear_error_state() call still reports."""
+
+    def test_reader_on_garbage_raises(self):
+        with self.assertRaises(Error):
+            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
+
+    def test_signer_from_info_with_bad_certs_raises(self):
+        with self.assertRaises(Error):
+            c2pa_module.create_signer_from_info(C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=b"not a certificate",
+                private_key=b"not a key",
+                ta_url=b"",
+            ))
+
+    def test_ed25519_sign_with_empty_data_raises(self):
+        with self.assertRaises(Error):
+            c2pa_module.ed25519_sign(b"", "not a key")
 
 
 if __name__ == '__main__':
