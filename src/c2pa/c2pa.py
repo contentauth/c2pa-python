@@ -1261,7 +1261,11 @@ def _check_ffi_operation_result(
 
     Args:
         result: The return value from the FFI call
-        fallback_msg: Error message if the native library has no error details
+        fallback_msg: Error message if the native library has no error details.
+            An error message template ending in `: {}` may be passed
+            unformatted. An "Unknown error" fallback is filled in here, since
+            reaching this point means the native layer offered nothing better.
+            Plain messages with no placeholder are used as-is.
         check: Predicate that returns True when the result indicates failure.
             Defaults to `not r` (for pointer-returning calls).
             Use `lambda r: r != 0` for status-code-returning calls.
@@ -1277,7 +1281,7 @@ def _check_ffi_operation_result(
         error = _parse_operation_result_for_error(_lib.c2pa_error())
         if error:
             raise C2paError(error)
-        raise C2paError(fallback_msg)
+        raise C2paError(fallback_msg.format("Unknown error"))
     return result
 
 
@@ -1780,15 +1784,6 @@ class Stream:
         'stream_error': "Error cleaning up stream: {}",
         'callback_error': "Error cleaning up callback {}: {}",
         'cleanup_error': "Error during cleanup: {}",
-        'read': "Stream is closed or not initialized during read operation",
-        'memory_error': "Memory error during stream operation: {}",
-        'read_error': "Error during read operation: {}",
-        'seek': "Stream is closed or not initialized during seek operation",
-        'seek_error': "Error during seek operation: {}",
-        'write': "Stream is closed or not initialized during write operation",
-        'write_error': "Error during write operation: {}",
-        'flush': "Stream is closed or not initialized during flush operation",
-        'flush_error': "Error during flush operation: {}"
     }
 
     def __init__(self, file_like_stream):
@@ -2218,16 +2213,12 @@ class Reader(ManagedResource):
 
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
-        'unsupported': "Unsupported format",
         'io_error': "IO error: {}",
         'manifest_error': "Invalid manifest data: must be bytes",
         'reader_error': "Failed to create reader: {}",
         'cleanup_error': "Error during cleanup: {}",
         'stream_error': "Error cleaning up stream: {}",
-        'file_error': "Error cleaning up file: {}",
-        'reader_cleanup_error': "Error cleaning up reader: {}",
         'encoding_error': "Invalid UTF-8 characters in input: {}",
-        'closed_error': "Reader is closed",
         'fragment_error': "Failed to process fragment: {}"
     }
 
@@ -2427,7 +2418,7 @@ class Reader(ManagedResource):
 
         _check_ffi_operation_result(
             reader_ptr,
-            Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
+            Reader._ERROR_MESSAGES['reader_error'])
 
         self._activate(reader_ptr)
 
@@ -2495,7 +2486,7 @@ class Reader(ManagedResource):
                 _check_ffi_operation_result(reader_ptr,
                                             Reader._ERROR_MESSAGES[
                                                 'reader_error'
-                                            ].format("Unknown error")
+                                            ]
                                             )
             except BaseException:
                 if reader_ptr:
@@ -2575,6 +2566,8 @@ class Reader(ManagedResource):
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
         self._close_streams()
+        # The Context is not ours to close, only to stop pinning.
+        self._context = None
 
     def _get_cached_manifest_data(self) -> Optional[dict]:
         """Get the cached manifest data, fetching and parsing if not cached.
@@ -2889,12 +2882,8 @@ class Signer(ManagedResource):
 
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
-        'closed_error': "Signer is closed",
         'cleanup_error': "Error during cleanup: {}",
-        'signer_cleanup': "Error cleaning up signer: {}",
         'callback_error': "Error in signer callback: {}",
-        'info_error': "Error creating signer from info: {}",
-        'invalid_data': "Invalid data for signing: {}",
         'invalid_certs': "Invalid certificate data: {}",
         'invalid_tsa': "Invalid TSA URL: {}",
         'encoding_error': "Invalid UTF-8 characters in input: {}"
@@ -3115,19 +3104,14 @@ class Builder(ManagedResource):
     _ERROR_MESSAGES = {
         'builder_error': "Failed to create builder: {}",
         'cleanup_error': "Error during cleanup: {}",
-        'builder_cleanup': "Error cleaning up builder: {}",
-        'closed_error': "Builder is closed",
-        'manifest_error': "Invalid manifest data: must be string or dict",
         'url_error': "Error setting remote URL: {}",
+        'intent_error': "Error setting intent for Builder: {}",
         'resource_error': "Error adding resource: {}",
         'ingredient_error': "Error adding ingredient: {}",
         'archive_read_error': "Error loading ingredient from archive: {}",
         'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
         'archive_load_error': "Failed to load archive into builder: {}",
-        'sign_error': "Error during signing: {}",
-        'encoding_error': "Invalid UTF-8 characters in manifest: {}",
-        'json_error': "Failed to serialize manifest JSON: {}"
     }
 
     @classmethod
@@ -3268,7 +3252,7 @@ class Builder(ManagedResource):
 
             _check_ffi_operation_result(
                 builder_ptr,
-                Builder._ERROR_MESSAGES['builder_error'].format("Unknown error"))
+                Builder._ERROR_MESSAGES['builder_error'])
 
             self._activate(builder_ptr)
 
@@ -3288,7 +3272,7 @@ class Builder(ManagedResource):
             _check_ffi_operation_result(builder_ptr,
                                         Builder._ERROR_MESSAGES[
                                             'builder_error'
-                                        ].format("Unknown error")
+                                        ]
                                         )
         except BaseException:
             if builder_ptr:
@@ -3344,7 +3328,7 @@ class Builder(ManagedResource):
 
         _check_ffi_operation_result(
             result,
-            Builder._ERROR_MESSAGES['url_error'].format("Unknown error"),
+            Builder._ERROR_MESSAGES['url_error'],
             check=lambda r: r != 0)
 
     def set_intent(
@@ -3383,7 +3367,7 @@ class Builder(ManagedResource):
 
         _check_ffi_operation_result(
             result,
-            "Error setting intent for Builder: Unknown error",
+            Builder._ERROR_MESSAGES['intent_error'],
             check=lambda r: r != 0)
 
     def add_resource(self, uri: str, stream: Any):
@@ -3406,7 +3390,7 @@ class Builder(ManagedResource):
 
             _check_ffi_operation_result(
                 result,
-                Builder._ERROR_MESSAGES['resource_error'].format("Unknown error"),
+                Builder._ERROR_MESSAGES['resource_error'],
                 check=lambda r: r != 0)
 
     def add_ingredient(
@@ -3473,7 +3457,7 @@ class Builder(ManagedResource):
 
             _check_ffi_operation_result(
                 result,
-                Builder._ERROR_MESSAGES['ingredient_error'].format("Unknown error"),
+                Builder._ERROR_MESSAGES['ingredient_error'],
                 check=lambda r: r != 0)
 
     def add_action(self, action_json: Union[str, dict]) -> None:
@@ -3495,7 +3479,7 @@ class Builder(ManagedResource):
 
         _check_ffi_operation_result(
             result,
-            Builder._ERROR_MESSAGES['action_error'].format("Unknown error"),
+            Builder._ERROR_MESSAGES['action_error'],
             check=lambda r: r != 0)
 
     def to_archive(self, stream: Any) -> None:
@@ -3516,7 +3500,7 @@ class Builder(ManagedResource):
 
             _check_ffi_operation_result(
                 result,
-                Builder._ERROR_MESSAGES["archive_error"].format("Unknown error"),
+                Builder._ERROR_MESSAGES["archive_error"],
                 check=lambda r: r != 0)
 
     def write_ingredient_archive(self, ingredient_id: str, stream: Any) -> None:
@@ -3539,10 +3523,9 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_write_ingredient_archive(
                 self._handle, ingredient_id_str, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
-                Builder._ERROR_MESSAGES["archive_error"].format(
-                    "Unknown error"
-                ),
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES["archive_error"],
                 check=lambda r: r != 0)
 
     def add_ingredient_from_archive(self, stream: Any) -> None:
@@ -3562,10 +3545,9 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_add_ingredient_from_archive(
                 self._handle, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
-                Builder._ERROR_MESSAGES["archive_read_error"].format(
-                    "Unknown error"
-                ),
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES["archive_read_error"],
                 check=lambda r: r != 0)
 
     def with_archive(self, stream: Any) -> 'Builder':
