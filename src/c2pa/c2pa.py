@@ -1471,15 +1471,16 @@ class Settings(ManagedResource):
         """Create new Settings with default values."""
         super().__init__()
 
-        ptr = _lib.c2pa_settings_new()
+        settings_ptr = _lib.c2pa_settings_new()
         try:
-            _check_ffi_operation_result(ptr, "Failed to create Settings")
+            _check_ffi_operation_result(
+                settings_ptr, "Failed to create Settings")
         except BaseException:
-            if ptr:
-                ManagedResource._free_native_ptr(ptr)
+            if settings_ptr:
+                ManagedResource._free_native_ptr(settings_ptr)
             raise
 
-        self._activate(ptr)
+        self._activate(settings_ptr)
 
     @classmethod
     def from_json(cls, json_str: str) -> 'Settings':
@@ -1640,11 +1641,11 @@ class Context(ManagedResource, ContextProvider):
 
         if settings is None and signer is None:
             # Simple default context
-            ptr = _lib.c2pa_context_new()
+            context_ptr = _lib.c2pa_context_new()
             _check_ffi_operation_result(
-                ptr, "Failed to create Context"
+                context_ptr, "Failed to create Context"
             )
-            self._activate(ptr)
+            self._activate(context_ptr)
         else:
             # Use ContextBuilder for settings/signer
             builder_ptr = _lib.c2pa_context_builder_new()
@@ -1683,16 +1684,16 @@ class Context(ManagedResource, ContextProvider):
                     self._has_signer = True
 
                 # Build consumes builder_ptr
-                ptr = (
+                context_ptr = (
                     _lib.c2pa_context_builder_build(builder_ptr)
                 )
                 builder_ptr = None
 
                 _check_ffi_operation_result(
-                    ptr, "Failed to build Context"
+                    context_ptr, "Failed to build Context"
                 )
 
-                self._activate(ptr)
+                self._activate(context_ptr)
             except BaseException:
                 # Free builder if build was not reached
                 if builder_ptr is not None:
@@ -2407,7 +2408,7 @@ class Reader(ManagedResource):
             manifest_data: Optional manifest bytes
         """
         if manifest_data is None:
-            ptr = _lib.c2pa_reader_from_stream(
+            reader_ptr = _lib.c2pa_reader_from_stream(
                 format_bytes, stream_obj._stream)
         else:
             if not isinstance(manifest_data, bytes):
@@ -2415,7 +2416,7 @@ class Reader(ManagedResource):
             manifest_array = (
                 ctypes.c_ubyte *
                 len(manifest_data)).from_buffer_copy(manifest_data)
-            ptr = (
+            reader_ptr = (
                 _lib.c2pa_reader_from_manifest_data_and_stream(
                     format_bytes,
                     stream_obj._stream,
@@ -2425,10 +2426,10 @@ class Reader(ManagedResource):
             )
 
         _check_ffi_operation_result(
-            ptr,
+            reader_ptr,
             Reader._ERROR_MESSAGES['reader_error'].format("Unknown error"))
 
-        self._activate(ptr)
+        self._activate(reader_ptr)
 
     def _init_from_file(self, path, format_bytes,
                         manifest_data=None):
@@ -2544,10 +2545,7 @@ class Reader(ManagedResource):
         self._backing_file = None
 
         # Caches for manifest JSON string and parsed data.
-        # These are invalidated when with_fragment() is called, because each
-        # new BMFF fragment can refine or update the manifest content as the
-        # reader progressively builds its understanding of the fragmented
-        # stream. They are also cleared on close() to release memory.
+        # These are invalidated when with_fragment() is called.
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
 
@@ -2573,6 +2571,7 @@ class Reader(ManagedResource):
     def _release(self):
         """Release Reader-specific resources (caches, stream, backing file).
         """
+
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
         self._close_streams()
@@ -3265,13 +3264,13 @@ class Builder(ManagedResource):
         if context is not None:
             self._init_from_context(context, json_str)
         else:
-            ptr = _lib.c2pa_builder_from_json(json_str)
+            builder_ptr = _lib.c2pa_builder_from_json(json_str)
 
             _check_ffi_operation_result(
-                ptr,
+                builder_ptr,
                 Builder._ERROR_MESSAGES['builder_error'].format("Unknown error"))
 
-            self._activate(ptr)
+            self._activate(builder_ptr)
 
     def _init_from_context(self, context, json_str):
         """Initialize Builder from a ContextProvider.
@@ -3296,9 +3295,9 @@ class Builder(ManagedResource):
                 ManagedResource._free_native_ptr(builder_ptr)
             raise
 
-        # Adopt the handle before the consuming call: _consume_and_swap needs
-        # an active resource, and from here on normal cleanup owns the pointer
-        # whichever way the call goes.
+        # Adopt the handle before the consuming call:
+        # _consume_and_swap needs an active resource,
+        # and from here on normal cleanup owns the pointer.
         self._activate(builder_ptr)
 
         self._consume_and_swap(
