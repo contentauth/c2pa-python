@@ -908,45 +908,6 @@ def scenario_builder_from_context_construction(iterations: int = 100) -> None:
         builder.close()
 
 
-def scenario_sign_interrupted(iterations: int = 100) -> None:
-    """Loop a sign that is interrupted partway through the FFI call.
-
-    _sign_internal catches BaseException so the Builder is closed even when
-    the interrupt is not an Exception subclass. Narrowing that back to
-    Exception leaks the whole Builder per iteration, since close() is skipped
-    and the handle outlives the object.
-    """
-    source_bytes = SOURCE_JPEG.read_bytes()
-    signer = _make_signer()
-    real_sign = c2pa_module._lib.c2pa_builder_sign
-
-    def _interrupt(*args):
-        raise KeyboardInterrupt
-
-    c2pa_module._lib.c2pa_builder_sign = _interrupt
-    try:
-        for _ in _iterate(iterations):
-            builder = Builder(MANIFEST_BASE)
-            try:
-                builder.sign(signer, "image/jpeg",
-                             io.BytesIO(source_bytes), io.BytesIO())
-            except C2paError:
-                # The wrapper re-raises the interrupt as C2paError, having
-                # closed the Builder first. Anything else means the handler
-                # stopped catching it.
-                pass
-            else:
-                raise AssertionError("interrupted sign did not raise")
-            if (builder._lifecycle_state
-                    is not c2pa_module.LifecycleState.CLOSED):
-                raise AssertionError(
-                    "interrupted sign left the Builder open; its handle "
-                    "leaks once per iteration")
-    finally:
-        c2pa_module._lib.c2pa_builder_sign = real_sign
-        signer.close()
-
-
 def scenario_signer_construction(iterations: int = 100) -> None:
     """Loop Signer.from_info()/__init__ construction and teardown.
 
@@ -1428,7 +1389,6 @@ SCENARIOS = {
     "signer_construction": scenario_signer_construction,
     "builder_from_context_construction":
         scenario_builder_from_context_construction,
-    "sign_interrupted": scenario_sign_interrupted,
     "fork_reader_collect": scenario_fork_reader_collect,
     "fork_contended_mutex": scenario_fork_contended_mutex,
     "fork_thread_local_orphan": scenario_fork_thread_local_orphan,

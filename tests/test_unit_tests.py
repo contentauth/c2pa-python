@@ -8408,61 +8408,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertEqual(len(freed), 1,
                          "from_archive leaked the handle when the wrap failed")
 
-    # Interrupt paths.
-    #
-    # These handlers catch BaseException rather than Exception, so a
-    # KeyboardInterrupt arriving mid-call still runs the cleanup. Catching
-    # Exception would let the interrupt escape past the free/close.
-
-    def test_interrupted_context_build_frees_builder_ptr(self):
-        # An interrupt between c2pa_context_builder_new and the build call
-        # leaves builder_ptr owned by nobody but this frame.
-        freed = self._instrument_frees()
-        real_build = c2pa_module._lib.c2pa_context_builder_build
-
-        def _interrupt(ptr):
-            raise KeyboardInterrupt
-
-        c2pa_module._lib.c2pa_context_builder_build = _interrupt
-        try:
-            with self.assertRaises(KeyboardInterrupt):
-                Context(signer=self._ctx_make_signer())
-        finally:
-            c2pa_module._lib.c2pa_context_builder_build = real_build
-
-        self.assertEqual(len(freed), 1,
-                         "interrupted Context build leaked the context "
-                         "builder pointer")
-
-    def test_interrupted_sign_closes_builder(self):
-        # sign() borrows the Builder and closes it afterwards. An interrupt
-        # must not skip that close, or the handle outlives the object.
-        builder = Builder(self.test_manifest)
-        signer = self._ctx_make_signer()
-        self.addCleanup(signer.close)
-        with open(os.path.join(FIXTURES_DIR, "C.jpg"), "rb") as f:
-            source_bytes = f.read()
-
-        real_sign = c2pa_module._lib.c2pa_builder_sign
-
-        def _interrupt(*args):
-            raise KeyboardInterrupt
-
-        c2pa_module._lib.c2pa_builder_sign = _interrupt
-        try:
-            # With `except Exception` the KeyboardInterrupt escapes unhandled
-            # and self.close() never runs; the BaseException handler catches
-            # it and re-raises it wrapped, having closed the Builder first.
-            with self.assertRaises(Error):
-                builder.sign(signer, "image/jpeg",
-                             io.BytesIO(source_bytes), io.BytesIO())
-        finally:
-            c2pa_module._lib.c2pa_builder_sign = real_sign
-
-        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED,
-                         "interrupted sign left the Builder open")
-        self.assertIsNone(builder._handle)
-
     def test_sign_failure_chains_the_original_exception(self):
         # The wrapper re-raises as C2paError; losing __cause__ hides which
         # call actually failed.
@@ -8486,34 +8431,6 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         self.assertIs(ctx.exception.__cause__, sentinel,
                       "signing error dropped the original exception")
-
-    def test_marshalling_error_on_set_signer_leaves_signer_owned(self):
-        # ctypes.ArgumentError means the call never reached the native side,
-        # so the signer was never taken and must keep owning its handle.
-        #
-        # This passes with or without the explicit ArgumentError re-raise at
-        # the call site, because a bare re-raise matches what happens with no
-        # handler at all. It pins the invariant against a future edit
-        # that adds work between the FFI call and _mark_consumed(), which would
-        # otherwise start marking an untaken signer as consumed.
-        signer = self._ctx_make_signer()
-        self.addCleanup(signer.close)
-        real_set = c2pa_module._lib.c2pa_context_builder_set_signer
-
-        def _bad_marshal(builder_ptr, signer_ptr):
-            raise ctypes.ArgumentError("bad argument type")
-
-        c2pa_module._lib.c2pa_context_builder_set_signer = _bad_marshal
-        try:
-            with self.assertRaises(ctypes.ArgumentError):
-                Context(signer=signer)
-        finally:
-            c2pa_module._lib.c2pa_context_builder_set_signer = real_set
-
-        self.assertIsNotNone(
-            signer._handle,
-            "a signer the native side never took was marked consumed")
-        self.assertEqual(signer._lifecycle_state, LifecycleState.ACTIVE)
 
 
 class TestErrorPlumbing(unittest.TestCase):

@@ -302,16 +302,11 @@ class ManagedResource:
             )
 
     def _mark_consumed(self):
-        """Mark as consumed by an FFI call that took ownership of the native
-        handle.
-
-        Ownership contract: the native pointer is now owned elsewhere, so this
-        does not free it. It releases only Python-side resources (via
-        `_release()`: callback refs, streams, caches) and marks the resource
-        closed. Marking it closed stops `_cleanup_resources` from freeing the
-        now foreign-owned pointer later; releasing here means those Python
-        resources are not stranded until garbage collection.
+        """Mark as consumed by an FFI call that took ownership
+        of native resources e.g. pointers. This means we should not
+        call clean-up here anymore, and leave it to the new owner.
         """
+
         if is_foreign_process(self):
             self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
@@ -326,10 +321,7 @@ class ManagedResource:
 
     def _activate(self, handle):
         """Attach a native handle to self and mark it active.
-
-        Ownership of `handle` transfers here: this object frees it on close.
-        Only an uninitialized resource can be activated, so a handle can never
-        be activated twice and a closed resource can never be reopened.
+        Ownership of `handle` transfers here.
 
         Args:
             handle: Non-null native pointer to take ownership of
@@ -353,16 +345,9 @@ class ManagedResource:
     def _swap_handle(self, new_handle):
         """Replace the handle after an FFI call consumed the old one and
         returned a replacement.
-
-        Ownership contract: the caller guarantees the callee has already
-        consumed and freed the old pointer. This method never frees the old
-        pointer; it only rebinds `self._handle` to the replacement. Calling it
-        when the old pointer was not consumed leaks that pointer.
-
         A null return from such a call is ambiguous (the callee may have
         failed validation before taking ownership, or failed the operation
         after), so callers must not call this with a null replacement.
-
         Requires the resource to be active.
 
         Args:
@@ -389,15 +374,11 @@ class ManagedResource:
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a replacement.
 
-        The native lib takes ownership partway through the call,
-        so a null return can be ambiguous.
-        The native error tells the cases apart:
+        The native lib may take ownership partway through the call.
+        The native error tells if ownership was transferred:
         - a pointer rejection (`_PRE_CONSUME_ERROR_TAGS`) precedes the
           transfer, so the handle is still ours and is kept;
-        - any other error means it was taken, then the operation failed;
-        - a null with no error cannot be placed, so the handle is dropped
-          anyway: leaking is recoverable, double-freeing is not. No native
-          path does this, so it only appears under mocks.
+        - any other error means it was taken, then the operation failed.
 
         The error is read without clearing it first.
         The slot is sticky: c2pa_error() peeks and nothing empties it.
@@ -429,8 +410,8 @@ class ManagedResource:
         if error:
             if any(tag in error
                    for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
-                # Rejected before ownership transferred, so the handle is
-                # still ours: keep it and let normal cleanup free it.
+                # Rejected before ownership transferred,
+                # so the handle is still ours.
                 logger.warning(
                     "%s: native call rejected the handle before taking "
                     "ownership (%s); handle retained",
@@ -438,7 +419,7 @@ class ManagedResource:
                     error)
                 _raise_typed_c2pa_error(error)
 
-            # Ownership transferred and then the operation failed.
+            # Ownership transferred and then an operation failed.
             self._mark_consumed()
             _raise_typed_c2pa_error(error)
 
@@ -448,14 +429,11 @@ class ManagedResource:
     @classmethod
     def _wrap_native_handle(cls, handle):
         """Build a brand-new instance around an already-valid,
-        already-owned native handle, bypassing __init__ entirely.
-
-        __init__ is bypassed, so `_init_attrs()` supplies the class's own
-        defaults and the instance is stamped with the creating process.
+        already-owned native handle (bypassing __init__).
 
         Everything an instance needs besides the native handle must be set in
-        `_init_attrs()`, not `__init__` — `_wrap_native_handle` never runs
-        `__init__`. An attribute a subclass sets only in `__init__` will be
+        `_init_attrs()`. `_wrap_native_handle` never runs `__init__`.
+        An attribute a subclass sets only in `__init__` will be
         missing (or left at its `_init_attrs` default) on a wrapped instance.
 
         Ownership of `handle` transfers only on successful return. If this
@@ -468,7 +446,6 @@ class ManagedResource:
             C2paError: If the handle is null
         """
         obj = object.__new__(cls)
-        # Stamps _owner_pid, which the fork guard relies on.
         ManagedResource.__init__(obj)
         obj._init_attrs()
         obj._activate(handle)
