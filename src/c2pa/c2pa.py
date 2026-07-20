@@ -2502,7 +2502,7 @@ class Reader(ManagedResource):
                 raise
 
             # Adopt the handle before the consuming call: _consume_and_swap
-            # needs an ACTIVE resource, and from here on normal cleanup owns
+            # needs an active resource, and from here on normal cleanup owns
             # the pointer whichever way the call goes.
             self._activate(reader_ptr)
 
@@ -2572,9 +2572,6 @@ class Reader(ManagedResource):
 
     def _release(self):
         """Release Reader-specific resources (caches, stream, backing file).
-
-        Every teardown path runs this, including _mark_consumed(), which
-        close() never gets a chance to follow.
         """
         self._manifest_json_str_cache = None
         self._manifest_data_cache = None
@@ -3300,7 +3297,7 @@ class Builder(ManagedResource):
             raise
 
         # Adopt the handle before the consuming call: _consume_and_swap needs
-        # an ACTIVE resource, and from here on normal cleanup owns the pointer
+        # an active resource, and from here on normal cleanup owns the pointer
         # whichever way the call goes.
         self._activate(builder_ptr)
 
@@ -3657,8 +3654,6 @@ class Builder(ManagedResource):
             # and single use/single sign done by a Builder.
             self.close()
         except BaseException as e:
-            # BaseException, not Exception: a KeyboardInterrupt mid-sign must
-            # still close the Builder rather than leaving its handle live.
             self.close()
             raise C2paError(f"Error during signing: {e}") from e
 

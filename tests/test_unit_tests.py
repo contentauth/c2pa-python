@@ -6935,8 +6935,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     the ownership hand-offs between Python and the native library.
 
     setUp records frees instead of performing them, so a miscount reads as a
-    leak or a double-free rather than a crash. Tests holding real handles
-    call _use_real_frees() first.
+    leak or a double-free rather than a crash.
+    Tests holding real handles call _use_real_frees() first.
     """
 
     class _FakeHandleResource(ManagedResource):
@@ -6961,7 +6961,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             self.release_calls += 1
 
     class _ExtenderResource(ManagedResource):
-        """A downstream extender that owns a raw handle and wraps it via
+        """Am extender that owns a raw handle and wraps it via
         _wrap_native_handle. It carries several attributes of its own, all
         defaulted in _init_attrs (not __init__), and _release reads them, so a
         missing attribute would surface as an AttributeError on teardown.
@@ -6994,7 +6994,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         return counts
 
     def _use_real_frees(self):
-        """Undo setUp's recorder, so native handles are really freed."""
+        """Undo free recorder, so native handles are really freed."""
         ManagedResource._free_native_ptr = self._real_free
 
     def _make_signer(self):
@@ -7004,8 +7004,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             key = f.read()
         return Signer.from_info(C2paSignerInfo(
             b"es256", certs, key, b"http://timestamp.digicert.com"))
-
-    # _cleanup_resources: a failing _release() must not strand the handle
 
     def test_release_failure_still_frees_handle(self):
         res = self._CallbackHoldingResource()
@@ -7028,8 +7026,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertTrue(
             any('Failed to release' in line for line in captured.output),
             f"_release() failure was not logged: {captured.output}")
-
-    # _activate guards
 
     def test_activate_rejects_null_handle(self):
         res = self._FakeHandleResource()
@@ -7078,16 +7074,14 @@ class TestManagedResourceLifecycle(unittest.TestCase):
                          "rejected activation replaced the handle")
         self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
 
-    # _swap_handle
-
     def test_swap_handle_does_not_free_consumed_handle(self):
         res = self._FakeHandleResource()
         res._activate(0xAAA1)
 
         res._swap_handle(0xAAA2)
 
-        # The FFI already owns and frees the old pointer, so freeing it here
-        # would be a double-free.
+        # The FFI already owns and frees the old pointer,
+        # so freeing it here would be a double-free.
         self.assertEqual(self.freed, [])
         self.assertEqual(res._handle, 0xAAA2)
 
@@ -7117,8 +7111,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(res._handle, 0x7777)
         self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
 
-    # _wrap_native_handle
-
     def test_wrap_native_handle_bypasses_init(self):
         seen = []
 
@@ -7138,7 +7130,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(obj._tag, 'from _init_attrs')
         self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
         self.assertTrue(obj.is_valid)
-        # ManagedResource.__init__ still ran, so fork-safety is intact.
         self.assertTrue(hasattr(obj, '_owner_pid'))
 
         obj.close()
@@ -7191,8 +7182,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
                          "forked child freed a pointer its parent still owns")
         # The child must not free a pointer the parent still owns.
         # The child does mark its own copies closed and nulls their handles,
-        # which is safe (the parent holds a separate copy) and
-        # stops the child from reusing a parent-owned handle.
+        # which stops the child from reusing a parent-owned handle.
         self.assertEqual(wrapped._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(wrapped._handle)
         self.assertEqual(swapped._lifecycle_state, LifecycleState.CLOSED)
@@ -7244,8 +7234,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [])
 
     # Consuming a handle hands the native pointer to a new owner,
-    # but the Python-side resources are still ours to let go of.
-
+    # but the Python-side resources are still ours and we need to free.
     def test_mark_consumed_releases_python_resources(self):
         res = self._ReleaseRecordingResource()
         res._activate(0xF1)
@@ -7282,7 +7271,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         obj = self._ExtenderResource._wrap_native_handle(0xE0)
 
         # Every attribute _init_attrs defaults is present,
-        # even thoug __init__ never ran.
+        # even though __init__ never ran.
         self.assertEqual(obj.label, "extender")
         self.assertEqual(obj.buffer, [])
         self.assertFalse(obj.released)
@@ -7301,8 +7290,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         obj = self._ExtenderResource._wrap_native_handle(0xE1)
         # Stamp a foreign owner:
         # teardown runs in a process that did not create the handle,
-        # so it must not free the pointer or run _release (which could touch
-        # native streams and deadlock after a multithreaded fork).
+        # so it must not free the pointer or run _release.
         obj._owner_pid = os.getpid() + 1
 
         obj.close()
@@ -7342,10 +7330,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
     def test_context_build_failure_consumes_signer(self):
-        # c2pa_context_builder_set_signer takes ownership of the signer
-        # pointer immediately, so a later build failure must still leave the
-        # Signer consumed.
-        # Otherwise it holds a pointer the native side has already freed.
         self._use_real_frees()
         signer = self._make_signer()
         real_build = c2pa_module._lib.c2pa_context_builder_build
@@ -7401,20 +7385,21 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._lib.c2pa_builder_from_json = real_json
 
-def _ptr_addr(ptr):
-    """Address a ctypes pointer points at, or None for a null pointer.
-
-    ctypes pointers compare by identity, not by value: two pointer objects
-    for the same address are unequal. Compare addresses instead.
-    """
-    if not ptr:
-        return None
-    return ctypes.cast(ptr, ctypes.c_void_p).value
-
 
 class TestManagedResourceObjects(TestContextAPIs):
     """Tests native resource handling management when managed manually.
     """
+
+    @staticmethod
+    def _ptr_addr(ptr):
+        """Address a ctypes pointer points at, or None for a null pointer.
+
+        ctypes pointers compare by identity, not by value: two pointer objects
+        for the same address are unequal. Compare addresses instead.
+        """
+        if not ptr:
+            return None
+        return ctypes.cast(ptr, ctypes.c_void_p).value
 
     def _instrument_frees(self):
         """Record frees instead of performing them, and restore on teardown.
@@ -7434,9 +7419,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
     def _free_count(self, freed, handle):
         """How many times `handle` was freed, ignoring unrelated frees."""
-        target = _ptr_addr(handle)
+        target = self._ptr_addr(handle)
         self.assertIsNotNone(target, "cannot count frees of a null handle")
-        return sum(1 for ptr in freed if _ptr_addr(ptr) == target)
+        return sum(1 for ptr in freed if self._ptr_addr(ptr) == target)
 
     def _make_archive(self, manifest=None):
         archive = io.BytesIO()
