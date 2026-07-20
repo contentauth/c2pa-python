@@ -493,9 +493,6 @@ class ManagedResource:
                 and self._lifecycle_state != LifecycleState.CLOSED
             ):
                 self._lifecycle_state = LifecycleState.CLOSED
-                # A failing _release() must not skip the free below:
-                # that would strand the native handle on an object already
-                # marked CLOSED, making it unreachable and unfreeable.
                 self._safe_release()
                 if hasattr(self, '_handle') and self._handle:
                     try:
@@ -1691,8 +1688,7 @@ class Context(ManagedResource, ContextProvider):
                 if signer is not None:
                     signer._ensure_valid_state()
                     # c2pa_context_builder_set_signer takes ownership of the
-                    # signer pointer immediately (Box::from_raw), on its error
-                    # path as well as on success.
+                    # signer pointer , on its error path as well as on success.
                     self._signer_callback_cb = signer._callback_cb
                     try:
                         result = (
@@ -2087,11 +2083,6 @@ class Stream:
         if self._closed:
             return
         if is_foreign_process(self):
-            # Unlike ManagedResource, which leaves a child's copy active
-            # because the parent still owns the pointer, a Stream's callbacks
-            # are bound to the parent's objects.
-            # The child's copy can never be used, so mark it closed
-            # and let the parent free it.
             self._closed = True
             self._initialized = False
             return
