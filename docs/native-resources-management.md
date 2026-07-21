@@ -3,7 +3,7 @@
 `ManagedResource` is the internal base class used by the C2PA Python SDK to wrap native (Rust/FFI) pointers. When adding new wrappers around native resources `ManagedResource` should be subclassed and follow the documented lifecycle rules.
 
 > [!NOTE]
-> `ManagedResource` and the lifecycle machinery described here are internal to the SDK, not part of its public API. In most cases, code that reads and writes C2PA data should use the public wrappers (`Reader`, `Builder`, `Signer`, `Context`, `Settings`).
+> `ManagedResource` and the lifecycle machinery described here are internal to the SDK. In most cases, code that reads and writes C2PA data should use the public wrappers (`Reader`, `Builder`, `Signer`, `Context`, `Settings`).
 
 ## Why `ManagedResource`?
 
@@ -112,7 +112,7 @@ def _free_native_ptr(ptr):
     _lib.c2pa_free(ptr)
 ```
 
-All native pointers are freed through this single path, regardless of which constructor created them (`c2pa_reader_from_stream`, `c2pa_builder_from_json`, `c2pa_signer_from_info`, etc.). No explicit `ctypes.cast` is needed: `c2pa_free`'s declared argtype is `c_void_p`, so ctypes converts any pointer instance on the way in. Casting explicitly with `ctypes.cast(ptr, c_void_p)` performs the same conversion but leaves a reference cycle behind on every call, so avoid it here.
+All native pointers are freed through this single path, regardless of which constructor created them (`c2pa_reader_from_stream`, `c2pa_builder_from_json`, `c2pa_signer_from_info`, etc.). No explicit `ctypes.cast` is needed: `c2pa_free`'s declared argtype is `c_void_p`, so ctypes converts any pointer instance on the way in. Casting explicitly with `ctypes.cast(ptr, c_void_p)` performs the same conversion but leaves a reference cycle behind on every call, which creates additional load on the (Python) garbage collector.
 
 `ManagedResource` guarantees that `c2pa_free` is called exactly once per pointer: not zero times (leak), not twice (double-free).
 

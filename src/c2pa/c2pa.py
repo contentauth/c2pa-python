@@ -273,18 +273,17 @@ class ManagedResource:
         instance directly. (ctypes.cast(ptr, c_void_p) would do the same
         conversion but leaves a reference cycle behind on every call.)
 
-        Returns c2pa_free's status code: 0 when the pointer was really freed
-        (a still-owned handle, or the try-assign native), -1 when the pointer
-        registry rejected an already-consumed address without touching memory.
-        A -1 is expected on the eager-free path when the released native has
-        already dropped the value, so it is logged at debug, not treated as an
-        error.
+        Returns c2pa_free's status code:
+        0 when the pointer was really freed,
+        -1 when the pointer registry rejected an already-consumed address.
+        A -1 can be expected on the eager-free path when the candidate released
+        native memory has already dropped the value, and is gracefully handled by
+        the native lib too.
         """
         result = _lib.c2pa_free(ptr)
         if result != 0:
             logger.debug(
-                "c2pa_free returned %s for an untracked pointer "
-                "(already consumed; registry-guarded no-op)",
+                "c2pa_free returned %s for an untracked pointer ",
                 result)
         return result
 
@@ -338,14 +337,9 @@ class ManagedResource:
 
     def _release_handle(self):
         """Free a native handle, then close the object holding it.
-
         Freeing synchronously at the error site leaves no window in which the
-        address could be reused and re-tracked. Post-state matches _mark_consumed,
-        so later cleanup will not free again.
-
-        Sets CLOSED before releasing and freeing (the same order as the close
-        path in _cleanup_resources) so an ill-timed interrupt can never leave an
-        ACTIVE object holding a freed handle.
+        address could be reused and re-tracked.
+        Sets CLOSED before releasing and freeing.
         """
 
         if is_foreign_process(self):
@@ -353,7 +347,7 @@ class ManagedResource:
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
-        # Nothing to free unless we are ACTIVE; still normalize the post-state.
+        # Nothing to free, normalize states.
         if self._lifecycle_state != LifecycleState.ACTIVE:
             self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
@@ -428,19 +422,16 @@ class ManagedResource:
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a replacement.
 
-        On success the native lib consumed our handle and returns a new one,
+        On success the native lib consumed the handle and returned a new one,
         which we swap in.
         On failure (null return, or an exception from the callback) the input
         is freed eagerly and synchronously right here, then the error is raised.
-
-        The error is read (into an owned string, freeing the native c-string)
-        before the input is freed, so the message is not lost.
-
-        The native error slot is sticky and thread-local: it stays set until
-        the next error on the same thread overwrites it, and the SDK does not
-        clear it before this call. The triage below therefore trusts that a
-        failing native path set its own error; a stale message from an earlier
-        call on this thread could otherwise be misread as this call's.
+        The error is read  before the input is freed, so the message is not lost
+        (in case the release steps would set a pointer tracking error).
+        The native error slot is sticky and thread-local: the SDK does not
+        clear it before this call.
+        The error handling therefore trusts that a failing native path set
+        its own error (overwriting previous one).
 
         Args:
             ffi_call: Callable taking the current handle, returning the
@@ -454,7 +445,7 @@ class ManagedResource:
         try:
             new_ptr = ffi_call(self._handle)
         except ctypes.ArgumentError:
-            # Marshalling failed, so the call never reached the native side
+            # Marshalling failed. The call never reached the native side,
             # and the handle is untouched.
             raise
         except BaseException as e:
@@ -479,7 +470,7 @@ class ManagedResource:
                 _raise_typed_c2pa_error(error)
 
             # Ownership transferred and then the operation failed:
-            # free eagerly (c2pa_free handles not double-freeing), then raise.
+            # free eagerly (native lib handles not double-freeing), then raise.
             self._release_handle()
             _raise_typed_c2pa_error(error)
 

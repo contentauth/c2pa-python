@@ -7667,7 +7667,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(builder._handle)
         self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
-        # The error path frees the old handle exactly once.
+        # The error path frees the old handle.
         self.assertEqual(self._free_count(freed, released_handle), 1,
                          "error path did not free the old handle exactly once")
 
@@ -7704,7 +7704,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        # The error path frees the old handle exactly once.
+        # The error path frees the old handle.
         self.assertEqual(self._free_count(freed, released_handle), 1,
                          "error path did not free the old handle exactly once")
 
@@ -7714,9 +7714,9 @@ class TestManagedResourceObjects(TestContextAPIs):
                          "close() freed a handle the error path already freed")
 
     def test_reader_with_fragment_ffi_raise_frees_self(self):
-        # If the ctypes call itself raises (not a null return), the failure runs
-        # through the except BaseException branch, which frees the handle
-        # eagerly. with_fragment must free exactly once and leave nothing for
+        # If the ctypes call itself raises, the failure runs
+        # through the except BaseException branch, which frees the handle.
+        # with_fragment must free exactly once and leave nothing for
         # close() to double-free.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
@@ -7743,7 +7743,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        # The error path frees the old handle exactly once.
+        # The error path frees the old handle.
         self.assertEqual(self._free_count(freed, released_handle), 1,
                          "error path did not free the old handle exactly once")
 
