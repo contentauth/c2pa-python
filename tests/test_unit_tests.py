@@ -7306,7 +7306,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
                          "forked child freed a handle its parent still owns")
         self.assertFalse(obj.released, "foreign teardown ran _release")
         # The child marks its own copy closed and nulls the handle:
-        # safe (the parent holds a separate copy) and it stops the
+        # the parent holds a separate copy and it stops the
         # child reusing a parent-owned handle.
         self.assertEqual(obj._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(obj._handle)
