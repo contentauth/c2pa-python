@@ -234,9 +234,13 @@ class ManagedResource:
         validated, which takes ownership of it and marks the resource active.
         Never assign `self._handle` or `self._lifecycle_state` directly.
       - Call `_swap_handle(new_handle)` instead when an FFI call consumed the
-        current handle and returned a replacement.
+        current handle and returned a replacement (the success side of
+        `_consume_and_swap`).
       - Call `_mark_consumed()` when an FFI call took ownership of the handle
-        without returning a replacement.
+        without returning a replacement (e.g. `Signer` into `Context`).
+      - Call `_release_handle()` when a consuming FFI call fails and the caller
+        must free the handle: it frees eagerly, then closes like
+        `_mark_consumed()`. `_consume_and_swap` uses it on the failure path.
       - Override `_release()` to free class-specific resources
         (streams, caches, callbacks, etc.), called before the
         native pointer is freed.
@@ -268,8 +272,20 @@ class ManagedResource:
         c2pa_free's argtype is c_void_p, so ctypes converts any pointer
         instance directly. (ctypes.cast(ptr, c_void_p) would do the same
         conversion but leaves a reference cycle behind on every call.)
+
+        Returns c2pa_free's status code:
+        0 when the pointer was really freed,
+        -1 when the pointer registry rejected an already-consumed address.
+        A -1 can be expected on the eager-free path when the candidate released
+        native memory has already dropped the value, and is gracefully handled by
+        the native lib too.
         """
-        _lib.c2pa_free(ptr)
+        result = _lib.c2pa_free(ptr)
+        if result != 0:
+            logger.debug(
+                "c2pa_free returned %s for an untracked pointer ",
+                result)
+        return result
 
     def _ensure_valid_state(self):
         """Raise if the resource is closed or uninitialized."""
@@ -318,6 +334,38 @@ class ManagedResource:
 
         self._handle = None
         self._lifecycle_state = LifecycleState.CLOSED
+
+    def _release_handle(self):
+        """Free a native handle, then close the object holding it.
+        Freeing synchronously at the error site leaves no window in which the
+        address could be reused and re-tracked.
+        Sets CLOSED before releasing and freeing.
+        """
+
+        if is_foreign_process(self):
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
+        # Nothing to free, normalize states.
+        if self._lifecycle_state != LifecycleState.ACTIVE:
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
+        self._lifecycle_state = LifecycleState.CLOSED
+        self._safe_release()
+
+        if self._handle:
+            try:
+                ManagedResource._free_native_ptr(self._handle)
+            except Exception:
+                logger.error(
+                    "Failed to free native %s resources",
+                    type(self).__name__,
+                    exc_info=True)
+            finally:
+                self._handle = None
 
     def _activate(self, handle):
         """Attach a native handle to self and mark it active.
@@ -374,14 +422,16 @@ class ManagedResource:
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a replacement.
 
-        The native lib may take ownership partway through the call.
-        The native error tells if ownership was transferred:
-        - a pointer rejection (`_PRE_CONSUME_ERROR_TAGS`) precedes the
-          transfer, so the handle is still ours and is kept;
-        - any other error means it was taken, then the operation failed.
-
-        The error is read without clearing it first.
-        The slot is sticky: c2pa_error() peeks and nothing empties it.
+        On success the native lib consumed the handle and returned a new one,
+        which we swap in.
+        On failure (null return, or an exception from the callback) the input
+        is freed eagerly and synchronously right here, then the error is raised.
+        The error is read  before the input is freed, so the message is not lost
+        (in case the release steps would set a pointer tracking error).
+        The native error slot is sticky and thread-local: the SDK does not
+        clear it before this call.
+        The error handling therefore trusts that a failing native path set
+        its own error (overwriting previous one).
 
         Args:
             ffi_call: Callable taking the current handle, returning the
@@ -395,23 +445,23 @@ class ManagedResource:
         try:
             new_ptr = ffi_call(self._handle)
         except ctypes.ArgumentError:
-            # Marshalling failed, so the call never reached the native side
+            # Marshalling failed. The call never reached the native side,
             # and the handle is untouched.
             raise
         except BaseException as e:
-            self._mark_consumed()
+            self._release_handle()
             raise C2paError(error_message.format(e)) from e
 
         if new_ptr:
             self._swap_handle(new_ptr)
             return
 
+        # Retrieve the error
         error = _read_native_error()
         if error:
             if any(tag in error
                    for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
-                # Rejected before ownership transferred,
-                # so the handle is still ours.
+                # Rejected before ownership transferred: the handle is still ours
                 logger.warning(
                     "%s: native call rejected the handle before taking "
                     "ownership (%s); handle retained",
@@ -419,11 +469,12 @@ class ManagedResource:
                     error)
                 _raise_typed_c2pa_error(error)
 
-            # Ownership transferred and then an operation failed.
-            self._mark_consumed()
+            # Ownership transferred and then the operation failed:
+            # free eagerly (native lib handles not double-freeing), then raise.
+            self._release_handle()
             _raise_typed_c2pa_error(error)
 
-        self._mark_consumed()
+        self._release_handle()
         raise C2paError(error_message.format("Unknown error"))
 
     @classmethod
