@@ -306,11 +306,13 @@ class ManagedResource:
         """
 
     def _safe_release(self):
-        """Run _release(), logging (never raising) if it fails.
+        """Run _release(), logging and swallowing any error including an
+        interrupt so it never raises. Callers rely on this to always reach the
+        free step that follows.
         """
         try:
             self._release()
-        except Exception:
+        except BaseException:
             logger.error(
                 "Failed to release %s resources",
                 type(self).__name__,
@@ -337,9 +339,8 @@ class ManagedResource:
 
     def _release_handle(self):
         """Free a native handle, then close the object holding it.
-        Freeing synchronously at the error site leaves no window in which the
-        address could be reused and re-tracked.
-        Sets CLOSED before releasing and freeing.
+        Sets CLOSED before releasing and freeing; _safe_release swallows any
+        interrupt so the free below always runs.
         """
 
         if is_foreign_process(self):
@@ -419,49 +420,59 @@ class ManagedResource:
     # so it is still ours to deal with.
     _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
 
-    def _consume_and_swap(self, ffi_call, error_message):
-        """Run an FFI call that consumes this handle and returns a replacement.
+    def _invoke_consume(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle, returning its raw result.
 
-        On success the native lib consumed the handle and returned a new one,
-        which we swap in.
-        On failure (null return, or an exception from the callback) the input
-        is freed eagerly and synchronously right here, then the error is raised.
-        The error is read  before the input is freed, so the message is not lost
-        (in case the release steps would set a pointer tracking error).
-        The native error slot is sticky and thread-local: the SDK does not
-        clear it before this call.
-        The error handling therefore trusts that a failing native path set
-        its own error (overwriting previous one).
+        A marshalling ArgumentError is re-raised untouched: the call never
+        reached the native side, so the handle is still ours and unchanged. Any
+        other exception from the call frees the handle before raising.
+
+        The caller inspects the returned result to tell success from failure
+        (the convention differs per call) and routes a failure to
+        _raise_consume_failure.
 
         Args:
-            ffi_call: Callable taking the current handle, returning the
-                replacement or null.
-            error_message: Format string with one placeholder, used when the
-                native layer offers no error of its own.
+            ffi_call: Callable taking the current handle, returning the native
+                result (a replacement pointer, a status code, ...).
+            error_message: Format string with one placeholder, used to wrap a
+                callback exception.
 
         Raises:
-            C2paError: If the call fails, typed by native error when one.
+            ctypes.ArgumentError: If marshalling failed; handle untouched.
+            C2paError: If the call raised any other exception.
         """
         try:
-            new_ptr = ffi_call(self._handle)
+            return ffi_call(self._handle)
         except ctypes.ArgumentError:
-            # Marshalling failed. The call never reached the native side,
-            # and the handle is untouched.
             raise
         except BaseException as e:
             self._release_handle()
             raise C2paError(error_message.format(e)) from e
 
-        if new_ptr:
-            self._swap_handle(new_ptr)
-            return
+    def _raise_consume_failure(self, error_message):
+        """Raise the error from a consume call that reached native and failed.
 
-        # Retrieve the error
+        The native error is read before any free so a defensive free's own
+        pointer-tracking error cannot overwrite it: the native error slot is
+        sticky and thread-local and the SDK does not clear it before the call,
+        so this trusts that the failing native path set its own error.
+
+        A pre-consume tag means the native side rejected a pointer before taking
+        ownership, so the handle is still ours and is retained. Any other error
+        means ownership transferred before the failure, so the handle is freed
+        eagerly (the native lib handles not double-freeing) before raising.
+
+        Args:
+            error_message: Format string with one placeholder, used when the
+                native layer offers no error of its own.
+
+        Raises:
+            C2paError: Always; typed by the native error when there is one.
+        """
         error = _read_native_error()
         if error:
             if any(tag in error
                    for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
-                # Rejected before ownership transferred: the handle is still ours
                 logger.warning(
                     "%s: native call rejected the handle before taking "
                     "ownership (%s); handle retained",
@@ -469,13 +480,36 @@ class ManagedResource:
                     error)
                 _raise_typed_c2pa_error(error)
 
-            # Ownership transferred and then the operation failed:
-            # free eagerly (native lib handles not double-freeing), then raise.
             self._release_handle()
             _raise_typed_c2pa_error(error)
 
         self._release_handle()
         raise C2paError(error_message.format("Unknown error"))
+
+    def _consume_and_swap(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle and returns a replacement.
+
+        On success the native lib consumed the handle and returned a new one,
+        which we swap in. A null return is a failure routed to
+        _raise_consume_failure.
+        """
+        new_ptr = self._invoke_consume(ffi_call, error_message)
+        if new_ptr:
+            self._swap_handle(new_ptr)
+            return
+        self._raise_consume_failure(error_message)
+
+    def _consume_no_replacement(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle on success, when the native
+        call returns a status code (0 = success) rather than a replacement
+        handle. A non-zero status is a failure routed to
+        _raise_consume_failure.
+        """
+        result = self._invoke_consume(ffi_call, error_message)
+        if result == 0:
+            self._mark_consumed()
+            return
+        self._raise_consume_failure(error_message)
 
     @classmethod
     def _wrap_native_handle(cls, handle):
@@ -1720,29 +1754,21 @@ class Context(ManagedResource, ContextProvider):
 
                 if signer is not None:
                     signer._ensure_valid_state()
-                    # c2pa_context_builder_set_signer takes ownership of the
-                    # signer pointer , on its error path as well as on success.
+                    # _consume_no_replacement makes sure that a rejected
+                    # signer is retained instead of being closed and leaked.
                     self._signer_callback_cb = signer._callback_cb
-                    try:
-                        result = (
-                            _lib.c2pa_context_builder_set_signer(
-                                builder_ptr, signer._handle,
-                            )
-                        )
-                    except ctypes.ArgumentError:
-                        # Marshalling failed, so the call never reached the
-                        # native side and the signer was never taken.
-                        raise
-                    signer._mark_consumed()
-                    if result != 0:
-                        _parse_operation_result_for_error(None)
+                    signer._consume_no_replacement(
+                        lambda h: _lib.c2pa_context_builder_set_signer(
+                            builder_ptr, h),
+                        "Failed to set signer on Context: {}")
                     self._has_signer = True
 
-                # Build consumes builder_ptr
+                # Build consumes the builder only on success.
                 context_ptr = (
                     _lib.c2pa_context_builder_build(builder_ptr)
                 )
-                builder_ptr = None
+                if context_ptr:
+                    builder_ptr = None
 
                 _check_ffi_operation_result(
                     context_ptr, "Failed to build Context"
