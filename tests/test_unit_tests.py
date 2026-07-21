@@ -7648,14 +7648,18 @@ class TestManagedResourceObjects(TestContextAPIs):
     def test_builder_with_archive_null_return_frees_self(self):
         builder = Builder(self.test_manifest)
         released_handle = builder._handle
+        archive = self._make_archive()
 
-        # Simulate an error being set
+        # Mimic an error.
         c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+
+        # Instrument before the failure...
+        freed = self._instrument_frees()
         try:
             with self.assertRaises(Error):
-                builder.with_archive(self._make_archive())
+                builder.with_archive(archive)
         finally:
             c2pa_module._lib.c2pa_builder_with_archive = real_call
 
@@ -7663,25 +7667,32 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(builder._handle)
         self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
-        # The eager free-on-error already ran, so close() must not free again.
-        freed = self._instrument_frees()
+        # The error path frees the old handle exactly once.
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "error path did not free the old handle exactly once")
+
+        # close() must not free it again.
         builder.close()
-        self.assertEqual(self._free_count(freed, released_handle), 0,
+        self.assertEqual(self._free_count(freed, released_handle), 1,
                          "close() double-freed an already-released handle")
 
-    def test_reader_with_fragment_null_return_consumes_self(self):
+    def test_reader_with_fragment_null_return_frees_self(self):
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
-        consumed_handle = reader._handle
+        released_handle = reader._handle
 
-        # Simulate an error being set
+        # Mimic an error.
         c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
+
+        # Instrument before the failure so the eager free on the error path is
+        # counted, not just whatever close() does afterwards.
+        freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -7693,27 +7704,34 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        freed = self._instrument_frees()
-        reader.close()
-        self.assertEqual(self._free_count(freed, consumed_handle), 0,
-                         "close() freed a handle the FFI already consumed")
+        # The error path frees the old handle exactly once.
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "error path did not free the old handle exactly once")
 
-    def test_reader_with_fragment_ffi_raise_consumes_self(self):
-        # If the ctypes call itself raises (not a null return), the callee has
-        # already consumed the old handle, so with_fragment must mark self
-        # consumed rather than leave a dangling pointer that close() would
-        # double-free.
+        # close() must not free it again.
+        reader.close()
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "close() freed a handle the error path already freed")
+
+    def test_reader_with_fragment_ffi_raise_frees_self(self):
+        # If the ctypes call itself raises (not a null return), the failure runs
+        # through the except BaseException branch, which frees the handle
+        # eagerly. with_fragment must free exactly once and leave nothing for
+        # close() to double-free.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
-        consumed_handle = reader._handle
+        released_handle = reader._handle
 
         def _raise(*_args):
             raise RuntimeError("boom")
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = _raise
+
+        # Instrument before the failure so the eager free is counted.
+        freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -7725,10 +7743,14 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        freed = self._instrument_frees()
+        # The error path frees the old handle exactly once.
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "error path did not free the old handle exactly once")
+
+        # close() must not free it again.
         reader.close()
-        self.assertEqual(self._free_count(freed, consumed_handle), 0,
-                         "close() freed a handle the FFI already consumed")
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "close() freed a handle the error path already freed")
 
     # Consume-and-return ownership: the native call takes the handle partway
     # through its body, so a null return does not say on its own whether the

@@ -141,7 +141,8 @@ Each transition has one method that performs it, and subclasses must go through 
 | --- | --- | --- |
 | `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
 | `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
-| `_mark_consumed()` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side. Runs `_release()` first, so subclass cleanup still happens. Unlike the other two, it validates nothing. |
+| `_mark_consumed()` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two, it validates nothing. |
+| `_release_handle()` | ACTIVE to CLOSED | Frees the handle eagerly and closes the object, for the consume-and-swap failure path where the caller must free. Same post-state as `_mark_consumed()`; the difference is the extra `c2pa_free`. |
 
 Because activation is the only way in, no code path can leave an object ACTIVE while holding a null handle.
 
@@ -336,7 +337,7 @@ stateDiagram-v2
     end note
 ```
 
-The object stays `ACTIVE` throughout because the Python-side object is still valid: it has a live native pointer, its public methods still work, and callers may continue using it (e.g. reading the updated manifest or feeding in another fragment). The lifecycle state does not change because from `ManagedResource`'s perspective nothing has closed. Only the underlying native pointer has been swapped. This is different from `_mark_consumed()`, where the object transitions to `CLOSED` and becomes unusable. The old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call.
+On success the object stays `ACTIVE` because the Python-side object is still valid: it has a live native pointer, its public methods still work, and callers may continue using it (e.g. reading the updated manifest or feeding in another fragment). The lifecycle state does not change because from `ManagedResource`'s perspective nothing has closed. Only the underlying native pointer has been swapped. This is different from `_mark_consumed()`, where the object transitions to `CLOSED` and becomes unusable. On the success path the old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call. The failure path is different and is covered by the triage below.
 
 ### `_consume_and_swap()`
 
@@ -353,13 +354,24 @@ The call is passed as a lambda because the helper supplies the handle and, on su
 
 The helper exists because a null return can be ambiguous. The native function validates the borrowed pointer first, then takes ownership, then does the work, so a null result can mean either "rejected your pointer, never took it" or "took your pointer, then failed". The native error message is what tells them apart:
 
-| Native error | Who owns the handle |
-| --- | --- |
-| `UntrackedPointer:` or `WrongPointerType:` | Still ours: rejected before ownership moved, so the handle is kept and the resource stays `ACTIVE` |
-| Any other error | Assumed taken, so `_mark_consumed()` runs and the resource goes `CLOSED`. The raised error is typed from the native message. |
-| No error at all | Same ownership conclusion, but nothing to type the error from, so the caller's message is raised with `"Unknown error"` filled in. |
+| Native error | Who owns the handle | What the helper does |
+| --- | --- | --- |
+| `UntrackedPointer:` or `WrongPointerType:` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
+| Any other error | Assumed taken, then the operation failed | `_release_handle()` frees the handle eagerly here, resource goes `CLOSED`, error typed from the native message. |
+| No error at all | Same ownership conclusion, nothing to type from | `_release_handle()` frees eagerly, the caller's message is raised with `"Unknown error"` filled in. |
+
+Note the failure path frees eagerly (`_release_handle()`), it does not run `_mark_consumed()`. This is the dual-contract behaviour described below.
 
 This triage relies on the native error still being readable after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it, and the SDK does not clear it before these calls.
+
+#### Why the failure path frees eagerly (dual contract)
+
+Two native contracts are in play, and the eager free is correct under both:
+
+- **Try-assign native (incoming):** the consuming call restores the original value to the caller on error and hands the pointer back, so the caller *must* free it. The eager `_release_handle()` is mandatory here or the handle leaks on every failed `with_fragment`/`with_archive`.
+- **Released native (`c2pa-v0.90.0`):** the consuming call has already dropped the value by the time null returns, so the address is untracked. A redundant `c2pa_free` against it is a guarded no-op (returns `-1`, memory untouched), not a double-free.
+
+One Python path, correct under both. The native-side details (which release path drops vs. restores) are not visible from this repo — the native library is consumed as a prebuilt binary — so treat the two contracts above as the assumed native behaviour this code is written against.
 
 ### Adopting the handle before giving it away
 
@@ -513,7 +525,7 @@ class NativeResource(ManagedResource):
 
 - `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls). Make sure it handles being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
 
-- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. If the pointer is freed manually and `ManagedResource` frees it again, the process crashes (double-free).
+- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. A redundant free of an already-released pointer is not a crash: the native pointer registry rejects an untracked address without touching memory and returns `-1`. `ManagedResource` relies on this guard so the consume-and-swap failure path can free eagerly without risking a double-free. Still, do not free manually — the lifecycle owns the pointer and bypassing it defeats the state checks.
 
 - If a subclass inherits from both `ManagedResource` and an ABC like `ContextProvider`, and both define a property with the same name (e.g. `is_valid`), Python resolves it using the MRO. The parent listed first in the class definition wins. If the ABC is listed first, Python finds the abstract property before the concrete one and raises `TypeError: Can't instantiate abstract class`. Always list the class with the concrete implementation first (e.g. `class Context(ManagedResource, ContextProvider)`, not `class Context(ContextProvider, ManagedResource)`).
 

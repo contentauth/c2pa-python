@@ -234,9 +234,13 @@ class ManagedResource:
         validated, which takes ownership of it and marks the resource active.
         Never assign `self._handle` or `self._lifecycle_state` directly.
       - Call `_swap_handle(new_handle)` instead when an FFI call consumed the
-        current handle and returned a replacement.
+        current handle and returned a replacement (the success side of
+        `_consume_and_swap`).
       - Call `_mark_consumed()` when an FFI call took ownership of the handle
-        without returning a replacement.
+        without returning a replacement (e.g. `Signer` into `Context`).
+      - Call `_release_handle()` when a consuming FFI call fails and the caller
+        must free the handle: it frees eagerly, then closes like
+        `_mark_consumed()`. `_consume_and_swap` uses it on the failure path.
       - Override `_release()` to free class-specific resources
         (streams, caches, callbacks, etc.), called before the
         native pointer is freed.
@@ -268,8 +272,21 @@ class ManagedResource:
         c2pa_free's argtype is c_void_p, so ctypes converts any pointer
         instance directly. (ctypes.cast(ptr, c_void_p) would do the same
         conversion but leaves a reference cycle behind on every call.)
+
+        Returns c2pa_free's status code: 0 when the pointer was really freed
+        (a still-owned handle, or the try-assign native), -1 when the pointer
+        registry rejected an already-consumed address without touching memory.
+        A -1 is expected on the eager-free path when the released native has
+        already dropped the value, so it is logged at debug, not treated as an
+        error.
         """
-        _lib.c2pa_free(ptr)
+        result = _lib.c2pa_free(ptr)
+        if result != 0:
+            logger.debug(
+                "c2pa_free returned %s for an untracked pointer "
+                "(already consumed; registry-guarded no-op)",
+                result)
+        return result
 
     def _ensure_valid_state(self):
         """Raise if the resource is closed or uninitialized."""
@@ -325,6 +342,10 @@ class ManagedResource:
         Freeing synchronously at the error site leaves no window in which the
         address could be reused and re-tracked. Post-state matches _mark_consumed,
         so later cleanup will not free again.
+
+        Sets CLOSED before releasing and freeing (the same order as the close
+        path in _cleanup_resources) so an ill-timed interrupt can never leave an
+        ACTIVE object holding a freed handle.
         """
 
         if is_foreign_process(self):
@@ -332,6 +353,13 @@ class ManagedResource:
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
+        # Nothing to free unless we are ACTIVE; still normalize the post-state.
+        if self._lifecycle_state != LifecycleState.ACTIVE:
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
+        self._lifecycle_state = LifecycleState.CLOSED
         self._safe_release()
 
         if self._handle:
@@ -340,10 +368,10 @@ class ManagedResource:
             except Exception:
                 logger.error(
                     "Failed to free native %s resources",
-                    type(self).__name__)
-
-        self._handle = None
-        self._lifecycle_state = LifecycleState.CLOSED
+                    type(self).__name__,
+                    exc_info=True)
+            finally:
+                self._handle = None
 
     def _activate(self, handle):
         """Attach a native handle to self and mark it active.
@@ -407,6 +435,12 @@ class ManagedResource:
 
         The error is read (into an owned string, freeing the native c-string)
         before the input is freed, so the message is not lost.
+
+        The native error slot is sticky and thread-local: it stays set until
+        the next error on the same thread overwrites it, and the SDK does not
+        clear it before this call. The triage below therefore trusts that a
+        failing native path set its own error; a stale message from an earlier
+        call on this thread could otherwise be misread as this call's.
 
         Args:
             ffi_call: Callable taking the current handle, returning the
