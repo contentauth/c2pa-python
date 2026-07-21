@@ -306,9 +306,7 @@ class ManagedResource:
         """
 
     def _safe_release(self):
-        """Run _release(), logging and swallowing any error including an
-        interrupt so it never raises. Callers rely on this to always reach the
-        free step that follows.
+        """Run _release() safely (no raise), log on error.
         """
         try:
             self._release()
@@ -339,8 +337,7 @@ class ManagedResource:
 
     def _release_handle(self):
         """Free a native handle, then close the object holding it.
-        Sets CLOSED before releasing and freeing; _safe_release swallows any
-        interrupt so the free below always runs.
+        Sets closed before releasing and freeing..
         """
 
         if is_foreign_process(self):
@@ -450,17 +447,12 @@ class ManagedResource:
             raise C2paError(error_message.format(e)) from e
 
     def _raise_consume_failure(self, error_message):
-        """Raise the error from a consume call that reached native and failed.
+        """Raise the error from an FFI handler consuming call.
 
-        The native error is read before any free so a defensive free's own
+        The native error is read before any free so a free's own
         pointer-tracking error cannot overwrite it: the native error slot is
         sticky and thread-local and the SDK does not clear it before the call,
         so this trusts that the failing native path set its own error.
-
-        A pre-consume tag means the native side rejected a pointer before taking
-        ownership, so the handle is still ours and is retained. Any other error
-        means ownership transferred before the failure, so the handle is freed
-        eagerly (the native lib handles not double-freeing) before raising.
 
         Args:
             error_message: Format string with one placeholder, used when the
@@ -488,10 +480,8 @@ class ManagedResource:
 
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a replacement.
-
         On success the native lib consumed the handle and returned a new one,
-        which we swap in. A null return is a failure routed to
-        _raise_consume_failure.
+        which we swap in. A null return is a failure.
         """
         new_ptr = self._invoke_consume(ffi_call, error_message)
         if new_ptr:
@@ -1754,8 +1744,8 @@ class Context(ManagedResource, ContextProvider):
 
                 if signer is not None:
                     signer._ensure_valid_state()
-                    # _consume_no_replacement makes sure that a rejected
-                    # signer is retained instead of being closed and leaked.
+                    # makes sure that a rejected signer is retained
+                    # instead of being closed and leaked.
                     self._signer_callback_cb = signer._callback_cb
                     signer._consume_no_replacement(
                         lambda h: _lib.c2pa_context_builder_set_signer(
@@ -1763,13 +1753,12 @@ class Context(ManagedResource, ContextProvider):
                         "Failed to set signer on Context: {}")
                     self._has_signer = True
 
-                # Build consumes the builder only on success.
+                # Build consumes builder_ptr.
                 context_ptr = (
                     _lib.c2pa_context_builder_build(builder_ptr)
                 )
                 if context_ptr:
                     builder_ptr = None
-
                 _check_ffi_operation_result(
                     context_ptr, "Failed to build Context"
                 )

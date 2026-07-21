@@ -7404,8 +7404,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._lib.c2pa_context_builder_build = real_build
 
-        # One free: the un-consumed builder. Settings borrows, so it is not
-        # freed here.
+        # One free: the un-consumed builder.
+        # Settings borrows, so it is not freed here.
         self.assertEqual(len(self.freed), 1,
                          "un-consumed builder leaked on build failure")
         settings.close()
@@ -7416,7 +7416,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         res._consume_no_replacement(lambda h: 0, "set failed: {}")
 
-        # Native took ownership: nothing freed here, handle nulled and closed.
+        # Native took ownership.
         self.assertEqual(self.freed, [])
         self.assertIsNone(res._handle)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
@@ -7432,7 +7432,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._read_native_error = real_read
 
-        # Rejected before ownership transferred: handle retained and usable.
+        # Rejected before ownership transferred: handle retained.
         self.assertEqual(res._handle, 0xCAFE)
         self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
         self.assertEqual(self.freed, [])
@@ -7450,7 +7450,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._read_native_error = real_read
 
-        # Ownership transferred, then the operation failed: freed once, closed.
+        # Ownership transferred, then the operation failed: freed, closed.
         self.assertEqual(self.freed, [0xCAFE])
         self.assertIsNone(res._handle)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
@@ -7459,8 +7459,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         res = self._InterruptingReleaseResource()
         res._activate(0xDEAD)
 
-        # _safe_release swallows the interrupt, so the free still runs and the
-        # handle is not stranded CLOSED-but-unfreed.
         res._release_handle()
 
         self.assertEqual(self.freed, [0xDEAD])
