@@ -7645,9 +7645,12 @@ class TestManagedResourceObjects(TestContextAPIs):
                          "closing a consumed Signer freed a pointer the "
                          "context now owns")
 
-    def test_builder_with_archive_null_return_consumes_self(self):
+    def test_builder_with_archive_null_return_frees_self(self):
         builder = Builder(self.test_manifest)
-        consumed_handle = builder._handle
+        released_handle = builder._handle
+
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
         try:
@@ -7656,15 +7659,15 @@ class TestManagedResourceObjects(TestContextAPIs):
         finally:
             c2pa_module._lib.c2pa_builder_with_archive = real_call
 
-        # The FFI consumed the old handle and returned no replacement,
-        # so there is nothing left for this object to own...
+        # Nothing left to own after failing
         self.assertIsNone(builder._handle)
         self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
+        # The eager free-on-error already ran, so close() must not free again.
         freed = self._instrument_frees()
         builder.close()
-        self.assertEqual(self._free_count(freed, consumed_handle), 0,
-                         "close() freed a handle the FFI already consumed")
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() double-freed an already-released handle")
 
     def test_reader_with_fragment_null_return_consumes_self(self):
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
@@ -7673,9 +7676,8 @@ class TestManagedResourceObjects(TestContextAPIs):
             reader = Reader("video/mp4", init)
         consumed_handle = reader._handle
 
-        # The mock sets no error, which no native path does. Plant an
-        # operation-style one so a stale tag from another test is not read.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked null return")
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
@@ -7869,8 +7871,8 @@ class TestManagedResourceObjects(TestContextAPIs):
             reader = Reader("video/mp4", init)
 
         consumed_handle = reader._handle
-        # Not a pre-consume tag, so the mocked failure reads as unplaceable.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked null return")
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
@@ -8276,6 +8278,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         backing_file = reader._backing_file
         self.assertFalse(backing_file.closed)
 
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
@@ -8296,6 +8300,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         builder = Builder(self.test_manifest, context=context)
         archive = self._make_archive()
 
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
         try:
@@ -8343,6 +8349,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         reader.json()
         self.assertIsNotNone(reader._manifest_json_str_cache)
 
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
