@@ -299,15 +299,15 @@ class TestReader(unittest.TestCase):
 
     def test_stream_read_string_stream_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
-            # xyz is actually an extension that is recognized
-            # as mimetype chemical/x-xyz
-            Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
+            # txt maps to text/plain in Python's built-in mimetypes
+            # default map, and text/plain isn't a supported mimetype now
+            Reader(os.path.join(FIXTURES_DIR, "C.txt"))
 
     def test_try_create_raises_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
-            # xyz is actually an extension that is recognized
-            # as mimetype chemical/x-xyz, but we don't support it
-            Reader.try_create(os.path.join(FIXTURES_DIR, "C.xyz"))
+            # txt maps to text/plain in Python's built-in mimetypes
+            # default map, and text/plain isn't a supported mimetype now
+            Reader.try_create(os.path.join(FIXTURES_DIR, "C.txt"))
 
     def test_unrecognized_extension_defers_to_detection(self):
         with tempfile.TemporaryDirectory() as tmp:
