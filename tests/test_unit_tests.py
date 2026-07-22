@@ -7386,10 +7386,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             c2pa_module._lib.c2pa_builder_from_json = real_json
 
     def test_context_build_null_return_frees_builder(self):
-        # build's only null path is a pre-consume rejection, which leaves the
-        # builder tracked and alive, so Context must free it on the way out.
-        # Set a pre-consume tag in the error slot so the rejection is
-        # unambiguous and does not depend on ambient slot state.
+        # Set a pre-consume tag in the error slot to mock a pointer rejection.
         settings = Settings()
         c2pa_module._lib.c2pa_error_set_last(
             b"UntrackedPointer: mocked pre-consume rejection")
