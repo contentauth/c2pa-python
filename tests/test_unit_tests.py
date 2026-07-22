@@ -6934,9 +6934,10 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     the _owner_pid stamp that governs which process may free a handle, and
     the ownership hand-offs between Python and the native library.
 
-    setUp records frees instead of performing them, so a miscount reads as a
-    leak or a double-free rather than a crash.
-    Tests holding real handles call _use_real_frees() first.
+    For testing: setUp records frees instead of performing them,
+    so a miscount reads as memory handling issue.
+    Tests releasing real handles call _use_real_frees() first to
+    restore release behavior.
     """
 
     class _FakeHandleResource(ManagedResource):
@@ -6961,10 +6962,10 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             self.release_calls += 1
 
     class _ExtenderResource(ManagedResource):
-        """Am extender that owns a raw handle and wraps it via
+        """For testing: An extender that owns a raw handle and wraps it via
         _wrap_native_handle. It carries several attributes of its own, all
         defaulted in _init_attrs (not __init__), and _release reads them, so a
-        missing attribute would surface as an AttributeError on teardown.
+        missing attribute would surface as an AttributeError on test teardown.
         """
 
         def _init_attrs(self):
@@ -7080,8 +7081,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         res._swap_handle(0xAAA2)
 
-        # The FFI already owns and frees the old pointer,
-        # so freeing it here would be a double-free.
+        # The FFI already owns and frees the old pointer.
         self.assertEqual(self.freed, [])
         self.assertEqual(res._handle, 0xAAA2)
 
@@ -7188,7 +7188,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(swapped._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(swapped._handle)
 
-        # A second foreign teardown is a no-op: still nothing freed.
+        # A second foreign teardown is a no-op.
         wrapped.close()
         swapped.close()
         self.assertEqual(self.freed, [])
@@ -7203,8 +7203,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         swapped._swap_handle(0xC6)
         swapped.close()
 
-        # 0xC5 was consumed by the (simulated) FFI swap,
-        # so only the replacement is ours to free.
+        # 0xC5 was consumed by the test FFI swap.
+        # Only the replacement must be freed here.
         self.assertEqual(self._free_counts(), {0xC4: 1, 0xC6: 1})
 
     def test_foreign_child_skips_release(self):
@@ -7222,46 +7222,46 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     def test_consumed_resource_frees_nothing_in_either_process(self):
         owned = self._FakeHandleResource()
         owned._activate(0xE1)
-        owned._mark_consumed()
+        owned._teardown(free_handle=False)
         owned.close()
 
         foreign = self._FakeHandleResource()
         foreign._activate(0xE2)
-        foreign._mark_consumed()
+        foreign._teardown(free_handle=False)
         foreign._owner_pid = os.getpid() + 1
         foreign.close()
 
         self.assertEqual(self.freed, [])
 
-    # Consuming a handle hands the native pointer to a new owner,
-    # but the Python-side resources are still ours and we need to free.
-    def test_mark_consumed_releases_python_resources(self):
+    # Consuming a handle hands the native pointer to a new owner.
+    # The Python-side resources are still ours to free.
+    def test_teardown_consumed_releases_python_resources(self):
         res = self._ReleaseRecordingResource()
         res._activate(0xF1)
 
-        res._mark_consumed()
+        res._teardown(free_handle=False)
 
         self.assertEqual(res.release_calls, 1)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(res._handle)
         self.assertEqual(self.freed, [])
 
-    def test_mark_consumed_swallows_failing_release(self):
+    def test_teardown_consumed_swallows_failing_release(self):
         res = self._CallbackHoldingResource()
         res._activate(0xF2)
 
         with self.assertLogs("c2pa", level="ERROR"):
-            res._mark_consumed()
+            res._teardown(free_handle=False)
 
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(res._handle)
 
-    def test_mark_consumed_in_foreign_process_skips_release(self):
+    def test_teardown_consumed_in_foreign_process_skips_release(self):
         res = self._ReleaseRecordingResource()
         res._activate(0xF3)
         res._owner_pid = os.getpid() + 1
 
-        res._mark_consumed()
+        res._teardown(free_handle=False)
 
         self.assertEqual(res.release_calls, 0)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
@@ -7278,7 +7278,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertTrue(obj.is_valid)
         self.assertEqual(obj._owner_pid, os.getpid())
 
-        # _release reads those attributes, so a missing one would raise here.
+        # _release reads those attributes, so a missing one will raise here.
         obj.close()
         obj.close()
 
@@ -7298,14 +7298,14 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [],
                          "forked child freed a handle its parent still owns")
         self.assertFalse(obj.released, "foreign teardown ran _release")
-        # The child marks its own copy closed and nulls the handle: safe (the
-        # parent holds a separate copy) and it stops the child reusing a
-        # parent-owned handle.
+        # The child marks its own copy closed and nulls the handle:
+        # the parent holds a separate copy and it stops the
+        # child reusing a parent-owned handle.
         self.assertEqual(obj._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(obj._handle)
 
-        # A second foreign teardown stays a no-op, and any operation on the
-        # now-closed child copy fails loudly instead of reaching native code.
+        # A second foreign teardown stays a no-op,
+        # and any operation on the now-closed child copy fails.
         obj.close()
         self.assertEqual(self.freed, [])
         with self.assertRaises(Error):
@@ -7368,7 +7368,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def test_construction_failure_leaves_nothing_to_free(self):
         # Activation happens after the null check, so a failed construction
-        # leaves no handle on the object for __del__ to find.
+        # has no handle on the object that __del__ can find.
         real_new = c2pa_module._lib.c2pa_context_new
         c2pa_module._lib.c2pa_context_new = lambda: None
         try:
@@ -7384,6 +7384,71 @@ class TestManagedResourceLifecycle(unittest.TestCase):
                 Builder({"claim_generator": "test"})
         finally:
             c2pa_module._lib.c2pa_builder_from_json = real_json
+
+    def test_context_build_null_return_frees_builder(self):
+        # Set a pre-consume tag in the error slot to mock a pointer rejection.
+        settings = Settings()
+        c2pa_module._lib.c2pa_error_set_last(
+            b"UntrackedPointer: mocked pre-consume rejection")
+        real_build = c2pa_module._lib.c2pa_context_builder_build
+        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        try:
+            with self.assertRaises(Error):
+                Context(settings=settings)
+        finally:
+            c2pa_module._lib.c2pa_context_builder_build = real_build
+
+        # One free: the un-consumed builder.
+        # Settings borrows, so it is not freed here.
+        self.assertEqual(len(self.freed), 1,
+                         "un-consumed builder leaked on build failure")
+        settings.close()
+
+    def test_consume_no_replacement_marks_consumed_on_success(self):
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        res._consume_no_replacement(lambda h: 0, "set failed: {}")
+
+        # Native took ownership.
+        self.assertEqual(self.freed, [])
+        self.assertIsNone(res._handle)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_consume_no_replacement_retains_on_pre_consume_tag(self):
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = lambda: "UntrackedPointer: rejected"
+        try:
+            with self.assertRaises(Error):
+                res._consume_no_replacement(lambda h: -1, "set failed: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        # Rejected before ownership transferred: handle retained.
+        self.assertEqual(res._handle, 0xCAFE)
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(self.freed, [])
+        res.close()
+        self.assertEqual(self.freed, [0xCAFE])
+
+    def test_consume_no_replacement_marks_consumed_on_other_error(self):
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = lambda: "OtherError: boom"
+        try:
+            with self.assertRaises(Error):
+                res._consume_no_replacement(lambda h: -1, "set failed: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        # A non-tag error means native took ownership then failed and dropped
+        # the value itself: mark consumed, do not free.
+        self.assertEqual(self.freed, [])
+        self.assertIsNone(res._handle)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
 
 
 class TestManagedResourceObjects(TestContextAPIs):
@@ -7403,11 +7468,6 @@ class TestManagedResourceObjects(TestContextAPIs):
 
     def _instrument_frees(self):
         """Record frees instead of performing them, and restore on teardown.
-
-        This patches the base class, so every ManagedResource freed while the
-        patch is installed lands in the list, including objects the garbage
-        collector reclaims mid-test. Ask _free_count() about one handle rather
-        than asserting on the length of the list.
         """
         freed = []
         real_free = ManagedResource._free_native_ptr
@@ -7545,7 +7605,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertNotEqual(builder._handle, original_handle,
                             "the native handle was not replaced")
         self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
-        # The replacement came from this process, so the stamp still applies.
+        # The replacement came from this process, the stamp still applies.
         self.assertEqual(builder._owner_pid, original_stamp)
         self.assertEqual(builder._owner_pid, os.getpid())
         builder.close()
@@ -7589,8 +7649,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         builder.close()
         builder.close()
 
-        # Only the replacement is ours to free: the original was consumed by
-        # the FFI call that returned it.
+        # Only the replacement is must be freed here.
         self.assertEqual(self._free_count(freed, swapped_handle), 1)
         self.assertEqual(self._free_count(freed, original_handle), 0)
 
@@ -7632,8 +7691,8 @@ class TestManagedResourceObjects(TestContextAPIs):
 
     def test_consumed_signer_close_frees_nothing(self):
         signer = self._ctx_make_signer()
-        # Captured before the context consumes it: close() nulls the handle,
-        # so afterwards there is no pointer left to identify the free by.
+        # Captured before the context consumes it:
+        # close() nulls the handle, there is no pointer left to identify the free by.
         signer_handle = signer._handle
         context = Context(signer=signer)
         self.addCleanup(context.close)
@@ -7645,41 +7704,57 @@ class TestManagedResourceObjects(TestContextAPIs):
                          "closing a consumed Signer freed a pointer the "
                          "context now owns")
 
-    def test_builder_with_archive_null_return_consumes_self(self):
+    def test_builder_with_archive_null_return_marks_consumed(self):
         builder = Builder(self.test_manifest)
-        consumed_handle = builder._handle
+        released_handle = builder._handle
+        archive = self._make_archive()
+
+        # Mimic a non-tag error: native took ownership then failed and dropped
+        # the value itself, so the handle is marked consumed, not freed.
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+
+        # Instrument before the failure...
+        freed = self._instrument_frees()
         try:
             with self.assertRaises(Error):
-                builder.with_archive(self._make_archive())
+                builder.with_archive(archive)
         finally:
             c2pa_module._lib.c2pa_builder_with_archive = real_call
 
-        # The FFI consumed the old handle and returned no replacement,
-        # so there is nothing left for this object to own...
+        # Nothing left to own after failing.
         self.assertIsNone(builder._handle)
         self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
-        freed = self._instrument_frees()
-        builder.close()
-        self.assertEqual(self._free_count(freed, consumed_handle), 0,
-                         "close() freed a handle the FFI already consumed")
+        # A non-tag error marks consumed: no free (a free here would be a
+        # guarded no-op that dirties the error slot and races a recycled
+        # address in other threads).
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
 
-    def test_reader_with_fragment_null_return_consumes_self(self):
+        # close() must not free it either.
+        builder.close()
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() freed a handle already marked consumed")
+
+    def test_reader_with_fragment_null_return_marks_consumed(self):
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
-        consumed_handle = reader._handle
+        released_handle = reader._handle
 
-        # The mock sets no error, which no native path does. Plant an
-        # operation-style one so a stale tag from another test is not read.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked null return")
+        # Mimic a non-tag error: native took ownership then failed and dropped
+        # the value itself, so the handle is marked consumed, not freed.
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
+
+        # Instrument before failure so any free would be counted.
+        freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -7691,27 +7766,33 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        freed = self._instrument_frees()
-        reader.close()
-        self.assertEqual(self._free_count(freed, consumed_handle), 0,
-                         "close() freed a handle the FFI already consumed")
+        # A non-tag error marks consumed: no free.
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
 
-    def test_reader_with_fragment_ffi_raise_consumes_self(self):
-        # If the ctypes call itself raises (not a null return), the callee has
-        # already consumed the old handle, so with_fragment must mark self
-        # consumed rather than leave a dangling pointer that close() would
-        # double-free.
+        # close() must not free it either.
+        reader.close()
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() freed a handle already marked consumed")
+
+    def test_reader_with_fragment_ffi_raise_frees_self(self):
+        # If the ctypes call itself raises, the failure runs
+        # through the except BaseException branch, which frees the handle.
+        # with_fragment must free exactly once and leave nothing for close().
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
-        consumed_handle = reader._handle
+        released_handle = reader._handle
 
         def _raise(*_args):
             raise RuntimeError("boom")
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = _raise
+
+        # Instrument before the failure so the eager free is counted.
+        freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -7723,14 +7804,18 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        freed = self._instrument_frees()
-        reader.close()
-        self.assertEqual(self._free_count(freed, consumed_handle), 0,
-                         "close() freed a handle the FFI already consumed")
+        # The error path frees the old handle.
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "error path did not free the old handle exactly once")
 
-    # Consume-and-return ownership: the native call takes the handle partway
-    # through its body, so a null return does not say on its own whether the
-    # handle was consumed. These pin the classification down.
+        # close() must not free it again.
+        reader.close()
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "close() freed a handle the error path already freed")
+
+    # Consume-and-return ownership: the native call can take the handle partway
+    # through the call, so a null return does not always say on its own
+    # whether the handle was consumed or not, warranting further checks/bookkeeping.
 
     @staticmethod
     def _is_pre_consume_rejection(error_message):
@@ -7765,8 +7850,8 @@ class TestManagedResourceObjects(TestContextAPIs):
                 buf)
 
     def test_with_fragment_pre_consume_rejection_keeps_handle(self):
-        # Rejected before Box::from_raw, so nothing was consumed and the
-        # handle is still ours. Dropping it here would leak it.
+        # Rejected before native lib took ownership,
+        # so nothing was consumed and the handle is still ours.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
@@ -7806,15 +7891,14 @@ class TestManagedResourceObjects(TestContextAPIs):
                         reader.with_fragment("video/mp4", init, frag)
             finally:
                 reader._handle = real_handle
-            # Still owns a working handle every time round, so nothing
-            # leaked: a dropped handle would leave the reader closed.
+            # Still owns a working handle every time round.
             self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
             self.assertTrue(reader.json())
             reader.close()
 
     def test_with_archive_post_consume_failure_consumes_handle(self):
-        # Ownership taken, then the operation failed: the handle is gone,
-        # so close() must not free it again.
+        # Ownership taken, then the operation failed:
+        # The handle is gone, so close() must not free it again.
         builder = Builder(json.dumps(
             {"claim_generator_info": [{"name": "test", "version": "0.1"}],
              "assertions": []}))
@@ -7832,8 +7916,7 @@ class TestManagedResourceObjects(TestContextAPIs):
                          "close() freed a handle the FFI already consumed")
 
     def test_with_fragment_marshalling_error_keeps_handle(self):
-        # Never reaches native code, so nothing was consumed. The old
-        # blanket except marked it consumed here and leaked the handle.
+        # Never reaches native code, so nothing was consumed.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
@@ -7869,8 +7952,8 @@ class TestManagedResourceObjects(TestContextAPIs):
             reader = Reader("video/mp4", init)
 
         consumed_handle = reader._handle
-        # Not a pre-consume tag, so the mocked failure reads as unplaceable.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked null return")
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
@@ -8276,6 +8359,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         backing_file = reader._backing_file
         self.assertFalse(backing_file.closed)
 
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
@@ -8296,6 +8381,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         builder = Builder(self.test_manifest, context=context)
         archive = self._make_archive()
 
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
         try:
@@ -8343,6 +8430,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         reader.json()
         self.assertIsNotNone(reader._manifest_json_str_cache)
 
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
@@ -8475,8 +8564,8 @@ class TestErrorPlumbing(unittest.TestCase):
             c2pa_module._check_ffi_operation_result(42, "unused"), 42)
 
     def test_stream_creation_failure_reports_a_real_message(self):
-        # Regression: used to raise bare Exception("...: None"), because
-        # _parse_operation_result_for_error never returns a message.
+        # Regression: used to raise bare Exception("...: None") instead of the
+        # native error message.
         real = c2pa_module._lib.c2pa_create_stream
         c2pa_module._lib.c2pa_create_stream = lambda *a: None
         try:
