@@ -328,18 +328,15 @@ class ManagedResource:
             return
 
         self._lifecycle_state = LifecycleState.CLOSED
-        try:
-            self._safe_release()
-        finally:
-            # In finally: an interrupt escaping _release() still frees the
-            # handle (state is CLOSED, so no later path would retry).
-            handle, self._handle = self._handle, None
-            if free_handle and handle:
-                try:
-                    ManagedResource._free_native_ptr(handle)
-                except Exception:
-                    logger.error("Failed to free native %s resources",
-                                 type(self).__name__, exc_info=True)
+        self._safe_release()
+
+        handle, self._handle = self._handle, None
+        if free_handle and handle:
+            try:
+                ManagedResource._free_native_ptr(handle)
+            except Exception:
+                logger.error("Failed to free native %s resources",
+                             type(self).__name__, exc_info=True)
 
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
