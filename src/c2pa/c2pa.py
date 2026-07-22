@@ -237,8 +237,8 @@ class ManagedResource:
         current handle and returned a replacement (the success side of
         `_consume_and_swap`).
       - Call `_teardown(free_handle=False)` when an FFI call took ownership of
-        the handle without returning a replacement (e.g. `Signer` into
-        `Context`): the new owner frees it, so this does not.
+        the handle without returning a replacement: the new owner frees it,
+        so this does not.
       - Call `_release_handle()` when a consuming FFI call fails with ownership
         unknown: it frees eagerly (guarded), then closes. `_consume_and_swap`
         uses it on that failure path.
@@ -332,20 +332,21 @@ class ManagedResource:
             return
 
         self._lifecycle_state = LifecycleState.CLOSED
-        self._safe_release()
-
-        if free_handle and self._handle:
-            try:
-                ManagedResource._free_native_ptr(self._handle)
-            except Exception:
-                logger.error(
-                    "Failed to free native %s resources",
-                    type(self).__name__,
-                    exc_info=True)
-            finally:
-                self._handle = None
-        else:
-            self._handle = None
+        try:
+            self._safe_release()
+        finally:
+            # Free in finally so an interrupt escaping _release() (a BaseException
+            # _safe_release does not swallow) still frees an owned handle. State
+            # is already CLOSED, so no later teardown path would retry it.
+            handle, self._handle = self._handle, None
+            if free_handle and handle:
+                try:
+                    ManagedResource._free_native_ptr(handle)
+                except Exception:
+                    logger.error(
+                        "Failed to free native %s resources",
+                        type(self).__name__,
+                        exc_info=True)
 
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
@@ -413,8 +414,10 @@ class ManagedResource:
         """Run an FFI call that consumes this handle, returning its raw result.
 
         A marshalling ArgumentError is re-raised untouched: the call never
-        reached the native side, so the handle is still ours and unchanged. Any
-        other exception from the call frees the handle before raising.
+        reached the native side, so the handle is still ours and unchanged. An
+        ordinary Exception from the call frees the handle before raising; an
+        interrupt (KeyboardInterrupt/SystemExit) propagates untouched and the
+        still-ACTIVE handle is freed later at close()/GC (a guarded free).
 
         The caller inspects the returned result to tell success from failure
         (the convention differs per call) and routes a failure to

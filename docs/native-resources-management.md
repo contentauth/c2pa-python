@@ -142,7 +142,7 @@ Each transition has one method that performs it, and subclasses must go through 
 | `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
 | `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
 | `_mark_consumed()` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two, it validates nothing. |
-| `_release_handle()` | ACTIVE to CLOSED | Frees the handle eagerly and closes the object, for failure paths where ownership is unknown (the free is guarded, so a `-1` no-op if the native side already dropped it). Same post-state as `_mark_consumed()`; the difference is the extra `c2pa_free`. |
+| `_release_handle()` | ACTIVE to CLOSED | Frees the handle eagerly and closes the object. Same post-state as `_mark_consumed()`. |
 
 Because activation is the only way in, no code path can leave an object ACTIVE while holding a null handle.
 

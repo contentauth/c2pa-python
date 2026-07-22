@@ -7388,7 +7388,11 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     def test_context_build_null_return_frees_builder(self):
         # build's only null path is a pre-consume rejection, which leaves the
         # builder tracked and alive, so Context must free it on the way out.
+        # Set a pre-consume tag in the error slot so the rejection is
+        # unambiguous and does not depend on ambient slot state.
         settings = Settings()
+        c2pa_module._lib.c2pa_error_set_last(
+            b"UntrackedPointer: mocked pre-consume rejection")
         real_build = c2pa_module._lib.c2pa_context_builder_build
         c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
         try:
@@ -7703,12 +7707,13 @@ class TestManagedResourceObjects(TestContextAPIs):
                          "closing a consumed Signer freed a pointer the "
                          "context now owns")
 
-    def test_builder_with_archive_null_return_frees_self(self):
+    def test_builder_with_archive_null_return_marks_consumed(self):
         builder = Builder(self.test_manifest)
         released_handle = builder._handle
         archive = self._make_archive()
 
-        # Mimic an error.
+        # Mimic a non-tag error: native took ownership then failed and dropped
+        # the value itself, so the handle is marked consumed, not freed.
         c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
         c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
@@ -7725,31 +7730,33 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(builder._handle)
         self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
 
-        # Error frees the old handle.
-        self.assertEqual(self._free_count(freed, released_handle), 1,
-                         "error path did not free the old handle exactly once")
+        # A non-tag error marks consumed: no free (a free here would be a
+        # guarded no-op that dirties the error slot and races a recycled
+        # address in other threads).
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
 
-        # close() must not free again.
+        # close() must not free it either.
         builder.close()
-        self.assertEqual(self._free_count(freed, released_handle), 1,
-                         "close() double-freed an already-released handle")
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() freed a handle already marked consumed")
 
-    def test_reader_with_fragment_null_return_frees_self(self):
+    def test_reader_with_fragment_null_return_marks_consumed(self):
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
         released_handle = reader._handle
 
-        # Mimic an error.
+        # Mimic a non-tag error: native took ownership then failed and dropped
+        # the value itself, so the handle is marked consumed, not freed.
         c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
 
-        # Instrument before failure so the eager free is counted,
-        # not just whatever close() does afterwards.
+        # Instrument before failure so any free would be counted.
         freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
@@ -7762,14 +7769,14 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
-        # The error path frees the old handle.
-        self.assertEqual(self._free_count(freed, released_handle), 1,
-                         "error path did not free the old handle exactly once")
+        # A non-tag error marks consumed: no free.
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
 
-        # close() must not free it again.
+        # close() must not free it either.
         reader.close()
-        self.assertEqual(self._free_count(freed, released_handle), 1,
-                         "close() freed a handle the error path already freed")
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() freed a handle already marked consumed")
 
     def test_reader_with_fragment_ffi_raise_frees_self(self):
         # If the ctypes call itself raises, the failure runs
