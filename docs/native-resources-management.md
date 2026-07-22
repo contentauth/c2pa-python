@@ -14,7 +14,7 @@
 - Ownership transfers (e.g. signer to context) are handled so the same pointer is not freed twice (and the objects/classes know which one owns what).
 - Cleanup never raises (trade-off to avoid raising errors on clean-up only, but errors are logged).
 
-Developers wrapping new native resources must inherit from `ManagedResource` and follow the documented lifecycle rules.
+A new wrapper around a native resource inherits from `ManagedResource` and follows the documented lifecycle rules.
 
 ## Why is native resources management needed?
 
@@ -88,7 +88,7 @@ Notes:
 | --- | --- |
 | **Pointer freed exactly once** | Each native pointer is passed to `c2pa_free` at most once. No leak (zero frees) and no double-free. |
 | **Cleanup is idempotent** | Calling `close()` (or exiting a `with` block) multiple times is safe; after the first successful cleanup, further calls do nothing. |
-| **Cleanup never raises (ordinary errors)** | The cleanup path catches and logs `Exception`, never re-raising it. `_release()` runs inside `_safe_release()`, which logs and swallows; the `c2pa_free` call has its own handler; and `_cleanup_resources()` wraps both. The original exception from the `with` block (if any) is never masked. **Interrupts are the deliberate exception:** `KeyboardInterrupt` / `SystemExit` are `BaseException`, not `Exception`, so they propagate out of cleanup and may skip the remaining free. This is intentional — an interrupt kills the process and the OS reclaims the memory, so swallowing it to guard a few bytes would be worse than letting it through. Do not widen these handlers to `except BaseException`. |
+| **Cleanup never raises (ordinary errors)** | The cleanup path catches and logs `Exception`, never re-raising it. `_release()` runs inside `_safe_release()`, which logs and swallows; the `c2pa_free` call has its own handler; and `_cleanup_resources()` wraps both. The original exception from the `with` block (if any) is never masked. **Asynchronous interrupts are the deliberate exception.** The cleanup handlers catch `Exception`, which excludes the `BaseException` signals the interpreter raises to unwind a process (a cancellation request or an exit in progress). Those propagate through cleanup untouched, and the remaining free may not run. Such a signal means the process is being torn down and its address space, native allocations included, is about to be reclaimed as a whole. Catching it would suppress a shutdown the caller asked for in order to complete a free that is about to become irrelevant, so the handlers stay scoped to `Exception`. |
 | **State transitions are one-way** | Lifecycle moves only from UNINITIALIZED to ACTIVE to CLOSED. A closed resource cannot be reactivated. |
 | **Transitions go through helper methods** | Subclasses call `_activate()`, `_swap_handle()` or `_teardown()` and never assign `_handle` or `_lifecycle_state` directly. `_activate()` and `_swap_handle()` validate before mutating, so an object cannot end up active with a null handle. |
 | **Ownership transfer is safe** | When a pointer is transferred elsewhere (e.g. via `_teardown(free_handle=False)`), the object stops managing it and does not call `c2pa_free` on it. |
@@ -196,7 +196,7 @@ Cleanup must not raise an *ordinary* exception. A failure during cleanup (for ex
 - The state is set to `CLOSED` as the very first step, before attempting to free anything. If cleanup fails halfway, the object is still marked closed, preventing a second attempt from doing further damage.
 - Cleanup is idempotent. Calling `close()` on an already-closed object returns immediately.
 
-These handlers catch `Exception`, not `BaseException`. A `SystemExit` raised inside cleanup (for instance during a slow `_release()`) propagates out and may skip the remaining free. The interrupt is tearing the process down anyway and the OS will reclaim the memory.
+These handlers catch `Exception`, not `BaseException`. The signals the interpreter raises to unwind a process (a cancellation request, or an exit already in progress) are `BaseException`, so they pass through cleanup untouched and the remaining free may not run. That is intentional: the signal means the whole process is going away, and its address space, native allocations included, is reclaimed on exit. Holding the interpreter in cleanup to finish a free that is about to become irrelevant would only delay the shutdown the caller asked for.
 
 All three cleanup entry points converge on the same method, and the exception handling sits at three different levels inside it:
 
@@ -367,7 +367,7 @@ self._consume_and_swap(
 
 The call is passed as a lambda because the helper supplies the handle and, on success, replaces it via `_swap_handle()`.
 
-The helper exists because a null return can be ambiguous. The native function validates the borrowed pointer first, then takes ownership, then does the work, so a null result can mean either "rejected your pointer, never took it" or "took your pointer, then failed". The native error message is what tells them apart:
+The helper exists because a null return can be ambiguous. The native function validates the borrowed pointer first, then takes ownership, then does the work, so a null result can mean either "rejected the pointer, never took it" or "took the pointer, then failed". The native error message is what tells them apart:
 
 | Native error | Who owns the handle | What the helper does |
 | --- | --- | --- |
@@ -387,9 +387,15 @@ Three consume helpers share this triage; they differ only in what the FFI call r
 
 `_consume_no_replacement()` is how a `Signer` is fed to a `Context` (`set_signer` returns a status code); `_consume_into()` is how that same `Context` build returns the new context pointer. Any failure in any of the three lands in the table above, so a pre-consume rejection retains the handle rather than assuming it was taken.
 
-#### Why a non-tag error does not free
+#### Why an ownership-taken failure does not free
 
-The binding targets one native contract, the released C FFI (`c2pa-v0.90.0`). Its consuming calls reject a borrowed pointer up front with a `_PRE_CONSUME_ERROR_TAGS` tag (handle retained), or take ownership and, on any later failure, drop the value themselves. So a non-tag error means the value is already gone: `_teardown(free_handle=False)` is exact, and a `c2pa_free` there would be a guarded no-op that only dirties the sticky error slot and risks racing a recycled address in another thread. `_release_handle()` stays only where ownership is genuinely unknown — an async exception mid-call, or the no-error fallthrough no released path produces — where the guarded free is the right default (a real free if the handle is ours, a `-1` no-op if not). The native-side details are not visible from this repo (the library is a prebuilt binary), so treat the contract above as the assumed native behaviour this code is written against.
+A consuming FFI call fails in one of two ways. It either rejects the borrowed pointer before taking it, or it takes ownership first and then, on any later failure, drops the value itself. There is no failure path that takes the pointer and leaves it for the caller to free.
+
+The native error message says which of the two happened. A rejection carries one of the `_PRE_CONSUME_ERROR_TAGS` (`UntrackedPointer:` or `WrongPointerType:`), so the handle was never taken and is retained. Any other error message means the native side took ownership and already dropped the value.
+
+So a taken-then-failed error means the value is already gone, and `_teardown(free_handle=False)` is exact: a `c2pa_free` there would be a guarded no-op that only dirties the sticky error slot and risks racing a recycled address. `_release_handle()` (a guarded free) is used only where ownership is unknown, such as an exception mid-call or the no-error fallthrough that no defined failure produces. There the guarded free is the right default: a real free if the handle is ours, a `-1` no-op if not.
+
+The native side is a prebuilt binary and not visible from this repo, so this two-outcome contract is the behavior the code is written against rather than something it can inspect.
 
 ### Adopting the handle before giving it away
 
@@ -431,7 +437,7 @@ The cleanup order matters: `_release()` runs first (closing streams, dropping ca
 
 Clearing it in `_release()` is the other half of that. A closed Reader has no further use for the Context, and holding the reference would keep alive an object nothing can reach through the Reader's public API.
 
-Dropping the reference before the native pointer is freed is safe because the native side does not depend on the Python object staying alive. When a reader is created from a shared context, the native side takes its own reference-counted handle on that context (an `Arc` clone in the Rust library), so the native reader keeps the context alive independently of whether Python still points at it. (That native behaviour is not visible from this repo, which ships a prebuilt binary; it is the contract this code is written against.)
+Dropping the reference before the native pointer is freed is safe because the native side does not depend on the Python object staying alive. When a reader is created from a shared context, the native side takes its own reference-counted handle on that context (an `Arc` clone in the Rust library), so the native reader keeps the context alive independently of whether Python still points at it. (That native behavior is not visible from this repo, which ships a prebuilt binary; it is the contract this code is written against.)
 
 ## Fork safety
 
@@ -535,18 +541,18 @@ class NativeResource(ManagedResource):
 
 ### Troubleshooting
 
-- If an attribute is set only in `__init__`, an instance built by `_wrap_native_handle()` will not have it, because that path never runs `__init__`. The failure shows up later as an `AttributeError` from whichever method reads the attribute, often `_release()` during cleanup. Declare attributes in `_init_attrs()` and call it from `__init__`.
+- An attribute set only in `__init__` is missing on an instance built by `_wrap_native_handle()`, because that path never runs `__init__`. The failure shows up later as an `AttributeError` from whichever method reads the attribute, often `_release()` during cleanup. Attributes belong in `_init_attrs()`, which `__init__` calls.
 
-- If `_init_attrs()` is called after an FFI call that can raise, and the call fails, `_release()` will access attributes that do not exist yet and crash with `AttributeError`. Call it immediately after `super().__init__()`, before anything that can fail.
+- `_init_attrs()` called after an FFI call that can raise leaves `_release()` accessing attributes that do not exist yet when that call fails, crashing with `AttributeError`. It belongs immediately after `super().__init__()`, before anything that can fail.
 
-- Assigning `self._handle` or `self._lifecycle_state` directly bypasses the checks that make the lifecycle safe. `_activate()` refuses a null handle and refuses to run on an already-active object; `_swap_handle()` requires the resource to be active and the replacement non-null. Assigning the fields yourself gives up both, and the resulting bugs (an ACTIVE object with a null handle, or a silently discarded pointer) surface far from their cause.
+- Assigning `self._handle` or `self._lifecycle_state` directly bypasses the checks that make the lifecycle safe. `_activate()` refuses a null handle and refuses to run on an already-active object; `_swap_handle()` requires the resource to be active and the replacement non-null. Direct assignment gives up both, and the resulting bugs (an ACTIVE object with a null handle, or a silently discarded pointer) surface far from their cause.
 
-- If `_release()` raises, the exception is silently swallowed by `_cleanup_resources()`. It will not be visible unless logs are checked. Define a lifecycle for managed resources so `_release()` can check whether they need releasing. Wrap the actual release call in try/except as a fallback for unexpected failures.
+- A `_release()` that raises has its exception silently swallowed by `_cleanup_resources()`, visible only in the logs. A small lifecycle for managed resources lets `_release()` check whether they need releasing; the actual release call wrapped in try/except is a fallback for unexpected failures.
 
-- `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls). Make sure it handles being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
+- `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls), so it must handle being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
 
-- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. A redundant free of an already-released pointer is not a crash: the native pointer registry rejects an untracked address without touching memory and returns `-1`. `ManagedResource` relies on this guard so the unknown-ownership failure paths can free eagerly without risking a double-free. Still, do not free manually — the lifecycle owns the pointer and bypassing it defeats the state checks.
+- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. A redundant free of an already-released pointer is not a crash: the native pointer registry rejects an untracked address without touching memory and returns `-1`. `ManagedResource` relies on this guard so the unknown-ownership failure paths can free eagerly without risking a double-free. A manual free is still wrong — the lifecycle owns the pointer and bypassing it defeats the state checks.
 
-- If a subclass inherits from both `ManagedResource` and an ABC like `ContextProvider`, and both define a property with the same name (e.g. `is_valid`), Python resolves it using the MRO. The parent listed first in the class definition wins. If the ABC is listed first, Python finds the abstract property before the concrete one and raises `TypeError: Can't instantiate abstract class`. Always list the class with the concrete implementation first (e.g. `class Context(ManagedResource, ContextProvider)`, not `class Context(ContextProvider, ManagedResource)`).
+- When a subclass inherits from both `ManagedResource` and an ABC like `ContextProvider`, and both define a property with the same name (e.g. `is_valid`), Python resolves it using the MRO. The parent listed first in the class definition wins. With the ABC listed first, Python finds the abstract property before the concrete one and raises `TypeError: Can't instantiate abstract class`. The class with the concrete implementation therefore comes first (e.g. `class Context(ManagedResource, ContextProvider)`, not `class Context(ContextProvider, ManagedResource)`).
 
-- If two parent classes define the same method or property with different concrete implementations, the MRO silently picks the first one. This can cause subtle bugs where the wrong implementation is used. When combining multiple inheritance with shared property names, verify the MRO with `ClassName.__mro__` or `ClassName.mro()` to confirm the expected resolution order.
+- When two parent classes define the same method or property with different concrete implementations, the MRO silently picks the first one, which can cause subtle bugs where the wrong implementation is used. With shared property names across multiple inheritance, `ClassName.__mro__` or `ClassName.mro()` confirms the expected resolution order.
