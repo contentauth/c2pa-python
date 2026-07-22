@@ -294,7 +294,7 @@ sequenceDiagram
     participant N as Native lib
 
     C->>X: Context(settings, signer)
-    X->>B: with _NativeBuilder() (owns the builder; close() frees it on any failure)
+    X->>B: with _NativeBuilder() (owns the builder, close() frees it on any failure)
     X->>S: _ensure_valid_state()
     X->>X: copy signer._callback_cb to _signer_callback_cb
     Note right of X: Pin the callback first:<br/>the Signer is about to be consumed
