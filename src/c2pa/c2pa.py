@@ -1198,16 +1198,17 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
 def _get_mime_type_from_path(path: Union[str, Path]) -> str:
     """Attempt to guess the MIME type from a file path's extension.
     When the extension is missing or unrecognized, this returns an empty
-    string so the caller hands it to the lib for auto-detection (guess 1).
-    A recognized-but-wrong extension still returns its MIME type; the native
-    layer attempts to correct it from the bytes when reading (guess 2).
+    string so the caller hands it to the lib for auto-detection.
+    A recognized-but-wrong extension still returns a mimetype:
+    the native layer will attempt to correct it from the bytes when
+    reading (the real type still needs to be supported by the lib).
 
     Args:
         path: File path as string or Path object
 
     Returns:
-        MIME type string, or an empty string when it cannot be determined
-        from the extension.
+        MIME type string, or an empty string
+          (when it cannot be determined from the extension).
         An empty string here means the native lib should attempt auto-detect.
     """
     path_obj = Path(path)
