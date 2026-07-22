@@ -142,7 +142,7 @@ Each transition has one method that performs it, and subclasses must go through 
 | `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
 | `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
 | `_mark_consumed()` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two, it validates nothing. |
-| `_release_handle()` | ACTIVE to CLOSED | Frees the handle eagerly and closes the object, for the consume-and-swap failure path where the caller must free. Same post-state as `_mark_consumed()`; the difference is the extra `c2pa_free`. |
+| `_release_handle()` | ACTIVE to CLOSED | Frees the handle eagerly and closes the object, for failure paths where ownership is unknown (the free is guarded, so a `-1` no-op if the native side already dropped it). Same post-state as `_mark_consumed()`; the difference is the extra `c2pa_free`. |
 
 Because activation is the only way in, no code path can leave an object ACTIVE while holding a null handle.
 
@@ -357,21 +357,14 @@ The helper exists because a null return can be ambiguous. The native function va
 | Native error | Who owns the handle | What the helper does |
 | --- | --- | --- |
 | `UntrackedPointer:` or `WrongPointerType:` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
-| Any other error | Assumed taken, then the operation failed | `_release_handle()` frees the handle eagerly here, resource goes `CLOSED`, error typed from the native message. |
-| No error at all | Same ownership conclusion, nothing to type from | `_release_handle()` frees eagerly, the caller's message is raised with `"Unknown error"` filled in. |
-
-Note the failure path frees eagerly (`_release_handle()`), it does not run `_mark_consumed()`. This is the dual-contract behaviour described below.
+| Any other error | Taken, then the operation failed | `_mark_consumed()`: the native side already dropped the value, so nothing is freed here; resource goes `CLOSED`, error typed from the native message. |
+| No error at all | Unknown (no released path reaches here) | `_release_handle()` guarded free, the caller's message is raised with `"Unknown error"` filled in. |
 
 This triage relies on the native error still being readable after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it, and the SDK does not clear it before these calls.
 
-#### Why the failure path frees eagerly (dual contract)
+#### Why a non-tag error does not free
 
-Two native contracts are in play, and the eager free is correct under both:
-
-- **Try-assign native (incoming):** the consuming call restores the original value to the caller on error and hands the pointer back, so the caller *must* free it. The eager `_release_handle()` is mandatory here or the handle leaks on every failed `with_fragment`/`with_archive`.
-- **Released native (`c2pa-v0.90.0`):** the consuming call has already dropped the value by the time null returns, so the address is untracked. A redundant `c2pa_free` against it is a guarded no-op (returns `-1`, memory untouched), not a double-free.
-
-One Python path, correct under both. The native-side details (which release path drops vs. restores) are not visible from this repo — the native library is consumed as a prebuilt binary — so treat the two contracts above as the assumed native behaviour this code is written against.
+The binding targets one native contract, the released C FFI (`c2pa-v0.90.0`). Its consuming calls reject a borrowed pointer up front with a `_PRE_CONSUME_ERROR_TAGS` tag (handle retained), or take ownership and, on any later failure, drop the value themselves. So a non-tag error means the value is already gone: `_mark_consumed()` is exact, and a `c2pa_free` there would be a guarded no-op that only dirties the sticky error slot and risks racing a recycled address in another thread. `_release_handle()` stays only where ownership is genuinely unknown — an async exception mid-call, or the no-error fallthrough no released path produces — where the guarded free is the right default (a real free if the handle is ours, a `-1` no-op if not). The native-side details are not visible from this repo (the library is a prebuilt binary), so treat the contract above as the assumed native behaviour this code is written against.
 
 ### Adopting the handle before giving it away
 
@@ -525,7 +518,7 @@ class NativeResource(ManagedResource):
 
 - `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls). Make sure it handles being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
 
-- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. A redundant free of an already-released pointer is not a crash: the native pointer registry rejects an untracked address without touching memory and returns `-1`. `ManagedResource` relies on this guard so the consume-and-swap failure path can free eagerly without risking a double-free. Still, do not free manually — the lifecycle owns the pointer and bypassing it defeats the state checks.
+- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. A redundant free of an already-released pointer is not a crash: the native pointer registry rejects an untracked address without touching memory and returns `-1`. `ManagedResource` relies on this guard so the unknown-ownership failure paths can free eagerly without risking a double-free. Still, do not free manually — the lifecycle owns the pointer and bypassing it defeats the state checks.
 
 - If a subclass inherits from both `ManagedResource` and an ABC like `ContextProvider`, and both define a property with the same name (e.g. `is_valid`), Python resolves it using the MRO. The parent listed first in the class definition wins. If the ABC is listed first, Python finds the abstract property before the concrete one and raises `TypeError: Can't instantiate abstract class`. Always list the class with the concrete implementation first (e.g. `class Context(ManagedResource, ContextProvider)`, not `class Context(ContextProvider, ManagedResource)`).
 

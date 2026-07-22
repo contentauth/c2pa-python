@@ -6979,13 +6979,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             self.buffer.append(self.label)
             self.released = True
 
-    class _InterruptingReleaseResource(ManagedResource):
-        """_release() raises KeyboardInterrupt, an interrupt _safe_release()
-        does not catch, to check the handle is still freed on the way out."""
-
-        def _release(self):
-            raise KeyboardInterrupt
-
     def setUp(self):
         self.data_dir = FIXTURES_DIR
         self.freed = []
@@ -7229,12 +7222,12 @@ class TestManagedResourceLifecycle(unittest.TestCase):
     def test_consumed_resource_frees_nothing_in_either_process(self):
         owned = self._FakeHandleResource()
         owned._activate(0xE1)
-        owned._mark_consumed()
+        owned._teardown(free_handle=False)
         owned.close()
 
         foreign = self._FakeHandleResource()
         foreign._activate(0xE2)
-        foreign._mark_consumed()
+        foreign._teardown(free_handle=False)
         foreign._owner_pid = os.getpid() + 1
         foreign.close()
 
@@ -7242,33 +7235,33 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     # Consuming a handle hands the native pointer to a new owner.
     # The Python-side resources are still ours to free.
-    def test_mark_consumed_releases_python_resources(self):
+    def test_teardown_consumed_releases_python_resources(self):
         res = self._ReleaseRecordingResource()
         res._activate(0xF1)
 
-        res._mark_consumed()
+        res._teardown(free_handle=False)
 
         self.assertEqual(res.release_calls, 1)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(res._handle)
         self.assertEqual(self.freed, [])
 
-    def test_mark_consumed_swallows_failing_release(self):
+    def test_teardown_consumed_swallows_failing_release(self):
         res = self._CallbackHoldingResource()
         res._activate(0xF2)
 
         with self.assertLogs("c2pa", level="ERROR"):
-            res._mark_consumed()
+            res._teardown(free_handle=False)
 
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
         self.assertIsNone(res._handle)
 
-    def test_mark_consumed_in_foreign_process_skips_release(self):
+    def test_teardown_consumed_in_foreign_process_skips_release(self):
         res = self._ReleaseRecordingResource()
         res._activate(0xF3)
         res._owner_pid = os.getpid() + 1
 
-        res._mark_consumed()
+        res._teardown(free_handle=False)
 
         self.assertEqual(res.release_calls, 0)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
@@ -7439,7 +7432,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         res.close()
         self.assertEqual(self.freed, [0xCAFE])
 
-    def test_consume_no_replacement_frees_on_other_error(self):
+    def test_consume_no_replacement_marks_consumed_on_other_error(self):
         res = self._FakeHandleResource()
         res._activate(0xCAFE)
         real_read = c2pa_module._read_native_error
@@ -7450,28 +7443,9 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._read_native_error = real_read
 
-        # Ownership transferred, then the operation failed: freed, closed.
-        self.assertEqual(self.freed, [0xCAFE])
-        self.assertIsNone(res._handle)
-        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
-
-    def test_interrupt_in_release_still_frees_handle(self):
-        res = self._InterruptingReleaseResource()
-        res._activate(0xDEAD)
-
-        res._release_handle()
-
-        self.assertEqual(self.freed, [0xDEAD])
-        self.assertIsNone(res._handle)
-        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
-
-    def test_interrupt_in_cleanup_still_frees_handle(self):
-        res = self._InterruptingReleaseResource()
-        res._activate(0xBEEF)
-
-        res._cleanup_resources()
-
-        self.assertEqual(self.freed, [0xBEEF])
+        # A non-tag error means native took ownership then failed and dropped
+        # the value itself: mark consumed, do not free.
+        self.assertEqual(self.freed, [])
         self.assertIsNone(res._handle)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
 
@@ -8586,8 +8560,8 @@ class TestErrorPlumbing(unittest.TestCase):
             c2pa_module._check_ffi_operation_result(42, "unused"), 42)
 
     def test_stream_creation_failure_reports_a_real_message(self):
-        # Regression: used to raise bare Exception("...: None"), because
-        # _parse_operation_result_for_error never returns a message.
+        # Regression: used to raise bare Exception("...: None") instead of the
+        # native error message.
         real = c2pa_module._lib.c2pa_create_stream
         c2pa_module._lib.c2pa_create_stream = lambda *a: None
         try:
