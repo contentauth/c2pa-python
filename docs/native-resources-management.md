@@ -88,7 +88,7 @@ Notes:
 | --- | --- |
 | **Pointer freed exactly once** | Each native pointer is passed to `c2pa_free` at most once. No leak (zero frees) and no double-free. |
 | **Cleanup is idempotent** | Calling `close()` (or exiting a `with` block) multiple times is safe; after the first successful cleanup, further calls do nothing. |
-| **Cleanup never raises** | The cleanup path is wrapped so that exceptions are caught and logged, never re-raised. `_release()` runs inside `_safe_release()`, which logs and swallows; the `c2pa_free` call has its own handler; and `_cleanup_resources()` wraps both. The original exception from the `with` block (if any) is never masked. |
+| **Cleanup never raises (ordinary errors)** | The cleanup path catches and logs `Exception`, never re-raising it. `_release()` runs inside `_safe_release()`, which logs and swallows; the `c2pa_free` call has its own handler; and `_cleanup_resources()` wraps both. The original exception from the `with` block (if any) is never masked. **Interrupts are the deliberate exception:** `KeyboardInterrupt` / `SystemExit` are `BaseException`, not `Exception`, so they propagate out of cleanup and may skip the remaining free. This is intentional — an interrupt kills the process and the OS reclaims the memory, so swallowing it to guard a few bytes would be worse than letting it through. Do not widen these handlers to `except BaseException`. |
 | **State transitions are one-way** | Lifecycle moves only from UNINITIALIZED to ACTIVE to CLOSED. A closed resource cannot be reactivated. |
 | **Transitions go through helper methods** | Subclasses call `_activate()`, `_swap_handle()` or `_teardown()` and never assign `_handle` or `_lifecycle_state` directly. `_activate()` and `_swap_handle()` validate before mutating, so an object cannot end up active with a null handle. |
 | **Ownership transfer is safe** | When a pointer is transferred elsewhere (e.g. via `_teardown(free_handle=False)`), the object stops managing it and does not call `c2pa_free` on it. |
@@ -188,13 +188,15 @@ If neither of the above is used, `__del__` attempts to free the native pointer w
 
 ## Error handling during cleanup
 
-Cleanup must never raise an exception. A failure during cleanup (for example, the native library crashing on free) should not mask the original exception that caused the `with` block to exit. `ManagedResource` enforces this:
+Cleanup must not raise an *ordinary* exception. A failure during cleanup (for example, the native library crashing on free) should not mask the original exception that caused the `with` block to exit. `ManagedResource` enforces this:
 
-- `close()` delegates to `_cleanup_resources()`, which wraps the entire cleanup sequence in a try/except that catches and silences all exceptions.
-- `_release()` is never called directly during cleanup. It runs inside `_safe_release()`, which logs any failure with a traceback and returns normally, so a subclass whose `_release()` raises cannot stop the native pointer from being freed afterwards.
+- `close()` delegates to `_cleanup_resources()`, which wraps the entire cleanup sequence in a try/except that catches and silences `Exception`.
+- `_release()` is never called directly during cleanup. It runs inside `_safe_release()`, which logs any `Exception` with a traceback and returns normally, so a subclass whose `_release()` raises an ordinary error cannot stop the native pointer from being freed afterwards.
 - If freeing the native pointer fails, the error is logged via Python's `logging` module but not re-raised.
 - The state is set to `CLOSED` as the very first step, before attempting to free anything. If cleanup fails halfway, the object is still marked closed, preventing a second attempt from doing further damage.
 - Cleanup is idempotent. Calling `close()` on an already-closed object returns immediately.
+
+These handlers catch `Exception`, not `BaseException`. A `SystemExit` raised inside cleanup (for instance during a slow `_release()`) propagates out and may skip the remaining free. The interrupt is tearing the process down anyway and the OS will reclaim the memory.
 
 All three cleanup entry points converge on the same method, and the exception handling sits at three different levels inside it:
 
@@ -279,45 +281,48 @@ Some operations transfer a native pointer from one object to another. When this 
 
 `_teardown(free_handle=False)` handles this. It runs `_release()`, then sets `_handle = None` and `_lifecycle_state = CLOSED` without freeing the pointer.
 
-In the SDK this happens in one place: passing a `Signer` to a `Context`. The Context takes ownership of the Signer's native pointer, and the Signer must not be used again directly after that.
+In the SDK this happens in one place: passing a `Signer` to a `Context`. The Context runs a short-lived native context builder, feeds the signer into it, builds the context, and activates the result. The builder itself is wrapped in `_NativeBuilder` (a small `ManagedResource`), so every failure inside the `with` block frees it through `close()` unless a consuming call already took it. There is no raw pointer held across the calls and no bespoke error handler.
 
-The order of operations matters, because `c2pa_context_builder_set_signer` takes ownership on its error path as well as on success:
+The signer transfer goes through `_consume_no_replacement()`, which routes any failure to the shared triage (see [Consume-and-swap](#consume-and-swap)). That triage decides per error whether the signer was actually consumed: `set_signer` does *not* unconditionally take ownership.
 
 ```mermaid
 sequenceDiagram
     participant C as Caller
     participant S as Signer
     participant X as Context
+    participant B as _NativeBuilder
     participant N as Native lib
 
     C->>X: Context(settings, signer)
+    X->>B: with _NativeBuilder() (owns the builder; close() frees it on any failure)
     X->>S: _ensure_valid_state()
     X->>X: copy signer._callback_cb to _signer_callback_cb
-    Note right of X: Pin the callback first:<br/>the Signer is about to close
-    X->>N: c2pa_context_builder_set_signer(builder_ptr, handle)
+    Note right of X: Pin the callback first:<br/>the Signer is about to be consumed
+    X->>S: _consume_no_replacement(set_signer)
+    S->>N: c2pa_context_builder_set_signer(builder_ptr, handle)
 
-    alt ctypes.ArgumentError
-        Note over X,N: Marshalling failed, native side never ran
-        X-->>C: re-raise, Signer keeps its handle
-    else call returned
-        N-->>X: result
-        X->>S: _teardown(free_handle=False)
-        Note right of S: Unconditional, before checking result:<br/>set_signer takes ownership either way
-        X->>X: raise if result != 0
+    alt status 0 (success)
+        S->>S: _teardown(free_handle=False)
+        Note right of S: Consumed: native took the signer
+    else pre-consume tag (UntrackedPointer / WrongPointerType)
+        Note right of S: Rejected before ownership moved:<br/>Signer retained, typed error raised
+    else other error
+        S->>S: _teardown(free_handle=False)
+        Note right of S: Native took it then failed and dropped it
     end
 
-    X->>N: c2pa_context_builder_build(builder_ptr)
-    N-->>X: context_ptr
-    X->>X: _activate(context_ptr)
+    X->>B: _consume_into(build)
+    B->>N: c2pa_context_builder_build(builder_ptr)
+    N-->>X: context_ptr (builder consumed)
+    X->>X: _activate(context_ptr) (outside the with)
 ```
 
 Details in that sequence that are easy to get wrong:
 
-- The callback is copied to the Context *before* the transfer. The consumed teardown runs `_release()`, so consuming the Signer drops its reference to the callback; a Context that copied it afterwards would be pointing at a callback nothing keeps alive.
-- The consumed teardown runs before the result is checked, not after. A failed `set_signer` has still taken the pointer, so waiting for a successful result would leak it.
-- `ctypes.ArgumentError` is the exception. It means ctypes could not marshal the arguments, so the native function never ran and never saw the pointer. The Signer still owns its handle and is left untouched.
-
-Both `c2pa_context_builder_set_signer` and `c2pa_context_builder_build` consume what they are given, so the `builder_ptr` is freed by the error handler only when the build was never reached.
+- The callback is copied to the Context *before* the transfer. A successful consume runs `_release()`, which drops the Signer's reference to the callback; a Context that copied it afterwards would be pointing at a callback nothing keeps alive.
+- `set_signer` does not always take the pointer. A pre-consume rejection (`UntrackedPointer:` / `WrongPointerType:`) leaves the Signer `ACTIVE` and retained, so the triage must read the native error before deciding to close it. Treating every failure as "consumed" would close a signer the native side never took.
+- A `ctypes.ArgumentError` from `set_signer` is re-raised untouched by `_invoke_consume`: marshalling failed, the native function never ran, and the Signer still owns its handle. Only calls that reached native go through the consumed/retained triage.
+- The builder is never held as a raw local across the signer and build calls. `_NativeBuilder`'s `with` block owns it: a settings error, a retained-signer error, a build rejection, or an async interrupt all free it through `close()`, and a successful build consumes it so `close()` is then a no-op. The old raw-pointer recovery block that used to free `builder_ptr` on the un-reached-build path is gone.
 
 ### Adopting a handle the SDK already owns
 
@@ -372,6 +377,16 @@ The helper exists because a null return can be ambiguous. The native function va
 
 This triage relies on the native error still being readable after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it, and the SDK does not clear it before these calls.
 
+Three consume helpers share this triage; they differ only in what the FFI call returns on success:
+
+| Helper | Success return | Success action |
+| --- | --- | --- |
+| `_consume_and_swap()` | a replacement pointer | `_swap_handle()`, resource stays `ACTIVE` |
+| `_consume_no_replacement()` | a status code (`0` = ok) | `_teardown(free_handle=False)`, resource `CLOSED` |
+| `_consume_into()` | a *different* object's pointer | `_teardown(free_handle=False)`, the pointer returned for the caller to own |
+
+`_consume_no_replacement()` is how a `Signer` is fed to a `Context` (`set_signer` returns a status code); `_consume_into()` is how that same `Context` build returns the new context pointer. Any failure in any of the three lands in the table above, so a pre-consume rejection retains the handle rather than assuming it was taken.
+
 #### Why a non-tag error does not free
 
 The binding targets one native contract, the released C FFI (`c2pa-v0.90.0`). Its consuming calls reject a borrowed pointer up front with a `_PRE_CONSUME_ERROR_TAGS` tag (handle retained), or take ownership and, on any later failure, drop the value themselves. So a non-tag error means the value is already gone: `_teardown(free_handle=False)` is exact, and a `c2pa_free` there would be a guarded no-op that only dirties the sticky error slot and risks racing a recycled address in another thread. `_release_handle()` stays only where ownership is genuinely unknown — an async exception mid-call, or the no-error fallthrough no released path produces — where the guarded free is the right default (a real free if the handle is ours, a `-1` no-op if not). The native-side details are not visible from this repo (the library is a prebuilt binary), so treat the contract above as the assumed native behaviour this code is written against.
@@ -416,7 +431,7 @@ The cleanup order matters: `_release()` runs first (closing streams, dropping ca
 
 Clearing it in `_release()` is the other half of that. A closed Reader has no further use for the Context, and holding the reference would keep alive an object nothing can reach through the Reader's public API.
 
-Dropping the reference before the native pointer is freed is safe because the native side does not depend on the Python object staying alive. `Reader::from_shared_context` clones the underlying `Arc`, so the native reader holds its own count on the context and does not care whether Python still points at it.
+Dropping the reference before the native pointer is freed is safe because the native side does not depend on the Python object staying alive. When a reader is created from a shared context, the native side takes its own reference-counted handle on that context (an `Arc` clone in the Rust library), so the native reader keeps the context alive independently of whether Python still points at it. (That native behaviour is not visible from this repo, which ships a prebuilt binary; it is the contract this code is written against.)
 
 ## Fork safety
 
