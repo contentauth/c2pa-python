@@ -304,7 +304,7 @@ sequenceDiagram
     alt status 0 (success)
         S->>S: _teardown(free_handle=False)
         Note right of S: Consumed: native took the signer
-    else pre-consume tag (UntrackedPointer / WrongPointerType)
+    else pre-consume rejection (UntrackedPointer / WrongPointerType)
         Note right of S: Rejected before ownership moved:<br/>Signer retained, typed error raised
     else other error
         S->>S: _teardown(free_handle=False)
@@ -367,15 +367,30 @@ self._consume_and_swap(
 
 The call is passed as a lambda because the helper supplies the handle and, on success, replaces it via `_swap_handle()`.
 
-The helper exists because a null return can be ambiguous. The native function validates the borrowed pointer first, then takes ownership, then does the work, so a null result can mean either "rejected the pointer, never took it" or "took the pointer, then failed". The native error message is what tells them apart:
+The helper exists because a failed return can be ambiguous. The native functions run in phases: it validates the borrowed pointer, then takes ownership, then does the work. A failure in the first phase and a failure after the second come back to Python as the same value (a null pointer, or a non-zero status), but they leave ownership in opposite places.
+
+```mermaid
+flowchart TD
+    CALL["FFI call(handle)"] --> V{"validate borrowed handle"}
+    V -->|invalid| R["reject: handle NOT taken<br/>sets UntrackedPointer / WrongPointerType"] --> F1["returns a failure value<br/>(null, or non-zero status)"]
+    V -->|valid| TAKE["take ownership of handle"]
+    TAKE --> WORK{"execute function logic"}
+    WORK -->|fails| DROP["native drops the value itself<br/>sets some other error"] --> F2["returns a failure value<br/>(null, or non-zero status)"]
+    WORK -->|succeeds| OK["returns replacement / 0 / new pointer"]
+
+    F1 -.failure value returned to Python.- AMB(["needs to consult error to know failure mode from Python"])
+    F2 -.failure value returned to Python.- AMB
+```
+
+The two failure paths are indistinguishable from the return value alone. Only the native error message set alongside them tells the phases apart:
 
 | Native error | Who owns the handle | What the helper does |
 | --- | --- | --- |
 | `UntrackedPointer:` or `WrongPointerType:` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
-| Any other error | Taken, then the operation failed | `_teardown(free_handle=False)`: the native side already dropped the value, so nothing is freed here; resource goes `CLOSED`, error typed from the native message. |
-| No error at all | Unknown (no released path reaches here) | `_release_handle()` guarded free, the caller's message is raised with `"Unknown error"` filled in. |
+| Any other error | Taken, then the operation failed | `_teardown(free_handle=False)`: the native side already dropped the value, so nothing is freed here. Resource goes `CLOSED`, error typed from the native message. |
+| No error at all | Unknown | `_release_handle()` guarded free, the caller's message is raised with `"Unknown error"` filled in. |
 
-This triage relies on the native error still being readable after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it, and the SDK does not clear it before these calls.
+This error and ownership triage flow relies on the native error still being readable (and correctly being the last error encountered) after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it.
 
 Three consume helpers share this triage; they differ only in what the FFI call returns on success:
 
@@ -385,17 +400,21 @@ Three consume helpers share this triage; they differ only in what the FFI call r
 | `_consume_no_replacement()` | a status code (`0` = ok) | `_teardown(free_handle=False)`, resource `CLOSED` |
 | `_consume_into()` | a *different* object's pointer | `_teardown(free_handle=False)`, the pointer returned for the caller to own |
 
-`_consume_no_replacement()` is how a `Signer` is fed to a `Context` (`set_signer` returns a status code); `_consume_into()` is how that same `Context` build returns the new context pointer. Any failure in any of the three lands in the table above, so a pre-consume rejection retains the handle rather than assuming it was taken.
+`_consume_no_replacement()` is how a `Signer` is fed to a `Context` (`set_signer` returns a status code); `_consume_into()` is how that same `Context` build returns the new context pointer. A failure in any of the three is handled by the table above, so a pre-consume rejection retains the handle rather than assuming it was taken.
 
 #### Why an ownership-taken failure does not free
 
-A consuming FFI call fails in one of two ways. It either rejects the borrowed pointer before taking it, or it takes ownership first and then, on any later failure, drops the value itself. There is no failure path that takes the pointer and leaves it for the caller to free.
+A consuming FFI call can fail. It may reject the borrowed pointer before taking it, or it may take ownership first and then, on a later failure, drop the value itself.
 
-The native error message says which of the two happened. A rejection carries one of the `_PRE_CONSUME_ERROR_TAGS` (`UntrackedPointer:` or `WrongPointerType:`), so the handle was never taken and is retained. Any other error message means the native side took ownership and already dropped the value.
+The native error message indicates which of the errors happened. A rejection carries one of the `_PRE_CONSUME_ERROR_TAGS` (`UntrackedPointer:` or `WrongPointerType:`), which means the handle was never taken and is retained. Any other error message means the native side may have taken ownership and already dropped the value. On top of those, a consuming call whose wrapper runs Python (such as a signing callback) can raise a Python exception before native reports anything at all, and that outcome is handled separately.
 
-So a taken-then-failed error means the value is already gone, and `_teardown(free_handle=False)` is exact: a `c2pa_free` there would be a guarded no-op that only dirties the sticky error slot and risks racing a recycled address. `_release_handle()` (a guarded free) is used only where ownership is unknown, such as an exception mid-call or the no-error fallthrough that no defined failure produces. There the guarded free is the right default: a real free if the handle is ours, a `-1` no-op if not.
+The two settled branches each take the exact action their ownership implies. A pre-consume rejection (an error prefixed `UntrackedPointer:` or `WrongPointerType:`) means the handle is still the caller's, so it is retained and freed later by normal cleanup. Any other native error means the value is already gone, so `_teardown(free_handle=False)` runs the Python-side cleanup without freeing anything.
 
-The native side is a prebuilt binary and not visible from this repo, so this two-outcome contract is the behavior the code is written against rather than something it can inspect.
+Always calling the guarded free instead, even where the value is known to be gone, is tempting because a stale free looks like a harmless `-1` no-op. It is only harmless while the freed address stays unclaimed. The native registry rejects an address it no longer tracks, but once another thread allocates a fresh tracked object at that recycled address, the registry does track it again — and a stale free aimed at the old value would now find a live entry and destroy a different thread's object. The scenario is unlikely, but not unreachable: it needs a second thread inside its own FFI call, an allocator that hands back the exact address just freed, and that reuse to happen during the (narrow) window between the native drop and this free. But the window is real under concurrent use. The failure is a silent cross-thread corruption rather than a clean error, and the free is not needed in the first place on this branch. So where the value is known to be consumed, the free is skipped rather than issued and left to the registry to reject. The native error slot stays sticky: it holds whatever it last held until the next error overwrites it, and nothing clears it in between. Issuing an unneeded free would set an untracked-pointer error there that a later caller could mistake for the failure it actually asked about, so skipping the free keeps the slot free for the next real error.
+
+`_release_handle()` (a guarded free) is reserved for the two branches where ownership is not known for certain: a Python exception raised before native reports anything, and a failure that leaves the error slot empty (which no defined native failure is expected to produce). In both, a guarded free is a good default, since it is a real free when the handle is still ours and a `-1` no-op when the native side already took it.
+
+A consuming C FFI function first removes the pointer from its registry, then reconstructs the owned value from it. `untrack_or_return!` runs ahead of `Box::from_raw` in `c2pa_c_ffi`. If the address is unknown or the wrong type, the untrack step fails before ownership is taken and sets an error whose prefix (`UntrackedPointer:` or `WrongPointerType:`) identifies it as a pre-consume rejection. Once the value has been reconstructed, a later failure simply drops it, the same as any owned value going out of scope. The Python side stays defensive (and as generic as possible) rather than assuming any exact behavior: it retains the handle when it recognizes one of those rejection prefixes, and where the outcome is unclear it falls back to the guarded free. A native side that behaved differently would degrade in one of two bounded ways: If it kept a pointer the Python side treated as consumed, nothing would free that pointer and it would leak. If it had already released a pointer the Python side then tried to free, the registry would not find the address and the free would return `-1` without touching memory.
 
 ### Adopting the handle before giving it away
 
