@@ -371,6 +371,22 @@ class ManagedResource:
         self._handle = handle
         self._lifecycle_state = LifecycleState.ACTIVE
 
+    def _create_and_activate(self, ffi_call, error_message, *,
+                             check=lambda r: not r):
+        """Obtain a fresh native pointer, validate it, and take ownership.
+        On any failure before ownership transfers, the pointer is freed
+        and the error re-raised.
+        """
+        ptr = ffi_call()
+        try:
+            _check_ffi_operation_result(ptr, error_message, check=check)
+            self._activate(ptr)
+        except Exception:
+            if ptr:
+                ManagedResource._free_native_ptr(ptr)
+            raise
+        return ptr
+
     def _swap_handle(self, new_handle):
         """Replace the handle after an FFI call consumed the old one and
         returned a replacement.
@@ -1504,16 +1520,8 @@ class Settings(ManagedResource):
         """Create new Settings with default values."""
         super().__init__()
 
-        settings_ptr = _lib.c2pa_settings_new()
-        try:
-            _check_ffi_operation_result(
-                settings_ptr, "Failed to create Settings")
-        except Exception:
-            if settings_ptr:
-                ManagedResource._free_native_ptr(settings_ptr)
-            raise
-
-        self._activate(settings_ptr)
+        self._create_and_activate(
+            _lib.c2pa_settings_new, "Failed to create Settings")
 
     @classmethod
     def from_json(cls, json_str: str) -> 'Settings':
@@ -2489,25 +2497,12 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Create reader from context
-            reader_ptr = _lib.c2pa_reader_from_context(
-                context.execution_context,
-            )
-            try:
-                _check_ffi_operation_result(reader_ptr,
-                                            Reader._ERROR_MESSAGES[
-                                                'reader_error'
-                                            ]
-                                            )
-            except Exception:
-                if reader_ptr:
-                    ManagedResource._free_native_ptr(reader_ptr)
-                raise
-
-            # Adopt the handle before the consuming call: _consume_and_swap
-            # needs an active resource, and from here on normal cleanup owns
-            # the pointer whichever way the call goes.
-            self._activate(reader_ptr)
+            # Adopt before the consuming call: _consume_and_swap needs an
+            # active resource, and cleanup then owns the pointer either way.
+            self._create_and_activate(
+                lambda: _lib.c2pa_reader_from_context(
+                    context.execution_context),
+                Reader._ERROR_MESSAGES['reader_error'])
 
             if manifest_data is not None:
                 manifest_array = (
@@ -3276,24 +3271,11 @@ class Builder(ManagedResource):
         if not context.is_valid:
             raise C2paError("Context is not valid")
 
-        builder_ptr = _lib.c2pa_builder_from_context(
-            context.execution_context,
-        )
-        try:
-            _check_ffi_operation_result(builder_ptr,
-                                        Builder._ERROR_MESSAGES[
-                                            'builder_error'
-                                        ]
-                                        )
-        except Exception:
-            if builder_ptr:
-                ManagedResource._free_native_ptr(builder_ptr)
-            raise
-
-        # Adopt the handle before the consuming call:
-        # _consume_and_swap needs an active resource,
-        # and from here on normal cleanup owns the pointer.
-        self._activate(builder_ptr)
+        # Adopt before the consuming call: _consume_and_swap needs an
+        # active resource, and cleanup then owns the pointer either way.
+        self._create_and_activate(
+            lambda: _lib.c2pa_builder_from_context(context.execution_context),
+            Builder._ERROR_MESSAGES['builder_error'])
 
         self._consume_and_swap(
             lambda handle: _lib.c2pa_builder_with_definition(
