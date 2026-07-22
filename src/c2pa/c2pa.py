@@ -1197,19 +1197,18 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
 
 def _get_mime_type_from_path(path: Union[str, Path]) -> str:
     """Attempt to guess the MIME type from a file path's extension.
-
     When the extension is missing or unrecognized, this returns an empty
-    string so the caller can hand it to the native layer for auto-detection
-    from the asset's magic bytes (see Reader). A recognized-but-wrong
-    extension still returns its MIME type; the native layer corrects it from
-    the bytes when reading.
+    string so the caller hands it to the lib for auto-detection (guess 1).
+    A recognized-but-wrong extension still returns its MIME type; the native
+    layer attempts to correct it from the bytes when reading (guess 2).
 
     Args:
         path: File path as string or Path object
 
     Returns:
         MIME type string, or an empty string when it cannot be determined
-        from the extension (signals native auto-detection).
+        from the extension.
+        An empty string here means the native lib should attempt auto-detect.
     """
     path_obj = Path(path)
     file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
@@ -1219,8 +1218,8 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
         # so we bypass it and set the correct type
         return "image/dng"
     else:
-        # Fall back to an empty string for extensionless or unknown files so
-        # the native layer can detect the format from the asset's bytes.
+        # Fall back to an empty string for extensionless or unknown files.
+        # Empty string flags this as a guess-type attempt.
         return mimetypes.guess_type(str(path))[0] or ""
 
 
@@ -1973,13 +1972,12 @@ def _get_supported_mime_types(ffi_func, cache):
 def _validate_and_encode_format(
     format_str: str, supported_types: list[str], class_name: str
 ) -> bytes:
-    """Validate a MIME type / format string and encode it to UTF-8 bytes.
+    """Validate a MIME type/format string and encode it to UTF-8 bytes.
 
-    A blank format (empty or whitespace-only) is treated as a request for
-    native format auto-detection: it skips the supported-types check and
-    encodes to empty bytes, letting the native library infer the format from
-    the asset's magic bytes. A non-empty format is still validated against the
-    supported list.
+    A blank format (e.g. empty) is treated as a request for format auto-detect:
+    it skips the supported-types check and encodes to empty bytes,
+    letting the native library guess the format.
+    A non-empty format is still validated against the supported list.
 
     Args:
         format_str: The MIME type or format string to validate. Pass an empty
@@ -1992,8 +1990,10 @@ def _validate_and_encode_format(
         UTF-8 encoded format bytes (empty bytes for auto-detection)
 
     Raises:
-        C2paError.NotSupported: If a non-empty format is not supported
-        C2paError.Encoding: If the string contains invalid UTF-8 characters
+        C2paError.NotSupported: If format non-empty and
+            non-empty format unsupported.
+        C2paError.Encoding: If the non-empty string contains
+            invalid UTF-8 characters
     """
     if not format_str.strip():
         return b""
@@ -2149,14 +2149,14 @@ class Reader(ManagedResource):
         """Create a new Reader.
 
         The format is optional: pass an empty string (or read an extensionless
-        file by path) to let the native library detect the format from the
-        asset's magic bytes. A recognized but wrong format/extension is also
-        corrected from the bytes when reading. If the bytes are not a
-        recognized asset, a C2paError is raised.
+        file by path) to let the native library detect the format.
+        A recognized but wrong format/extension is also corrected from the bytes
+        when reading (so reading doesn't fail on wrong file extension).
+        If the bytes are not a recognized asset, a C2paError is raised.
 
         Args:
-            format_or_path: The format (MIME type) or path to read from. An
-                empty string requests auto-detection from the asset's bytes.
+            format_or_path: The format (MIME type) or path to read from.
+                An empty string is an auto-detection request.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional context implementing ContextProvider with settings
@@ -2196,8 +2196,7 @@ class Reader(ManagedResource):
 
         if stream is None:
             # Create a stream from the file path in format_or_path.
-            # An empty MIME type (extensionless/unknown file) is passed
-            # through so the native layer attempts auto-detect from the bytes.
+            # Empty format = native lib will try to guess format.
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
 
@@ -2290,8 +2289,7 @@ class Reader(ManagedResource):
         supported = Reader.get_supported_mime_types()
 
         if stream is None:
-            # An empty MIME type (extensionless / unknown file) is passed
-            # through so the native layer auto-detects from the bytes.
+            # Empty format = native lib will try to guess format.
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
             format_bytes = _validate_and_encode_format(

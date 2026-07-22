@@ -336,7 +336,7 @@ class TestReader(unittest.TestCase):
             Reader("mimetype/does-not-exist", self.testPath)
 
     def test_read_extensionless_file_path(self):
-        # A good file with no extension is read by detecting the format.
+        # Extensionless file triggers type auto-detection.
         with tempfile.TemporaryDirectory() as tmp:
             no_ext = os.path.join(tmp, "C")
             shutil.copyfile(self.testPath, no_ext)
@@ -351,6 +351,7 @@ class TestReader(unittest.TestCase):
 
     def test_read_wrong_extension_corrected(self):
         # A JPEG saved with a .png extension is corrected from the bytes.
+        # (Read is possible and does not fail due to wrong type).
         with tempfile.TemporaryDirectory() as tmp:
             wrong = os.path.join(tmp, "C.png")
             shutil.copyfile(self.testPath, wrong)
@@ -364,14 +365,13 @@ class TestReader(unittest.TestCase):
                 self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_explicit_empty_format_forces_detection(self):
-        # Passing "" works even when the correct format is known.
+        # Passing "" works even when the correct format is supported.
         with open(self.testPath, "rb") as file:
             with Reader("", file) as reader:
                 manifest_store = json.loads(reader.json())
                 self.assertIn("active_manifest", manifest_store)
 
     def test_autodetect_multiformat(self):
-        # Detection works across container families, not just JPEG.
         fixtures = [
             os.path.join(FIXTURES_DIR, "files-for-reading-tests", "CA.jpg"),
             os.path.join(FIXTURES_DIR, "video1.mp4"),
@@ -385,7 +385,6 @@ class TestReader(unittest.TestCase):
                         self.assertIn("active_manifest", json.loads(reader.json()))
 
     def test_dng_extension_still_special_cased(self):
-        # The .dng path keeps its special-case MIME and still reads.
         dng_path = os.path.join(FIXTURES_DIR, "C.dng")
         with Reader(dng_path) as reader:
             self.assertIn("active_manifest", json.loads(reader.json()))
@@ -396,7 +395,7 @@ class TestReader(unittest.TestCase):
             Reader("", io.BytesIO(b"not an asset at all"))
 
     def test_empty_stream_raises(self):
-        # A zero-byte stream cannot be detected and raises cleanly.
+        # A zero-byte stream cannot be detected and raises.
         with self.assertRaises(Error):
             Reader("", io.BytesIO(b""))
 
@@ -404,13 +403,14 @@ class TestReader(unittest.TestCase):
         with open(self.testPath, "rb") as file:
             data = bytearray(file.read())
         # Corrupt the body while keeping the leading JPEG magic intact.
+        # This will still raise errors.
         for i in range(64, min(len(data), 4096)):
             data[i] ^= 0xFF
         with self.assertRaises(Error):
             Reader("", io.BytesIO(bytes(data)))
 
     def test_garbage_extensionless_file_raises(self):
-        # Random bytes in an extensionless file raise cleanly.
+        # Random bytes in an extensionless file raise.
         with tempfile.TemporaryDirectory() as tmp:
             garbage = os.path.join(tmp, "garbage")
             with open(garbage, "wb") as f:
@@ -433,11 +433,11 @@ class TestReader(unittest.TestCase):
 
     def test_sub_magic_length_stream_raises(self):
         # Fewer bytes than a full magic signature cannot be detected.
+        # This will raise too.
         with self.assertRaises(Error):
             Reader("", io.BytesIO(b"\xff\xd8\xff"))
 
     def test_preseeked_stream_is_rewound(self):
-        # Detection rewinds the stream
         with open(self.testPath, "rb") as file:
             data = file.read()
         stream = io.BytesIO(data)
