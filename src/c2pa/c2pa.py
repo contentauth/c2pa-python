@@ -307,8 +307,7 @@ class ManagedResource:
         """
 
     def _safe_release(self):
-        """Run _release(), logging and swallowing ordinary errors so teardown
-        continues. Interrupts (KeyboardInterrupt, SystemExit) propagate.
+        """Run _release(), logging on error.
         """
         try:
             self._release()
@@ -321,10 +320,7 @@ class ManagedResource:
 
     def _teardown(self, free_handle: bool):
         """Close the object: run _release, optionally free the handle, null it.
-
-        The one place that owns the foreign-process rule, the CLOSED ordering
-        and the guarded free. free_handle=False (consumed) frees nothing; the
-        new owner does.
+        free_handle=False (consumed) frees nothing, the new owner needs to free.
         """
         if is_foreign_process(self):
             self._handle = None
@@ -335,18 +331,15 @@ class ManagedResource:
         try:
             self._safe_release()
         finally:
-            # Free in finally so an interrupt escaping _release() (a BaseException
-            # _safe_release does not swallow) still frees an owned handle. State
-            # is already CLOSED, so no later teardown path would retry it.
+            # In finally: an interrupt escaping _release() still frees the
+            # handle (state is CLOSED, so no later path would retry).
             handle, self._handle = self._handle, None
             if free_handle and handle:
                 try:
                     ManagedResource._free_native_ptr(handle)
                 except Exception:
-                    logger.error(
-                        "Failed to free native %s resources",
-                        type(self).__name__,
-                        exc_info=True)
+                    logger.error("Failed to free native %s resources",
+                                 type(self).__name__, exc_info=True)
 
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
@@ -413,15 +406,11 @@ class ManagedResource:
     def _invoke_consume(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle, returning its raw result.
 
-        A marshalling ArgumentError is re-raised untouched: the call never
-        reached the native side, so the handle is still ours and unchanged. An
-        ordinary Exception from the call frees the handle before raising; an
-        interrupt (KeyboardInterrupt/SystemExit) propagates untouched and the
-        still-ACTIVE handle is freed later at close()/GC (a guarded free).
-
-        The caller inspects the returned result to tell success from failure
-        (the convention differs per call) and routes a failure to
-        _raise_consume_failure.
+        A marshalling ArgumentError is re-raised untouched (call never reached
+        native, handle unchanged). An Exception frees the handle before
+        raising. The caller inspects the returned result to tell success
+        from failure (the convention differs per call) and routes a failure
+        to _raise_consume_failure.
 
         Args:
             ffi_call: Callable taking the current handle, returning the native
