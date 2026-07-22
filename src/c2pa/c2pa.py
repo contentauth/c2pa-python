@@ -236,11 +236,12 @@ class ManagedResource:
       - Call `_swap_handle(new_handle)` instead when an FFI call consumed the
         current handle and returned a replacement (the success side of
         `_consume_and_swap`).
-      - Call `_mark_consumed()` when an FFI call took ownership of the handle
-        without returning a replacement (e.g. `Signer` into `Context`).
-      - Call `_release_handle()` when a consuming FFI call fails and the caller
-        must free the handle: it frees eagerly, then closes like
-        `_mark_consumed()`. `_consume_and_swap` uses it on the failure path.
+      - Call `_teardown(free_handle=False)` when an FFI call took ownership of
+        the handle without returning a replacement: the new owner frees it,
+        so this does not.
+      - Call `_release_handle()` when a consuming FFI call fails with ownership
+        unknown: it frees eagerly (guarded), then closes. `_consume_and_swap`
+        uses it on that failure path.
       - Override `_release()` to free class-specific resources
         (streams, caches, callbacks, etc.), called before the
         native pointer is freed.
@@ -306,7 +307,8 @@ class ManagedResource:
         """
 
     def _safe_release(self):
-        """Run _release(), logging (never raising) if it fails.
+        """Run _release(), logging and swallowing ordinary errors so teardown
+        continues. Interrupts (KeyboardInterrupt, SystemExit) propagate.
         """
         try:
             self._release()
@@ -317,55 +319,44 @@ class ManagedResource:
                 exc_info=True,
             )
 
-    def _mark_consumed(self):
-        """Mark as consumed by an FFI call that took ownership
-        of native resources e.g. pointers. This means we should not
-        call clean-up here anymore, and leave it to the new owner.
-        """
+    def _teardown(self, free_handle: bool):
+        """Close the object: run _release, optionally free the handle, null it.
 
+        The one place that owns the foreign-process rule, the CLOSED ordering
+        and the guarded free. free_handle=False (consumed) frees nothing; the
+        new owner does.
+        """
         if is_foreign_process(self):
             self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
-        # Callers raise straight after consuming, so a failing _release()
-        # here would mask the error they are reporting.
-        self._safe_release()
-
-        self._handle = None
         self._lifecycle_state = LifecycleState.CLOSED
+        try:
+            self._safe_release()
+        finally:
+            # Free in finally so an interrupt escaping _release() (a BaseException
+            # _safe_release does not swallow) still frees an owned handle. State
+            # is already CLOSED, so no later teardown path would retry it.
+            handle, self._handle = self._handle, None
+            if free_handle and handle:
+                try:
+                    ManagedResource._free_native_ptr(handle)
+                except Exception:
+                    logger.error(
+                        "Failed to free native %s resources",
+                        type(self).__name__,
+                        exc_info=True)
 
     def _release_handle(self):
-        """Free a native handle, then close the object holding it.
-        Freeing synchronously at the error site leaves no window in which the
-        address could be reused and re-tracked.
-        Sets CLOSED before releasing and freeing.
+        """Free this handle, then close the object. Used only where ownership is
+        unknown (a guarded free is a real free if ours, a no-op if not).
         """
-
-        if is_foreign_process(self):
-            self._handle = None
-            self._lifecycle_state = LifecycleState.CLOSED
-            return
-
-        # Nothing to free, normalize states.
         if self._lifecycle_state != LifecycleState.ACTIVE:
             self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
             return
-
-        self._lifecycle_state = LifecycleState.CLOSED
-        self._safe_release()
-
-        if self._handle:
-            try:
-                ManagedResource._free_native_ptr(self._handle)
-            except Exception:
-                logger.error(
-                    "Failed to free native %s resources",
-                    type(self).__name__,
-                    exc_info=True)
-            finally:
-                self._handle = None
+        self._teardown(free_handle=True)
 
     def _activate(self, handle):
         """Attach a native handle to self and mark it active.
@@ -419,49 +410,58 @@ class ManagedResource:
     # so it is still ours to deal with.
     _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
 
-    def _consume_and_swap(self, ffi_call, error_message):
-        """Run an FFI call that consumes this handle and returns a replacement.
+    def _invoke_consume(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle, returning its raw result.
 
-        On success the native lib consumed the handle and returned a new one,
-        which we swap in.
-        On failure (null return, or an exception from the callback) the input
-        is freed eagerly and synchronously right here, then the error is raised.
-        The error is read  before the input is freed, so the message is not lost
-        (in case the release steps would set a pointer tracking error).
-        The native error slot is sticky and thread-local: the SDK does not
-        clear it before this call.
-        The error handling therefore trusts that a failing native path set
-        its own error (overwriting previous one).
+        A marshalling ArgumentError is re-raised untouched: the call never
+        reached the native side, so the handle is still ours and unchanged. An
+        ordinary Exception from the call frees the handle before raising; an
+        interrupt (KeyboardInterrupt/SystemExit) propagates untouched and the
+        still-ACTIVE handle is freed later at close()/GC (a guarded free).
+
+        The caller inspects the returned result to tell success from failure
+        (the convention differs per call) and routes a failure to
+        _raise_consume_failure.
 
         Args:
-            ffi_call: Callable taking the current handle, returning the
-                replacement or null.
+            ffi_call: Callable taking the current handle, returning the native
+                result (a replacement pointer, a status code, ...).
+            error_message: Format string with one placeholder, used to wrap a
+                callback exception.
+
+        Raises:
+            ctypes.ArgumentError: If marshalling failed; handle untouched.
+            C2paError: If the call raised any other exception.
+        """
+        try:
+            return ffi_call(self._handle)
+        except ctypes.ArgumentError:
+            # Marshalling failed: the call never reached native, so the handle
+            # is untouched and still ours. Re-raise as-is.
+            raise
+        except Exception as e:
+            self._release_handle()
+            raise C2paError(error_message.format(e)) from e
+
+    def _raise_consume_failure(self, error_message):
+        """Raise the error from an FFI handler consuming call.
+
+        The native error is read before any free so a free's own
+        pointer-tracking error cannot overwrite it: the native error slot is
+        sticky and thread-local and the SDK does not clear it before the call,
+        so this trusts that the failing native path set its own error.
+
+        Args:
             error_message: Format string with one placeholder, used when the
                 native layer offers no error of its own.
 
         Raises:
-            C2paError: If the call fails, typed by native error when one.
+            C2paError: Always; typed by the native error when there is one.
         """
-        try:
-            new_ptr = ffi_call(self._handle)
-        except ctypes.ArgumentError:
-            # Marshalling failed. The call never reached the native side,
-            # and the handle is untouched.
-            raise
-        except BaseException as e:
-            self._release_handle()
-            raise C2paError(error_message.format(e)) from e
-
-        if new_ptr:
-            self._swap_handle(new_ptr)
-            return
-
-        # Retrieve the error
         error = _read_native_error()
         if error:
             if any(tag in error
                    for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
-                # Rejected before ownership transferred: the handle is still ours
                 logger.warning(
                     "%s: native call rejected the handle before taking "
                     "ownership (%s); handle retained",
@@ -469,13 +469,51 @@ class ManagedResource:
                     error)
                 _raise_typed_c2pa_error(error)
 
-            # Ownership transferred and then the operation failed:
-            # free eagerly (native lib handles not double-freeing), then raise.
-            self._release_handle()
+            # A non-tag error means the native side took ownership then failed,
+            # dropping the value itself: mark consumed, do not free (a free here
+            # would be a guarded no-op that dirties the error slot and races a
+            # recycled address in other threads).
+            self._teardown(free_handle=False)
             _raise_typed_c2pa_error(error)
 
+        # No error in the slot: ownership is unknown, so free defensively.
         self._release_handle()
         raise C2paError(error_message.format("Unknown error"))
+
+    def _consume_and_swap(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle and returns a replacement.
+        On success the native lib consumed the handle and returned a new one,
+        which we swap in. A null return is a failure.
+        """
+        new_ptr = self._invoke_consume(ffi_call, error_message)
+        if new_ptr:
+            self._swap_handle(new_ptr)
+            return
+        self._raise_consume_failure(error_message)
+
+    def _consume_no_replacement(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle on success, when the native
+        call returns a status code (0 = success) rather than a replacement
+        handle. A non-zero status is a failure routed to
+        _raise_consume_failure.
+        """
+        result = self._invoke_consume(ffi_call, error_message)
+        if result == 0:
+            self._teardown(free_handle=False)
+            return
+        self._raise_consume_failure(error_message)
+
+    def _consume_into(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle and returns a *different*
+        object's pointer. On success this handle is consumed (mark, don't free)
+        and the new pointer is returned for the caller to own. A null return is
+        a failure routed to _raise_consume_failure.
+        """
+        result = self._invoke_consume(ffi_call, error_message)
+        if result:
+            self._teardown(free_handle=False)
+            return result
+        self._raise_consume_failure(error_message)
 
     @classmethod
     def _wrap_native_handle(cls, handle):
@@ -520,18 +558,7 @@ class ManagedResource:
                 hasattr(self, '_lifecycle_state')
                 and self._lifecycle_state != LifecycleState.CLOSED
             ):
-                self._lifecycle_state = LifecycleState.CLOSED
-                self._safe_release()
-                if hasattr(self, '_handle') and self._handle:
-                    try:
-                        ManagedResource._free_native_ptr(self._handle)
-                    except Exception:
-                        logger.error(
-                            "Failed to free native %s resources",
-                            type(self).__name__,
-                        )
-                    finally:
-                        self._handle = None
+                self._teardown(free_handle=True)
         except Exception:
             pass
 
@@ -1268,41 +1295,6 @@ def _raise_typed_c2pa_error(error_str: str) -> None:
     raise C2paError(error_str)
 
 
-def _parse_operation_result_for_error(
-        result: ctypes.c_void_p | None,
-        check_error: bool = True) -> Optional[str]:
-    """Helper function to handle string results from C2PA functions.
-
-    When result is falsy and check_error is True, this function retrieves the
-    error from the native library, parses it, and raises a typed C2paError.
-
-    When result is truthy (a pointer to an error string), this function
-    converts it to a Python string, parses it, and raises a typed C2paError.
-
-    Args:
-        result: A pointer to a result string, or None/falsy on error
-        check_error: Whether to check for errors when result is falsy
-
-    Returns:
-        None if no error occurred
-
-    Raises:
-        C2paError subclass: The appropriate typed exception if an error occurred
-    """
-    if not result:  # pragma: no cover
-        if check_error:
-            error_str = _read_native_error()
-            if error_str:
-                _raise_typed_c2pa_error(error_str)
-        return None
-
-    # In the case result would be a string already (error message)
-    error_str = _convert_to_py_string(result)
-    if error_str:
-        _raise_typed_c2pa_error(error_str)
-    return None
-
-
 def _check_ffi_operation_result(
         result,
         fallback_msg,
@@ -1329,9 +1321,9 @@ def _check_ffi_operation_result(
         C2paError: If the check indicates failure
     """
     if check(result):
-        error = _parse_operation_result_for_error(_lib.c2pa_error())
+        error = _read_native_error()
         if error:
-            raise C2paError(error)
+            _raise_typed_c2pa_error(error)
         raise C2paError(fallback_msg.format("Unknown error"))
     return result
 
@@ -1530,7 +1522,7 @@ class Settings(ManagedResource):
         try:
             _check_ffi_operation_result(
                 settings_ptr, "Failed to create Settings")
-        except BaseException:
+        except Exception:
             if settings_ptr:
                 ManagedResource._free_native_ptr(settings_ptr)
             raise
@@ -1578,11 +1570,11 @@ class Settings(ManagedResource):
         path_bytes = _to_utf8_bytes(path, "settings path")
         value_bytes = _to_utf8_bytes(value, "settings value")
 
-        result = _lib.c2pa_settings_set_value(
-            self._handle, path_bytes, value_bytes
-        )
-        if result != 0:
-            _parse_operation_result_for_error(None)
+        _check_ffi_operation_result(
+            _lib.c2pa_settings_set_value(
+                self._handle, path_bytes, value_bytes),
+            "Failed to set settings value",
+            check=lambda r: r != 0)
 
         return self
 
@@ -1603,11 +1595,11 @@ class Settings(ManagedResource):
 
         data_bytes = _to_utf8_bytes(data, "settings data")
 
-        result = _lib.c2pa_settings_update_from_string(
-            self._handle, data_bytes, b"json"
-        )
-        if result != 0:
-            _parse_operation_result_for_error(None)
+        _check_ffi_operation_result(
+            _lib.c2pa_settings_update_from_string(
+                self._handle, data_bytes, b"json"),
+            "Failed to update settings",
+            check=lambda r: r != 0)
 
         return self
 
@@ -1675,6 +1667,18 @@ class Context(ManagedResource, ContextProvider):
     used directly again after that.
     """
 
+    class _NativeBuilder(ManagedResource):
+        """Short-lived wrapper so the native context builder rides the normal
+        lifecycle: any failure inside its `with` block frees it via close()
+        unless a consuming call already took it.
+        """
+
+        def __init__(self):
+            super().__init__()
+            ptr = _lib.c2pa_context_builder_new()
+            _check_ffi_operation_result(ptr, "Failed to create ContextBuilder")
+            self._activate(ptr)
+
     def __init__(
         self,
         settings: Optional['Settings'] = None,
@@ -1702,61 +1706,31 @@ class Context(ManagedResource, ContextProvider):
             )
             self._activate(context_ptr)
         else:
-            # Use ContextBuilder for settings/signer
-            builder_ptr = _lib.c2pa_context_builder_new()
-            _check_ffi_operation_result(
-                builder_ptr, "Failed to create ContextBuilder"
-            )
-
-            try:
+            # Any failure inside the with frees the builder via close();
+            # a successful build consumes it, so close() is then a no-op.
+            with self._NativeBuilder() as nb:
                 if settings is not None:
-                    result = (
+                    _check_ffi_operation_result(
                         _lib.c2pa_context_builder_set_settings(
-                            builder_ptr, settings._c_settings,
-                        )
-                    )
-                    if result != 0:
-                        _parse_operation_result_for_error(None)
+                            nb._handle, settings._c_settings),
+                        "Failed to set settings on Context",
+                        check=lambda r: r != 0)
 
                 if signer is not None:
                     signer._ensure_valid_state()
-                    # c2pa_context_builder_set_signer takes ownership of the
-                    # signer pointer , on its error path as well as on success.
+                    # A rejected signer is retained, not closed and leaked.
                     self._signer_callback_cb = signer._callback_cb
-                    try:
-                        result = (
-                            _lib.c2pa_context_builder_set_signer(
-                                builder_ptr, signer._handle,
-                            )
-                        )
-                    except ctypes.ArgumentError:
-                        # Marshalling failed, so the call never reached the
-                        # native side and the signer was never taken.
-                        raise
-                    signer._mark_consumed()
-                    if result != 0:
-                        _parse_operation_result_for_error(None)
+                    signer._consume_no_replacement(
+                        lambda h: _lib.c2pa_context_builder_set_signer(
+                            nb._handle, h),
+                        "Failed to set signer on Context: {}")
                     self._has_signer = True
 
-                # Build consumes builder_ptr
-                context_ptr = (
-                    _lib.c2pa_context_builder_build(builder_ptr)
-                )
-                builder_ptr = None
+                context_ptr = nb._consume_into(
+                    lambda h: _lib.c2pa_context_builder_build(h),
+                    "Failed to build Context: {}")
 
-                _check_ffi_operation_result(
-                    context_ptr, "Failed to build Context"
-                )
-
-                self._activate(context_ptr)
-            except BaseException:
-                # Free builder if build was not reached
-                if builder_ptr is not None:
-                    try:
-                        ManagedResource._free_native_ptr(builder_ptr)
-                    except Exception:
-                        pass
-                raise
+            self._activate(context_ptr)
 
     def _init_attrs(self):
         super()._init_attrs()
@@ -2539,7 +2513,7 @@ class Reader(ManagedResource):
                                                 'reader_error'
                                             ]
                                             )
-            except BaseException:
+            except Exception:
                 if reader_ptr:
                     ManagedResource._free_native_ptr(reader_ptr)
                 raise
@@ -2575,7 +2549,7 @@ class Reader(ManagedResource):
                         self._own_stream._stream,
                     ),
                     Reader._ERROR_MESSAGES['reader_error'])
-        except BaseException:
+        except Exception:
             self._close_streams()
             raise
 
@@ -3248,7 +3222,7 @@ class Builder(ManagedResource):
             try:
                 # A builder from an archive here carries no context.
                 return cls._wrap_native_handle(handle)
-            except BaseException:
+            except Exception:
                 # No instance took ownership, so the handle is still ours.
                 ManagedResource._free_native_ptr(handle)
                 raise
@@ -3325,7 +3299,7 @@ class Builder(ManagedResource):
                                             'builder_error'
                                         ]
                                         )
-        except BaseException:
+        except Exception:
             if builder_ptr:
                 ManagedResource._free_native_ptr(builder_ptr)
             raise
@@ -3685,7 +3659,7 @@ class Builder(ManagedResource):
             # Closing here ensures resources clean up,
             # and single use/single sign done by a Builder.
             self.close()
-        except BaseException as e:
+        except Exception as e:
             self.close()
             raise C2paError(f"Error during signing: {e}") from e
 
