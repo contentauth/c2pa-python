@@ -177,6 +177,49 @@ def _fmt(n: int) -> str:
     return f"{n} B"
 
 
+def _delta_pct(current: int, base: int) -> str:
+    """Signed percentage change vs baseline, or '-' when no baseline."""
+    if not base:
+        return "-"
+    return f"{(current - base) / base * 100:+.1f}%"
+
+
+def _write_github_summary(results: dict, baseline: dict) -> None:
+    """Append a values table to $GITHUB_STEP_SUMMARY when running in CI.
+    """
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path or not results:
+        return
+
+    lines = [
+        "## Memory benchmark (memray)",
+        "",
+        f"Iterations: {ITERATIONS} · threshold: +{(THRESHOLD - 1) * 100:.0f}%"
+        f"{f' · env: {PERF_ENV}' if PERF_ENV else ''}",
+        "",
+        "| scenario | peak | allocs | peak Δ% | memory used Δ% | status |",
+        "|----------|------|--------|---------|----------------|--------|",
+    ]
+    for name, m in results.items():
+        b = baseline.get(name, {}) if baseline else {}
+        peak_base = b.get("peak_bytes", 0)
+        leaked_base = b.get("leaked_bytes", 0)
+        regressed = (
+            (peak_base and m["peak_bytes"] > peak_base * THRESHOLD)
+            or (leaked_base and m["leaked_bytes"] > leaked_base * THRESHOLD)
+        )
+        status = "REGRESSED" if regressed else "ok"
+        lines.append(
+            f"| {name} | {_fmt(m['peak_bytes'])} "
+            f"| {m['total_allocations']} | {_delta_pct(m['peak_bytes'], peak_base)} "
+            f"| {_delta_pct(m['leaked_bytes'], leaked_base)} | {status} |"
+        )
+    lines.append("")
+
+    with open(summary_path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="c2pa-python memory profiler")
     parser.add_argument(
@@ -318,6 +361,9 @@ def main() -> None:
         BASELINE_FILE.write_text(json.dumps(output, indent=2))
         verb = "Updated" if prior_baseline else "Created"
         print(f"\n{verb} baseline: {BASELINE_FILE}")
+
+    # Emit the report table to the PR's Step Summary in CI.
+    _write_github_summary(results, baseline)
 
     if render_failures:
         print("\nFLAMEGRAPH RENDERS FAILED (capture + metrics still recorded):", file=sys.stderr)

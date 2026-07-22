@@ -2,7 +2,7 @@ FROM python:3.12.13-slim-bookworm
 
 WORKDIR /workspace
 
-# libunwind for memray native stack unwinding
+# libunwind-dev for memray native stack unwinding.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libunwind-dev \
     ca-certificates \
