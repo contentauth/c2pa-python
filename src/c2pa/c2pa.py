@@ -1971,33 +1971,45 @@ def _get_supported_mime_types(ffi_func, cache):
 
 
 def _validate_and_encode_format(
-    format_str: str, supported_types: list[str], class_name: str
+    format_str: str,
+    supported_types: list[str],
+    class_name: str,
+    allow_autodetect: bool = True,
 ) -> bytes:
     """Validate a MIME type/format string and encode it to UTF-8 bytes.
 
-    A blank format (e.g. empty) is treated as a request for format auto-detect:
-    it skips the supported-types check and encodes to empty bytes,
-    letting the native library guess the format.
-    A non-empty format is still validated against the supported list.
+    A blank format (e.g. empty) is treated as a request for format auto-detect
+    when allow_autodetect is True (default), letting the native library
+    guess the mimetype/format.
+    When allow_autodetect is False, a blank format is rejected instead
+    (e.g. when we want to enforce an explicit format).
+    A non-empty format is always validated against the supported list.
 
     Args:
         format_str: The MIME type or format string to validate. Pass an empty
             or whitespace-only string to request auto-detection from the
-            asset's bytes.
+            asset's bytes (only when ``allow_autodetect`` is True).
         supported_types: List of supported MIME types
         class_name: Name of the calling class (for error messages)
+        allow_autodetect: When True (default), a blank format requests
+            auto-detection. When False, a blank format raises
+            C2paError.NotSupported.
 
     Returns:
         UTF-8 encoded format bytes (empty bytes for auto-detection)
 
     Raises:
-        C2paError.NotSupported: If format non-empty and
-            non-empty format unsupported.
+        C2paError.NotSupported: If the format is non-empty and unsupported,
+            or if the format is blank and ``allow_autodetect`` is False.
         C2paError.Encoding: If the non-empty string contains
             invalid UTF-8 characters
     """
     if not format_str.strip():
-        return b""
+        if allow_autodetect:
+            return b""
+        raise C2paError.NotSupported(
+            f"{class_name} requires an explicit format (MIME type)"
+        )
     if format_str.lower() not in supported_types:
         raise C2paError.NotSupported(
             f"{class_name} does not support {format_str}")
@@ -3354,7 +3366,8 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_write_ingredient_archive(
                 self._handle, ingredient_id_str, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
+            _check_ffi_operation_result(
+                result,
                 Builder._ERROR_MESSAGES["archive_error"].format(
                     "Unknown error"
                 ),
@@ -3377,7 +3390,8 @@ class Builder(ManagedResource):
             result = _lib.c2pa_builder_add_ingredient_from_archive(
                 self._handle, stream_obj._stream)
 
-            _check_ffi_operation_result(result,
+            _check_ffi_operation_result(
+                result,
                 Builder._ERROR_MESSAGES["archive_read_error"].format(
                     "Unknown error"
                 ),
@@ -3450,7 +3464,8 @@ class Builder(ManagedResource):
                 raise C2paError("Invalid or closed signer")
 
         format_bytes = _validate_and_encode_format(
-            format, Builder.get_supported_mime_types(), "Builder")
+            format, Builder.get_supported_mime_types(), "Builder",
+            allow_autodetect=False)
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         try:
@@ -3663,9 +3678,17 @@ class Builder(ManagedResource):
             Manifest bytes
 
         Raises:
+            C2paError.NotSupported: If the format cannot be determined from
+                the source path (extensionless or unrecognized extension);
+                signing requires an explicit, resolvable format.
             C2paError: If there was an error during signing
         """
         mime_type = _get_mime_type_from_path(source_path)
+        if not mime_type:
+            raise C2paError.NotSupported(
+                "Could not determine the format (MIME type) from "
+                f"'{source_path}'. Sign a stream with an explicit format "
+                "instead, or use a recognized file extension.")
 
         try:
             with (

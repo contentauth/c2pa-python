@@ -30,7 +30,8 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _validate_and_encode_format
+from pathlib import Path
 
 
 PROJECT_PATH = os.getcwd()
@@ -457,6 +458,54 @@ class TestReader(unittest.TestCase):
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
+
+    def test_get_mime_type_from_path_dng_special_cased(self):
+        self.assertEqual(_get_mime_type_from_path("photo.dng"), "image/dng")
+
+    def test_get_mime_type_from_path_uppercase_dng(self):
+        self.assertEqual(_get_mime_type_from_path("PHOTO.DNG"), "image/dng")
+
+    def test_get_mime_type_from_path_jpeg(self):
+        self.assertEqual(_get_mime_type_from_path("photo.jpg"), "image/jpeg")
+
+    def test_get_mime_type_from_path_unknown_extension_returns_empty(self):
+        # An unrecognized extension yields "" so the caller can auto-detect.
+        self.assertEqual(_get_mime_type_from_path("asset.unknownext"), "")
+
+    def test_get_mime_type_from_path_no_suffix_returns_empty(self):
+        self.assertEqual(_get_mime_type_from_path("asset"), "")
+
+    def test_get_mime_type_from_path_accepts_path_object(self):
+        self.assertEqual(
+            _get_mime_type_from_path(Path("dir/photo.jpg")), "image/jpeg")
+
+    def test_validate_and_encode_format_blank_autodetects(self):
+        # Reader default: a blank format requests auto-detection.
+        self.assertEqual(
+            _validate_and_encode_format("", ["image/jpeg"], "Reader"), b"")
+        self.assertEqual(
+            _validate_and_encode_format("   ", ["image/jpeg"], "Reader"), b"")
+
+    def test_validate_and_encode_format_valid_returns_bytes(self):
+        self.assertEqual(
+            _validate_and_encode_format(
+                "image/jpeg", ["image/jpeg"], "Reader"),
+            b"image/jpeg")
+
+    def test_validate_and_encode_format_case_insensitive(self):
+        self.assertEqual(
+            _validate_and_encode_format(
+                "IMAGE/JPEG", ["image/jpeg"], "Reader"),
+            b"IMAGE/JPEG")
+
+    def test_validate_and_encode_format_unsupported_raises(self):
+        with self.assertRaises(Error.NotSupported):
+            _validate_and_encode_format(
+                "application/zip", ["image/jpeg"], "Reader")
+
+    def test_reader_accepts_path_object(self):
+        with Reader(Path(self.testPath)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_reader_double_close(self):
         with open(self.testPath, "rb") as file:
@@ -3457,6 +3506,37 @@ class TestBuilderWithSigner(unittest.TestCase):
           self.assertIn("Valid", json_data)
           output.close()
 
+    def test_validate_and_encode_format_builder_blank_raises(self):
+        with self.assertRaises(Error.NotSupported):
+            _validate_and_encode_format(
+                "", Builder.get_supported_mime_types(), "Builder",
+                allow_autodetect=False)
+
+    def test_sign_empty_format_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO()
+            with self.assertRaises(Error.NotSupported):
+                builder.sign(self.signer, "", file, output)
+
+    def test_sign_file_extensionless_source_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "source")
+            shutil.copyfile(self.testPath, no_ext)
+            dest = os.path.join(tmp, "out.jpg")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(no_ext, dest, self.signer)
+
+    def test_sign_file_unrecognized_extension_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            weird = os.path.join(tmp, "source.unknownextension")
+            shutil.copyfile(self.testPath, weird)
+            dest = os.path.join(tmp, "out.jpg")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(weird, dest, self.signer)
+
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
         try:
@@ -6121,6 +6201,16 @@ class TestReaderWithContext(TestContextAPIs):
         data = reader.json()
         self.assertIsNotNone(data)
         reader.close()
+        context.close()
+
+    def test_reader_extensionless_path_with_context_autodetects(self):
+        context = Context()
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "asset")
+            shutil.copyfile(DEFAULT_TEST_FILE, no_ext)
+            reader = Reader(no_ext, context=context)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
         context.close()
 
     def test_reader_format_and_path_with_ctx(self):
