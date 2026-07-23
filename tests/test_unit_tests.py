@@ -3537,6 +3537,15 @@ class TestBuilderWithSigner(unittest.TestCase):
             with self.assertRaises(Error.NotSupported):
                 builder.sign_file(weird, dest, self.signer)
 
+    def test_sign_file_exceptions_preservation(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "source.txt")
+            shutil.copyfile(self.testPath, src)
+            dest = os.path.join(tmp, "out.txt")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(src, dest, self.signer)
+
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
         try:

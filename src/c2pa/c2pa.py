@@ -3699,6 +3699,9 @@ class Builder(ManagedResource):
                     return self.sign(signer, mime_type, source_file, dest_file)
                 # else:
                 return self.sign(mime_type, source_file, dest_file)
+        except C2paError:
+            # Preserve C2paError and its subtypes
+            raise
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 
