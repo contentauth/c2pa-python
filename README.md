@@ -12,7 +12,7 @@ Features:
 - Add assertions and ingredients to assets.
 - Examples and unit tests to demonstrate usage.
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/c2pa-c).
 
