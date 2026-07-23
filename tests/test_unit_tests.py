@@ -3806,6 +3806,32 @@ class TestBuilderWithSigner(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             builder = Builder(circular_obj)
 
+    def test_construction_failure_before_native_call_is_collectable(self):
+        """Builder(None) fails encoding the manifest before any FFI call.
+        A half-built instance is UNINITIALIZED with no native handle.
+        """
+        captured = []
+        real_init_attrs = Builder._init_attrs
+
+        def recording_init_attrs(self):
+            real_init_attrs(self)
+            captured.append(self)
+
+        Builder._init_attrs = recording_init_attrs
+        try:
+            with self.assertRaises(Error):
+                Builder(None)
+        finally:
+            Builder._init_attrs = real_init_attrs
+
+        self.assertEqual(len(captured), 1,
+                         "_init_attrs did not run during the failed construction")
+        instance = captured[0]
+        self.assertEqual(instance._lifecycle_state, LifecycleState.UNINITIALIZED)
+        self.assertIsNone(instance._handle)
+
+        instance._release()
+
     def test_builder_state_transitions(self):
         """Test Builder state transitions during lifecycle."""
         builder = Builder(self.manifestDefinition)
