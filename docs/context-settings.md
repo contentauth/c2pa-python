@@ -274,10 +274,10 @@ The Settings JSON has this top-level structure:
 
 The settings format is **JSON** only. Pass JSON strings to `Settings.from_json()` or `Context.from_json()`, and dictionaries to `Settings.from_dict()` or `Context.from_dict()`. The `from_dict()` methods convert Python dictionaries to a format compatible with the underlying native libraries.
 
-Notes:
-- All properties are optional. If you don't specify a value, the SDK uses the default value.
-- If you specify a value of `null` (or `None` in a dict), the property is explicitly set to `null`, not the default. This distinction is important when you want to override a default behavior.
-- For Boolean values, use JSON Booleans `true`/`false` in JSON strings, or Python `True`/`False` in dicts.
+> [!NOTE]
+> - All properties are optional. If you don't specify a value, the SDK uses the default value.
+> - If you specify a value of `null` (or `None` in a dict), the property is explicitly set to `null`, not the default. This distinction is important when you want to override a default behavior.
+> - For Boolean values, use JSON Booleans `true`/`false` in JSON strings, or Python `True`/`False` in dicts.
 
 The settings JSON schema is shared across all C2PA SDKs (Rust, C/C++, Python, and so on). For a complete reference to all properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
 
@@ -420,8 +420,8 @@ The following properties default to `true` (verification enabled):
 
 - `verify_after_reading` - Automatically verify manifests when reading assets. Disable only if you want to manually control verification timing.
 - `verify_after_sign` - Automatically verify manifests after signing. Recommended to keep enabled to catch signing errors immediately.
-- `verify_trust` - Verify signing certificates against configured trust anchors. WARNING: Disabling makes verification non-compliant.
-- `verify_timestamp_trust` - Verify timestamp authority (TSA) certificates. WARNING: Disabling makes verification non-compliant.
+- `verify_trust` - Verify signing certificates against configured trust anchors. **Warning:** Disabling makes verification non-compliant.
+- `verify_timestamp_trust` - Verify timestamp authority (TSA) certificates. **Warning:** Disabling makes verification non-compliant.
 - `remote_manifest_fetch` - Fetch remote manifests referenced in the asset. Disable in offline or air-gapped environments.
 
 > [!WARNING]
@@ -628,9 +628,9 @@ C2PA uses a certificate-based trust model to prove who signed an asset. When cre
 - **Certificate chain** (`sign_cert`): An X.509 certificate chain in PEM format. The first certificate identifies the signer; subsequent certificates form a chain up to a trusted root. Verifiers use this chain to confirm the signature comes from a trusted source.
 - **Timestamp authority URL** (`ta_url`): An optional [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) timestamp server URL. When provided, the SDK requests a trusted timestamp during signing, proving _when_ the signature was made. This keeps signatures verifiable even after the signing certificate expires.
 
-### Signer from settings (recommended)
+### Signer from settings
 
-Configure signer credentials directly in settings. This is the most common approach:
+Configure signer credentials directly in settings. This is the most common and recommended approach:
 
 ```py
 ctx = Context.from_dict({
@@ -649,7 +649,7 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign("image/jpeg", src, dst)
 ```
 
-### Signer on Context (signer object)
+### Signer object on Context
 
 Create a `Signer` object and pass it to the `Context`. The signer is **consumed**: the `Signer` object becomes invalid after this call and the `Context` takes ownership.
 

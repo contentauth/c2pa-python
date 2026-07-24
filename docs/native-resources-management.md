@@ -1,8 +1,8 @@
-# Native resource management (ManagedResource class)
+# Native resource management
 
 `ManagedResource` is the internal base class used by the C2PA Python SDK to wrap native (Rust/FFI) pointers. When adding new wrappers around native resources `ManagedResource` should be subclassed and follow the documented lifecycle rules.
 
-## Why `ManagedResource`?
+## Why ManagedResource?
 
 `ManagedResource` is the internal base class responsible for managing native pointers owned by the C2PA Python SDK. It guarantees:
 
@@ -27,7 +27,7 @@ Python manages its own objects' memory automatically through garbage collection.
 
 This system works well for pure Python objects, but native memory sits outside of it entirely. The garbage collector sees the Python wrapper object (e.g. a `Reader` instance) and tracks references to it, but it has no visibility into the native memory that the wrapper's `_handle` attribute points to. Memory allocated by native libraries is invisible to the garbage collector: it does not know the size of that native allocation, cannot tell when it is no longer needed, and will not call the native library's `c2pa_free` function to release it. If the Python wrapper of those native resources is collected without first calling `c2pa_free`, the native memory is never released and leaks.
 
-### Why `__del__` is not reliable enough
+### Why __del__ is not reliable enough
 
 Python does offer `__del__` as a hook that runs when an object is collected (finalizer), and `ManagedResource` uses it as a fallback to possibly clean up leftover resources at that point. But `__del__` cannot be relied on as the primary cleanup mechanism: its timing is unpredictable (due to being called when the garbage collection runs, which is non-deterministic itself), it may not run at all during interpreter shutdown, and other Python implementations (PyPy, GraalPy) that do not use reference counting make its behavior even less deterministic.
 
@@ -70,7 +70,7 @@ Notes:
 > The MRO is computed using C3 linearization, which enforces two rules: children appear before their parents, and left-to-right order from the class definition is preserved. For `class Context(ManagedResource, ContextProvider)`:
 >
 > 1. `Context`: the class itself always comes first.
-> 2. `ManagedResource` :first listed parent, nothing else requires it to appear later.
+> 2. `ManagedResource`: first listed parent, nothing else requires it to appear later.
 > 3. `ContextProvider`: second listed parent, must come after `ManagedResource` to preserve declaration order.
 > 4. `ABC`: parent of `ContextProvider`, must come after its child.
 > 5. `object`: root of everything (all objects), always last.
@@ -134,7 +134,7 @@ Every public method calls `_ensure_valid_state()` before doing any work. Besides
 
 ## Ways to clean up
 
-### Context manager (`with` statement)
+### Using a context manager
 
 ```python
 with Reader("image.jpg") as reader:
@@ -144,7 +144,7 @@ with Reader("image.jpg") as reader:
 
 When the `with` block exits, `__exit__` calls `close()`, which frees the native pointer. This is the safest approach because cleanup happens even if the code inside the block raises an exception.
 
-### Explicit `.close()`
+### Explicit close
 
 ```python
 reader = Reader("image.jpg")
@@ -156,7 +156,7 @@ finally:
 
 Calling `.close()` directly is equivalent to exiting a `with` block. It is idempotent: calling it multiple times is safe and does nothing after the first call.
 
-### Destructor fallback (`__del__`)
+### Destructor fallback
 
 If neither of the above is used, `__del__` attempts to free the native pointer when Python garbage-collects the object. As described above, `__del__` timing is unpredictable and it may not run at all, so it is a safety net rather than a primary cleanup mechanism.
 
@@ -269,7 +269,7 @@ self._handle = new_ptr
 
 The object stays `ACTIVE` throughout because the Python-side object is still valid: it has a live native pointer, its public methods still work, and callers may continue using it (e.g. reading the updated manifest or feeding in another fragment). The lifecycle state does not change because from `ManagedResource`'s perspective nothing has closed. Only the underlying native pointer has been swapped. This is different from `_mark_consumed()`, where the object transitions to `CLOSED` and becomes unusable. The old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call.
 
-## Subclass-specific cleanup with `_release()`
+## Subclass-specific cleanup
 
 Each subclass can override `_release()` to clean up its own resources before the native pointer is freed. The base implementation does nothing.
 
@@ -285,7 +285,7 @@ Examples from the codebase:
 
 The cleanup order matters: `_release()` runs first (closing streams, dropping callbacks), then `c2pa_free` frees the native pointer. This order prevents the native library from accessing Python objects that no longer exist.
 
-## Why is `Stream` not a `ManagedResource`?
+## Why is Stream not a ManagedResource?
 
 `Stream` wraps a Python stream-like object (file stream or memory stream) so the native library can read from and write to it via callbacks. It does not inherit from `ManagedResource`, and it uses `c2pa_release_stream()` instead of `c2pa_free()` for cleanup.
 
@@ -293,7 +293,7 @@ The reason is that ownership runs in the opposite direction. A `Reader` or `Buil
 
 `Stream` tracks its own state with `_closed` and `_initialized` flags rather than `LifecycleState`, but it supports the same three cleanup paths: context manager, explicit `.close()`, and `__del__` fallback.
 
-## Implementing a subclass of `ManagedResource`
+## Implementing a subclass of ManagedResource
 
 To wrap a new native resource, inherit from `ManagedResource` and follow these rules:
 
