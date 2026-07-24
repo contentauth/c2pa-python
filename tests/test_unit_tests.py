@@ -475,6 +475,22 @@ class TestReader(unittest.TestCase):
     def test_get_mime_type_from_path_no_suffix_returns_empty(self):
         self.assertEqual(_get_mime_type_from_path("asset"), "")
 
+    def test_get_mime_type_from_path_multi_dot_uses_final_suffix(self):
+        # Only the final suffix determines the type.
+        self.assertEqual(
+            _get_mime_type_from_path("photo.final.jpg"), "image/jpeg")
+
+    def test_get_mime_type_from_path_compound_extension(self):
+        # mimetypes treats ".gz" as an encoding, not a type suffix,
+        # the type is derived from ".tar"
+        result = _get_mime_type_from_path("archive.tar.gz")
+        self.assertIsInstance(result, str)
+        self.assertNotIn(result, ("image/jpeg", "image/dng"))
+
+    def test_get_mime_type_from_path_hidden_dotfile_returns_empty(self):
+        # Check how we handle files without suffix (usually hidden files)
+        self.assertEqual(_get_mime_type_from_path(".gitignore"), "")
+
     def test_get_mime_type_from_path_accepts_path_object(self):
         self.assertEqual(
             _get_mime_type_from_path(Path("dir/photo.jpg")), "image/jpeg")
