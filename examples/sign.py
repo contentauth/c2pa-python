@@ -110,6 +110,6 @@ with c2pa.Context() as context:
             # The validation state will depend on loaded trust settings.
             # Without loaded trust settings,
             # the manifest validation_state will be "Invalid".
-            print(reader.json())
+            print(reader.crjson())
 
 print("\nExample completed successfully!")
