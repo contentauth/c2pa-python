@@ -1201,7 +1201,8 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
     string so the caller hands it to the lib for auto-detection.
     A recognized-but-wrong extension still returns a mimetype:
     the native layer will attempt to correct it from the bytes when
-    reading (the real type still needs to be supported by the lib).
+    reading (the real type still needs to be supported by the lib),
+    and if it can't, an error will happen then.
 
     Args:
         path: File path as string or Path object
@@ -3679,8 +3680,8 @@ class Builder(ManagedResource):
 
         Raises:
             C2paError.NotSupported: If the format cannot be determined from
-                the source path (extensionless or unrecognized extension);
-                signing requires an explicit, resolvable format.
+                the source path (extensionless or unrecognized extension),
+                since signing requires an explicit, resolvable format.
             C2paError: If there was an error during signing
         """
         mime_type = _get_mime_type_from_path(source_path)
@@ -3699,6 +3700,9 @@ class Builder(ManagedResource):
                     return self.sign(signer, mime_type, source_file, dest_file)
                 # else:
                 return self.sign(mime_type, source_file, dest_file)
+        except C2paError:
+            # Preserve C2paError and its subtypes
+            raise
         except Exception as e:
             raise C2paError(f"Error signing file: {str(e)}") from e
 

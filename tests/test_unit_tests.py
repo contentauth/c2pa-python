@@ -300,14 +300,12 @@ class TestReader(unittest.TestCase):
 
     def test_stream_read_string_stream_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
-            # txt maps to text/plain in Python's built-in mimetypes
-            # default map, and text/plain isn't a supported mimetype now
+            # txt maps to text/plain
+            # text/plain isn't a supported mimetype now
             Reader(os.path.join(FIXTURES_DIR, "C.txt"))
 
     def test_try_create_raises_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
-            # txt maps to text/plain in Python's built-in mimetypes
-            # default map, and text/plain isn't a supported mimetype now
             Reader.try_create(os.path.join(FIXTURES_DIR, "C.txt"))
 
     def test_unrecognized_extension_defers_to_detection(self):
@@ -3552,6 +3550,15 @@ class TestBuilderWithSigner(unittest.TestCase):
             dest = os.path.join(tmp, "out.jpg")
             with self.assertRaises(Error.NotSupported):
                 builder.sign_file(weird, dest, self.signer)
+
+    def test_sign_file_exceptions_preservation(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "source.txt")
+            shutil.copyfile(self.testPath, src)
+            dest = os.path.join(tmp, "out.txt")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(src, dest, self.signer)
 
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
