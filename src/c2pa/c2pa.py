@@ -376,6 +376,15 @@ class ManagedResource:
         """Obtain a fresh native pointer, validate it, and take ownership.
         On any failure before ownership transfers, the pointer is freed
         and the error re-raised.
+
+        Args:
+            ffi_call: Zero-arg callable returning a fresh native pointer.
+            error_message: Message for the C2paError raised on failure.
+            check: Predicate marking a result invalid
+                (default: a falsy pointer).
+
+        Raises:
+            C2paError: If the pointer fails validation; it is freed first.
         """
         ptr = ffi_call()
         try:
@@ -1669,9 +1678,9 @@ class Context(ManagedResource, ContextProvider):
 
         def __init__(self):
             super().__init__()
-            ptr = _lib.c2pa_context_builder_new()
-            _check_ffi_operation_result(ptr, "Failed to create ContextBuilder")
-            self._activate(ptr)
+            self._create_and_activate(
+                _lib.c2pa_context_builder_new,
+                "Failed to create ContextBuilder")
 
     def __init__(
         self,
@@ -1694,11 +1703,9 @@ class Context(ManagedResource, ContextProvider):
 
         if settings is None and signer is None:
             # Simple default context
-            context_ptr = _lib.c2pa_context_new()
-            _check_ffi_operation_result(
-                context_ptr, "Failed to create Context"
-            )
-            self._activate(context_ptr)
+            self._create_and_activate(
+                _lib.c2pa_context_new,
+                "Failed to create Context")
         else:
             # Any failure inside the with frees the builder via close();
             # a successful build consumes it, so close() is then a no-op.

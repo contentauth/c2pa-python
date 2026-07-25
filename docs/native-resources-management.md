@@ -16,6 +16,18 @@
 
 A new wrapper around a native resource inherits from `ManagedResource` and follows the documented lifecycle rules.
 
+## Definitions
+
+A **native pointer** is an address that says where a piece of memory lives. The C2PA SDK is a Python wrapper around a Rust library (the "native" library), and that library allocates memory Python cannot see. When the SDK creates a `Reader`, `Builder`, `Signer`, `Context`, or `Settings`, the Python object holds a native pointer to memory that the native library allocated and manages. Python's garbage collector tracks the Python object but knows nothing about the native memory behind the pointer, so it cannot free it.
+
+The **native side** of the Rust library is reached through its C FFI.
+
+**Ownership** answers one question: who is responsible for freeing a piece of native memory. Native memory has to be freed exactly once. The owner is whoever must free it. If nobody frees it, the memory leaks. If two owners each free it, the same memory is freed twice, which corrupts the allocator and can crash the process. So exactly one side owns each pointer at any moment, and that side frees it.
+
+**Taking ownership** or **transferring ownership** means that responsibility moves from one holder to another. When Python hands a pointer to the native side and the native side takes ownership, the old holder must stop trying to free it, or the pointer gets freed twice. The [Ownership transfer](#ownership-transfer) section covers how the Python SDK handles this.
+
+A pointer is **consumed** when a native call takes ownership of the pointer passed to it, often returning a replacement pointer. Once a pointer is consumed, Python must not free it again, since the native side now owns it.
+
 ## Why is native resources management needed?
 
 ### Native pointers in a Python wrapper
