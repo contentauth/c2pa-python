@@ -22,7 +22,9 @@ A **native pointer** is an address that says where a piece of memory lives. The 
 
 The **native side** of the Rust library is reached through its C FFI.
 
-**Ownership** answers one question: who is responsible for freeing a piece of native memory. Native memory has to be freed exactly once. The owner is whoever must free it. If nobody frees it, the memory leaks. If two owners each free it, the same memory is freed twice, which corrupts the allocator and can crash the process. So exactly one side owns each pointer at any moment, and that side frees it.
+A **handle** is a single native pointer a `ManagedResource` object holds and manages, stored in its `_handle` attribute. Each object owns one handle at a time. The lifecycle machinery is mostly about tracking that one handle: creating it, swapping it, and freeing it.
+
+**Ownership** answers one question: who is responsible for freeing a piece of native memory. Native memory has to be freed (exactly once). The owner is whoever must free it. If nobody frees it, the memory leaks. If two owners each free it, the same memory is freed twice, which corrupts the allocator and can crash the process. So exactly one side owns each pointer at any moment, and that side frees it.
 
 **Taking ownership** or **transferring ownership** means that responsibility moves from one holder to another. When Python hands a pointer to the native side and the native side takes ownership, the old holder must stop trying to free it, or the pointer gets freed twice. The [Ownership transfer](#ownership-transfer) section covers how the Python SDK handles this.
 
