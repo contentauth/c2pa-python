@@ -1952,7 +1952,8 @@ def _get_supported_mime_types(ffi_func, cache):
             try:
                 if arr[i] is None:
                     continue
-                mime_type = arr[i].decode("utf-8", errors='replace')
+                mime_type = arr[i].decode(
+                    "utf-8", errors='replace').strip().lower()
                 if mime_type:
                     result.append(mime_type)
             except Exception:
@@ -1972,50 +1973,51 @@ def _get_supported_mime_types(ffi_func, cache):
 
 
 def _validate_and_encode_format(
-    format_str: str,
+    format_str: Optional[str],
     supported_types: list[str],
     class_name: str,
     allow_autodetect: bool = True,
 ) -> bytes:
     """Validate a MIME type/format string and encode it to UTF-8 bytes.
 
-    A blank format (e.g. empty) is treated as a request for format auto-detect
-    when allow_autodetect is True (default), letting the native library
-    guess the mimetype/format.
-    When allow_autodetect is False, a blank format is rejected instead
-    (e.g. when we want to enforce an explicit format).
-    A non-empty format is always validated against the supported list.
+    None, an empty string, or whitespace all mean the same thing: no format
+    was given. When allow_autodetect is True (default), that requests
+    auto-detection and the native library guesses the format from the bytes.
+    Auto-detection is best effort, so pass the format when you know it.
+    When allow_autodetect is False, a missing format is rejected instead.
+    A given format is matched case- and whitespace-insensitively against the
+    supported list.
 
     Args:
-        format_str: The MIME type or format string to validate. Pass an empty
-            or whitespace-only string to request auto-detection from the
+        format_str: The MIME type or format to validate, or None. Pass None,
+            an empty string, or whitespace to request auto-detection from the
             asset's bytes (only when ``allow_autodetect`` is True).
-        supported_types: List of supported MIME types
-        class_name: Name of the calling class (for error messages)
-        allow_autodetect: When True (default), a blank format requests
-            auto-detection. When False, a blank format raises
+        supported_types: List of supported MIME types.
+        class_name: Name of the calling class (for error messages).
+        allow_autodetect: When True (default), a missing format requests
+            auto-detection. When False, a missing format raises
             C2paError.NotSupported.
 
     Returns:
-        UTF-8 encoded format bytes (empty bytes for auto-detection)
+        UTF-8 encoded format bytes (empty bytes for auto-detection).
 
     Raises:
-        C2paError.NotSupported: If the format is non-empty and unsupported,
-            or if the format is blank and ``allow_autodetect`` is False.
-        C2paError.Encoding: If the non-empty string contains
-            invalid UTF-8 characters
+        C2paError.NotSupported: If a given format is unsupported, or if the
+            format is missing and ``allow_autodetect`` is False.
+        C2paError.Encoding: If the format contains invalid UTF-8 characters.
     """
-    if not format_str.strip():
+    key = (format_str or "").strip()
+    if not key:
         if allow_autodetect:
             return b""
         raise C2paError.NotSupported(
             f"{class_name} requires an explicit format (MIME type)"
         )
-    if format_str.lower() not in supported_types:
+    if key.lower() not in supported_types:
         raise C2paError.NotSupported(
             f"{class_name} does not support {format_str}")
     try:
-        return format_str.encode('utf-8')
+        return key.encode('utf-8')
     except UnicodeError as e:
         raise C2paError.Encoding(
             f"Invalid UTF-8 characters in input: {e}")
@@ -2083,7 +2085,7 @@ class Reader(ManagedResource):
     @overload
     def try_create(
         cls,
-        format_or_path: Union[str, Path],
+        format_or_path: Union[str, Path, None],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
     ) -> Optional["Reader"]: ...
@@ -2092,7 +2094,7 @@ class Reader(ManagedResource):
     @overload
     def try_create(
         cls,
-        format_or_path: Union[str, Path],
+        format_or_path: Union[str, Path, None],
         stream: Optional[Any],
         manifest_data: Optional[Any],
         context: 'ContextProvider',
@@ -2101,7 +2103,7 @@ class Reader(ManagedResource):
     @classmethod
     def try_create(
         cls,
-        format_or_path: Union[str, Path],
+        format_or_path: Union[str, Path, None],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
@@ -2116,7 +2118,8 @@ class Reader(ManagedResource):
         exceptions for the expected case of no manifest.
 
         Args:
-            format_or_path: The format or path to read from
+            format_or_path: The format or path to read from.
+                None or an empty string requests auto-detection (best effort).
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional ContextProvider for settings
@@ -2139,7 +2142,7 @@ class Reader(ManagedResource):
     @overload
     def __init__(
         self,
-        format_or_path: Union[str, Path],
+        format_or_path: Union[str, Path, None],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
     ) -> None: ...
@@ -2147,7 +2150,7 @@ class Reader(ManagedResource):
     @overload
     def __init__(
         self,
-        format_or_path: Union[str, Path],
+        format_or_path: Union[str, Path, None],
         stream: Optional[Any],
         manifest_data: Optional[Any],
         context: 'ContextProvider',
@@ -2155,22 +2158,23 @@ class Reader(ManagedResource):
 
     def __init__(
         self,
-        format_or_path: Union[str, Path],
+        format_or_path: Union[str, Path, None],
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
     ):
         """Create a new Reader.
 
-        The format is optional: pass an empty string (or read an extensionless
-        file by path) to let the native library detect the format.
+        The format is optional: pass None, an empty string, or read an
+        extensionless file by path to let the native library detect the
+        format. Detection is best effort, so pass the format when you know it.
         A recognized but wrong format/extension is also corrected from the bytes
         when reading (so reading doesn't fail on wrong file extension).
         If the bytes are not a recognized asset, a C2paError is raised.
 
         Args:
             format_or_path: The format (MIME type) or path to read from.
-                An empty string is an auto-detection request.
+                None or an empty string requests auto-detection.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional context implementing ContextProvider with settings
@@ -2221,14 +2225,16 @@ class Reader(ManagedResource):
         elif isinstance(stream, str):
             # stream is a file path, format_or_path is the format
             format_bytes = _validate_and_encode_format(
-                str(format_or_path), supported, "Reader")
+                None if format_or_path is None else str(format_or_path),
+                supported, "Reader")
             self._init_from_file(
                 stream, format_bytes, manifest_data)
 
         else:
             # format_or_path is a format string, stream is a stream object
             format_bytes = _validate_and_encode_format(
-                str(format_or_path), supported, "Reader")
+                None if format_or_path is None else str(format_or_path),
+                supported, "Reader")
 
             with Stream(stream) as stream_obj:
                 self._create_reader(
@@ -2312,12 +2318,14 @@ class Reader(ManagedResource):
             self._own_stream = Stream(self._backing_file)
         elif isinstance(stream, str):
             format_bytes = _validate_and_encode_format(
-                str(format_or_path), supported, "Reader")
+                None if format_or_path is None else str(format_or_path),
+                supported, "Reader")
             self._backing_file = open(stream, 'rb')
             self._own_stream = Stream(self._backing_file)
         else:
             format_bytes = _validate_and_encode_format(
-                str(format_or_path), supported, "Reader")
+                None if format_or_path is None else str(format_or_path),
+                supported, "Reader")
             self._own_stream = Stream(stream)
 
         try:
@@ -2423,7 +2431,7 @@ class Reader(ManagedResource):
 
         return self._manifest_data_cache
 
-    def with_fragment(self, format: str, stream,
+    def with_fragment(self, format: Optional[str], stream,
                       fragment_stream) -> "Reader":
         """Process a BMFF fragment stream with this reader.
 
@@ -2431,7 +2439,8 @@ class Reader(ManagedResource):
         content is split into init segments and fragment files.
 
         Args:
-            format: MIME type of the media (e.g., "video/mp4")
+            format: MIME type of the media (e.g., "video/mp4").
+                None or an empty string requests auto-detection (best effort).
             stream: Stream-like object with the main/init segment data
             fragment_stream: Stream-like object with the fragment data
 

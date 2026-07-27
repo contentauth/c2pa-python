@@ -88,6 +88,66 @@ class TestC2paSdk(unittest.TestCase):
         self.assertIn(parse_native_version(), sdk_version())
 
 
+class TestFormatValidation(unittest.TestCase):
+    """Unit tests for _validate_and_encode_format.
+    """
+
+    SUPPORTED = ["image/jpeg", "image/png"]
+
+    def test_strips_whitespace_from_query(self):
+        for value in (" image/jpeg", "image/jpeg ", "\timage/jpeg\n"):
+            self.assertEqual(
+                _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
+                b"image/jpeg")
+
+    def test_case_insensitive_match_preserves_case(self):
+        for value in ("IMAGE/JPEG", "Image/Jpeg"):
+            self.assertEqual(
+                _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
+                value.encode("utf-8"))
+
+    def test_encodes_stripped_key(self):
+        self.assertEqual(
+            _validate_and_encode_format(
+                "  IMAGE/JPEG  ", self.SUPPORTED, "Reader"),
+            b"IMAGE/JPEG")
+
+    def test_production_supported_list_is_normalized(self):
+        # _get_supported_mime_types strips and lowercases every entry.
+        for entry in Reader.get_supported_mime_types():
+            self.assertEqual(entry, entry.strip().lower())
+
+    def test_none_autodetects(self):
+        self.assertEqual(
+            _validate_and_encode_format(None, self.SUPPORTED, "Reader"),
+            b"")
+
+    def test_blank_autodetects(self):
+        for value in ("", "   ", "\t\n"):
+            self.assertEqual(
+                _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
+                b"")
+
+    def test_missing_format_rejected_when_autodetect_disabled(self):
+        for value in (None, "", "   "):
+            with self.assertRaises(Error.NotSupported):
+                _validate_and_encode_format(
+                    value, self.SUPPORTED, "Builder",
+                    allow_autodetect=False)
+
+    def test_unsupported_format_raises_with_original_in_message(self):
+        with self.assertRaises(Error.NotSupported) as ctx:
+            _validate_and_encode_format(
+                "application/x-nope", self.SUPPORTED, "Reader")
+        self.assertIn("application/x-nope", str(ctx.exception))
+
+    def test_literal_none_string_is_not_a_valid_format(self):
+        # The string "None" (as opposed to the None object) is not a
+        # real type and must still be rejected.
+        with self.assertRaises(Error.NotSupported):
+            _validate_and_encode_format("None", self.SUPPORTED, "Reader")
+
+
 class TestReader(unittest.TestCase):
     def setUp(self):
         warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
@@ -307,6 +367,32 @@ class TestReader(unittest.TestCase):
     def test_try_create_raises_mimetype_not_supported(self):
         with self.assertRaises(Error.NotSupported):
             Reader.try_create(os.path.join(FIXTURES_DIR, "C.txt"))
+
+    def test_none_format_matches_empty_string_on_stream(self):
+        # None and "" both request auto-detection and read the same asset.
+        with open(self.testPath, "rb") as file:
+            with Reader(None, file) as reader:
+                none_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                empty_json = reader.json()
+        self.assertEqual(none_json, empty_json)
+        self.assertNotIn("None", none_json[:64])
+
+    def test_padded_format_accepted_on_stream(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(" image/jpeg ", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_none_format_matches_empty_string(self):
+        with open(self.testPath, "rb") as file:
+            none_reader = Reader.try_create(None, file)
+        self.assertIsNotNone(none_reader)
+        with open(self.testPath, "rb") as file:
+            empty_reader = Reader.try_create("", file)
+        self.assertIsNotNone(empty_reader)
+        if none_reader is not None and empty_reader is not None:
+            self.assertEqual(none_reader.json(), empty_reader.json())
 
     def test_unrecognized_extension_defers_to_detection(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1350,6 +1436,22 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.close()
             with self.assertRaises(Error):
               builder.sign(self.signer, "image/jpeg", file, output)
+
+    def test_sign_rejects_none_format(self):
+        # sign requires an explicit format; None must raise NotSupported.
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            with self.assertRaises(Error.NotSupported):
+                builder.sign(self.signer, None, file, output)
+
+    def test_sign_accepts_padded_format(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            manifest_bytes = builder.sign(
+                self.signer, " image/jpeg ", file, output)
+            self.assertTrue(len(manifest_bytes) > 0)
 
     def test_builder_does_not_allow_archiving_after_close(self):
         with open(self.testPath, "rb") as file:
