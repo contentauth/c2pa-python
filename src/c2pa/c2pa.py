@@ -1988,7 +1988,7 @@ def _validate_and_encode_format(
     Auto-detection is best effort, so pass the format when you know it.
     When allow_autodetect is False, a missing format is rejected instead.
     A given format is matched case- and whitespace-insensitively against the
-    supported list.
+    supported list, and is returned normalized as lowercase.
 
     Args:
         format_str: The MIME type or format to validate, or None. Pass None,
@@ -2001,21 +2001,21 @@ def _validate_and_encode_format(
             C2paError.NotSupported.
 
     Returns:
-        UTF-8 encoded format bytes (empty bytes for auto-detection).
+        UTF-8 encoded lowercase format bytes (empty bytes for auto-detection).
 
     Raises:
         C2paError.NotSupported: If a given format is unsupported, or if the
             format is missing and ``allow_autodetect`` is False.
         C2paError.Encoding: If the format contains invalid UTF-8 characters.
     """
-    key = (format_str or "").strip()
+    key = (format_str or "").strip().lower()
     if not key:
         if allow_autodetect:
             return b""
         raise C2paError.NotSupported(
             f"{class_name} requires an explicit format (MIME type)"
         )
-    if key.lower() not in supported_types:
+    if key not in supported_types:
         raise C2paError.NotSupported(
             f"{class_name} does not support {format_str}")
     try:

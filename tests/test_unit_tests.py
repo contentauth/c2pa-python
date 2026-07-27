@@ -193,17 +193,17 @@ class TestFormatValidation(unittest.TestCase):
                 _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
                 b"image/jpeg")
 
-    def test_case_insensitive_match_preserves_case(self):
+    def test_case_insensitive_match_normalizes_case(self):
         for value in ("IMAGE/JPEG", "Image/Jpeg"):
             self.assertEqual(
                 _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
-                value.encode("utf-8"))
+                b"image/jpeg")
 
-    def test_encodes_stripped_key(self):
+    def test_encodes_stripped_and_normalized_key(self):
         self.assertEqual(
             _validate_and_encode_format(
                 "  IMAGE/JPEG  ", self.SUPPORTED, "Reader"),
-            b"IMAGE/JPEG")
+            b"image/jpeg")
 
     def test_production_supported_list_is_normalized(self):
         # _get_supported_mime_types strips and lowercases every entry.
@@ -804,7 +804,7 @@ class TestReader(unittest.TestCase):
         self.assertEqual(
             _validate_and_encode_format(
                 "IMAGE/JPEG", ["image/jpeg"], "Reader"),
-            b"IMAGE/JPEG")
+            b"image/jpeg")
 
     def test_validate_and_encode_format_unsupported_raises(self):
         with self.assertRaises(Error.NotSupported):
@@ -3332,6 +3332,41 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.add_ingredient(ingredient_json, "image/png", f)
 
         builder.close()
+
+    def test_sign_with_any_format_spelling_keeps_thumbnail(self):
+        # The format reaches thumbnail generation,
+        # which matches a MIME type case sensitively,
+        # so an unnormalized spelling silently produces no thumbnail.
+        for fmt in ("image/jpeg", "IMAGE/JPEG", "Image/Jpeg", "jpg", "JPG"):
+            with self.subTest(format=fmt):
+                builder = Builder(self.manifestDefinition)
+                dest = io.BytesIO()
+                with open(self.testPath, "rb") as source:
+                    builder.sign(self.signer, fmt, source, dest)
+
+                dest.seek(0)
+                reader = Reader("image/jpeg", dest)
+                manifest_store = json.loads(reader.json())
+                active = manifest_store["manifests"][
+                    manifest_store["active_manifest"]]
+
+                self.assertIn(
+                    "thumbnail", active,
+                    f"signing with {fmt} dropped the claim thumbnail")
+                thumbnail = active["thumbnail"]
+                self.assertEqual(thumbnail["format"], "image/jpeg")
+
+                # The reference must resolve to a real JPEG, not just be present.
+                thumbnail_bytes = io.BytesIO()
+                reader.resource_to_stream(
+                    thumbnail["identifier"], thumbnail_bytes)
+                data = thumbnail_bytes.getvalue()
+                self.assertGreater(
+                    len(data), 1000,
+                    f"signing with {fmt} produced an empty claim thumbnail")
+                self.assertEqual(
+                    data[:3], b"\xff\xd8\xff",
+                    f"signing with {fmt} produced a thumbnail that is not a JPEG")
 
     def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
         builder = Builder.from_json(self.manifestDefinition)
