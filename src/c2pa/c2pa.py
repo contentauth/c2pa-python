@@ -1570,6 +1570,9 @@ class Stream:
     # Maximum value for a 32-bit signed integer (2^31 - 1)
     _MAX_STREAM_ID = 2**31 - 1
 
+    # Methods an object must expose to be wrapped as Stream.
+    _REQUIRED_STREAM_METHODS = ("read", "write", "seek", "tell", "flush")
+
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'stream_error': "Error cleaning up stream: {}",
@@ -1616,15 +1619,14 @@ class Stream:
         self._stream_id = f"{id(self)}-{stream_counter}"
 
         # Rest of the existing initialization code...
-        required_methods = ['read', 'write', 'seek', 'tell', 'flush']
         missing_methods = [
-            method for method in required_methods if not hasattr(
+            method for method in Stream._REQUIRED_STREAM_METHODS if not hasattr(
                 file_like_stream, method)]
         if missing_methods:
             raise TypeError(
                 "Object must be a stream-like object with methods: {}. "
                 "Missing: {}".format(
-                    ", ".join(required_methods),
+                    ", ".join(Stream._REQUIRED_STREAM_METHODS),
                     ", ".join(missing_methods),
                 )
             )
@@ -1976,7 +1978,7 @@ def _encode_format(
     format_str: Optional[str],
     class_name: str,
     allow_autodetect: bool = True,
-) -> bytes:
+) -> Optional[bytes]:
     """Normalize a MIME type/format string and encode it to UTF-8 bytes.
 
     The binding does not validate the format itself: the native library is the
@@ -1998,17 +2000,19 @@ def _encode_format(
             C2paError.NotSupported.
 
     Returns:
-        UTF-8 encoded format bytes (empty bytes for auto-detection).
+        The lowercased UTF-8 format bytes, or None to request auto-detection
+        (no format given). Use _format_ffi_arg to turn the result into the
+        empty-bytes flag the native library expects.
 
     Raises:
         C2paError.NotSupported: If the format is missing and
             ``allow_autodetect`` is False.
         C2paError.Encoding: If the format contains invalid UTF-8 characters.
     """
-    key = (format_str or "").strip()
+    key = (format_str or "").strip().lower()
     if not key:
         if allow_autodetect:
-            return b""
+            return None
         raise C2paError.NotSupported(
             f"{class_name} requires an explicit format (MIME type)"
         )
@@ -2017,6 +2021,26 @@ def _encode_format(
     except UnicodeError as e:
         raise C2paError.Encoding(
             f"Invalid UTF-8 characters in input: {e}")
+
+
+def _format_ffi_arg(fmt: Optional[bytes]) -> bytes:
+    """Convert an encoded format to the native FFI argument.
+
+    The native library treats empty bytes as the "detect the type from the
+    bytes" flag, so a missing format (None) maps to b"" rather than a NULL
+    ``c_char_p``.
+    """
+    return fmt if fmt is not None else b""
+
+
+def _is_read_stream(obj) -> bool:
+    """Return True if obj is a stream-like object this SDK can use.
+    Note: only method presence to identify streams are checked,
+    not that they work (a broken stream can fail later).
+    """
+    if obj is None or isinstance(obj, (str, Path)):
+        return False
+    return all(hasattr(obj, method) for method in Stream._REQUIRED_STREAM_METHODS)
 
 
 class Reader(ManagedResource):
@@ -2085,7 +2109,16 @@ class Reader(ManagedResource):
     @overload
     def try_create(
         cls,
-        format_or_path: Union[str, Path, None],
+        stream: Any,
+        manifest_data: Optional[Any] = None,
+        context: Optional['ContextProvider'] = None,
+    ) -> Optional["Reader"]: ...
+
+    @classmethod
+    @overload
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
     ) -> Optional["Reader"]: ...
@@ -2103,7 +2136,7 @@ class Reader(ManagedResource):
     @classmethod
     def try_create(
         cls,
-        format_or_path: Union[str, Path, None],
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
@@ -2117,9 +2150,13 @@ class Reader(ManagedResource):
         want to check if an asset contains C2PA data without handling
         exceptions for the expected case of no manifest.
 
+        Pass a stream as the only argument (``try_create(stream)``) to read it
+        with an auto-detected format.
+
         Args:
-            format_or_path: The format or path to read from.
-                None or an empty string requests auto-detection (best effort).
+            format_or_path: The format or path to read from, or a stream to
+                read with an auto-detected format. None or an empty string
+                requests auto-detection (best effort).
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional ContextProvider for settings
@@ -2142,7 +2179,15 @@ class Reader(ManagedResource):
     @overload
     def __init__(
         self,
-        format_or_path: Union[str, Path, None],
+        stream: Any,
+        manifest_data: Optional[Any] = None,
+        context: Optional['ContextProvider'] = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
     ) -> None: ...
@@ -2158,7 +2203,7 @@ class Reader(ManagedResource):
 
     def __init__(
         self,
-        format_or_path: Union[str, Path, None],
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
@@ -2178,9 +2223,13 @@ class Reader(ManagedResource):
         sidecar. If the bytes are not a recognized asset and no format resolves
         the type, a C2paError is raised.
 
+        Pass a stream as the only argument (``Reader(stream)``) to read it with
+        an auto-detected format.
+
         Args:
-            format_or_path: The format (MIME type) or path to read from.
-                None or an empty string requests detection from the bytes.
+            format_or_path: The format (MIME type) or path to read from, or a
+                stream to read with an auto-detected format. None or an empty
+                string requests detection from the bytes.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional context implementing ContextProvider with settings
@@ -2209,6 +2258,15 @@ class Reader(ManagedResource):
 
         self._context = context
 
+        # Only stream, no format: Reader(fh) must auto-detect on the stream.
+        if stream is None and _is_read_stream(format_or_path):
+            stream = format_or_path
+            format_or_path = None
+        # A context supplies settings, not the asset, so a path or stream is
+        # still required to read from.
+        if format_or_path is None and stream is None:
+            raise C2paError("Reader requires a path or a stream")
+
         if context is not None:
             self._init_from_context(
                 context, format_or_path, stream,
@@ -2216,46 +2274,53 @@ class Reader(ManagedResource):
             )
             return
 
+        format_bytes = self._resolve_format_bytes(format_or_path, stream)
+
         if stream is None:
             # Create a stream from the file path in format_or_path.
-            # Empty format = native lib will try to guess format.
-            path = str(format_or_path)
-            mime_type = _get_mime_type_from_path(path)
-
-            format_bytes = _encode_format(mime_type, "Reader")
-            self._init_from_file(path, format_bytes)
+            # A None format lets the native lib guess from the bytes.
+            self._init_from_file(str(format_or_path), format_bytes)
 
         elif isinstance(stream, str):
             # stream is a file path, format_or_path is the format
-            format_bytes = _encode_format(
-                None if format_or_path is None else str(format_or_path),
-                "Reader")
             self._init_from_file(
                 stream, format_bytes, manifest_data)
 
         else:
             # format_or_path is a format string, stream is a stream object
-            format_bytes = _encode_format(
-                None if format_or_path is None else str(format_or_path),
-                "Reader")
-
             with Stream(stream) as stream_obj:
                 self._create_reader(
                     format_bytes, stream_obj, manifest_data)
                 self._lifecycle_state = LifecycleState.ACTIVE
+
+    @staticmethod
+    def _resolve_format_bytes(format_or_path, stream) -> Optional[bytes]:
+        """Resolve the encoded format for a (format_or_path, stream) pair.
+
+        When only a path is given (``stream is None``), the format is derived
+        from the file extension. Otherwise ``format_or_path`` is the format
+        string (or None).
+        Returns None to request auto-detection.
+        """
+        if stream is None:
+            return _encode_format(
+                _get_mime_type_from_path(str(format_or_path)), "Reader")
+        return _encode_format(
+            None if format_or_path is None else str(format_or_path), "Reader")
 
     def _create_reader(self, format_bytes, stream_obj,
                        manifest_data=None):
         """Create a Reader from a Stream.
 
         Args:
-            format_bytes: UTF-8 encoded format/MIME type
+            format_bytes: Encoded format/MIME type, or None for auto-detection
             stream_obj: A Stream instance
             manifest_data: Optional manifest bytes
         """
+        format_arg = _format_ffi_arg(format_bytes)
         if manifest_data is None:
             self._handle = _lib.c2pa_reader_from_stream(
-                format_bytes, stream_obj._stream)
+                format_arg, stream_obj._stream)
         else:
             if not isinstance(manifest_data, bytes):
                 raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
@@ -2264,7 +2329,7 @@ class Reader(ManagedResource):
                 len(manifest_data)).from_buffer_copy(manifest_data)
             self._handle = (
                 _lib.c2pa_reader_from_manifest_data_and_stream(
-                    format_bytes,
+                    format_arg,
                     stream_obj._stream,
                     manifest_array,
                     len(manifest_data),
@@ -2309,23 +2374,16 @@ class Reader(ManagedResource):
             raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
 
         # Determine format and open stream
+        format_bytes = self._resolve_format_bytes(format_or_path, stream)
+        format_arg = _format_ffi_arg(format_bytes)
         if stream is None:
-            # Empty format = native lib will try to guess format.
-            path = str(format_or_path)
-            mime_type = _get_mime_type_from_path(path)
-            format_bytes = _encode_format(mime_type, "Reader")
-            self._backing_file = open(path, 'rb')
+            # A None format lets the native lib guess from the bytes.
+            self._backing_file = open(str(format_or_path), 'rb')
             self._own_stream = Stream(self._backing_file)
         elif isinstance(stream, str):
-            format_bytes = _encode_format(
-                None if format_or_path is None else str(format_or_path),
-                "Reader")
             self._backing_file = open(stream, 'rb')
             self._own_stream = Stream(self._backing_file)
         else:
-            format_bytes = _encode_format(
-                None if format_or_path is None else str(format_or_path),
-                "Reader")
             self._own_stream = Stream(stream)
 
         try:
@@ -2354,7 +2412,7 @@ class Reader(ManagedResource):
                 new_ptr = (
                     _lib.c2pa_reader_with_manifest_data_and_stream(
                         reader_ptr,
-                        format_bytes,
+                        format_arg,
                         self._own_stream._stream,
                         manifest_array,
                         len(manifest_data),
@@ -2363,7 +2421,7 @@ class Reader(ManagedResource):
             else:
                 # Consume reader with stream
                 new_ptr = _lib.c2pa_reader_with_stream(
-                    reader_ptr, format_bytes,
+                    reader_ptr, format_arg,
                     self._own_stream._stream,
                 )
 
@@ -2453,12 +2511,12 @@ class Reader(ManagedResource):
         """
         self._ensure_valid_state()
 
-        format_bytes = _encode_format(format, "Reader")
+        format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
         with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
             new_ptr = _lib.c2pa_reader_with_fragment(
                 self._handle,
-                format_bytes,
+                format_arg,
                 main_obj._stream,
                 frag_obj._stream,
             )
@@ -3472,15 +3530,16 @@ class Builder(ManagedResource):
             if not hasattr(signer, '_handle') or not signer._handle:
                 raise C2paError("Invalid or closed signer")
 
-        format_bytes = _encode_format(
-            format, "Builder", allow_autodetect=False)
+        # allow_autodetect=False, so this never returns None (raises instead).
+        format_arg = _format_ffi_arg(
+            _encode_format(format, "Builder", allow_autodetect=False))
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         try:
             if signer is not None:
                 result = _lib.c2pa_builder_sign(
                     self._handle,
-                    format_bytes,
+                    format_arg,
                     source_stream._stream,
                     dest_stream._stream,
                     signer._handle,
@@ -3489,7 +3548,7 @@ class Builder(ManagedResource):
             else:
                 result = _lib.c2pa_builder_sign_context(
                     self._handle,
-                    format_bytes,
+                    format_arg,
                     source_stream._stream,
                     dest_stream._stream,
                     ctypes.byref(manifest_bytes_ptr),
