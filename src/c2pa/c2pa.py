@@ -1972,38 +1972,37 @@ def _get_supported_mime_types(ffi_func, cache):
     return [], cache
 
 
-def _validate_and_encode_format(
+def _encode_format(
     format_str: Optional[str],
-    supported_types: list[str],
     class_name: str,
     allow_autodetect: bool = True,
 ) -> bytes:
-    """Validate a MIME type/format string and encode it to UTF-8 bytes.
+    """Normalize a MIME type/format string and encode it to UTF-8 bytes.
 
-    None, an empty string, or whitespace all mean the same thing: no format
-    was given. When allow_autodetect is True (default), that requests
-    auto-detection and the native library guesses the format from the bytes.
-    Auto-detection is best effort, so pass the format when you know it.
-    When allow_autodetect is False, a missing format is rejected instead.
-    A given format is matched case- and whitespace-insensitively against the
-    supported list.
+    The binding does not validate the format itself: the native library is the
+    authority on what is supported and detects the asset type from the bytes,
+    so the format is passed straight through after trimming whitespace.
+
+    None, an empty string, or whitespace all mean the same thing: no format was
+    given. When allow_autodetect is True (default), that requests detection and
+    the native library guesses the type from the bytes. When allow_autodetect
+    is False, a missing format is rejected instead.
 
     Args:
-        format_str: The MIME type or format to validate, or None. Pass None,
-            an empty string, or whitespace to request auto-detection from the
-            asset's bytes (only when ``allow_autodetect`` is True).
-        supported_types: List of supported MIME types.
+        format_str: The MIME type or format, or None. Pass None, an empty
+            string, or whitespace to request detection from the asset's bytes
+            (only when ``allow_autodetect`` is True).
         class_name: Name of the calling class (for error messages).
         allow_autodetect: When True (default), a missing format requests
-            auto-detection. When False, a missing format raises
+            detection. When False, a missing format raises
             C2paError.NotSupported.
 
     Returns:
         UTF-8 encoded format bytes (empty bytes for auto-detection).
 
     Raises:
-        C2paError.NotSupported: If a given format is unsupported, or if the
-            format is missing and ``allow_autodetect`` is False.
+        C2paError.NotSupported: If the format is missing and
+            ``allow_autodetect`` is False.
         C2paError.Encoding: If the format contains invalid UTF-8 characters.
     """
     key = (format_str or "").strip()
@@ -2013,9 +2012,6 @@ def _validate_and_encode_format(
         raise C2paError.NotSupported(
             f"{class_name} requires an explicit format (MIME type)"
         )
-    if key.lower() not in supported_types:
-        raise C2paError.NotSupported(
-            f"{class_name} does not support {format_str}")
     try:
         return key.encode('utf-8')
     except UnicodeError as e:
@@ -2070,6 +2066,10 @@ class Reader(ManagedResource):
     @classmethod
     def _is_mime_type_supported(cls, mime_type: str) -> bool:
         """Check if a MIME type is supported.
+
+        Not used internally: the native library is the authority on format
+        support and detects the type from the bytes. Kept for callers that
+        want a pre-flight check before handing an asset to a Reader.
 
         Args:
             mime_type: The MIME type to check
@@ -2165,16 +2165,22 @@ class Reader(ManagedResource):
     ):
         """Create a new Reader.
 
-        The format is optional: pass None, an empty string, or read an
-        extensionless file by path to let the native library detect the
-        format. Detection is best effort, so pass the format when you know it.
-        A recognized but wrong format/extension is also corrected from the bytes
-        when reading (so reading doesn't fail on wrong file extension).
-        If the bytes are not a recognized asset, a C2paError is raised.
+        The format is optional. Passing a known format gives the native
+        library more to work with, so prefer it. Pass None, an empty string,
+        or an extensionless file path to let the library detect the type from
+        the asset bytes.
+
+        The library reconciles the format against the container it detects in
+        the bytes: when the given format disagrees with the detected container,
+        the library ignores the format and uses its own best guess (so reading
+        does not fail on a wrong file extension); when no container is
+        detected, the format is used as a hint and the asset is treated as a
+        sidecar. If the bytes are not a recognized asset and no format resolves
+        the type, a C2paError is raised.
 
         Args:
             format_or_path: The format (MIME type) or path to read from.
-                None or an empty string requests auto-detection.
+                None or an empty string requests detection from the bytes.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional context implementing ContextProvider with settings
@@ -2210,31 +2216,28 @@ class Reader(ManagedResource):
             )
             return
 
-        supported = Reader.get_supported_mime_types()
-
         if stream is None:
             # Create a stream from the file path in format_or_path.
             # Empty format = native lib will try to guess format.
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
 
-            format_bytes = _validate_and_encode_format(
-                mime_type, supported, "Reader")
+            format_bytes = _encode_format(mime_type, "Reader")
             self._init_from_file(path, format_bytes)
 
         elif isinstance(stream, str):
             # stream is a file path, format_or_path is the format
-            format_bytes = _validate_and_encode_format(
+            format_bytes = _encode_format(
                 None if format_or_path is None else str(format_or_path),
-                supported, "Reader")
+                "Reader")
             self._init_from_file(
                 stream, format_bytes, manifest_data)
 
         else:
             # format_or_path is a format string, stream is a stream object
-            format_bytes = _validate_and_encode_format(
+            format_bytes = _encode_format(
                 None if format_or_path is None else str(format_or_path),
-                supported, "Reader")
+                "Reader")
 
             with Stream(stream) as stream_obj:
                 self._create_reader(
@@ -2306,26 +2309,23 @@ class Reader(ManagedResource):
             raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
 
         # Determine format and open stream
-        supported = Reader.get_supported_mime_types()
-
         if stream is None:
             # Empty format = native lib will try to guess format.
             path = str(format_or_path)
             mime_type = _get_mime_type_from_path(path)
-            format_bytes = _validate_and_encode_format(
-                mime_type, supported, "Reader")
+            format_bytes = _encode_format(mime_type, "Reader")
             self._backing_file = open(path, 'rb')
             self._own_stream = Stream(self._backing_file)
         elif isinstance(stream, str):
-            format_bytes = _validate_and_encode_format(
+            format_bytes = _encode_format(
                 None if format_or_path is None else str(format_or_path),
-                supported, "Reader")
+                "Reader")
             self._backing_file = open(stream, 'rb')
             self._own_stream = Stream(self._backing_file)
         else:
-            format_bytes = _validate_and_encode_format(
+            format_bytes = _encode_format(
                 None if format_or_path is None else str(format_or_path),
-                supported, "Reader")
+                "Reader")
             self._own_stream = Stream(stream)
 
         try:
@@ -2439,8 +2439,9 @@ class Reader(ManagedResource):
         content is split into init segments and fragment files.
 
         Args:
-            format: MIME type of the media (e.g., "video/mp4").
-                None or an empty string requests auto-detection (best effort).
+            format: MIME type of the media (e.g., "video/mp4"). None or an
+                empty string requests detection from the bytes; the native
+                library reconciles the format against the detected container.
             stream: Stream-like object with the main/init segment data
             fragment_stream: Stream-like object with the fragment data
 
@@ -2452,10 +2453,7 @@ class Reader(ManagedResource):
         """
         self._ensure_valid_state()
 
-        supported = Reader.get_supported_mime_types()
-        format_bytes = _validate_and_encode_format(
-            format, supported, "Reader"
-        )
+        format_bytes = _encode_format(format, "Reader")
 
         with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
             new_ptr = _lib.c2pa_reader_with_fragment(
@@ -3454,7 +3452,8 @@ class Builder(ManagedResource):
         are single-sign use. The Builder is closed after signing.
 
         Args:
-            format: The MIME type or extension of the content
+            format: The MIME type or extension of the content. Required for
+                signing: a missing format raises C2paError.NotSupported.
             source_stream: The source stream
             dest_stream: The destination stream,
                 opened in w+b (write+read binary) mode.
@@ -3473,9 +3472,8 @@ class Builder(ManagedResource):
             if not hasattr(signer, '_handle') or not signer._handle:
                 raise C2paError("Invalid or closed signer")
 
-        format_bytes = _validate_and_encode_format(
-            format, Builder.get_supported_mime_types(), "Builder",
-            allow_autodetect=False)
+        format_bytes = _encode_format(
+            format, "Builder", allow_autodetect=False)
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         try:

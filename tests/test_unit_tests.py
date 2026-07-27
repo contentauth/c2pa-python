@@ -30,7 +30,7 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _validate_and_encode_format
+from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format
 from pathlib import Path
 
 
@@ -89,27 +89,28 @@ class TestC2paSdk(unittest.TestCase):
 
 
 class TestFormatValidation(unittest.TestCase):
-    """Unit tests for _validate_and_encode_format.
-    """
+    """Unit tests for _encode_format.
 
-    SUPPORTED = ["image/jpeg", "image/png"]
+    The binding no longer validates the format against a supported list: the
+    native library is the authority and detects the type from the bytes, so a
+    given format is trimmed and passed straight through.
+    """
 
     def test_strips_whitespace_from_query(self):
         for value in (" image/jpeg", "image/jpeg ", "\timage/jpeg\n"):
             self.assertEqual(
-                _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
+                _encode_format(value, "Reader"),
                 b"image/jpeg")
 
-    def test_case_insensitive_match_preserves_case(self):
+    def test_case_is_preserved(self):
         for value in ("IMAGE/JPEG", "Image/Jpeg"):
             self.assertEqual(
-                _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
+                _encode_format(value, "Reader"),
                 value.encode("utf-8"))
 
     def test_encodes_stripped_key(self):
         self.assertEqual(
-            _validate_and_encode_format(
-                "  IMAGE/JPEG  ", self.SUPPORTED, "Reader"),
+            _encode_format("  IMAGE/JPEG  ", "Reader"),
             b"IMAGE/JPEG")
 
     def test_production_supported_list_is_normalized(self):
@@ -118,34 +119,29 @@ class TestFormatValidation(unittest.TestCase):
             self.assertEqual(entry, entry.strip().lower())
 
     def test_none_autodetects(self):
-        self.assertEqual(
-            _validate_and_encode_format(None, self.SUPPORTED, "Reader"),
-            b"")
+        self.assertEqual(_encode_format(None, "Reader"), b"")
 
     def test_blank_autodetects(self):
         for value in ("", "   ", "\t\n"):
-            self.assertEqual(
-                _validate_and_encode_format(value, self.SUPPORTED, "Reader"),
-                b"")
+            self.assertEqual(_encode_format(value, "Reader"), b"")
 
     def test_missing_format_rejected_when_autodetect_disabled(self):
         for value in (None, "", "   "):
             with self.assertRaises(Error.NotSupported):
-                _validate_and_encode_format(
-                    value, self.SUPPORTED, "Builder",
-                    allow_autodetect=False)
+                _encode_format(value, "Builder", allow_autodetect=False)
 
-    def test_unsupported_format_raises_with_original_in_message(self):
-        with self.assertRaises(Error.NotSupported) as ctx:
-            _validate_and_encode_format(
-                "application/x-nope", self.SUPPORTED, "Reader")
-        self.assertIn("application/x-nope", str(ctx.exception))
+    def test_unknown_format_passes_through(self):
+        # No supported-list check: the format is encoded and handed to the
+        # native library, which is the authority on validity.
+        self.assertEqual(
+            _encode_format("application/x-nope", "Reader"),
+            b"application/x-nope")
 
-    def test_literal_none_string_is_not_a_valid_format(self):
-        # The string "None" (as opposed to the None object) is not a
-        # real type and must still be rejected.
-        with self.assertRaises(Error.NotSupported):
-            _validate_and_encode_format("None", self.SUPPORTED, "Reader")
+    def test_literal_none_string_passes_through(self):
+        # The string "None" is a plain string;
+        # it is trimmed and encoded like any other,
+        # not rejected in the binding.
+        self.assertEqual(_encode_format("None", "Reader"), b"None")
 
 
 class TestReader(unittest.TestCase):
@@ -312,10 +308,13 @@ class TestReader(unittest.TestCase):
             active_manifest_results = validation_results["activeManifest"]
             self.assertIsInstance(active_manifest_results, dict)
 
-    def test_reader_detects_unsupported_mimetype_on_stream(self):
+    def test_wrong_mimetype_corrected_from_bytes_on_stream(self):
+        # The binding passes the format straight through.
+        # The native library detects the JPEG container and ignores the mismatched format,
+        # so a valid asset still reads with a wrong (or bogus) mimetype.
         with open(self.testPath, "rb") as file:
-            with self.assertRaises(Error.NotSupported):
-              Reader("mimetype/does-not-exist", file)
+            with Reader("mimetype/does-not-exist", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
@@ -358,15 +357,24 @@ class TestReader(unittest.TestCase):
         # Just run and verify there is no crash
         json.loads(reader.json())
 
-    def test_stream_read_string_stream_mimetype_not_supported(self):
-        with self.assertRaises(Error.NotSupported):
-            # txt maps to text/plain
-            # text/plain isn't a supported mimetype now
-            Reader(os.path.join(FIXTURES_DIR, "C.txt"))
+    def test_unreadable_asset_raises_not_supported(self):
+        # A plain-text file is not a recognizable asset. The binding no longer
+        # rejects it up front; the native library raises NotSupported when it
+        # fails to detect a container.
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = os.path.join(tmp, "C.txt")
+            with open(txt, "w") as f:
+                f.write("just some plain text, not an asset\n")
+            with self.assertRaises(Error.NotSupported):
+                Reader(txt)
 
-    def test_try_create_raises_mimetype_not_supported(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader.try_create(os.path.join(FIXTURES_DIR, "C.txt"))
+    def test_try_create_unreadable_asset_raises_not_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = os.path.join(tmp, "C.txt")
+            with open(txt, "w") as f:
+                f.write("just some plain text, not an asset\n")
+            with self.assertRaises(Error.NotSupported):
+                Reader.try_create(txt)
 
     def test_none_format_matches_empty_string_on_stream(self):
         # None and "" both request auto-detection and read the same asset.
@@ -416,9 +424,12 @@ class TestReader(unittest.TestCase):
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
-    def test_reader_detects_unsupported_mimetype_on_file(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader("mimetype/does-not-exist", self.testPath)
+    def test_wrong_mimetype_corrected_from_bytes_on_file(self):
+        # As with a stream: a valid asset opened by path still reads when the
+        # given mimetype is wrong, because the native library corrects it from
+        # the detected container.
+        with Reader("mimetype/does-not-exist", self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_read_extensionless_file_path(self):
         # Extensionless file triggers type auto-detection.
@@ -579,29 +590,23 @@ class TestReader(unittest.TestCase):
         self.assertEqual(
             _get_mime_type_from_path(Path("dir/photo.jpg")), "image/jpeg")
 
-    def test_validate_and_encode_format_blank_autodetects(self):
+    def test_encode_format_blank_autodetects(self):
         # Reader default: a blank format requests auto-detection.
-        self.assertEqual(
-            _validate_and_encode_format("", ["image/jpeg"], "Reader"), b"")
-        self.assertEqual(
-            _validate_and_encode_format("   ", ["image/jpeg"], "Reader"), b"")
+        self.assertEqual(_encode_format("", "Reader"), b"")
+        self.assertEqual(_encode_format("   ", "Reader"), b"")
 
-    def test_validate_and_encode_format_valid_returns_bytes(self):
+    def test_encode_format_returns_bytes(self):
         self.assertEqual(
-            _validate_and_encode_format(
-                "image/jpeg", ["image/jpeg"], "Reader"),
-            b"image/jpeg")
+            _encode_format("image/jpeg", "Reader"), b"image/jpeg")
 
-    def test_validate_and_encode_format_case_insensitive(self):
+    def test_encode_format_case_preserved(self):
         self.assertEqual(
-            _validate_and_encode_format(
-                "IMAGE/JPEG", ["image/jpeg"], "Reader"),
-            b"IMAGE/JPEG")
+            _encode_format("IMAGE/JPEG", "Reader"), b"IMAGE/JPEG")
 
-    def test_validate_and_encode_format_unsupported_raises(self):
-        with self.assertRaises(Error.NotSupported):
-            _validate_and_encode_format(
-                "application/zip", ["image/jpeg"], "Reader")
+    def test_encode_format_unknown_passes_through(self):
+        # The native library decides validity.
+        self.assertEqual(
+            _encode_format("application/zip", "Reader"), b"application/zip")
 
     def test_reader_accepts_path_object(self):
         with Reader(Path(self.testPath)) as reader:
@@ -3622,11 +3627,9 @@ class TestBuilderWithSigner(unittest.TestCase):
           self.assertIn("Valid", json_data)
           output.close()
 
-    def test_validate_and_encode_format_builder_blank_raises(self):
+    def test_encode_format_builder_blank_raises(self):
         with self.assertRaises(Error.NotSupported):
-            _validate_and_encode_format(
-                "", Builder.get_supported_mime_types(), "Builder",
-                allow_autodetect=False)
+            _encode_format("", "Builder", allow_autodetect=False)
 
     def test_sign_empty_format_raises(self):
         builder = Builder(self.manifestDefinition)
