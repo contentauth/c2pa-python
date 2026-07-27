@@ -15,6 +15,9 @@ import gc
 import inspect
 import os
 import io
+import gzip
+import bz2
+import lzma
 import json
 import re
 import unittest
@@ -33,8 +36,9 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg, _is_read_stream
 import c2pa.c2pa as c2pa_module
+from pathlib import Path
 
 
 PROJECT_PATH = os.getcwd()
@@ -89,6 +93,173 @@ class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version.
         self.assertIn(parse_native_version(), sdk_version())
+
+
+class TestIsReadableStream(unittest.TestCase):
+    """ A stream is anything Stream will accept (read/write/seek/tell/flush).
+    """
+
+    def _tmp_path(self):
+        return os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
+
+    def test_paths_and_formats_are_not_streams(self):
+        for value in (None, "", "image/jpeg", "path/to/file.jpg",
+                      Path("x.jpg")):
+            self.assertFalse(_is_read_stream(value), repr(value))
+
+    def test_non_stream_objects_are_not_streams(self):
+        for value in (b"bytes", bytearray(b"x"), 42, object()):
+            self.assertFalse(_is_read_stream(value), repr(value))
+
+    def test_object_missing_methods_is_not_a_stream(self):
+        class OnlyRead:
+            def read(self):
+                return b""
+        self.assertFalse(_is_read_stream(OnlyRead()))
+
+    def test_read_only_object_is_not_a_stream(self):
+        # Has read/seek/tell but no write/flush, so not a Stream for us.
+        class ReadOnly:
+            def read(self):
+                return b""
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+        self.assertFalse(_is_read_stream(ReadOnly()))
+
+    def test_in_memory_streams_are_streams(self):
+        self.assertTrue(_is_read_stream(io.BytesIO(b"x")))
+        self.assertTrue(_is_read_stream(io.StringIO("x")))
+
+    def test_file_handles_are_streams(self):
+        path = self._tmp_path()
+        for opener in (
+            lambda: open(path, "rb"),
+            lambda: open(path, "rb", buffering=0),
+            lambda: io.BufferedReader(io.FileIO(path, "rb")),
+            lambda: open(path, "r+b"),
+            lambda: open(path, "r"),
+        ):
+            fh = opener()
+            try:
+                self.assertTrue(_is_read_stream(fh), type(fh).__name__)
+            finally:
+                fh.close()
+
+    def test_spooled_temporary_file_is_a_stream(self):
+        with tempfile.SpooledTemporaryFile() as fh:
+            self.assertTrue(_is_read_stream(fh))
+
+    def test_compressed_file_objects_are_streams(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for ext, opener in (
+                ("gz", gzip.open),
+                ("bz2", bz2.open),
+                ("xz", lzma.open),
+            ):
+                p = os.path.join(tmp, f"f.{ext}")
+                with opener(p, "wb") as fh:
+                    fh.write(b"data")
+                with opener(p, "rb") as fh:
+                    self.assertTrue(_is_read_stream(fh), ext)
+
+    def test_placeholder_typed_object_with_all_methods_is_a_stream(self):
+        class Duck:
+            def read(self, *a):
+                return b""
+
+            def write(self, *a):
+                return 0
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+
+            def flush(self):
+                pass
+        self.assertTrue(_is_read_stream(Duck()))
+
+
+class TestFormatValidation(unittest.TestCase):
+    """Unit tests for _encode_format.
+
+    The binding no longer validates the format against a supported list: the
+    native library is the authority and detects the type from the bytes, so a
+    given format is trimmed and passed straight through.
+    """
+
+    def test_strips_whitespace_from_query(self):
+        for value in (" image/jpeg", "image/jpeg ", "\timage/jpeg\n"):
+            self.assertEqual(
+                _encode_format(value, "Reader"),
+                b"image/jpeg")
+
+    def test_case_normalized_to_lowercase(self):
+        # MIME types are case-insensitive, so the format is lowercased before
+        # being handed to the native library.
+        for value in ("IMAGE/JPEG", "Image/Jpeg"):
+            self.assertEqual(
+                _encode_format(value, "Reader"),
+                b"image/jpeg")
+
+    def test_encodes_stripped_and_lowercased_key(self):
+        self.assertEqual(
+            _encode_format("  IMAGE/JPEG  ", "Reader"),
+            b"image/jpeg")
+
+    def test_production_supported_list_is_normalized(self):
+        # _get_supported_mime_types strips and lowercases every entry.
+        for entry in Reader.get_supported_mime_types():
+            self.assertEqual(entry, entry.strip().lower())
+
+    def test_none_autodetects(self):
+        # A missing format is None (auto-detect), not the empty-bytes sentinel.
+        self.assertIsNone(_encode_format(None, "Reader"))
+
+    def test_blank_autodetects(self):
+        for value in ("", "   ", "\t\n"):
+            self.assertIsNone(_encode_format(value, "Reader"))
+
+    def test_missing_format_rejected_when_autodetect_disabled(self):
+        for value in (None, "", "   "):
+            with self.assertRaises(Error.NotSupported):
+                _encode_format(value, "Builder", allow_autodetect=False)
+
+    def test_format_ffi_arg_maps_none_to_empty_bytes(self):
+        # The native library's "detect from bytes" flag is empty bytes, not a
+        # NULL c_char_p, so None must map to b"".
+        self.assertEqual(_format_ffi_arg(None), b"")
+        self.assertEqual(_format_ffi_arg(b"image/jpeg"), b"image/jpeg")
+
+    def test_resolve_format_bytes(self):
+        # Path form derives the format from the extension.
+        self.assertEqual(
+            Reader._resolve_format_bytes("photo.jpg", None), b"image/jpeg")
+        # Extensionless path -> auto-detect.
+        self.assertIsNone(
+            Reader._resolve_format_bytes("no_extension", None))
+        # Stream given: format_or_path is the format (or None for detect).
+        self.assertEqual(
+            Reader._resolve_format_bytes("image/jpeg", object()), b"image/jpeg")
+        self.assertIsNone(
+            Reader._resolve_format_bytes(None, object()))
+
+    def test_unknown_format_passes_through(self):
+        # No supported-list check: the format is encoded and handed to the
+        # native library, which is the authority on validity.
+        self.assertEqual(
+            _encode_format("application/x-nope", "Reader"),
+            b"application/x-nope")
+
+    def test_literal_none_string_passes_through(self):
+        # The string "None" is a plain string; it is trimmed, lowercased, and
+        # encoded like any other, not rejected in the binding.
+        self.assertEqual(_encode_format("None", "Reader"), b"none")
 
 
 class TestReader(unittest.TestCase):
@@ -255,10 +426,13 @@ class TestReader(unittest.TestCase):
             active_manifest_results = validation_results["activeManifest"]
             self.assertIsInstance(active_manifest_results, dict)
 
-    def test_reader_detects_unsupported_mimetype_on_stream(self):
+    def test_wrong_mimetype_corrected_from_bytes_on_stream(self):
+        # The binding passes the format straight through.
+        # The native library detects the JPEG container and ignores the mismatched format,
+        # so a valid asset still reads with a wrong (or bogus) mimetype.
         with open(self.testPath, "rb") as file:
-            with self.assertRaises(Error.NotSupported):
-              Reader("mimetype/does-not-exist", file)
+            with Reader("mimetype/does-not-exist", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
@@ -301,40 +475,376 @@ class TestReader(unittest.TestCase):
         # Just run and verify there is no crash
         json.loads(reader.json())
 
-    def test_stream_read_string_stream_mimetype_not_supported(self):
-        with self.assertRaises(Error.NotSupported):
-            # xyz is actually an extension that is recognized
-            # as mimetype chemical/x-xyz
-            Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
+    def test_unreadable_asset_raises_not_supported(self):
+        # A plain-text file is not a recognizable asset. The binding no longer
+        # rejects it up front; the native library raises NotSupported when it
+        # fails to detect a container.
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = os.path.join(tmp, "C.txt")
+            with open(txt, "w") as f:
+                f.write("just some plain text, not an asset\n")
+            with self.assertRaises(Error.NotSupported):
+                Reader(txt)
 
-    def test_try_create_raises_mimetype_not_supported(self):
-        with self.assertRaises(Error.NotSupported):
-            # xyz is actually an extension that is recognized
-            # as mimetype chemical/x-xyz, but we don't support it
-            Reader.try_create(os.path.join(FIXTURES_DIR, "C.xyz"))
+    def test_try_create_unreadable_asset_raises_not_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = os.path.join(tmp, "C.txt")
+            with open(txt, "w") as f:
+                f.write("just some plain text, not an asset\n")
+            with self.assertRaises(Error.NotSupported):
+                Reader.try_create(txt)
 
-    def test_stream_read_string_stream_mimetype_not_recognized(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader(os.path.join(FIXTURES_DIR, "C.test"))
+    def test_none_format_matches_empty_string_on_stream(self):
+        # None and "" both request auto-detection and read the same asset.
+        with open(self.testPath, "rb") as file:
+            with Reader(None, file) as reader:
+                none_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                empty_json = reader.json()
+        self.assertEqual(none_json, empty_json)
+        self.assertNotIn("None", none_json[:64])
+        self.assertIn(DEFAULT_TEST_FILE_NAME, none_json)
 
-    def test_try_create_raises_mimetype_not_recognized(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader.try_create(os.path.join(FIXTURES_DIR, "C.test"))
+    def test_padded_format_accepted_on_stream(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(" image/jpeg ", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_none_format_matches_empty_string(self):
+        with open(self.testPath, "rb") as file:
+            none_reader = Reader.try_create(None, file)
+        self.assertIsNotNone(none_reader)
+        with open(self.testPath, "rb") as file:
+            empty_reader = Reader.try_create("", file)
+        self.assertIsNotNone(empty_reader)
+        if none_reader is not None and empty_reader is not None:
+            self.assertEqual(none_reader.json(), empty_reader.json())
+
+    def test_bare_stream_matches_empty_and_none_format(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(file) as reader:
+                bare_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                empty_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader(None, file) as reader:
+                none_json = reader.json()
+        self.assertEqual(bare_json, empty_json)
+        self.assertEqual(bare_json, none_json)
+
+    def test_bare_stream_keyword_form(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(stream=file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_bare_stream_in_memory(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        with Reader(io.BytesIO(data)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_bare_stream(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create(file)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+
+    def test_try_create_bare_stream_keyword(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create(stream=file)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+
+    def test_bare_stream_closed_handle_raises(self):
+        # _is_read_stream only checks method presence
+        #  so a closed handle is accepted as a stream and fails at read time.
+        file = open(self.testPath, "rb")
+        file.close()
+        with self.assertRaises(Error):
+            Reader(file)
+
+    def test_bare_stream_with_manifest_data_keeps_manifest(self):
+        # The bare-stream shift must not swallow manifest_data.
+        with open(self.testPath, "rb") as file:
+            with Reader(file, manifest_data=None) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_path_string_still_opens_by_path(self):
+        with Reader(self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_path_object_still_opens_by_path(self):
+        with Reader(Path(self.testPath)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_format_plus_stream_still_means_format_and_stream(self):
+        with open(self.testPath, "rb") as file:
+            with Reader("image/jpeg", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+        with open(self.testPath, "rb") as file:
+            with Reader(" image/jpeg ", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_format_plus_path_string_still_opens_by_path(self):
+        with Reader("image/jpeg", self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_no_args_raises_clear_error(self):
+        with self.assertRaises(Error) as ctx:
+            Reader()
+        self.assertIn("stream", str(ctx.exception).lower())
+
+    def test_none_first_arg_no_stream_raises_clear_error(self):
+        with self.assertRaises(Error) as ctx:
+            Reader(None)
+        self.assertIn("stream", str(ctx.exception).lower())
+
+    def test_text_stream_matches_existing_explicit_form(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        text = data.decode("latin-1")
+
+        def outcome(call):
+            try:
+                r = call()
+                out = ("ok", r.json()[:0])
+                r.close()
+                return out
+            except Exception as e:
+                return ("err", type(e).__name__)
+        bare = outcome(lambda: Reader(io.StringIO(text)))
+        explicit = outcome(lambda: Reader("image/jpeg", io.StringIO(text)))
+        self.assertEqual(bare, explicit)
+
+    def test_read_only_object_not_treated_as_stream(self):
+        # read/seek/tell but no write/flush
+        class ReadOnly:
+            def read(self, *a):
+                return b""
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+        with self.assertRaises(Error):
+            Reader(ReadOnly())
+
+    def test_unrecognized_extension_defers_to_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "C.test")
+            shutil.copyfile(self.testPath, asset)
+            with Reader(asset) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_unrecognized_extension_defers_to_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "C.test")
+            shutil.copyfile(self.testPath, asset)
+            reader = Reader.try_create(asset)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                with reader:
+                    self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
-    def test_reader_detects_unsupported_mimetype_on_file(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader("mimetype/does-not-exist", self.testPath)
+    def test_wrong_mimetype_corrected_from_bytes_on_file(self):
+        # As with a stream: a valid asset opened by path still reads when the
+        # given mimetype is wrong, because the native library corrects it from
+        # the detected container.
+        with Reader("mimetype/does-not-exist", self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_extensionless_file_path(self):
+        # Extensionless file triggers type auto-detection.
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "C")
+            shutil.copyfile(self.testPath, no_ext)
+            with Reader(no_ext) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_extensionless_stream_empty_format(self):
+        # An empty format string on a stream triggers auto-detection.
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_wrong_extension_corrected(self):
+        # A JPEG saved with a .png extension is corrected from the bytes.
+        # (Read is possible and does not fail due to wrong type).
+        with tempfile.TemporaryDirectory() as tmp:
+            wrong = os.path.join(tmp, "C.png")
+            shutil.copyfile(self.testPath, wrong)
+            with Reader(wrong) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_wrong_mime_corrected_on_stream(self):
+        # A wrong MIME hint on a stream is corrected from the bytes.
+        with open(self.testPath, "rb") as file:
+            with Reader("image/png", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_explicit_empty_format_forces_detection(self):
+        # Passing "" works even when the correct format is supported.
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                manifest_store = json.loads(reader.json())
+                self.assertIn("active_manifest", manifest_store)
+
+    def test_autodetect_multiformat(self):
+        fixtures = [
+            os.path.join(FIXTURES_DIR, "files-for-reading-tests", "CA.jpg"),
+            os.path.join(FIXTURES_DIR, "video1.mp4"),
+            os.path.join(FIXTURES_DIR, "files-for-reading-tests", "pdf-file.pdf"),
+            os.path.join(FIXTURES_DIR, "files-for-reading-tests", "sample1_signed.wav"),
+        ]
+        for path in fixtures:
+            with self.subTest(path=path):
+                with open(path, "rb") as file:
+                    with Reader("", file) as reader:
+                        self.assertIn("active_manifest", json.loads(reader.json()))
+
+    def test_dng_extension_still_special_cased(self):
+        dng_path = os.path.join(FIXTURES_DIR, "C.dng")
+        with Reader(dng_path) as reader:
+            self.assertIn("active_manifest", json.loads(reader.json()))
+
+    def test_garbage_stream_empty_format_raises(self):
+        # Unrecognized bytes with auto-detection raise rather than crash.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b"not an asset at all"))
+
+    def test_empty_stream_raises(self):
+        # A zero-byte stream cannot be detected and raises.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b""))
+
+    def test_truncated_corrupt_jpeg_raises(self):
+        with open(self.testPath, "rb") as file:
+            data = bytearray(file.read())
+        # Corrupt the body while keeping the leading JPEG magic intact.
+        # This will still raise errors.
+        for i in range(64, min(len(data), 4096)):
+            data[i] ^= 0xFF
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(bytes(data)))
+
+    def test_garbage_extensionless_file_raises(self):
+        # Random bytes in an extensionless file raise.
+        with tempfile.TemporaryDirectory() as tmp:
+            garbage = os.path.join(tmp, "garbage")
+            with open(garbage, "wb") as f:
+                f.write(b"this is not a media asset")
+            with self.assertRaises(Error):
+                Reader(garbage)
+
+    def test_try_create_garbage_stream_raises(self):
+        with self.assertRaises(Error) as context:
+            Reader.try_create("", io.BytesIO(b"not an asset at all"))
+        self.assertNotIn("ManifestNotFound", str(context.exception))
+
+    def test_try_create_extensionless_no_manifest_returns_none(self):
+        unsigned = os.path.join(
+            FIXTURES_DIR, "files-for-signing-tests", "earth_apollo17.jpg")
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "unsigned")
+            shutil.copyfile(unsigned, no_ext)
+            self.assertIsNone(Reader.try_create(no_ext))
+
+    def test_sub_magic_length_stream_raises(self):
+        # Fewer bytes than a full magic signature cannot be detected.
+        # This will raise too.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b"\xff\xd8\xff"))
+
+    def test_preseeked_stream_is_rewound(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        stream = io.BytesIO(data)
+        stream.seek(len(data) // 2)
+        with Reader("", stream) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_dng_extension_with_jpeg_bytes_corrected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dng = os.path.join(tmp, "fake.dng")
+            shutil.copyfile(self.testPath, fake_dng)
+            with Reader(fake_dng) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_filepath_as_stream_and_parse(self):
         with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
+
+    def test_get_mime_type_from_path_dng_special_cased(self):
+        self.assertEqual(_get_mime_type_from_path("photo.dng"), "image/dng")
+
+    def test_get_mime_type_from_path_uppercase_dng(self):
+        self.assertEqual(_get_mime_type_from_path("PHOTO.DNG"), "image/dng")
+
+    def test_get_mime_type_from_path_jpeg(self):
+        self.assertEqual(_get_mime_type_from_path("photo.jpg"), "image/jpeg")
+
+    def test_get_mime_type_from_path_unknown_extension_returns_empty(self):
+        # An unrecognized extension yields "" so the caller can auto-detect.
+        self.assertEqual(_get_mime_type_from_path("asset.unknownext"), "")
+
+    def test_get_mime_type_from_path_no_suffix_returns_empty(self):
+        self.assertEqual(_get_mime_type_from_path("asset"), "")
+
+    def test_get_mime_type_from_path_multi_dot_uses_final_suffix(self):
+        # Only the final suffix determines the type.
+        self.assertEqual(
+            _get_mime_type_from_path("photo.final.jpg"), "image/jpeg")
+
+    def test_get_mime_type_from_path_compound_extension(self):
+        # mimetypes treats ".gz" as an encoding, not a type suffix,
+        # the type is derived from ".tar"
+        result = _get_mime_type_from_path("archive.tar.gz")
+        self.assertIsInstance(result, str)
+        self.assertNotIn(result, ("image/jpeg", "image/dng"))
+
+    def test_get_mime_type_from_path_hidden_dotfile_returns_empty(self):
+        # Check how we handle files without suffix (usually hidden files)
+        self.assertEqual(_get_mime_type_from_path(".gitignore"), "")
+
+    def test_get_mime_type_from_path_accepts_path_object(self):
+        self.assertEqual(
+            _get_mime_type_from_path(Path("dir/photo.jpg")), "image/jpeg")
+
+    def test_encode_format_blank_autodetects(self):
+        # A blank format requests auto-detection.
+        self.assertIsNone(_encode_format("", "Reader"))
+        self.assertIsNone(_encode_format("   ", "Reader"))
+
+    def test_encode_format_returns_bytes(self):
+        self.assertEqual(
+            _encode_format("image/jpeg", "Reader"), b"image/jpeg")
+
+    def test_encode_format_case_normalized(self):
+        self.assertEqual(
+            _encode_format("IMAGE/JPEG", "Reader"), b"image/jpeg")
+
+    def test_encode_format_unknown_passes_through(self):
+        # The native library decides validity.
+        self.assertEqual(
+            _encode_format("application/zip", "Reader"), b"application/zip")
+
+    def test_reader_accepts_path_object(self):
+        with Reader(Path(self.testPath)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_reader_double_close(self):
         with open(self.testPath, "rb") as file:
@@ -1165,6 +1675,22 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.close()
             with self.assertRaises(Error):
               builder.sign(self.signer, "image/jpeg", file, output)
+
+    def test_sign_rejects_none_format(self):
+        # sign requires an explicit format; None must raise NotSupported.
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            with self.assertRaises(Error.NotSupported):
+                builder.sign(self.signer, None, file, output)
+
+    def test_sign_accepts_padded_format(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            manifest_bytes = builder.sign(
+                self.signer, " image/jpeg ", file, output)
+            self.assertTrue(len(manifest_bytes) > 0)
 
     def test_builder_does_not_allow_archiving_after_close(self):
         with open(self.testPath, "rb") as file:
@@ -2470,6 +2996,75 @@ class TestBuilderWithSigner(unittest.TestCase):
                     manifest_data = reader.json()
                     self.assertIn("Python Test", manifest_data)
 
+    def _detached_manifest_and_asset(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            builder.set_no_embed()
+            with io.BytesIO() as output_buffer:
+                manifest = builder.sign(
+                    self.signer, "image/jpeg", file, output_buffer)
+                return manifest, output_buffer.getvalue()
+
+    def test_bare_stream_with_real_manifest_data_is_used(self):
+        manifest, asset = self._detached_manifest_and_asset()
+        with Reader(io.BytesIO(asset), manifest_data=manifest) as reader:
+            self.assertIn("Python Test", reader.json())
+
+    def test_manifest_data_keyword_with_real_bytes(self):
+        # manifest_data passed by keyword (not positionally) with real bytes.
+        manifest, asset = self._detached_manifest_and_asset()
+        with Reader(
+                "image/jpeg", io.BytesIO(asset),
+                manifest_data=manifest) as reader:
+            self.assertIn("Python Test", reader.json())
+
+    def test_try_create_with_manifest_data(self):
+        manifest, asset = self._detached_manifest_and_asset()
+        reader = Reader.try_create(
+            "image/jpeg", io.BytesIO(asset), manifest)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn("Python Test", reader.json())
+            reader.close()
+
+    def test_try_create_with_manifest_data_keyword(self):
+        # try_create with manifest_data passed by keyword.
+        manifest, asset = self._detached_manifest_and_asset()
+        reader = Reader.try_create(
+            "image/jpeg", io.BytesIO(asset), manifest_data=manifest)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn("Python Test", reader.json())
+            reader.close()
+
+    def test_bare_stream_with_context_and_manifest(self):
+        # Stream and real manifest and context together.
+        manifest, asset = self._detached_manifest_and_asset()
+        context = Context()
+        try:
+            with Reader(io.BytesIO(asset), manifest_data=manifest,
+                        context=context) as reader:
+                self.assertIn("Python Test", reader.json())
+        finally:
+            context.close()
+
+    def test_try_create_format_plus_path_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "signed.jpg")
+            with open(self.testPath, "rb") as file, open(asset, "wb") as out:
+                Builder(self.manifestDefinition).sign(
+                    self.signer, "image/jpeg", file, out)
+            reader = Reader.try_create("image/jpeg", asset)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn("Python Test", reader.json())
+                reader.close()
+
+    def test_non_context_wrong_type_manifest_raises_typeerror(self):
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(TypeError):
+                Reader("image/jpeg", file, "not-bytes")
+
     def test_remote_sign_using_returned_bytes_V2(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinitionV2)
@@ -2768,6 +3363,41 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.add_ingredient(ingredient_json, "image/png", f)
 
         builder.close()
+
+    def test_sign_with_any_format_spelling_keeps_thumbnail(self):
+        # The format reaches thumbnail generation,
+        # which matches a MIME type case sensitively,
+        # so an unnormalized spelling silently produces no thumbnail.
+        for fmt in ("image/jpeg", "IMAGE/JPEG", "Image/Jpeg", "jpg", "JPG"):
+            with self.subTest(format=fmt):
+                builder = Builder(self.manifestDefinition)
+                dest = io.BytesIO()
+                with open(self.testPath, "rb") as source:
+                    builder.sign(self.signer, fmt, source, dest)
+
+                dest.seek(0)
+                reader = Reader("image/jpeg", dest)
+                manifest_store = json.loads(reader.json())
+                active = manifest_store["manifests"][
+                    manifest_store["active_manifest"]]
+
+                self.assertIn(
+                    "thumbnail", active,
+                    f"signing with {fmt} dropped the claim thumbnail")
+                thumbnail = active["thumbnail"]
+                self.assertEqual(thumbnail["format"], "image/jpeg")
+
+                # The reference must resolve to a real JPEG, not just be present.
+                thumbnail_bytes = io.BytesIO()
+                reader.resource_to_stream(
+                    thumbnail["identifier"], thumbnail_bytes)
+                data = thumbnail_bytes.getvalue()
+                self.assertGreater(
+                    len(data), 1000,
+                    f"signing with {fmt} produced an empty claim thumbnail")
+                self.assertEqual(
+                    data[:3], b"\xff\xd8\xff",
+                    f"signing with {fmt} produced a thumbnail that is not a JPEG")
 
     def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
         builder = Builder.from_json(self.manifestDefinition)
@@ -3334,6 +3964,44 @@ class TestBuilderWithSigner(unittest.TestCase):
           # or validation_status on read reports `signing certificate untrusted`.
           self.assertIn("Valid", json_data)
           output.close()
+
+    def test_encode_format_builder_blank_raises(self):
+        with self.assertRaises(Error.NotSupported):
+            _encode_format("", "Builder", allow_autodetect=False)
+
+    def test_sign_empty_format_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO()
+            with self.assertRaises(Error.NotSupported):
+                builder.sign(self.signer, "", file, output)
+
+    def test_sign_file_extensionless_source_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "source")
+            shutil.copyfile(self.testPath, no_ext)
+            dest = os.path.join(tmp, "out.jpg")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(no_ext, dest, self.signer)
+
+    def test_sign_file_unrecognized_extension_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            weird = os.path.join(tmp, "source.unknownextension")
+            shutil.copyfile(self.testPath, weird)
+            dest = os.path.join(tmp, "out.jpg")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(weird, dest, self.signer)
+
+    def test_sign_file_exceptions_preservation(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "source.txt")
+            shutil.copyfile(self.testPath, src)
+            dest = os.path.join(tmp, "out.txt")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(src, dest, self.signer)
 
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
@@ -6027,6 +6695,16 @@ class TestReaderWithContext(TestContextAPIs):
         reader.close()
         context.close()
 
+    def test_reader_extensionless_path_with_context_autodetects(self):
+        context = Context()
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "asset")
+            shutil.copyfile(DEFAULT_TEST_FILE, no_ext)
+            reader = Reader(no_ext, context=context)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+        context.close()
+
     def test_reader_format_and_path_with_ctx(self):
         context = Context()
         reader = Reader("image/jpeg", DEFAULT_TEST_FILE, context=context)
@@ -6034,6 +6712,59 @@ class TestReaderWithContext(TestContextAPIs):
         self.assertIsNotNone(data)
         reader.close()
         context.close()
+
+    def test_reader_bare_stream_with_context(self):
+        # The bare-stream shift runs before the context branch, so
+        # Reader(fh, context=ctx) reads via context with auto-detect.
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader(file_handle, context=context)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+        context.close()
+
+    def test_reader_path_object_with_context(self):
+        context = Context()
+        reader = Reader(Path(DEFAULT_TEST_FILE), context=context)
+        self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+        reader.close()
+        context.close()
+
+    def test_try_create_format_stream_with_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader.try_create(
+                "image/jpeg", file_handle, context=context)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+                reader.close()
+        context.close()
+
+    def test_try_create_bare_stream_with_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader.try_create(file_handle, context=context)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+                reader.close()
+        context.close()
+
+    def test_context_only_no_source_raises(self):
+        # A context supplies settings, not the asset,
+        # so no path/stream is an error rather than open("None").
+        context = Context()
+        with self.assertRaises(Error) as ctx:
+            Reader(context=context)
+        self.assertIn("stream", str(ctx.exception).lower())
+        context.close()
+
+    def test_reader_with_closed_context_raises(self):
+        context = Context()
+        context.close()
+        with self.assertRaises(Error):
+            Reader(DEFAULT_TEST_FILE, context=context)
 
     def test_with_fragment_on_closed_reader_raises(self):
         context = Context()
