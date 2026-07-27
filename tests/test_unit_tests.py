@@ -13,6 +13,9 @@
 
 import os
 import io
+import gzip
+import bz2
+import lzma
 import json
 import unittest
 import ctypes
@@ -30,7 +33,7 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _validate_and_encode_format
+from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _validate_and_encode_format, _is_read_stream
 from pathlib import Path
 
 
@@ -86,6 +89,96 @@ class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version.
         self.assertIn(parse_native_version(), sdk_version())
+
+
+class TestIsReadableStream(unittest.TestCase):
+    """ A stream is anything Stream will accept (read/write/seek/tell/flush).
+    """
+
+    def _tmp_path(self):
+        return os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
+
+    def test_paths_and_formats_are_not_streams(self):
+        for value in (None, "", "image/jpeg", "path/to/file.jpg",
+                      Path("x.jpg")):
+            self.assertFalse(_is_read_stream(value), repr(value))
+
+    def test_non_stream_objects_are_not_streams(self):
+        for value in (b"bytes", bytearray(b"x"), 42, object()):
+            self.assertFalse(_is_read_stream(value), repr(value))
+
+    def test_object_missing_methods_is_not_a_stream(self):
+        class OnlyRead:
+            def read(self):
+                return b""
+        self.assertFalse(_is_read_stream(OnlyRead()))
+
+    def test_read_only_object_is_not_a_stream(self):
+        # Has read/seek/tell but no write/flush, so not a Stream for us.
+        class ReadOnly:
+            def read(self):
+                return b""
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+        self.assertFalse(_is_read_stream(ReadOnly()))
+
+    def test_in_memory_streams_are_streams(self):
+        self.assertTrue(_is_read_stream(io.BytesIO(b"x")))
+        self.assertTrue(_is_read_stream(io.StringIO("x")))
+
+    def test_file_handles_are_streams(self):
+        path = self._tmp_path()
+        for opener in (
+            lambda: open(path, "rb"),
+            lambda: open(path, "rb", buffering=0),
+            lambda: io.BufferedReader(io.FileIO(path, "rb")),
+            lambda: open(path, "r+b"),
+            lambda: open(path, "r"),
+        ):
+            fh = opener()
+            try:
+                self.assertTrue(_is_read_stream(fh), type(fh).__name__)
+            finally:
+                fh.close()
+
+    def test_spooled_temporary_file_is_a_stream(self):
+        with tempfile.SpooledTemporaryFile() as fh:
+            self.assertTrue(_is_read_stream(fh))
+
+    def test_compressed_file_objects_are_streams(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for ext, opener in (
+                ("gz", gzip.open),
+                ("bz2", bz2.open),
+                ("xz", lzma.open),
+            ):
+                p = os.path.join(tmp, f"f.{ext}")
+                with opener(p, "wb") as fh:
+                    fh.write(b"data")
+                with opener(p, "rb") as fh:
+                    self.assertTrue(_is_read_stream(fh), ext)
+
+    def test_placeholder_typed_object_with_all_methods_is_a_stream(self):
+        class Duck:
+            def read(self, *a):
+                return b""
+
+            def write(self, *a):
+                return 0
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+
+            def flush(self):
+                pass
+        self.assertTrue(_is_read_stream(Duck()))
 
 
 class TestFormatValidation(unittest.TestCase):
@@ -393,6 +486,112 @@ class TestReader(unittest.TestCase):
         self.assertIsNotNone(empty_reader)
         if none_reader is not None and empty_reader is not None:
             self.assertEqual(none_reader.json(), empty_reader.json())
+
+    def test_bare_stream_matches_empty_and_none_format(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(file) as reader:
+                bare_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                empty_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader(None, file) as reader:
+                none_json = reader.json()
+        self.assertEqual(bare_json, empty_json)
+        self.assertEqual(bare_json, none_json)
+
+    def test_bare_stream_keyword_form(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(stream=file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_bare_stream_in_memory(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        with Reader(io.BytesIO(data)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_bare_stream(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create(file)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+
+    def test_try_create_bare_stream_keyword(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create(stream=file)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            reader.close()
+
+    def test_bare_stream_with_manifest_data_keeps_manifest(self):
+        # The bare-stream shift must not swallow manifest_data.
+        with open(self.testPath, "rb") as file:
+            with Reader(file, manifest_data=None) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_path_string_still_opens_by_path(self):
+        with Reader(self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_path_object_still_opens_by_path(self):
+        with Reader(Path(self.testPath)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_format_plus_stream_still_means_format_and_stream(self):
+        with open(self.testPath, "rb") as file:
+            with Reader("image/jpeg", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+        with open(self.testPath, "rb") as file:
+            with Reader(" image/jpeg ", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_format_plus_path_string_still_opens_by_path(self):
+        with Reader("image/jpeg", self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_no_args_raises_clear_error(self):
+        with self.assertRaises(Error) as ctx:
+            Reader()
+        self.assertIn("stream", str(ctx.exception).lower())
+
+    def test_none_first_arg_no_stream_raises_clear_error(self):
+        with self.assertRaises(Error) as ctx:
+            Reader(None)
+        self.assertIn("stream", str(ctx.exception).lower())
+
+    def test_text_stream_matches_existing_explicit_form(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        text = data.decode("latin-1")
+
+        def outcome(call):
+            try:
+                r = call()
+                out = ("ok", r.json()[:0])
+                r.close()
+                return out
+            except Exception as e:
+                return ("err", type(e).__name__)
+        bare = outcome(lambda: Reader(io.StringIO(text)))
+        explicit = outcome(lambda: Reader("image/jpeg", io.StringIO(text)))
+        self.assertEqual(bare, explicit)
+
+    def test_read_only_object_not_treated_as_stream(self):
+        # read/seek/tell but no write/flush
+        class ReadOnly:
+            def read(self, *a):
+                return b""
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+        with self.assertRaises(Error):
+            Reader(ReadOnly())
 
     def test_unrecognized_extension_defers_to_detection(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2756,6 +2955,54 @@ class TestBuilderWithSigner(unittest.TestCase):
                 with Reader("image/jpeg", read_buffer, manifest_data) as reader:
                     manifest_data = reader.json()
                     self.assertIn("Python Test", manifest_data)
+
+    def _detached_manifest_and_asset(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            builder.set_no_embed()
+            with io.BytesIO() as output_buffer:
+                manifest = builder.sign(
+                    self.signer, "image/jpeg", file, output_buffer)
+                return manifest, output_buffer.getvalue()
+
+    def test_bare_stream_with_real_manifest_data_is_used(self):
+        manifest, asset = self._detached_manifest_and_asset()
+        with Reader(io.BytesIO(asset), manifest_data=manifest) as reader:
+            self.assertIn("Python Test", reader.json())
+
+    def test_manifest_data_keyword_with_real_bytes(self):
+        # manifest_data passed by keyword (not positionally) with real bytes.
+        manifest, asset = self._detached_manifest_and_asset()
+        with Reader(
+                "image/jpeg", io.BytesIO(asset),
+                manifest_data=manifest) as reader:
+            self.assertIn("Python Test", reader.json())
+
+    def test_try_create_with_manifest_data(self):
+        manifest, asset = self._detached_manifest_and_asset()
+        reader = Reader.try_create(
+            "image/jpeg", io.BytesIO(asset), manifest)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn("Python Test", reader.json())
+            reader.close()
+
+    def test_try_create_format_plus_path_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "signed.jpg")
+            with open(self.testPath, "rb") as file, open(asset, "wb") as out:
+                Builder(self.manifestDefinition).sign(
+                    self.signer, "image/jpeg", file, out)
+            reader = Reader.try_create("image/jpeg", asset)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn("Python Test", reader.json())
+                reader.close()
+
+    def test_non_context_wrong_type_manifest_raises_typeerror(self):
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(TypeError):
+                Reader("image/jpeg", file, "not-bytes")
 
     def test_remote_sign_using_returned_bytes_V2(self):
         with open(self.testPath, "rb") as file:
@@ -6345,6 +6592,58 @@ class TestReaderWithContext(TestContextAPIs):
         self.assertIsNotNone(data)
         reader.close()
         context.close()
+
+    def test_reader_bare_stream_with_context(self):
+        # The bare-stream shift runs before the context branch, so
+        # Reader(fh, context=ctx) reads via context with auto-detect.
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader(file_handle, context=context)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+        context.close()
+
+    def test_reader_path_object_with_context(self):
+        context = Context()
+        reader = Reader(Path(DEFAULT_TEST_FILE), context=context)
+        self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+        reader.close()
+        context.close()
+
+    def test_try_create_format_stream_with_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader.try_create(
+                "image/jpeg", file_handle, context=context)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+                reader.close()
+        context.close()
+
+    def test_try_create_bare_stream_with_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader.try_create(file_handle, context=context)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                reader.close()
+        context.close()
+
+    def test_context_only_no_source_raises(self):
+        # A context supplies settings, not the asset,
+        # so no path/stream is an error rather than open("None").
+        context = Context()
+        with self.assertRaises(Error) as ctx:
+            Reader(context=context)
+        self.assertIn("stream", str(ctx.exception).lower())
+        context.close()
+
+    def test_reader_with_closed_context_raises(self):
+        context = Context()
+        context.close()
+        with self.assertRaises(Error):
+            Reader(DEFAULT_TEST_FILE, context=context)
 
     def test_with_fragment_on_closed_reader_raises(self):
         context = Context()

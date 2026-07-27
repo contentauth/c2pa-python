@@ -1570,6 +1570,9 @@ class Stream:
     # Maximum value for a 32-bit signed integer (2^31 - 1)
     _MAX_STREAM_ID = 2**31 - 1
 
+    # Methods an object must expose to be wrapped as Stream.
+    _REQUIRED_STREAM_METHODS = ("read", "write", "seek", "tell", "flush")
+
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'stream_error': "Error cleaning up stream: {}",
@@ -1616,15 +1619,14 @@ class Stream:
         self._stream_id = f"{id(self)}-{stream_counter}"
 
         # Rest of the existing initialization code...
-        required_methods = ['read', 'write', 'seek', 'tell', 'flush']
         missing_methods = [
-            method for method in required_methods if not hasattr(
+            method for method in Stream._REQUIRED_STREAM_METHODS if not hasattr(
                 file_like_stream, method)]
         if missing_methods:
             raise TypeError(
                 "Object must be a stream-like object with methods: {}. "
                 "Missing: {}".format(
-                    ", ".join(required_methods),
+                    ", ".join(Stream._REQUIRED_STREAM_METHODS),
                     ", ".join(missing_methods),
                 )
             )
@@ -2023,6 +2025,16 @@ def _validate_and_encode_format(
             f"Invalid UTF-8 characters in input: {e}")
 
 
+def _is_read_stream(obj) -> bool:
+    """Return True if obj is a stream-like object this SDK can use.
+    Note: only method presence to identify streams are checked,
+    not that they work (a broken stream can fail later).
+    """
+    if obj is None or isinstance(obj, (str, Path)):
+        return False
+    return all(hasattr(obj, method) for method in Stream._REQUIRED_STREAM_METHODS)
+
+
 class Reader(ManagedResource):
     """High-level wrapper for C2PA Reader operations.
 
@@ -2085,7 +2097,16 @@ class Reader(ManagedResource):
     @overload
     def try_create(
         cls,
-        format_or_path: Union[str, Path, None],
+        stream: Any,
+        manifest_data: Optional[Any] = None,
+        context: Optional['ContextProvider'] = None,
+    ) -> Optional["Reader"]: ...
+
+    @classmethod
+    @overload
+    def try_create(
+        cls,
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
     ) -> Optional["Reader"]: ...
@@ -2103,7 +2124,7 @@ class Reader(ManagedResource):
     @classmethod
     def try_create(
         cls,
-        format_or_path: Union[str, Path, None],
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
@@ -2117,9 +2138,13 @@ class Reader(ManagedResource):
         want to check if an asset contains C2PA data without handling
         exceptions for the expected case of no manifest.
 
+        Pass a stream as the only argument (``try_create(stream)``) to read it
+        with an auto-detected format.
+
         Args:
-            format_or_path: The format or path to read from.
-                None or an empty string requests auto-detection (best effort).
+            format_or_path: The format or path to read from, or a stream to
+                read with an auto-detected format. None or an empty string
+                requests auto-detection (best effort).
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional ContextProvider for settings
@@ -2142,7 +2167,15 @@ class Reader(ManagedResource):
     @overload
     def __init__(
         self,
-        format_or_path: Union[str, Path, None],
+        stream: Any,
+        manifest_data: Optional[Any] = None,
+        context: Optional['ContextProvider'] = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
     ) -> None: ...
@@ -2158,7 +2191,7 @@ class Reader(ManagedResource):
 
     def __init__(
         self,
-        format_or_path: Union[str, Path, None],
+        format_or_path: Union[str, Path, None] = None,
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
@@ -2172,9 +2205,13 @@ class Reader(ManagedResource):
         when reading (so reading doesn't fail on wrong file extension).
         If the bytes are not a recognized asset, a C2paError is raised.
 
+        Pass a stream as the only argument (``Reader(stream)``) to read it with
+        an auto-detected format.
+
         Args:
-            format_or_path: The format (MIME type) or path to read from.
-                None or an empty string requests auto-detection.
+            format_or_path: The format (MIME type) or path to read from, or a
+                stream to read with an auto-detected format. None or an empty
+                string requests auto-detection.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
             context: Optional context implementing ContextProvider with settings
@@ -2202,6 +2239,15 @@ class Reader(ManagedResource):
         self._manifest_data_cache = None
 
         self._context = context
+
+        # Only stream, no format: Reader(fh) must auto-detect on the stream.
+        if stream is None and _is_read_stream(format_or_path):
+            stream = format_or_path
+            format_or_path = None
+        # A context supplies settings, not the asset, so a path or stream is
+        # still required to read from.
+        if format_or_path is None and stream is None:
+            raise C2paError("Reader requires a path or a stream")
 
         if context is not None:
             self._init_from_context(
