@@ -33,7 +33,7 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _is_read_stream
+from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg, _is_read_stream
 from pathlib import Path
 
 
@@ -214,16 +214,36 @@ class TestFormatValidation(unittest.TestCase):
             self.assertEqual(entry, entry.strip().lower())
 
     def test_none_autodetects(self):
-        self.assertEqual(_encode_format(None, "Reader"), b"")
+        # A missing format is None (auto-detect), not the empty-bytes sentinel.
+        self.assertIsNone(_encode_format(None, "Reader"))
 
     def test_blank_autodetects(self):
         for value in ("", "   ", "\t\n"):
-            self.assertEqual(_encode_format(value, "Reader"), b"")
+            self.assertIsNone(_encode_format(value, "Reader"))
 
     def test_missing_format_rejected_when_autodetect_disabled(self):
         for value in (None, "", "   "):
             with self.assertRaises(Error.NotSupported):
                 _encode_format(value, "Builder", allow_autodetect=False)
+
+    def test_format_ffi_arg_maps_none_to_empty_bytes(self):
+        # The native library's "detect from bytes" flag is empty bytes, not a
+        # NULL c_char_p, so None must map to b"".
+        self.assertEqual(_format_ffi_arg(None), b"")
+        self.assertEqual(_format_ffi_arg(b"image/jpeg"), b"image/jpeg")
+
+    def test_resolve_format_bytes(self):
+        # Path form derives the format from the extension.
+        self.assertEqual(
+            Reader._resolve_format_bytes("photo.jpg", None), b"image/jpeg")
+        # Extensionless path -> auto-detect.
+        self.assertIsNone(
+            Reader._resolve_format_bytes("no_extension", None))
+        # Stream given: format_or_path is the format (or None for detect).
+        self.assertEqual(
+            Reader._resolve_format_bytes("image/jpeg", object()), b"image/jpeg")
+        self.assertIsNone(
+            Reader._resolve_format_bytes(None, object()))
 
     def test_unknown_format_passes_through(self):
         # No supported-list check: the format is encoded and handed to the
@@ -480,6 +500,7 @@ class TestReader(unittest.TestCase):
                 empty_json = reader.json()
         self.assertEqual(none_json, empty_json)
         self.assertNotIn("None", none_json[:64])
+        self.assertIn(DEFAULT_TEST_FILE_NAME, none_json)
 
     def test_padded_format_accepted_on_stream(self):
         with open(self.testPath, "rb") as file:
@@ -800,9 +821,9 @@ class TestReader(unittest.TestCase):
             _get_mime_type_from_path(Path("dir/photo.jpg")), "image/jpeg")
 
     def test_encode_format_blank_autodetects(self):
-        # Reader default: a blank format requests auto-detection.
-        self.assertEqual(_encode_format("", "Reader"), b"")
-        self.assertEqual(_encode_format("   ", "Reader"), b"")
+        # A blank format requests auto-detection.
+        self.assertIsNone(_encode_format("", "Reader"))
+        self.assertIsNone(_encode_format("   ", "Reader"))
 
     def test_encode_format_returns_bytes(self):
         self.assertEqual(
