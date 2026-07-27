@@ -524,7 +524,16 @@ class TestReader(unittest.TestCase):
             reader = Reader.try_create(stream=file)
         self.assertIsNotNone(reader)
         if reader is not None:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
             reader.close()
+
+    def test_bare_stream_closed_handle_raises(self):
+        # _is_read_stream only checks method presence
+        #  so a closed handle is accepted as a stream and fails at read time.
+        file = open(self.testPath, "rb")
+        file.close()
+        with self.assertRaises(Error):
+            Reader(file)
 
     def test_bare_stream_with_manifest_data_keeps_manifest(self):
         # The bare-stream shift must not swallow manifest_data.
@@ -2986,6 +2995,27 @@ class TestBuilderWithSigner(unittest.TestCase):
         if reader is not None:
             self.assertIn("Python Test", reader.json())
             reader.close()
+
+    def test_try_create_with_manifest_data_keyword(self):
+        # try_create with manifest_data passed by keyword.
+        manifest, asset = self._detached_manifest_and_asset()
+        reader = Reader.try_create(
+            "image/jpeg", io.BytesIO(asset), manifest_data=manifest)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn("Python Test", reader.json())
+            reader.close()
+
+    def test_bare_stream_with_context_and_manifest(self):
+        # Stream and real manifest and context together.
+        manifest, asset = self._detached_manifest_and_asset()
+        context = Context()
+        try:
+            with Reader(io.BytesIO(asset), manifest_data=manifest,
+                        context=context) as reader:
+                self.assertIn("Python Test", reader.json())
+        finally:
+            context.close()
 
     def test_try_create_format_plus_path_string(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -6627,6 +6657,7 @@ class TestReaderWithContext(TestContextAPIs):
             reader = Reader.try_create(file_handle, context=context)
             self.assertIsNotNone(reader)
             if reader is not None:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
                 reader.close()
         context.close()
 
