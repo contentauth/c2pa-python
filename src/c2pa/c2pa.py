@@ -1510,14 +1510,23 @@ class NetworkResource(ManagedResource):
     Private implementation detail of the custom-resolver feature: not part
     of the public API. Nests every native mirror/helper the feature needs
     (ctypes structs, the malloc used for response bodies, header parsing,
-    resolver normalization, the ctypes trampoline builder, and the request/
-    response data shapes) so nothing about this feature is part of the
-    public surface. Context is the only thing that uses this class.
+    resolver normalization, and the ctypes trampoline builder) so nothing
+    about the FFI plumbing is part of the public surface. Context is the
+    only thing that uses this class.
 
-    A custom resolver never needs to import HttpRequest/HttpResponse: it
-    receives a request-like object (.url, .method, .headers, .body) and
-    may return any response-like object (.status, .body) -- duck typing,
-    not isinstance checks, is what _make_trampoline relies on below.
+    This class itself is not re-exported from the top-level c2pa package
+    or listed in its __all__ -- it's still a real, directly importable
+    class (`from c2pa.c2pa import NetworkResource`), just excluded from
+    the curated surface next to Reader/Builder/Context.
+
+    c2pa ships no HttpRequest/HttpResponse/HttpResolver types at all: a
+    resolver passed to ContextBuilder.with_resolver()/Context(resolver=...)
+    is never isinstance-checked. Any callable, or any object exposing a
+    resolve(request) method, is accepted (see _coerce_resolver below); the
+    request handed to it exposes .url/.method/.headers/.body, and the
+    value it returns only needs .status (int) and .body (bytes) attributes
+    -- pure duck typing, both ways. tests/network/http_resolver.py has a
+    copyable reference implementation of that shape.
     """
 
     class _Request(ctypes.Structure):
@@ -1563,21 +1572,15 @@ class NetworkResource(ManagedResource):
         ctypes.POINTER(_Request),
         ctypes.POINTER(_Response))
 
-    class HttpRequest:
-        """An HTTP request the SDK asks a custom resolver to perform.
+    class _RequestView:
+        """Plain Python view of a decoded native HTTP request.
 
-        Attributes:
-            url: Absolute request URL.
-            method: HTTP method ("GET", "POST", ...).
-            headers: Request headers as a dict. Names are lowercased by the
-                native layer; when a header repeats, the last value wins.
-            body: Request body bytes (b"" when there is none). Timestamp
-                requests POST a body; manifest fetches send none.
-
-        All data is copied out of native memory, so it stays valid after
-        the resolver call returns. Not a public type: a resolver reads
-        attributes off the instance it's handed, it never imports this
-        class.
+        Internal plumbing only: the trampoline hands one of these to the
+        resolver's resolve_fn so it has .url/.method/.headers/.body to
+        read. Not a public type -- callers never construct or import this,
+        they just read attributes off the instance they're handed. See
+        tests/network/http_resolver.py for a copyable reference
+        HttpRequest with the same shape.
         """
         __slots__ = ("url", "method", "headers", "body")
 
@@ -1589,29 +1592,8 @@ class NetworkResource(ManagedResource):
             self.body = body
 
         def __repr__(self):
-            return (f"HttpRequest(method={self.method!r}, "
+            return (f"_RequestView(method={self.method!r}, "
                     f"url={self.url!r}, body_len={len(self.body)})")
-
-    class HttpResponse:
-        """The answer a custom resolver returns to the SDK.
-
-        Attributes:
-            status: HTTP status code. Remote manifest fetches only accept
-                200; any other code surfaces as a typed C2paError.
-            body: Response body bytes.
-
-        Not a public type: a resolver may return any object exposing these
-        two attributes, it never needs to import this class.
-        """
-        __slots__ = ("status", "body")
-
-        def __init__(self, status: int, body: bytes = b""):
-            self.status = status
-            self.body = body
-
-        def __repr__(self):
-            return (f"HttpResponse(status={self.status}, "
-                    f"body_len={len(self.body or b'')})")
 
     _native_malloc = None
 
@@ -1674,15 +1656,18 @@ class NetworkResource(ManagedResource):
             return resolve_fn
         if callable(resolver):
             return resolver
-        raise C2paError(
-            "HTTP resolver must be callable or provide a resolve() method")
+        raise TypeError(
+            "HTTP resolver must be callable or provide a resolve() method, "
+            f"got {type(resolver).__name__}")
 
     @classmethod
     def _make_trampoline(cls, resolve_fn):
         """Wrap a Python resolve function into a native C callback.
 
         Args:
-            resolve_fn: Callable[[HttpRequest], HttpResponse].
+            resolve_fn: Callable taking a duck-typed request (.url/
+                .method/.headers/.body) and returning a duck-typed
+                response (.status/.body) -- see cls._RequestView.
 
         Returns:
             The _Callback object. The caller MUST keep a reference to it
@@ -1704,7 +1689,7 @@ class NetworkResource(ManagedResource):
                 body = (ctypes.string_at(req.body, req.body_len)
                         if (req.body and req.body_len) else b"")
 
-                result = resolve_fn(cls.HttpRequest(
+                result = resolve_fn(cls._RequestView(
                     url=url,
                     method=method,
                     headers=cls._parse_header_lines(raw_headers),
@@ -1713,7 +1698,7 @@ class NetworkResource(ManagedResource):
                 payload = result.body or b""
                 if not isinstance(payload, (bytes, bytearray)):
                     raise TypeError(
-                        "HttpResponse.body must be bytes, got "
+                        "resolver response .body must be bytes, got "
                         f"{type(payload).__name__}")
 
                 response = response_ptr.contents
@@ -1957,24 +1942,34 @@ class ContextBuilder:
         """Attach a custom HTTP resolver to the Context being built.
 
         The resolver handles every HTTP request the SDK makes through this
-        Context: remote manifest fetches, OCSP requests, RFC 3161 timestamp
-        requests, and CAWG did:web resolution. Reader and Builder instances
-        created without a Context keep using the built-in resolver.
+        Context: remote manifest fetches, OCSP requests, RFC 3161
+        timestamp requests, and CAWG did:web resolution. Reader and
+        Builder instances created without a Context keep using the
+        built-in resolver. Can be called multiple times; the last
+        resolver wins.
 
-        Can be called multiple times; the last resolver wins.
+        c2pa ships no resolver type to subclass or construct: resolver is
+        never isinstance-checked. Any callable, or any object with a
+        resolve(request) method, works -- the request it receives exposes
+        .url (str), .method (str), .headers (dict), and .body (bytes);
+        the response it returns only needs .status (int) and .body
+        (bytes) attributes. See tests/network/http_resolver.py for a
+        copyable reference implementation of that shape. Validated
+        immediately: an invalid resolver raises TypeError here, not later
+        at build().
 
         Args:
-            resolver: An object with a resolve(request) method, or a
-                callable with the same signature. It receives a request
-                object exposing .url (str), .method (str), .headers
-                (dict), and .body (bytes), and must return a response
-                object exposing .status (int) and .body (bytes) -- any
-                object with those attributes works, there is no type to
-                import. Raising instead marks the request as a hard
-                failure, which surfaces as a typed C2paError.
+            resolver: A callable, or an object with a resolve(request)
+                method, matching the duck-typed contract above. Raising
+                from the resolver marks the request as a hard failure,
+                which surfaces as a typed C2paError.
 
         Returns:
             self, for method chaining.
+
+        Raises:
+            TypeError: resolver is neither callable nor has a resolve()
+                method.
 
         Notes:
             - Only status 200 is accepted for a remote manifest fetch; any
@@ -1998,6 +1993,7 @@ class ContextBuilder:
             - Do not call c2pa APIs from inside the resolver: reentering the
               FFI while a call is in flight is undefined.
         """
+        NetworkResource._coerce_resolver(resolver)
         self._resolver = resolver
         return self
 
@@ -2055,6 +2051,8 @@ class Context(ManagedResource, ContextProvider):
 
         Raises:
             C2paError: If creation fails
+            TypeError: resolver is neither callable nor has a resolve()
+                method.
         """
         super().__init__()
         self._init_attrs()
@@ -2112,23 +2110,7 @@ class Context(ManagedResource, ContextProvider):
         self._http_resolver_cb = None
 
     def _release(self):
-        """Release Context-specific resources.
-
-        _http_resolver_cb is deliberately NOT cleared here. The native
-        context is an Arc, and c2pa_reader_from_context /
-        c2pa_builder_from_context clone it, so the native context (and the
-        resolver holding a raw pointer into the ctypes thunk) can outlive
-        this object's ACTIVE state. Reader and Builder keep a reference to
-        the Python Context for their whole lifetime, and that reference
-        chain is what keeps the thunk alive as long as any native clone can
-        still call it. Clearing it here frees the thunk while it is still
-        reachable from native code, which is undefined behavior: an observed
-        symptom is a garbage response reported as "invalid status code".
-
-        The asymmetry with _signer_callback_cb below is intentional. That
-        one has the same latent hazard, but it predates this code and
-        changing it is out of scope here.
-        """
+        """Release Context-specific resources."""
         self._signer_callback_cb = None
 
     @classmethod

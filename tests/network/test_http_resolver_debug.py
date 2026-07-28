@@ -11,14 +11,13 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""A custom HTTP resolver that logs every request/response, exercised
+"""Tests for DebugHttpResolver (tests/network/http_resolver.py), exercised
 against the real network.
 
-Ported from the former examples/http_resolver_debug.py: still a runnable
-demonstration of intercepting every HTTP request the SDK makes through a
-Context, now also verified in CI. Needs internet access to fetch the
-remote manifest for tests/fixtures/cloud.jpg; tests skip (not fail) when
-that fetch can't reach the network.
+Demonstrates intercepting every HTTP request the SDK makes through a
+Context. Needs internet access to fetch the remote manifest for
+tests/fixtures/cloud.jpg; tests skip (not fail) when the resolver itself
+observes a transport failure.
 """
 
 import json
@@ -26,76 +25,13 @@ import os
 import sys
 import tempfile
 import unittest
-import urllib.error
-import urllib.request
-from typing import NamedTuple
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from network_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
+from http_resolver import DebugHttpResolver  # noqa: E402
 
 import c2pa  # noqa: E402
-
-FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        os.pardir, "fixtures")
-
-
-class HttpResponse(NamedTuple):
-    """Duck-typed stand-in for c2pa's internal resolver response shape.
-
-    The resolver contract only requires .status (int) and .body (bytes);
-    there is no public type to import, any object with those attributes
-    works.
-    """
-    status: int
-    body: bytes = b""
-
-
-def _skip_if_offline(testcase, exc):
-    """Skip the test if exc looks like a network-reachability failure.
-
-    Re-raises anything else, so a real bug in the resolver or the SDK
-    still fails the test instead of being silently skipped.
-    """
-    message = str(exc)
-    if "fetch" in message or "resolver" in message:
-        testcase.skipTest(
-            "needs internet access to fetch the remote manifest for "
-            f"tests/fixtures/cloud.jpg: {exc}")
-    raise exc
-
-
-class DebugHttpResolver:
-    """Logs every SDK HTTP request and response status.
-    The actual transfer is delegated to urllib.
-    """
-
-    def __init__(self, timeout=10.0):
-        self._timeout = timeout
-        self.requests = []
-
-    def resolve(self, request):
-        self.requests.append((request.method, request.url))
-
-        # Timestamp requests POST a body; manifest fetches send none.
-        data = request.body or None
-        req = urllib.request.Request(
-            request.url,
-            data=data,
-            method=request.method,
-            headers=request.headers)
-
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                return HttpResponse(resp.status, resp.read())
-        except urllib.error.HTTPError as e:
-            # A 4xx/5xx is still a response! Pass the status through and
-            # let the SDK turn it into its own typed error: a remote
-            # manifest fetch only accepts 200.
-            return HttpResponse(e.code, e.read())
-        # urllib.error.URLError (DNS failure, connection refused, timeout)
-        # is deliberately not caught: raising marks the request as a hard
-        # resolver failure, which surfaces as a typed C2paError.
 
 
 class TestHttpResolverDebug(unittest.TestCase):
@@ -114,7 +50,7 @@ class TestHttpResolverDebug(unittest.TestCase):
                         self.assertFalse(reader.is_embedded())
                         self.assertTrue(reader.get_remote_url())
         except c2pa.C2paError as e:
-            _skip_if_offline(self, e)
+            skip_if_offline(self, resolver, e)
 
         self.assertTrue(
             any(method == "GET" for method, _ in resolver.requests))
@@ -197,7 +133,7 @@ class TestHttpResolverDebug(unittest.TestCase):
                     self.assertEqual(
                         len(resolver.requests), requests_before_reread)
             except c2pa.C2paError as e:
-                _skip_if_offline(self, e)
+                skip_if_offline(self, resolver, e)
         finally:
             context.close()
 
