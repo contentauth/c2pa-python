@@ -16,8 +16,9 @@
 exercised against the real network.
 
 Needs internet access to fetch the remote manifest for
-tests/fixtures/cloud.jpg; tests skip (not fail) when the resolver itself
-observes a transport failure.
+tests/fixtures/cloud.jpg: these tests fail without it. On a Python
+install with no CA bundle configured, run them with
+SSL_CERT_FILE=$(python -m certifi).
 """
 
 import os
@@ -25,9 +26,13 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
+sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
 
-from http_resolver_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
+FIXTURES = os.path.join(_REPO_ROOT, "tests", "fixtures")
+
 from http_resolver_example_impl import (  # noqa: E402
     AlwaysFailResolver, CachingHttpResolver)
 
@@ -45,17 +50,14 @@ class TestHttpResolverCache(unittest.TestCase):
         expected and worth updating, not a false alarm.
         """
         resolver = CachingHttpResolver()
-        try:
-            with c2pa.Context.builder().with_resolver(
-                    resolver).build() as context:
-                for _ in range(2):
-                    with open(os.path.join(FIXTURES, "cloud.jpg"),
-                              "rb") as f:
-                        with c2pa.Reader(
-                                "image/jpeg", f, context=context) as reader:
-                            reader.get_validation_state()
-        except c2pa.C2paError as e:
-            skip_if_offline(self, resolver, e)
+        with c2pa.Context.builder().with_resolver(
+                resolver).build() as context:
+            for _ in range(2):
+                with open(os.path.join(FIXTURES, "cloud.jpg"),
+                          "rb") as f:
+                    with c2pa.Reader(
+                            "image/jpeg", f, context=context) as reader:
+                        reader.get_validation_state()
 
         self.assertEqual(resolver.cache.hits, 1)
         self.assertEqual(resolver.cache.misses, 1)
@@ -109,31 +111,28 @@ class TestHttpResolverCache(unittest.TestCase):
                    .with_signer(c2pa.Signer.from_info(signer_info))
                    .build())
         try:
-            try:
-                builder = c2pa.Builder(manifest_definition, context=context)
+            builder = c2pa.Builder(manifest_definition, context=context)
 
-                with open(os.path.join(FIXTURES, "cloud.jpg"),
-                          "rb") as ingredient:
-                    for index in range(3):
-                        ingredient.seek(0)
-                        builder.add_ingredient(
-                            {"title": f"cloud.jpg #{index + 1}",
-                             "relationship": "componentOf",
-                             "label": ingredient_labels[index]},
-                            "image/jpeg", ingredient)
+            with open(os.path.join(FIXTURES, "cloud.jpg"),
+                      "rb") as ingredient:
+                for index in range(3):
+                    ingredient.seek(0)
+                    builder.add_ingredient(
+                        {"title": f"cloud.jpg #{index + 1}",
+                         "relationship": "componentOf",
+                         "label": ingredient_labels[index]},
+                        "image/jpeg", ingredient)
 
-                with tempfile.TemporaryDirectory() as output_dir:
-                    output_path = os.path.join(
-                        output_dir, "A_signed_cached.jpg")
-                    with open(os.path.join(FIXTURES, "A.jpg"),
-                              "rb") as source:
-                        with open(output_path, "wb") as dest:
-                            builder.sign(
-                                c2pa.Signer.from_info(signer_info),
-                                "image/jpeg", source, dest)
-                    self.assertTrue(os.path.exists(output_path))
-            except c2pa.C2paError as e:
-                skip_if_offline(self, resolver, e)
+            with tempfile.TemporaryDirectory() as output_dir:
+                output_path = os.path.join(
+                    output_dir, "A_signed_cached.jpg")
+                with open(os.path.join(FIXTURES, "A.jpg"),
+                          "rb") as source:
+                    with open(output_path, "wb") as dest:
+                        builder.sign(
+                            c2pa.Signer.from_info(signer_info),
+                            "image/jpeg", source, dest)
+                self.assertTrue(os.path.exists(output_path))
         finally:
             context.close()
 

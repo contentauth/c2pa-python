@@ -153,7 +153,6 @@ class CachingHttpResolver(HttpResolver):
         self._max_retries = int(max_retries)
         self._backoff = float(backoff_seconds)
         self._max_retry_after = float(max_retry_after)
-        self.transport_errors = []
 
     def resolve(self, request):
         cacheable = request.method.upper() == "GET"
@@ -187,12 +186,6 @@ class CachingHttpResolver(HttpResolver):
                     return e.code, e.read()
                 delay = self._retry_delay(e, attempt)
                 time.sleep(delay)
-            except urllib.error.URLError as e:
-                # DNS failure, connection refused, timeout: recorded so
-                # http_resolver_test_helpers.skip_if_offline can tell this
-                # apart from a real bug.
-                self.transport_errors.append(e)
-                raise
         raise RuntimeError("unreachable")
 
     def _retry_delay(self, error, attempt):
@@ -223,7 +216,6 @@ class DebugHttpResolver(HttpResolver):
     def __init__(self, timeout=10.0):
         self._timeout = timeout
         self.requests = []
-        self.transport_errors = []
 
     def resolve(self, request):
         self.requests.append((request.method, request.url))
@@ -244,9 +236,3 @@ class DebugHttpResolver(HttpResolver):
             # let the SDK turn it into its own typed error: a remote
             # manifest fetch only accepts 200.
             return HttpResponse(e.code, e.read())
-        except urllib.error.URLError as e:
-            # DNS failure, connection refused, timeout: recorded so
-            # http_resolver_test_helpers.skip_if_offline can tell this
-            # apart from a real bug.
-            self.transport_errors.append(e)
-            raise

@@ -17,8 +17,9 @@ against the real network.
 
 Demonstrates intercepting every HTTP request the SDK makes through a
 Context. Needs internet access to fetch the remote manifest for
-tests/fixtures/cloud.jpg; tests skip (not fail) when the resolver itself
-observes a transport failure.
+tests/fixtures/cloud.jpg: these tests fail without it. On a Python
+install with no CA bundle configured, run them with
+SSL_CERT_FILE=$(python -m certifi).
 """
 
 import json
@@ -27,9 +28,13 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
+sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
 
-from http_resolver_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
+FIXTURES = os.path.join(_REPO_ROOT, "tests", "fixtures")
+
 from http_resolver_example_impl import DebugHttpResolver  # noqa: E402
 
 import c2pa  # noqa: E402
@@ -41,17 +46,14 @@ class TestHttpResolverDebug(unittest.TestCase):
         """Reading an asset whose manifest lives at a remote URL logs a
         GET for that fetch."""
         resolver = DebugHttpResolver()
-        try:
-            with c2pa.Context.builder().with_resolver(
-                    resolver).build() as context:
-                with open(os.path.join(FIXTURES, "cloud.jpg"), "rb") as f:
-                    with c2pa.Reader(
-                            "image/jpeg", f, context=context) as reader:
-                        reader.get_validation_state()
-                        self.assertFalse(reader.is_embedded())
-                        self.assertTrue(reader.get_remote_url())
-        except c2pa.C2paError as e:
-            skip_if_offline(self, resolver, e)
+        with c2pa.Context.builder().with_resolver(
+                resolver).build() as context:
+            with open(os.path.join(FIXTURES, "cloud.jpg"), "rb") as f:
+                with c2pa.Reader(
+                        "image/jpeg", f, context=context) as reader:
+                    reader.get_validation_state()
+                    self.assertFalse(reader.is_embedded())
+                    self.assertTrue(reader.get_remote_url())
 
         self.assertTrue(
             any(method == "GET" for method, _ in resolver.requests))
@@ -98,43 +100,40 @@ class TestHttpResolverDebug(unittest.TestCase):
                    .with_signer(c2pa.Signer.from_info(signer_info))
                    .build())
         try:
-            try:
-                builder = c2pa.Builder(manifest_definition, context=context)
+            builder = c2pa.Builder(manifest_definition, context=context)
 
-                with open(os.path.join(FIXTURES, "cloud.jpg"),
-                          "rb") as ingredient:
-                    builder.add_ingredient(
-                        {"title": "cloud.jpg", "relationship": "componentOf",
-                         "label": "cloud-ingredient"},
-                        "image/jpeg", ingredient)
+            with open(os.path.join(FIXTURES, "cloud.jpg"),
+                      "rb") as ingredient:
+                builder.add_ingredient(
+                    {"title": "cloud.jpg", "relationship": "componentOf",
+                     "label": "cloud-ingredient"},
+                    "image/jpeg", ingredient)
 
-                with tempfile.TemporaryDirectory() as output_dir:
-                    output_path = os.path.join(
-                        output_dir, "A_signed_resolver.jpg")
-                    with open(os.path.join(FIXTURES, "A.jpg"),
-                              "rb") as source:
-                        with open(output_path, "wb") as dest:
-                            builder.sign(
-                                c2pa.Signer.from_info(signer_info),
-                                "image/jpeg", source, dest)
+            with tempfile.TemporaryDirectory() as output_dir:
+                output_path = os.path.join(
+                    output_dir, "A_signed_resolver.jpg")
+                with open(os.path.join(FIXTURES, "A.jpg"),
+                          "rb") as source:
+                    with open(output_path, "wb") as dest:
+                        builder.sign(
+                            c2pa.Signer.from_info(signer_info),
+                            "image/jpeg", source, dest)
 
-                    self.assertTrue(
-                        any(m == "GET" for m, _ in resolver.requests))
-                    requests_before_reread = len(resolver.requests)
+                self.assertTrue(
+                    any(m == "GET" for m, _ in resolver.requests))
+                requests_before_reread = len(resolver.requests)
 
-                    # Reading the signed file back uses its embedded
-                    # manifest, so this makes no HTTP requests at all.
-                    with open(output_path, "rb") as f:
-                        with c2pa.Reader("image/jpeg", f) as reader:
-                            store = json.loads(reader.json())
-                            manifest = store["manifests"][
-                                store["active_manifest"]]
-                            self.assertTrue(manifest.get("ingredients"))
+                # Reading the signed file back uses its embedded
+                # manifest, so this makes no HTTP requests at all.
+                with open(output_path, "rb") as f:
+                    with c2pa.Reader("image/jpeg", f) as reader:
+                        store = json.loads(reader.json())
+                        manifest = store["manifests"][
+                            store["active_manifest"]]
+                        self.assertTrue(manifest.get("ingredients"))
 
-                    self.assertEqual(
-                        len(resolver.requests), requests_before_reread)
-            except c2pa.C2paError as e:
-                skip_if_offline(self, resolver, e)
+                self.assertEqual(
+                    len(resolver.requests), requests_before_reread)
         finally:
             context.close()
 

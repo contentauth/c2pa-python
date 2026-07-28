@@ -1594,10 +1594,9 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
         return mimetypes.guess_type(str(path))[0] or ""
 
 
-class HttpRequestView:
-    """This Python-side view of a decoded native HTTP request, with the
-    plumbing that turns a Python resolve_fn into the native
-    trampoline that constructs instances of this class and calls it.
+class C2paHttpRequestData:
+    """Python-side decoded copy of a native HTTP request,
+    handed to a custom HTTP resolver (with_resolve).
 
     Attributes:
         url: Absolute request URL.
@@ -1619,8 +1618,14 @@ class HttpRequestView:
         self.body = body
 
     def __repr__(self):
-        return (f"HttpRequestView(method={self.method!r}, "
+        return (f"C2paHttpRequestData(method={self.method!r}, "
                 f"url={self.url!r}, body_len={len(self.body)})")
+
+
+class C2paHttpResolverBridge:
+    """Plumbing that turns a Python resolver into the native trampoline
+    the C API calls.
+    """
 
     @staticmethod
     def _parse_header_lines(raw: str) -> dict:
@@ -1656,14 +1661,13 @@ class HttpRequestView:
             "HTTP resolver must be callable or provide a resolve() method, "
             f"got {type(resolver).__name__}")
 
-    @classmethod
-    def _make_trampoline(cls, resolve_fn):
+    @staticmethod
+    def _make_trampoline(resolve_fn):
         """Wrap a Python HTTP resolver function into a native C callback.
 
         Args:
-            resolve_fn: Callable taking a duck-typed request (.url/
-                .method/.headers/.body) and returning a duck-typed
-                response (.status/.body).
+            resolve_fn: Callable taking a C2paHttpRequestData and
+                returning a duck-typed response (.status/.body).
 
         Returns:
             The HttpResolverCallback object.
@@ -1685,10 +1689,11 @@ class HttpRequestView:
                 body = (ctypes.string_at(req.body, req.body_len)
                         if (req.body and req.body_len) else b"")
 
-                result = resolve_fn(cls(
+                result = resolve_fn(C2paHttpRequestData(
                     url=url,
                     method=method,
-                    headers=cls._parse_header_lines(raw_headers),
+                    headers=C2paHttpResolverBridge._parse_header_lines(
+                        raw_headers),
                     body=body))
 
                 payload = result.body or b""
@@ -1697,8 +1702,14 @@ class HttpRequestView:
                         "resolver response .body must be bytes, got "
                         f"{type(payload).__name__}")
 
+                status = getattr(result, "status", None)
+                if not isinstance(status, int) or isinstance(status, bool):
+                    raise TypeError(
+                        "resolver response .status must be an int, got "
+                        f"{type(status).__name__}")
+
                 response = response_ptr.contents
-                response.status = int(result.status)
+                response.status = status
                 if payload:
                     length = len(payload)
                     buf = ManagedResource._get_native_malloc()(length)
@@ -1709,7 +1720,6 @@ class HttpRequestView:
                     ctypes.memmove(buf, bytes(payload), length)
                     # Ownership handoff: from here the native library frees
                     # this buffer on return paths.
-                    # Never free it here.
                     response.body = ctypes.cast(
                         buf, ctypes.POINTER(ctypes.c_ubyte))
                     response.body_len = length
@@ -1881,6 +1891,7 @@ class ContextBuilder:
         self._settings = None
         self._signer = None
         self._resolver = None
+        self._resolve_fn = None
 
     def with_settings(
         self, settings: 'Settings',
@@ -1925,7 +1936,8 @@ class ContextBuilder:
         resolve(request) method, works -- the request it receives exposes
         .url (str), .method (str), .headers (dict), and .body (bytes);
         the response it returns only needs .status (int) and .body
-        (bytes) attributes. See tests/network/http_resolver.py for a
+        (bytes) attributes. See
+        tests/http_resolver/http_resolver_example_impl.py for a
         copyable reference implementation of that shape. Validated
         immediately: an invalid resolver raises TypeError here, not later
         at build().
@@ -1965,7 +1977,7 @@ class ContextBuilder:
             - Do not call c2pa APIs from inside the resolver: reentering the
               FFI while a call is in flight is undefined.
         """
-        HttpRequestView._coerce_resolver(resolver)
+        self._resolve_fn = C2paHttpResolverBridge._coerce_resolver(resolver)
         self._resolver = resolver
         return self
 
@@ -1975,6 +1987,8 @@ class ContextBuilder:
             settings=self._settings,
             signer=self._signer,
             resolver=self._resolver,
+            # Already coerced (and validated) by with_resolver.
+            _resolve_fn=self._resolve_fn,
         )
 
 
@@ -2020,6 +2034,7 @@ class Context(ManagedResource, ContextProvider):
         settings: Optional['Settings'] = None,
         signer: Optional['Signer'] = None,
         resolver=None,
+        _resolve_fn=None,
     ):
         """Create a Context.
 
@@ -2032,6 +2047,9 @@ class Context(ManagedResource, ContextProvider):
                 resolve(request) method or a callable with the same
                 signature. See ContextBuilder.with_resolver for the full
                 contract.
+            _resolve_fn: Private. The already-coerced callable for
+                `resolver`, passed by ContextBuilder.build() so the
+                coercion done by with_resolver is not repeated here.
 
         Raises:
             C2paError: If creation fails
@@ -2058,11 +2076,15 @@ class Context(ManagedResource, ContextProvider):
                         check=lambda r: r != 0)
 
                 if resolver is not None:
-                    resolve_fn = HttpRequestView._coerce_resolver(resolver)
-                    callback_cb = HttpRequestView._make_trampoline(
+                    # Reuse the builder's coercion when it did one,
+                    # coerce here for the direct Context(resolver=...),
+                    # from_json and from_dict paths.
+                    resolve_fn = _resolve_fn
+                    if resolve_fn is None:
+                        resolve_fn = (
+                            C2paHttpResolverBridge._coerce_resolver(resolver))
+                    callback_cb = C2paHttpResolverBridge._make_trampoline(
                         resolve_fn)
-                    # Pin the thunk before any native call can capture its
-                    # raw function pointer (see _release for why it stays).
                     self._http_resolver_cb = callback_cb
                     with self._NativeHttpResolver(callback_cb) as native_res:
                         native_res._consume_no_replacement(
