@@ -1703,6 +1703,7 @@ class C2paHttpResolverBridge:
                     raise TypeError(
                         "resolver response .body must be bytes, got "
                         f"{type(payload).__name__}")
+                data = bytes(payload)
 
                 status = getattr(result, "status", None)
                 if not isinstance(status, int) or isinstance(status, bool):
@@ -1712,14 +1713,14 @@ class C2paHttpResolverBridge:
 
                 response = response_ptr.contents
                 response.status = status
-                if payload:
-                    length = len(payload)
+                if data:
+                    length = len(data)
                     buf = ManagedResource._get_native_malloc()(length)
                     if not buf:
                         _lib.c2pa_error_set_last(
                             b"Other: HTTP resolver out of memory")
                         return -1
-                    ctypes.memmove(buf, bytes(payload), length)
+                    ctypes.memmove(buf, data, length)
                     # Ownership handoff: from here the native library frees
                     # this buffer on return paths. Never free it here.
                     response.body = ctypes.cast(
@@ -3466,7 +3467,8 @@ class Signer(ManagedResource):
                     return -1
 
                 # Copy the signature back to the C buffer
-                # (since callback is used in native code)
+                # (since callback is used in native code).
+                signature = bytes(signature)
                 actual_len = min(len(signature), signed_len)
                 # Use memmove for efficient memory copying instead of
                 # byte-by-byte loop
