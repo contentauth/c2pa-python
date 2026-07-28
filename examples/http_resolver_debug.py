@@ -7,15 +7,10 @@ import urllib.request
 import c2pa
 
 # This example shows how to intercept every HTTP request the C2PA SDK makes,
-# by attaching a custom HTTP resolver to a Context. The resolver logs the
-# method and URL of each request and the status code of each response, while
-# delegating the actual transfer to urllib from the standard library.
-#
-# A resolver sees all SDK HTTP traffic: remote manifest fetches, OCSP
-# requests, RFC 3161 timestamp requests, and CAWG did:web resolution.
-#
-# This example needs internet access: tests/fixtures/cloud.jpg carries no
-# embedded manifest, only a remote one that has to be fetched.
+# by attaching a custom HTTP resolver to a Context.
+# The resolver logs the method and URL of each request and the status code
+# of each response, while delegating the actual transfer to urllib from
+# the standard library. The resolver sees all network traffic.
 
 fixtures_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -27,10 +22,7 @@ output_dir = os.path.join(
 
 class DebugHttpResolver:
     """Logs every SDK HTTP request and response status.
-
-    The actual transfer is delegated to urllib, which also gives us redirect
-    handling for free: the SDK itself does not follow redirects, so a
-    hand-rolled resolver would have to implement that.
+    The actual transfer is delegated to urllib.
     """
 
     def __init__(self, timeout=10.0):
@@ -54,15 +46,14 @@ class DebugHttpResolver:
                       flush=True)
                 return c2pa.HttpResponse(resp.status, body)
         except urllib.error.HTTPError as e:
-            # A 4xx/5xx is still a real response. Pass the status through and
-            # let the SDK turn it into its own typed error: a remote manifest
-            # fetch only accepts 200.
+            # A 4xx/5xx is still a response!
+            # Pass the status through and let the SDK turn it into
+            # its own typed error: a remote manifest fetch only accepts 200.
             body = e.read()
             print(f"[http]   -> {e.code}", flush=True)
             return c2pa.HttpResponse(e.code, body)
-        # urllib.error.URLError (DNS failure, connection refused, timeout) is
-        # deliberately not caught: raising marks the request as a hard
-        # resolver failure, which surfaces as a typed C2paError.
+        # urllib.error.URLError (DNS failure, connection refused, timeout) is deliberately not caught:
+        # raising marks the request as a hard resolver failure, which surfaces as a typed C2paError.
 
 
 def read_with_resolver():
@@ -87,8 +78,7 @@ def sign_with_resolver():
     with open(fixtures_dir + "es256_private.key", "rb") as f:
         key = f.read()
 
-    # ta_url is None, meaning "no timestamp authority". An empty string is
-    # treated as a URL and fails signing.
+    # ta_url is None, meaning "no timestamp authority".
     signer_info = c2pa.C2paSignerInfo(
         alg=b"es256", sign_cert=certs, private_key=key, ta_url=None)
 
@@ -98,7 +88,21 @@ def sign_with_resolver():
             {"name": "http_resolver_debug", "version": "0.1"}],
         "format": "image/jpeg",
         "title": "Signed with a debug HTTP resolver",
-        "assertions": [],
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [
+                {
+                    "action": "c2pa.created",
+                    "digitalSourceType":
+                        "http://cv.iptc.org/newscodes/"
+                        "digitalsourcetype/digitalCreation",
+                },
+                {
+                    "action": "c2pa.placed",
+                    "parameters": {"ingredientIds": ["cloud-ingredient"]},
+                },
+            ]},
+        }],
     }
 
     resolver = DebugHttpResolver()
@@ -109,11 +113,13 @@ def sign_with_resolver():
     try:
         builder = c2pa.Builder(manifest_definition, context=context)
 
-        # Adding this ingredient fetches its remote manifest through the
-        # resolver, so one GET shows up in the log.
+        # Adding this ingredient fetches its remote manifest through the resolver,
+        # so one GET shows up in the log.
         with open(fixtures_dir + "cloud.jpg", "rb") as ingredient:
             builder.add_ingredient(
-                {"title": "cloud.jpg"}, "image/jpeg", ingredient)
+                {"title": "cloud.jpg", "relationship": "componentOf",
+                 "label": "cloud-ingredient"},
+                "image/jpeg", ingredient)
 
         os.makedirs(output_dir, exist_ok=True)
         output_path = output_dir + "A_signed_resolver.jpg"

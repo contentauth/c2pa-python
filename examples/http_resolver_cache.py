@@ -8,14 +8,8 @@ import urllib.request
 
 import c2pa
 
-# This example shows a custom HTTP resolver that caches responses and retries
-# throttled requests, using nothing but the standard library.
-#
-# The SDK may call a resolver from worker threads, so everything here is
-# thread-safe.
-#
-# This example needs internet access: tests/fixtures/cloud.jpg carries no
-# embedded manifest, only a remote one that has to be fetched.
+# This example shows a custom HTTP resolver that caches responses
+# and retries throttled requests.
 
 fixtures_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -61,13 +55,14 @@ class TtlLruCache:
 class CachingHttpResolver:
     """An HTTP resolver with a response cache and bounded retries.
 
-    Caching policy: only GET requests answered with 200 are cached. POSTs
-    (timestamp requests) and error responses never are.
+    Caching policy: only read GET requests answered with 200 are cached.
+    POSTs (timestamp requests) and error responses are not.
 
-    Retry policy: 429 and 503 are retried up to max_retries times, honoring
-    a capped Retry-After when the header is present and otherwise backing
-    off exponentially. Any other status is final and is passed through to
-    the SDK. Transport errors raise, which marks a hard failure.
+    Retry policy: 429 and 503 are retried up to max_retries times,
+    honoring a capped Retry-After when the header is present,
+    and otherwise backing off exponentially.
+    Any other status is final and is passed through to the SDK.
+    Transport errors raise, which marks a hard failure.
     """
 
     def __init__(self, cache=None, timeout=10.0, max_retries=3,
@@ -107,8 +102,8 @@ class CachingHttpResolver:
             except urllib.error.HTTPError as e:
                 retryable = e.code in (429, 503)
                 if not retryable or attempt == self._max_retries:
-                    # Final failure: pass the status back so the SDK can
-                    # report it as a typed error. Not cached.
+                    # Final failure:
+                    # Pass the status back so the SDK can report it..
                     return e.code, e.read()
                 delay = self._retry_delay(e, attempt)
                 print(f"[http]  {e.code}, retrying in {delay:.1f}s",
@@ -127,8 +122,8 @@ class CachingHttpResolver:
 
 
 def read_with_cache():
-    """Read the same remote-manifest asset twice: one fetch, one cache hit."""
-    print("\n--- Reading cloud.jpg twice through one cache ---")
+    """Read the same remote-manifest asset more than once for cache hits."""
+    print("\n--- Reading cloud.jpg multiple times should hit a cache")
 
     resolver = CachingHttpResolver()
     with c2pa.Context.builder().with_resolver(resolver).build() as context:
@@ -147,17 +142,19 @@ def sign_with_cache():
     Each add re-reads the ingredient's remote manifest through the context
     resolver, so three adds mean one network fetch and two cache hits.
     """
-    print("\n--- Signing with the same remote ingredient added 3 times ---")
+    print("\n--- Signing with the same remote ingredient added multiple times...")
 
     with open(fixtures_dir + "es256_certs.pem", "rb") as f:
         certs = f.read()
     with open(fixtures_dir + "es256_private.key", "rb") as f:
         key = f.read()
 
-    # ta_url is None, meaning "no timestamp authority". An empty string is
-    # treated as a URL and fails signing.
+    # ta_url is None, meaning "no timestamp authority".
+    # An empty string is treated as a URL and fails signing.
     signer_info = c2pa.C2paSignerInfo(
         alg=b"es256", sign_cert=certs, private_key=key, ta_url=None)
+
+    ingredient_labels = [f"cloud-ingredient-{i + 1}" for i in range(3)]
 
     manifest_definition = {
         "claim_generator": "http_resolver_cache",
@@ -165,10 +162,24 @@ def sign_with_cache():
             {"name": "http_resolver_cache", "version": "0.1"}],
         "format": "image/jpeg",
         "title": "Signed with a caching HTTP resolver",
-        "assertions": [],
+        "assertions": [{
+            "label": "c2pa.actions.v2",
+            "data": {"actions": [
+                {
+                    "action": "c2pa.created",
+                    "digitalSourceType":
+                        "http://cv.iptc.org/newscodes/"
+                        "digitalsourcetype/digitalCreation",
+                },
+                {
+                    "action": "c2pa.placed",
+                    "parameters": {"ingredientIds": ingredient_labels},
+                },
+            ]},
+        }],
     }
 
-    # A fresh resolver per flow keeps the printed counts easy to follow.
+    # A fresh resolver per flow so it prints nicely.
     resolver = CachingHttpResolver()
     context = (c2pa.Context.builder()
                .with_resolver(resolver)
@@ -181,7 +192,9 @@ def sign_with_cache():
             for index in range(3):
                 ingredient.seek(0)
                 builder.add_ingredient(
-                    {"title": f"cloud.jpg #{index + 1}"},
+                    {"title": f"cloud.jpg #{index + 1}",
+                     "relationship": "componentOf",
+                     "label": ingredient_labels[index]},
                     "image/jpeg", ingredient)
 
         os.makedirs(output_dir, exist_ok=True)
@@ -201,7 +214,7 @@ def sign_with_cache():
 
 def failing_resolver_is_a_clean_error():
     """A final failure surfaces as a typed error, not a crash."""
-    print("\n--- A resolver that always answers 500 ---")
+    print("\n--- A resolver that always answers 500")
 
     def always_500(request):
         return c2pa.HttpResponse(500, b"")
