@@ -9,6 +9,7 @@ Plain functions (no pytest dependencies) that exercise the profiling scenarios.
 Each function is called N times by run_profile.py.
 """
 
+import ctypes
 import gc
 import io
 import json
@@ -27,6 +28,7 @@ from c2pa import (
     Signer,
     Stream,
 )
+import c2pa.c2pa as c2pa_module
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
@@ -36,6 +38,8 @@ SIGNED_JPEG = FIXTURES_DIR / "C.jpg"
 CLOUD_JPEG = FIXTURES_DIR / "cloud.jpg"
 SOURCE_JPEG = FIXTURES_DIR / "A.jpg"
 SIGNING_PNG = SIGNING_FIXTURES_DIR / "sample1.png"
+DASH_INIT_MP4 = FIXTURES_DIR / "dashinit.mp4"
+DASH_FRAGMENT = FIXTURES_DIR / "dash1.m4s"
 
 _DST_COMPOSITE = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
 
@@ -477,6 +481,213 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
         builder.sign("image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
+def scenario_builder_with_archive_swap(iterations: int = 100) -> None:
+    """Loop Builder.with_archive(), the consume-and-return FFI path.
+
+    c2pa_builder_with_archive consumes the old native handle and returns a
+    replacement, so the Python side swaps the pointer without freeing the
+    consumed one. Freeing it would be a double-free, and failing to adopt the
+    replacement would leak. The other builder scenarios never swap a live
+    handle, so neither mistake would show up there.
+    """
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.with_archive(io.BytesIO(archive_bytes))
+        builder.close()
+
+
+def scenario_reader_with_fragment_swap(iterations: int = 100) -> None:
+    """Loop Reader.with_fragment(), the other consume-and-return FFI path.
+
+    Same ownership hand-off as with_archive: c2pa_reader_with_fragment eats
+    the old reader handle and returns a new one.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    for _ in _iterate(iterations):
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            reader.with_fragment(
+                "video/mp4",
+                io.BytesIO(init_bytes),
+                io.BytesIO(fragment_bytes),
+            )
+        except C2paError:
+            # A failed call consumed the old handle just as a successful one
+            # would, so the scenario measures both outcomes.
+            pass
+        finally:
+            reader.close()
+
+
+def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
+    """Loop Builder.from_archive() itself (context-less alternate constructor),
+    then sign. Regression guard for the classmethod's native-handle wrapping.
+    """
+    signer = _make_signer()
+    source_bytes = SOURCE_JPEG.read_bytes()
+    ingredient_bytes = SIGNED_JPEG.read_bytes()
+    archive_bytes = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive_bytes)
+    archive_bytes = archive_bytes.getvalue()
+    for _ in _iterate(iterations):
+        # from_archive() yields a context-less Builder, so sign() needs an
+        # explicit signer (no Context to pull one from).
+        builder = Builder.from_archive(io.BytesIO(archive_bytes))
+        with io.BytesIO(ingredient_bytes) as ing:
+            builder.add_ingredient(
+                {"relationship": "parentOf", "instance_id": _PARENT_ID},
+                "image/jpeg", ing,
+            )
+        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
+
+
+# Consume-and-return failure paths.
+#
+# These calls take ownership partway through their body, so a null return is
+# ambiguous and getting it wrong leaks one handle per call. The success paths
+# are covered above; these loop the failure paths, where the leak would be.
+
+def _untracked_reader_handle():
+    """A pointer the native registry does not know about.
+
+    A never-allocated buffer, so it is rejected like a stale handle without
+    allocating a real Reader per call, which would swamp the measurement.
+    Freed handles are unusable here: recycled addresses become tracked again.
+    """
+    buf = ctypes.create_string_buffer(64)
+    return ctypes.cast(buf, ctypes.POINTER(c2pa_module.C2paReader)), buf
+
+
+def scenario_reader_with_fragment_pre_consume_rejection(
+        iterations: int = 100) -> None:
+    """Loop the rejection that precedes the ownership transfer.
+
+    The handle is still ours, so treating this as consumed drops a pointer
+    the registry still holds and leaked_bytes climbs with iterations.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    for _ in _iterate(iterations):
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        real_handle = reader._handle
+        # Keep the buffer alive: the cast pointer does not own it, and an
+        # early collection would hand the FFI a dangling address.
+        bogus, _buf = _untracked_reader_handle()
+        reader._handle = bogus
+        try:
+            reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
+                                 io.BytesIO(fragment_bytes))
+            raise AssertionError("pre-consume rejection did not raise")
+        except C2paError as e:
+            # Fail loudly: without these the scenario still runs when the
+            # ownership logic regresses, and a rejection that stops being
+            # recognised looks identical to a pass.
+            if not any(tag in str(e) for tag in
+                       c2pa_module.ManagedResource._PRE_CONSUME_ERROR_TAGS):
+                raise AssertionError(
+                    f"expected a pre-consume rejection, got: {e}") from e
+            if reader._handle is None:
+                raise AssertionError(
+                    "handle was dropped on a pre-consume rejection; the "
+                    "native side never took ownership, so this leaks") from e
+        finally:
+            # Restore before close() so the real handle is freed exactly once.
+            reader._handle = real_handle
+            reader.close()
+
+
+def scenario_builder_with_archive_post_consume_failure(
+        iterations: int = 100) -> None:
+    """Loop a failure after the ownership transfer.
+
+    The control: if the fix over-corrected into retaining handles the native
+    side already dropped, this scenario double-frees or leaks.
+    """
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE)
+        try:
+            builder.with_archive(io.BytesIO(b"not a valid archive"))
+            raise AssertionError("post-consume failure did not raise")
+        except C2paError:
+            pass
+        finally:
+            builder.close()
+
+
+def scenario_with_fragment_marshalling_error(iterations: int = 100) -> None:
+    """Loop a failure that never reaches native code.
+
+    Nothing was consumed, so the reader must stay usable. The old blanket
+    except marked it consumed here, leaking on what is only a type error.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    for _ in _iterate(iterations):
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            reader.with_fragment("video/mp4", object(), object())
+            raise AssertionError("marshalling error did not raise")
+        except (C2paError, TypeError, ctypes.ArgumentError):
+            pass
+        finally:
+            # Must still be usable: nothing was handed over.
+            reader.json()
+            reader.close()
+
+
+def scenario_with_fragment_mixed_outcomes(iterations: int = 100) -> None:
+    """Interleave success, pre-consume rejection and post-consume failure.
+
+    Each path leaves a different state behind, so running them in sequence
+    catches a stale error being read as the current call's.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    for i in _iterate(iterations):
+        phase = i % 3
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            if phase == 0:
+                reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
+                                     io.BytesIO(fragment_bytes))
+            elif phase == 1:
+                real_handle = reader._handle
+                bogus, _buf = _untracked_reader_handle()
+                reader._handle = bogus
+                try:
+                    reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
+                                         io.BytesIO(fragment_bytes))
+                    raise AssertionError(
+                        "pre-consume rejection did not raise")
+                except C2paError as e:
+                    # A stale error from the phase before must not be read as
+                    # this call's; the rejection would stop being recognised.
+                    if not any(
+                            tag in str(e) for tag in c2pa_module
+                            .ManagedResource._PRE_CONSUME_ERROR_TAGS):
+                        raise AssertionError(
+                            f"expected a pre-consume rejection, got: {e}"
+                        ) from e
+                    if reader._handle is None:
+                        raise AssertionError(
+                            "handle dropped on a pre-consume rejection"
+                        ) from e
+                finally:
+                    reader._handle = real_handle
+            else:
+                try:
+                    reader.with_fragment("video/mp4", io.BytesIO(b"garbage"),
+                                         io.BytesIO(b"garbage"))
+                except C2paError:
+                    pass
+        finally:
+            reader.close()
+
+
 # Archive scenarios: builder as working store (to_archive/with_archive) and
 # per-ingredient archives (write_ingredient_archive/add_ingredient_from_archive).
 
@@ -676,6 +887,37 @@ def scenario_reader_string_apis(iterations: int = 100) -> None:
         reader.get_remote_url()
         reader.resource_to_stream(thumb_uri, io.BytesIO())
         reader.close()
+
+
+def scenario_builder_from_context_construction(iterations: int = 100) -> None:
+    """Loop Builder(context=...) construction, the consume-and-swap path.
+
+    c2pa_builder_from_context hands back a handle that
+    c2pa_builder_with_definition then consumes and replaces. The Builder
+    adopts the first handle before that call so _consume_and_swap can own the
+    swap, which means a mis-sequenced swap leaks the replacement or frees the
+    consumed pointer twice. The other context builder scenarios sign a full
+    asset per iteration, so a one-handle regression here would sit under their
+    noise. This one only constructs and closes.
+
+    scenario_reader_manifest_data_context is the Reader-side equivalent.
+    """
+    context = Context()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.close()
+
+
+def scenario_signer_construction(iterations: int = 100) -> None:
+    """Loop Signer.from_info()/__init__ construction and teardown.
+
+    Every other scenario calls _make_signer() once outside its loop, so
+    repeated Signer construction/destruction has no coverage elsewhere.
+    Regression guard for Signer.__init__'s native-handle activation.
+    """
+    for _ in _iterate(iterations):
+        signer = _make_signer()
+        signer.close()
 
 
 # jpeg + png context variants, paired with the `_legacy` scenarios above for
@@ -878,6 +1120,37 @@ def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
             r.close()
 
 
+def scenario_fork_child_closes_then_parent_frees(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    20 Readers created, fork, the CHILD closes all 20 inherited Readers (and
+    runs GC so any __del__ fires) before exiting, then the parent closes its
+    own 20 copies. Exercises the child-side path where _cleanup_resources marks
+    the child's copy CLOSED and nulls the handle while skipping the native free
+    — the branch scenario_fork_parent_frees_after_fork never hits (its child
+    does nothing). Two invariants: the child must exit cleanly (no deadlock via
+    the 5 s alarm, no crash from a child-side double-free), and the parent must
+    still free all 20 (leaked_bytes stays at baseline — the child's state
+    mutation does not suppress the parent's frees, since the copies are
+    independent post-fork).
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        readers = []
+        for _ in range(20):
+            with open(SIGNED_JPEG, "rb") as f:
+                readers.append(Reader("image/jpeg", f))
+
+        def _child():
+            for r in readers:
+                r.close()      # foreign teardown: mark closed, skip native free
+            gc.collect()
+
+        _fork_wait(_child)
+        for r in readers:
+            r.close()          # parent's own copies: real free
+
+
 def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
     """Fork safety benchmark scenario:
     Child calls sys.exit(0), full Python shutdown: atexit, finalizers, GC.
@@ -898,6 +1171,157 @@ def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
         _fork_wait(_child)
         reader.close()
         context.close()
+
+
+def _fork_contended_over(make_object, iterations):
+    """Fork over an object built by make_object() while 8 threads churn
+    Readers, so the registry Mutex is likely held at the instant of fork().
+
+    The child closes the inherited object. Without the PID guard that close
+    calls into the native library and can block forever on a mutex left
+    locked by a thread that fork() did not clone, which _fork_wait's alarm
+    reports as a timeout. The parent closes afterwards for the real free.
+    """
+    if not hasattr(os, "fork"):
+        return
+    stop = threading.Event()
+
+    def _worker():
+        while not stop.is_set():
+            with open(SIGNED_JPEG, "rb") as f:
+                r = Reader("image/jpeg", f)
+            r.close()
+
+    threads = [threading.Thread(target=_worker, daemon=True)
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    try:
+        for _ in _iterate(iterations):
+            for _ in range(5):
+                obj = make_object()
+
+                def _child(o=obj):
+                    o.close()
+                    gc.collect()
+
+                _fork_wait(_child)
+                obj.close()
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(timeout=5)
+
+
+def scenario_fork_contended_mutex_swap(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    fork over a Builder whose handle came from with_archive(), under the same
+    thread contention as fork_contended_mutex. That scenario only ever forks
+    over handles that came straight from a constructor, so a swapped-in
+    handle losing its stamp would go unnoticed there.
+    """
+    if not hasattr(os, "fork"):
+        return
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+
+    def _make():
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.with_archive(io.BytesIO(archive_bytes))
+        return builder
+
+    _fork_contended_over(_make, iterations)
+
+
+def scenario_fork_contended_mutex_wrap(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    fork over a Builder built by from_archive(), under thread contention.
+    from_archive is the only path that bypasses __init__, so it is the one
+    most likely to be missing the PID stamp the child's close() depends on.
+    """
+    if not hasattr(os, "fork"):
+        return
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+
+    _fork_contended_over(
+        lambda: Builder.from_archive(io.BytesIO(archive_bytes)), iterations)
+
+
+def scenario_fork_consumed_signer(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    the parent builds a Context that consumed a Signer, then forks. The child
+    closes both. The consumed Signer holds no handle, so it must be inert in
+    either process, and the Context must be skipped by the PID guard.
+    """
+    if not hasattr(os, "fork"):
+        return
+    for _ in _iterate(iterations):
+        signer = _make_signer()
+        context = Context(signer=signer)
+
+        def _child(c=context, s=signer):
+            s.close()
+            c.close()
+            gc.collect()
+
+        _fork_wait(_child)
+        signer.close()
+        context.close()
+
+
+def scenario_swap_chain_churn(iterations: int = 100) -> None:
+    """Loop with_archive() repeatedly on one Builder, so a chain of handles
+    is consumed and replaced on a single live object. Every other scenario
+    swaps a given object at most once.
+
+    This one is a crash and allocation-churn guard rather than a leak gate.
+    Only one Builder is closed however many times the loop runs, so a
+    close-path leak here is O(1) and invisible against the interpreter's
+    allocation floor. What a broken swap does instead is fail loudly: keeping
+    the consumed pointer makes the next call raise UntrackedPointer from the
+    native registry, and freeing it makes the free itself fail. total_allocations
+    still tracks the churn.
+    """
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+    builder = Builder(MANIFEST_BASE, context=context)
+    for _ in _iterate(iterations):
+        builder.with_archive(io.BytesIO(archive_bytes))
+    builder.close()
+    context.close()
+
+
+def scenario_fork_swap_cleanup(iterations: int = 100) -> None:
+    """Fork safety benchmark scenario:
+    the handle a Builder owns at fork time came from with_archive(), which
+    consumed the original and returned a replacement. The child must skip the
+    free on the swapped-in handle just as it would on an original one, and the
+    parent must still free it exactly once afterwards. The other fork
+    scenarios only ever fork over handles that came straight from a
+    constructor.
+    """
+    if not hasattr(os, "fork"):
+        return
+    context = Context(signer=_make_signer())
+    archive = io.BytesIO()
+    Builder(MANIFEST_BASE).to_archive(archive)
+    archive_bytes = archive.getvalue()
+    for _ in _iterate(iterations):
+        builder = Builder(MANIFEST_BASE, context=context)
+        builder.with_archive(io.BytesIO(archive_bytes))
+
+        def _child(b=builder):
+            b.close()
+            gc.collect()
+
+        _fork_wait(_child)
+        builder.close()
 
 
 def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
@@ -943,6 +1367,16 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
+    "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
+    "builder_with_archive_swap": scenario_builder_with_archive_swap,
+    "reader_with_fragment_swap": scenario_reader_with_fragment_swap,
+    "with_fragment_pre_consume_rejection":
+        scenario_reader_with_fragment_pre_consume_rejection,
+    "with_archive_post_consume_failure":
+        scenario_builder_with_archive_post_consume_failure,
+    "with_fragment_marshalling_error":
+        scenario_with_fragment_marshalling_error,
+    "with_fragment_mixed_outcomes": scenario_with_fragment_mixed_outcomes,
     "builder_to_archive_with_ingredient": scenario_builder_to_archive_with_ingredient,
     "builder_sign_jpeg_archive_roundtrip_ingredient_in_archive": scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive,
     "builder_write_ingredient_archive": scenario_builder_write_ingredient_archive,
@@ -952,13 +1386,23 @@ SCENARIOS = {
     "reader_error_no_manifest": scenario_reader_error_no_manifest,
     "builder_error_invalid_manifest": scenario_builder_error_invalid_manifest,
     "reader_string_apis": scenario_reader_string_apis,
+    "signer_construction": scenario_signer_construction,
+    "builder_from_context_construction":
+        scenario_builder_from_context_construction,
     "fork_reader_collect": scenario_fork_reader_collect,
     "fork_contended_mutex": scenario_fork_contended_mutex,
     "fork_thread_local_orphan": scenario_fork_thread_local_orphan,
     "fork_gc_cycle": scenario_fork_gc_cycle,
     "fork_parent_frees_after_fork": scenario_fork_parent_frees_after_fork,
+    "fork_child_closes_then_parent_frees":
+        scenario_fork_child_closes_then_parent_frees,
     "fork_child_sys_exit": scenario_fork_child_sys_exit,
     "fork_stream_cleanup": scenario_fork_stream_cleanup,
+    "fork_swap_cleanup": scenario_fork_swap_cleanup,
+    "fork_contended_mutex_swap": scenario_fork_contended_mutex_swap,
+    "fork_contended_mutex_wrap": scenario_fork_contended_mutex_wrap,
+    "fork_consumed_signer": scenario_fork_consumed_signer,
+    "swap_chain_churn": scenario_swap_chain_churn,
 }
 
 
