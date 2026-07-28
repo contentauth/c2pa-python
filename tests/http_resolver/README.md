@@ -43,6 +43,8 @@ The [`test_http_resolver_debug.py`](./test_http_resolver_debug.py) uses `DebugHt
 
 The [`test_http_resolver_cache.py`](./test_http_resolver_cache.py) uses `CachingHttpResolver`: an LRU cache with a TTL (defaults: 100 items, 120 seconds) that retries throttled requests. Only GET requests answered with 200 are cached.
 
+Both need internet access to fetch the remote manifest for `tests/fixtures/cloud.jpg`, and fail without it. If your Python has no CA bundle configured, every fetch fails with `CERTIFICATE_VERIFY_FAILED`. This is common with python.org builds on macOS where `Install Certificates.command` was never run; prefix the commands with `SSL_CERT_FILE=$(python -m certifi)`.
+
 Run the examples with:
 
 ```bash

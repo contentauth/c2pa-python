@@ -1595,8 +1595,9 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
 
 
 class C2paHttpRequestData:
-    """Python-side decoded copy of a native HTTP request,
-    handed to a custom HTTP resolver (with_resolve).
+    """Decoded copy of a native HTTP request,
+    handed to a custom HTTP resolver
+    (configured using with_resolver on a Context).
 
     Attributes:
         url: Absolute request URL.
@@ -1624,7 +1625,8 @@ class C2paHttpRequestData:
 
 class C2paHttpResolverBridge:
     """Plumbing that turns a Python resolver into the native trampoline
-    the C API calls.
+    the C API calls to handle HTTP resolvers configured on a Context
+    using `with_resolver`.
     """
 
     @staticmethod
@@ -1719,7 +1721,7 @@ class C2paHttpResolverBridge:
                         return -1
                     ctypes.memmove(buf, bytes(payload), length)
                     # Ownership handoff: from here the native library frees
-                    # this buffer on return paths.
+                    # this buffer on return paths. Never free it here.
                     response.body = ctypes.cast(
                         buf, ctypes.POINTER(ctypes.c_ubyte))
                     response.body_len = length
@@ -2076,8 +2078,8 @@ class Context(ManagedResource, ContextProvider):
                         check=lambda r: r != 0)
 
                 if resolver is not None:
-                    # Reuse the builder's coercion when it did one,
-                    # coerce here for the direct Context(resolver=...),
+                    # Reuse the builder's coercion when it did one.
+                    # Coerce here for the direct Context(resolver=...),
                     # from_json and from_dict paths.
                     resolve_fn = _resolve_fn
                     if resolve_fn is None:
@@ -2085,6 +2087,8 @@ class Context(ManagedResource, ContextProvider):
                             C2paHttpResolverBridge._coerce_resolver(resolver))
                     callback_cb = C2paHttpResolverBridge._make_trampoline(
                         resolve_fn)
+                    # Pin the thunk before any native call can capture its
+                    # raw function pointer (see _release for why it stays).
                     self._http_resolver_cb = callback_cb
                     with self._NativeHttpResolver(callback_cb) as native_res:
                         native_res._consume_no_replacement(
