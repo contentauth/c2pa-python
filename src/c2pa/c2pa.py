@@ -1927,22 +1927,8 @@ class ContextBuilder:
         """Attach a custom HTTP resolver to the Context being built.
 
         The resolver handles every HTTP request the SDK makes through this
-        Context: remote manifest fetches, OCSP requests, RFC 3161
-        timestamp requests, and CAWG did:web resolution. Reader and
-        Builder instances created without a Context keep using the
-        built-in resolver. Can be called multiple times; the last
-        resolver wins.
-
-        c2pa ships no resolver type to subclass or construct: resolver is
-        never isinstance-checked. Any callable, or any object with a
-        resolve(request) method, works -- the request it receives exposes
-        .url (str), .method (str), .headers (dict), and .body (bytes);
-        the response it returns only needs .status (int) and .body
-        (bytes) attributes. See
-        tests/http_resolver/http_resolver_example_impl.py for a
-        copyable reference implementation of that shape. Validated
-        immediately: an invalid resolver raises TypeError here, not later
-        at build().
+        Context. Reader and Builder instances created without a Context
+        keep using the built-in resolver.
 
         Args:
             resolver: A callable, or an object with a resolve(request)
@@ -1954,15 +1940,12 @@ class ContextBuilder:
             self, for method chaining.
 
         Raises:
-            TypeError: resolver is neither callable nor has a resolve()
-                method.
+            TypeError: resolver is neither callable
+                nor has a resolve() method.
 
         Notes:
-            - Only status 200 is accepted for a remote manifest fetch; any
+            - Only status 200 is accepted for a remote manifest fetch, any
               other status surfaces as a typed C2paError.
-            - The SDK does not follow redirects. A resolver delegating to
-              urllib.request gets redirect handling for free; a hand-rolled
-              one must implement it.
             - Security: a custom resolver bypasses the
               core.allowed_network_hosts setting, which only filters the
               built-in resolver. Host filtering becomes the resolver's
@@ -1970,14 +1953,8 @@ class ContextBuilder:
             - Settings still gate the resolver. With
               verify.remote_manifest_fetch set to false the resolver is
               never invoked and the read fails instead.
-            - Manifests larger than 10 MB are truncated without an error,
-              because the resolver response carries no Content-Length.
-            - The resolver may be called from SDK worker threads, so it must
-              be thread-safe, and it may be called for as long as any Reader
-              or Builder created from the Context is alive, including after
-              Context.close().
-            - Do not call c2pa APIs from inside the resolver: reentering the
-              FFI while a call is in flight is undefined.
+            - Do not call any other c2pa APIs from inside the resolver:
+              reentering the FFI while a call is in flight is undefined behavior.
         """
         self._resolve_fn = C2paHttpResolverBridge._coerce_resolver(resolver)
         self._resolver = resolver
