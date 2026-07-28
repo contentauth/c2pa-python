@@ -495,7 +495,7 @@ The cleanup order matters: `_release()` runs first (closing streams, dropping ca
 
 ### Dropping a Context reference
 
-`Reader` and `Builder` both keep a `_context` attribute that is written once and never read. It is not dead code: it is what keeps the Context alive while the native handle depends on it. Without that reference, `Reader("image/jpeg", stream, context=Context())` would let the Context become collectable as soon as the constructor returned, even though the reader is still using it.
+`Reader` and `Builder` both keep a `_context` attribute that is written once and never read. The reference keeps the Context alive while the native handle depends on it. Without it, `Reader("image/jpeg", stream, context=Context())` would let the Context become collectable as soon as the constructor returned, even though the reader is still using it.
 
 Clearing it in `_release()` is the other half of that. A closed Reader has no further use for the Context, and holding the reference would keep alive an object nothing can reach through the Reader's public API.
 
@@ -530,7 +530,7 @@ sequenceDiagram
 
 Both `_cleanup_resources()` and the consumed teardown take this branch. Neither simply skips the work: they null the handle and mark the object `CLOSED` so the child cannot go on to use it or try to free it later. Mutating the child's copy has no effect on the parent's, which is untouched and still valid.
 
-The memory the child skips is not lost for good. A child that calls `exec()` replaces its address space; a child that exits has its memory reclaimed by the OS. Even a long-lived child (a `multiprocessing` worker using the fork start method) retains at most the objects it inherited at fork time, which is a bounded, one-off amount rather than a growing leak. Anything the child allocates itself carries the child's own PID and is freed normally.
+The memory the child skips is reclaimed anyway. A child that calls `exec()` replaces its address space; a child that exits has its memory reclaimed by the OS. Even a long-lived child (a `multiprocessing` worker using the fork start method) retains at most the objects it inherited at fork time, which is a bounded, one-off amount rather than a growing leak. Anything the child allocates itself carries the child's own PID and is freed normally.
 
 > [!NOTE]
 > `is_foreign_process()` returns `False` when no owner PID was ever recorded, so an object that somehow missed the stamp is cleaned up as before rather than leaking silently.

@@ -67,7 +67,7 @@ class DebugHttpResolver:
 
 def read_with_resolver():
     """Read an asset whose manifest lives at a remote URL."""
-    print("\n--- Reading cloud.jpg (manifest is remote) ---")
+    print("\n--- Reading cloud.jpg (manifest is remote):")
 
     resolver = DebugHttpResolver()
     with c2pa.Context.builder().with_resolver(resolver).build() as context:
@@ -80,7 +80,7 @@ def read_with_resolver():
 
 def sign_with_resolver():
     """Sign an asset, adding an ingredient whose manifest is remote."""
-    print("\n--- Signing A.jpg with a remote-manifest ingredient ---")
+    print("\n--- Signing A.jpg with a remote-manifest ingredient:")
 
     with open(fixtures_dir + "es256_certs.pem", "rb") as f:
         certs = f.read()
@@ -124,9 +124,9 @@ def sign_with_resolver():
                     "image/jpeg", source, dest)
         print(f"signed asset written to {output_path}")
 
-        # Reading the signed file back uses its embedded manifest, so this
-        # makes no HTTP requests at all.
-        print("\n--- Reading the signed asset (no HTTP expected) ---")
+        # Reading the signed file back uses its embedded manifest,
+        # so this makes no HTTP requests at all.
+        print("\n--- Reading the signed asset (no HTTP expected): ")
         with open(output_path, "rb") as f:
             with c2pa.Reader("image/jpeg", f) as reader:
                 store = json.loads(reader.json())

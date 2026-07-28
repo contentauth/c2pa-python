@@ -70,12 +70,12 @@ except Exception as err:
 
 ## Using a custom HTTP resolver
 
-A custom HTTP resolver lets you intercept every HTTP request the SDK makes through a `Context`: remote manifest fetches, OCSP requests, RFC 3161 timestamp requests, and CAWG `did:web` resolution. Use it to add authentication headers, cache responses, log traffic, or serve responses from memory in tests.
+A custom HTTP resolver lets you intercept every HTTP request the SDK makes through a `Context`. You can use custom resolvers to add headers, cache responses, log traffic, or serve responses from memory in tests.
 
 A resolver is either an object with a `resolve(request)` method or a plain callable. It receives an `HttpRequest` and returns an `HttpResponse`:
 
 ```py
-class MyResolver:
+class AnHttpResolver:
     def resolve(self, request):
         # request.url, request.method, request.headers, request.body
         return c2pa.HttpResponse(200, b"...")
@@ -84,18 +84,18 @@ context = c2pa.Context.builder().with_resolver(MyResolver()).build()
 reader = c2pa.Reader("image/jpeg", stream, context=context)
 ```
 
-Raising from the resolver marks the request as a hard failure; returning a non-200 status passes that status through, and the SDK turns it into a typed `C2paError`.
+Raising from the resolver marks the request as a hard failure. Returning a non-200 status passes that status through, and the SDK turns it into a typed `C2paError`.
 
-Two things are worth knowing before you write one:
+Two things to note before writing one:
 
 - A custom resolver bypasses the `core.allowed_network_hosts` setting, which only filters the built-in resolver. Host filtering becomes your responsibility.
-- The SDK does not follow redirects. Delegating to `urllib.request` gives you redirect handling for free.
+- The SDK does not follow redirects by default. Delegating to `urllib.request` in the examples gives you redirect handling for free.
 
-The [`examples/http_resolver_debug.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/http_resolver_debug.py) script logs the method and URL of each request and the status of each response, delegating the transfer to `urllib`. It runs one read flow and one signing flow.
+The [`examples/http_resolver_debug.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/http_resolver_debug.py) script logs the method and URL of each request and the status of each response, delegating the transfer to `urllib`.
 
-The [`examples/http_resolver_cache.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/http_resolver_cache.py) script adds an LRU cache with a TTL (defaults: 100 items, 120 seconds) and retries throttled requests. Only GET requests answered with 200 are cached. It reads the same asset twice to show a cache hit, then adds the same remote-manifest ingredient three times while signing, which produces one network fetch and two cache hits.
+The [`examples/http_resolver_cache.py`](https://github.com/contentauth/c2pa-python/blob/main/examples/http_resolver_cache.py) script adds an LRU cache with a TTL (defaults: 100 items, 120 seconds) and retries throttled requests. Only GET requests answered with 200 are cached.
 
-Both scripts use `tests/fixtures/cloud.jpg`, which has no embedded manifest, only a remote one, so **they need internet access**. If the fetch fails they print a hint instead of a traceback.
+Both scripts use `tests/fixtures/cloud.jpg`, which has no embedded manifest, only a remote one, so they need network access.
 
 ## Running the examples
 
