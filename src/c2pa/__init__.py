@@ -31,8 +31,6 @@ from .c2pa import (
     Context,
     ContextBuilder,
     ContextProvider,
-    HttpRequest,
-    HttpResponse,
     sdk_version,
     load_settings
 )  # NOQA
@@ -52,8 +50,6 @@ __all__ = [
     'Context',
     'ContextBuilder',
     'ContextProvider',
-    'HttpRequest',
-    'HttpResponse',
     'sdk_version',
     'load_settings'
 ]
