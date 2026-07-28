@@ -93,6 +93,10 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_context_builder_build',
     'c2pa_context_builder_set_signer',
     'c2pa_context_new',
+    # HTTP resolver bindings
+    'c2pa_http_resolver_create',
+    'c2pa_context_builder_set_http_resolver',
+    'c2pa_error_set_last',
     # Free bindings
     'c2pa_string_free',
     'c2pa_free_string_array',
@@ -646,6 +650,50 @@ SignerCallback = ctypes.CFUNCTYPE(
             ctypes.c_ubyte), ctypes.c_size_t)
 
 
+class C2paHttpRequest(ctypes.Structure):
+    """Mirror of the native C2paHttpRequest (#[repr(C)]).
+
+    Read-only view: every pointer borrows native memory that is only valid
+    for the duration of the resolver callback. Copy anything you keep.
+
+    The string fields are c_char_p so ctypes converts them to bytes on read.
+    `body` stays a c_ubyte pointer because it is binary, not NUL-terminated.
+    """
+    _fields_ = [
+        ("url", ctypes.c_char_p),
+        ("method", ctypes.c_char_p),
+        ("headers", ctypes.c_char_p),
+        ("body", ctypes.POINTER(ctypes.c_ubyte)),
+        ("body_len", ctypes.c_size_t),
+    ]
+
+
+class C2paHttpResponse(ctypes.Structure):
+    """Mirror of the native C2paHttpResponse (#[repr(C)]).
+
+    The callback fills this in. `body` must be allocated with the C runtime
+    malloc that the native library's free() matches: the native side takes
+    ownership and frees it on both the success and the error return path.
+    """
+    _fields_ = [
+        ("status", ctypes.c_int),
+        ("body", ctypes.POINTER(ctypes.c_ubyte)),
+        ("body_len", ctypes.c_size_t),
+    ]
+
+
+class C2paHttpResolver(ctypes.Structure):
+    """Opaque structure for a native HTTP resolver handle."""
+    _fields_ = []  # Empty as it's opaque in the C API
+
+
+HttpResolverCallback = ctypes.CFUNCTYPE(
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.POINTER(C2paHttpRequest),
+    ctypes.POINTER(C2paHttpResponse))
+
+
 class StreamContext(ctypes.Structure):
     """Opaque structure for stream context."""
     _fields_ = []  # Empty as it's opaque in the C API
@@ -1039,6 +1087,23 @@ _setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
 _setup_function(
     _lib.c2pa_context_builder_set_signer,
     [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paSigner)],
+    ctypes.c_int
+)
+
+# HTTP resolver bindings
+_setup_function(
+    _lib.c2pa_http_resolver_create,
+    [ctypes.c_void_p, HttpResolverCallback],
+    ctypes.POINTER(C2paHttpResolver)
+)
+_setup_function(
+    _lib.c2pa_context_builder_set_http_resolver,
+    [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paHttpResolver)],
+    ctypes.c_int
+)
+_setup_function(
+    _lib.c2pa_error_set_last,
+    [ctypes.c_char_p],
     ctypes.c_int
 )
 _setup_function(
@@ -1494,6 +1559,196 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
         return mimetypes.guess_type(str(path))[0] or ""
 
 
+_NATIVE_MALLOC = None
+
+
+def _get_native_malloc():
+    """Return malloc from the C runtime whose free() the native library calls.
+
+    Resolver response bodies are handed to the native library, which frees
+    them with the platform libc free(). The allocation must come from the
+    matching runtime or the free is heap corruption, not a leak.
+
+    Looked up lazily so importing c2pa never fails on an exotic platform
+    unless the resolver feature is actually used.
+    """
+    global _NATIVE_MALLOC
+    if _NATIVE_MALLOC is None:
+        if sys.platform == "win32":
+            try:
+                # Rust MSVC targets link the UCRT, so libc::free is
+                # ucrtbase!free. The legacy msvcrt.dll is a different heap.
+                crt = ctypes.CDLL("ucrtbase")
+            except OSError:
+                crt = ctypes.CDLL("msvcrt")
+        else:
+            crt = ctypes.CDLL(None)
+        malloc = crt.malloc
+        malloc.argtypes = [ctypes.c_size_t]
+        # Required: the default c_int restype truncates 64-bit pointers.
+        malloc.restype = ctypes.c_void_p
+        _NATIVE_MALLOC = malloc
+    return _NATIVE_MALLOC
+
+
+def _parse_header_lines(raw: str) -> dict:
+    """Parse the FFI's newline-delimited 'Name: Value' header block.
+
+    The native side always sends a string (empty when there are no headers),
+    never NULL. Header names arrive lowercased, and repeated headers are sent
+    as separate lines, so the last occurrence of a name wins here.
+    """
+    headers = {}
+    for line in raw.split("\n"):
+        name, sep, value = line.partition(":")
+        if sep:
+            headers[name.strip()] = value.strip()
+    return headers
+
+
+class HttpRequest:
+    """An HTTP request the SDK asks a custom resolver to perform.
+
+    Attributes:
+        url: Absolute request URL.
+        method: HTTP method ("GET", "POST", ...).
+        headers: Request headers as a dict. Names are lowercased by the
+            native layer; when a header repeats, the last value wins.
+        body: Request body bytes (b"" when there is none). Timestamp
+            requests POST a body; manifest fetches send none.
+
+    All data is copied out of native memory, so it stays valid after the
+    resolver call returns.
+    """
+    __slots__ = ("url", "method", "headers", "body")
+
+    def __init__(self, url: str, method: str, headers: dict, body: bytes):
+        self.url = url
+        self.method = method
+        self.headers = headers
+        self.body = body
+
+    def __repr__(self):
+        return (f"HttpRequest(method={self.method!r}, url={self.url!r}, "
+                f"body_len={len(self.body)})")
+
+
+class HttpResponse:
+    """The answer a custom resolver returns to the SDK.
+
+    Attributes:
+        status: HTTP status code. Remote manifest fetches only accept 200;
+            any other code surfaces as a typed C2paError.
+        body: Response body bytes.
+    """
+    __slots__ = ("status", "body")
+
+    def __init__(self, status: int, body: bytes = b""):
+        self.status = status
+        self.body = body
+
+    def __repr__(self):
+        return (f"HttpResponse(status={self.status}, "
+                f"body_len={len(self.body or b'')})")
+
+
+def _coerce_resolver(resolver):
+    """Normalize a resolver into a plain callable taking an HttpRequest.
+
+    Accepts either an object with a resolve(request) method or a bare
+    callable with the same signature.
+    """
+    resolve_fn = getattr(resolver, "resolve", None)
+    if callable(resolve_fn):
+        return resolve_fn
+    if callable(resolver):
+        return resolver
+    raise C2paError(
+        "HTTP resolver must be callable or provide a resolve() method")
+
+
+def _make_http_resolver_trampoline(resolve_fn):
+    """Wrap a Python resolve function into a native C callback.
+
+    Args:
+        resolve_fn: Callable[[HttpRequest], HttpResponse].
+
+    Returns:
+        The HttpResolverCallback object. The caller MUST keep a reference to
+        it for as long as any native context built from it can run: the
+        native side holds only a raw function pointer, and letting the thunk
+        be collected while a context can still call it is undefined behavior.
+    """
+    def _trampoline(_ctx, request_ptr, response_ptr):
+        try:
+            req = request_ptr.contents
+            # Copy everything out now: these pointers borrow native memory
+            # that is only valid for the duration of this call.
+            url = req.url.decode("utf-8", "replace") if req.url else ""
+            method = (req.method.decode("utf-8", "replace")
+                      if req.method else "")
+            raw_headers = (req.headers.decode("utf-8", "replace")
+                           if req.headers else "")
+            body = (ctypes.string_at(req.body, req.body_len)
+                    if (req.body and req.body_len) else b"")
+
+            result = resolve_fn(HttpRequest(
+                url=url,
+                method=method,
+                headers=_parse_header_lines(raw_headers),
+                body=body))
+
+            payload = result.body or b""
+            if not isinstance(payload, (bytes, bytearray)):
+                raise TypeError(
+                    "HttpResponse.body must be bytes, got "
+                    f"{type(payload).__name__}")
+
+            response = response_ptr.contents
+            response.status = int(result.status)
+            if payload:
+                length = len(payload)
+                buf = _get_native_malloc()(length)
+                if not buf:
+                    _lib.c2pa_error_set_last(
+                        b"Other: HTTP resolver out of memory")
+                    return -1
+                ctypes.memmove(buf, bytes(payload), length)
+                # Ownership handoff: from here the native library frees this
+                # buffer on BOTH return paths (it copies then frees on 0, and
+                # frees a leftover body on non-zero). Never free it here.
+                response.body = ctypes.cast(
+                    buf, ctypes.POINTER(ctypes.c_ubyte))
+                response.body_len = length
+            else:
+                # body and body_len must stay NULL/0 together: the native
+                # side skips its free when body_len is 0, so a non-NULL
+                # pointer with a zero length is never freed and leaks.
+                response.body = None
+                response.body_len = 0
+            return 0
+        except BaseException as e:  # noqa: B036 - must not unwind into native
+            # BaseException on purpose: an exception escaping a ctypes
+            # callback cannot propagate into Rust, so it would be reported
+            # as a generic failure with the real cause lost. Catching it
+            # here (including KeyboardInterrupt) turns it into a typed error
+            # carrying the actual message.
+            #
+            # Setting the error is mandatory, not best-effort: the native
+            # error slot is thread-local and is NOT cleared before the
+            # callback runs, so returning non-zero without setting it
+            # surfaces a stale, unrelated error from an earlier call.
+            try:
+                _lib.c2pa_error_set_last(
+                    "Other: Python HTTP resolver failed: {}".format(e)
+                    .encode("utf-8", "replace"))
+            except BaseException:
+                pass
+            return -1
+
+    return HttpResolverCallback(_trampoline)
+
+
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
 
@@ -1633,6 +1888,7 @@ class ContextBuilder:
     def __init__(self):
         self._settings = None
         self._signer = None
+        self._resolver = None
 
     def with_settings(
         self, settings: 'Settings',
@@ -1660,11 +1916,59 @@ class ContextBuilder:
         self._signer = signer
         return self
 
+    def with_resolver(
+        self, resolver,
+    ) -> 'ContextBuilder':
+        """Attach a custom HTTP resolver to the Context being built.
+
+        The resolver handles every HTTP request the SDK makes through this
+        Context: remote manifest fetches, OCSP requests, RFC 3161 timestamp
+        requests, and CAWG did:web resolution. Reader and Builder instances
+        created without a Context keep using the built-in resolver.
+
+        Can be called multiple times; the last resolver wins.
+
+        Args:
+            resolver: An object with a resolve(request) -> HttpResponse
+                method, or a callable with the same signature. It receives
+                an HttpRequest and must return an HttpResponse. Raising
+                instead marks the request as a hard failure, which surfaces
+                as a typed C2paError.
+
+        Returns:
+            self, for method chaining.
+
+        Notes:
+            - Only status 200 is accepted for a remote manifest fetch; any
+              other status surfaces as a typed C2paError.
+            - The SDK does not follow redirects. A resolver delegating to
+              urllib.request gets redirect handling for free; a hand-rolled
+              one must implement it.
+            - Security: a custom resolver bypasses the
+              core.allowed_network_hosts setting, which only filters the
+              built-in resolver. Host filtering becomes the resolver's
+              responsibility.
+            - Settings still gate the resolver. With
+              verify.remote_manifest_fetch set to false the resolver is
+              never invoked and the read fails instead.
+            - Manifests larger than 10 MB are truncated without an error,
+              because the resolver response carries no Content-Length.
+            - The resolver may be called from SDK worker threads, so it must
+              be thread-safe, and it may be called for as long as any Reader
+              or Builder created from the Context is alive, including after
+              Context.close().
+            - Do not call c2pa APIs from inside the resolver: reentering the
+              FFI while a call is in flight is undefined.
+        """
+        self._resolver = resolver
+        return self
+
     def build(self) -> 'Context':
         """Build and return a configured Context."""
         return Context(
             settings=self._settings,
             signer=self._signer,
+            resolver=self._resolver,
         )
 
 
@@ -1693,10 +1997,24 @@ class Context(ManagedResource, ContextProvider):
                 _lib.c2pa_context_builder_new,
                 "Failed to create ContextBuilder")
 
+    class _NativeHttpResolver(ManagedResource):
+        """Short-lived wrapper for a native C2paHttpResolver handle.
+
+        Any failure inside its `with` block frees it via close(), unless a
+        consuming call already took ownership of it.
+        """
+
+        def __init__(self, callback_cb):
+            super().__init__()
+            self._create_and_activate(
+                lambda: _lib.c2pa_http_resolver_create(None, callback_cb),
+                "Failed to create HTTP resolver")
+
     def __init__(
         self,
         settings: Optional['Settings'] = None,
         signer: Optional['Signer'] = None,
+        resolver=None,
     ):
         """Create a Context.
 
@@ -1705,6 +2023,10 @@ class Context(ManagedResource, ContextProvider):
                 If None, default SDK settings are used.
             signer: Optional Signer. If provided it is consumed
                 and must not be used directly again after that call.
+            resolver: Optional custom HTTP resolver, either an object with a
+                resolve(request) -> HttpResponse method or a callable with
+                the same signature. See ContextBuilder.with_resolver for the
+                full contract.
 
         Raises:
             C2paError: If creation fails
@@ -1712,7 +2034,7 @@ class Context(ManagedResource, ContextProvider):
         super().__init__()
         self._init_attrs()
 
-        if settings is None and signer is None:
+        if settings is None and signer is None and resolver is None:
             # Simple default context
             self._create_and_activate(
                 _lib.c2pa_context_new,
@@ -1727,6 +2049,19 @@ class Context(ManagedResource, ContextProvider):
                             nb._handle, settings._c_settings),
                         "Failed to set settings on Context",
                         check=lambda r: r != 0)
+
+                if resolver is not None:
+                    resolve_fn = _coerce_resolver(resolver)
+                    callback_cb = _make_http_resolver_trampoline(resolve_fn)
+                    # Pin the thunk before any native call can capture its
+                    # raw function pointer (see _release for why it stays).
+                    self._http_resolver_cb = callback_cb
+                    with self._NativeHttpResolver(callback_cb) as native_res:
+                        native_res._consume_no_replacement(
+                            lambda h:
+                            _lib.c2pa_context_builder_set_http_resolver(
+                                nb._handle, h),
+                            "Failed to set HTTP resolver on Context: {}")
 
                 if signer is not None:
                     signer._ensure_valid_state()
@@ -1748,9 +2083,26 @@ class Context(ManagedResource, ContextProvider):
         super()._init_attrs()
         self._has_signer = False
         self._signer_callback_cb = None
+        self._http_resolver_cb = None
 
     def _release(self):
-        """Release Context-specific resources."""
+        """Release Context-specific resources.
+
+        _http_resolver_cb is deliberately NOT cleared here. The native
+        context is an Arc, and c2pa_reader_from_context /
+        c2pa_builder_from_context clone it, so the native context (and the
+        resolver holding a raw pointer into the ctypes thunk) can outlive
+        this object's ACTIVE state. Reader and Builder keep a reference to
+        the Python Context for their whole lifetime, and that reference
+        chain is what keeps the thunk alive as long as any native clone can
+        still call it. Clearing it here frees the thunk while it is still
+        reachable from native code, which is undefined behavior: an observed
+        symptom is a garbage response reported as "invalid status code".
+
+        The asymmetry with _signer_callback_cb below is intentional. That
+        one has the same latent hazard, but it predates this code and
+        changing it is out of scope here.
+        """
         self._signer_callback_cb = None
 
     @classmethod
@@ -1763,19 +2115,22 @@ class Context(ManagedResource, ContextProvider):
         cls,
         json_str: str,
         signer: Optional['Signer'] = None,
+        resolver=None,
     ) -> 'Context':
         """Create Context from a JSON configuration string.
 
         Args:
             json_str: JSON string with settings config.
             signer: Optional Signer (consumed if provided).
+            resolver: Optional custom HTTP resolver. See
+                ContextBuilder.with_resolver for the contract.
 
         Returns:
             A new Context instance.
         """
         settings = Settings.from_json(json_str)
         try:
-            return cls(settings=settings, signer=signer)
+            return cls(settings=settings, signer=signer, resolver=resolver)
         finally:
             settings.close()
 
@@ -1784,17 +2139,21 @@ class Context(ManagedResource, ContextProvider):
         cls,
         config: dict,
         signer: Optional['Signer'] = None,
+        resolver=None,
     ) -> 'Context':
         """Create Context from a dictionary.
 
         Args:
             config: Dictionary with settings configuration.
             signer: Optional Signer (consumed if provided).
+            resolver: Optional custom HTTP resolver. See
+                ContextBuilder.with_resolver for the contract.
 
         Returns:
             A new Context instance.
         """
-        return cls.from_json(json.dumps(config), signer=signer)
+        return cls.from_json(
+            json.dumps(config), signer=signer, resolver=resolver)
 
     @property
     def has_signer(self) -> bool:
