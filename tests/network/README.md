@@ -24,7 +24,7 @@ Two things to note before writing one:
 - A custom resolver bypasses the `core.allowed_network_hosts` setting, which only filters the built-in resolver. Host filtering becomes your responsibility.
 - The SDK does not follow redirects by default. Delegating to `urllib.request` as `http_resolver.py`'s examples do gives you redirect handling for free.
 
-### How a custom resolver works under the hood
+## How a custom resolver works
 
 1. **The wiring.** `ContextBuilder.with_resolver(resolver)` stores the resolver, validating it eagerly. `Context.__init__` (whether reached via the builder or `Context(resolver=...)` directly) wraps it in `Context._NativeHttpResolver` — a private nested class in `c2pa.py` that owns the native `C2paHttpResolver` handle via `c2pa_http_resolver_create`, following the same `ManagedResource` lifecycle as `Context._NativeBuilder`/`Reader`/`Builder`/`Signer`.
 
@@ -37,7 +37,7 @@ Two things to note before writing one:
    - The callback thunk is pinned on the `Context` and deliberately *not* cleared when the `Context` closes: native `Reader`/`Builder` instances clone the underlying Arc, so your resolver can still be invoked by a native clone after `Context.close()`, for as long as that `Reader`/`Builder` is alive. Your resolver must stay valid (and thread-safe — it may be called from SDK worker threads) for that whole lifetime.
    - Exceptions cannot unwind across the ctypes/native boundary: the trampoline catches every exception your resolver raises, reports it to the native error slot, and turns it into a typed `C2paError` raised from the `Reader`/`Builder` call that triggered the fetch — never from inside your `resolve()` itself.
 
-### The reference tests
+### The testable examples
 
 The [`test_http_resolver_debug.py`](./test_http_resolver_debug.py) test exercises `DebugHttpResolver`: logs the method and URL of each request and the status of each response.
 
@@ -45,7 +45,7 @@ The [`test_http_resolver_cache.py`](./test_http_resolver_cache.py) test exercise
 
 The [`test_http_resolver_contract.py`](./test_http_resolver_contract.py) test needs no network: it pins the eager-validation behavior above and that c2pa ships no resolver types at all (`HttpRequest`/`HttpResponse`/`HttpResolver` only exist in `http_resolver.py`, not in `c2pa.c2pa`).
 
-The debug and cache tests use `tests/fixtures/cloud.jpg`, which has no embedded manifest, only a remote one, so they need network access; each test skips (rather than fails) when the resolver itself observes a transport failure. Run them with:
+Run the testable examples with:
 
 ```bash
 python ./tests/network/test_http_resolver_contract.py   # offline-safe
