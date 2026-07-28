@@ -296,23 +296,16 @@ class ManagedResource:
 
     @staticmethod
     def _get_native_malloc():
-        """Return malloc from the C runtime whose free() the native library
-        calls.
+        """
+        Return malloc from the C runtime whose free() is used.
 
-        Resolver response bodies are handed to the native library, which
-        frees them with the platform libc free(). The allocation must come
-        from the matching runtime or the free is heap corruption, not a
-        leak.
-
-        Looked up lazily so importing c2pa never fails on an exotic
-        platform unless the resolver feature is actually used.
+        Some allocations must come from the matching runtime
+        or the free is heap corruption, so we retrieve that here.
+        Looked up lazily as needed, if needed,
         """
         if ManagedResource._native_malloc is None:
             if sys.platform == "win32":
                 try:
-                    # Rust MSVC targets link the UCRT, so libc::free is
-                    # ucrtbase!free. The legacy msvcrt.dll is a different
-                    # heap.
                     crt = ctypes.CDLL("ucrtbase")
                 except OSError:
                     crt = ctypes.CDLL("msvcrt")
@@ -320,8 +313,7 @@ class ManagedResource:
                 crt = ctypes.CDLL(None)
             malloc = crt.malloc
             malloc.argtypes = [ctypes.c_size_t]
-            # Required: the default c_int restype truncates 64-bit
-            # pointers.
+            # The default c_int restype truncates 64-bit pointers.
             malloc.restype = ctypes.c_void_p
             ManagedResource._native_malloc = malloc
         return ManagedResource._native_malloc
@@ -845,7 +837,8 @@ class C2paContext(ctypes.Structure):
 
 
 class C2paHttpRequest(ctypes.Structure):
-    """Matches the native C2paHttpRequest going through the C FFI.
+    """Matches the native C2paHttpRequest going through the C FFI,
+    useful if planning to write custom HTTP resolvers.
 
     Read-only view:
     Every pointer borrows native memory that is only valid
@@ -867,11 +860,13 @@ class C2paHttpRequest(ctypes.Structure):
 
 
 class C2paHttpResponse(ctypes.Structure):
-    """Mirror of the native C2paHttpResponse (#[repr(C)]).
+    """Mirror of the native C2paHttpResponse,
+    useful if planning to write custom HTTP resolvers.
 
-    The callback fills this in. `body` must be allocated with the C
-    runtime malloc that the native library's free() matches: the
-    native side takes ownership and frees it on both the success and
+    The HTTP resolver callback fills this data in.
+    `body` must be allocated with the C runtime malloc
+    that the native library's free() matches: the native
+    side takes ownership and frees it on both the success and
     the error return path.
     """
     _fields_ = [
@@ -1600,25 +1595,20 @@ def _get_mime_type_from_path(path: Union[str, Path]) -> str:
 
 
 class HttpRequestView:
-    """The Python-side view of a decoded native HTTP request, plus the
-    private machinery that turns a Python resolve_fn into the native
+    """This Python-side view of a decoded native HTTP request, with the
+    plumbing that turns a Python resolve_fn into the native
     trampoline that constructs instances of this class and calls it.
 
     Attributes:
         url: Absolute request URL.
         method: HTTP method ("GET", "POST", ...).
-        headers: Request headers as a dict. Names are lowercased by the
-            native layer; when a header repeats, the last value wins.
-        body: Request body bytes (b"" when there is none). Timestamp
-            requests POST a body; manifest fetches send none.
+        headers: Request headers as a dict.
+            Names are lowercased by the native layer.
+            When a header repeats, the last value wins.
+        body: Request body bytes (b"" when there is none).
 
     All data is copied out of native memory, so it stays valid after the
-    resolver call returns. Not re-exported from the top-level c2pa
-    package: c2pa ships no HttpRequest/HttpResponse/HttpResolver types at
-    all, a resolver passed to ContextBuilder.with_resolver()/
-    Context(resolver=...) is never isinstance-checked (see
-    _coerce_resolver below). See tests/network/http_resolver.py for a
-    copyable reference implementation of the request/response shape.
+    resolver call returns.
     """
     __slots__ = ("url", "method", "headers", "body")
 
@@ -1637,9 +1627,9 @@ class HttpRequestView:
         """Parse the FFI's newline-delimited 'Name: Value' header block.
 
         The native side always sends a string (empty when there are no
-        headers), never NULL. Header names arrive lowercased, and
-        repeated headers are sent as separate lines, so the last
-        occurrence of a name wins here.
+        headers), never NULL.
+        Header names arrive lowercased, and repeated headers are sent
+        as separate lines, so the last occurrence of a name wins here.
         """
         headers = {}
         for line in raw.split("\n"):
@@ -1650,13 +1640,12 @@ class HttpRequestView:
 
     @staticmethod
     def _coerce_resolver(resolver):
-        """Normalize a resolver into a callable taking an HttpRequest.
+        """Normalize a HTTP resolver into a callable taking an HttpRequest.
 
         Accepts either an object with a resolve(request) method or a bare
-        callable with the same signature. The request handed to it
-        exposes .url/.method/.headers/.body, and the value it returns
-        only needs .status (int) and .body (bytes) attributes -- pure
-        duck typing, both ways.
+        callable with the same signature.
+        The request handed to it exposes .url/.method/.headers/.body,
+        and the value it returns only needs .status (int) and .body (bytes)..
         """
         resolve_fn = getattr(resolver, "resolve", None)
         if callable(resolve_fn):
@@ -1669,7 +1658,7 @@ class HttpRequestView:
 
     @classmethod
     def _make_trampoline(cls, resolve_fn):
-        """Wrap a Python resolve function into a native C callback.
+        """Wrap a Python HTTP resolver function into a native C callback.
 
         Args:
             resolve_fn: Callable taking a duck-typed request (.url/
@@ -1677,18 +1666,17 @@ class HttpRequestView:
                 response (.status/.body).
 
         Returns:
-            The HttpResolverCallback object. The caller MUST keep a
-            reference to it for as long as any native context built from
-            it can run: the native side holds only a raw function
-            pointer, and letting the thunk be collected while a context
+            The HttpResolverCallback object.
+            The caller MUST keep a reference to it for as long as
+            any native context built from it can run:
+            the native side holds only a raw function pointer,
+            and letting the thunk be collected while a context
             can still call it is undefined behavior.
         """
         def _trampoline(_ctx, request_ptr, response_ptr):
             try:
                 req = request_ptr.contents
-                # Copy everything out now: these pointers borrow native
-                # memory that is only valid for the duration of this
-                # call.
+                # Copy everything out now to keep it.
                 url = req.url.decode("utf-8", "replace") if req.url else ""
                 method = (req.method.decode("utf-8", "replace")
                           if req.method else "")
@@ -1720,32 +1708,28 @@ class HttpRequestView:
                         return -1
                     ctypes.memmove(buf, bytes(payload), length)
                     # Ownership handoff: from here the native library frees
-                    # this buffer on BOTH return paths (it copies then
-                    # frees on 0, and frees a leftover body on non-zero).
+                    # this buffer on return paths.
                     # Never free it here.
                     response.body = ctypes.cast(
                         buf, ctypes.POINTER(ctypes.c_ubyte))
                     response.body_len = length
                 else:
-                    # body and body_len must stay NULL/0 together: the
-                    # native side skips its free when body_len is 0, so a
-                    # non-NULL pointer with a zero length is never freed
-                    # and leaks.
+                    # body and body_len must stay NULL/0 together:
+                    # the native side skips its free when body_len is 0.
                     response.body = None
                     response.body_len = 0
                 return 0
             except BaseException as e:  # noqa: B036 - must not unwind native
-                # BaseException on purpose: an exception escaping a ctypes
-                # callback cannot propagate into Rust, so it would be
-                # reported as a generic failure with the real cause lost.
-                # Catching it here (including KeyboardInterrupt) turns it
-                # into a typed error carrying the actual message.
+                # An exception escaping a ctypes callback cannot propagate
+                # into Rust, so it would be reported as a generic failure
+                # with the real cause lost.
+                # Catching it here turns it into a typed error carrying
+                # the actual message.
                 #
-                # Setting the error is mandatory, not best-effort: the
-                # native error slot is thread-local and is NOT cleared
-                # before the callback runs, so returning non-zero without
-                # setting it surfaces a stale, unrelated error from an
-                # earlier call.
+                # Setting the error is mandatory: the native error slot is
+                # thread-local and is not cleared before the callback runs,
+                # so returning non-zero without setting it could otherwise
+                # surface a stale error.
                 try:
                     _lib.c2pa_error_set_last(
                         "Other: Python HTTP resolver failed: {}".format(e)

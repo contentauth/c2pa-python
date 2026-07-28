@@ -43,12 +43,9 @@ The [`test_http_resolver_debug.py`](./test_http_resolver_debug.py) test exercise
 
 The [`test_http_resolver_cache.py`](./test_http_resolver_cache.py) test exercises `CachingHttpResolver`: an LRU cache with a TTL (defaults: 100 items, 120 seconds) that retries throttled requests. Only GET requests answered with 200 are cached.
 
-The [`test_http_resolver_contract.py`](./test_http_resolver_contract.py) test needs no network: it pins the eager-validation behavior above and that c2pa ships no resolver types at all (`HttpRequest`/`HttpResponse`/`HttpResolver` only exist in `http_resolver.py`, not in `c2pa.c2pa`).
-
 Run the testable examples with:
 
 ```bash
-python ./tests/network/test_http_resolver_contract.py   # offline-safe
 python ./tests/network/test_http_resolver_debug.py      # needs network
 python ./tests/network/test_http_resolver_cache.py      # needs network
 
