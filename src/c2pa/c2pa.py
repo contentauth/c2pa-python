@@ -1997,9 +1997,8 @@ class Context(ManagedResource, ContextProvider):
                 "Failed to create ContextBuilder")
 
     class _NativeHttpResolver(ManagedResource):
-        """Short-lived wrapper so the native HTTP resolver handle rides
-        the normal lifecycle: any failure inside its `with` block frees
-        it via close() unless a consuming call already took it.
+        """Short-lived wrapper so the potential custom native HTTP
+        resolver handle (if set) follows the normal lifecycle.
         """
 
         def __init__(self, callback_cb):
