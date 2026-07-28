@@ -19,9 +19,6 @@ test_http_resolver_cache.py: these pin the resolver validation behavior
 HttpResolver support, and that c2pa ships no resolver types at all --
 HttpRequest/HttpResponse/HttpResolver here come from the local reference
 implementation (tests/network/http_resolver.py), not from c2pa itself.
-NetworkResource is the one piece of this feature that does live in c2pa
-(it's the FFI binding), so its "importable but not re-exported" property
-is pinned here too.
 """
 
 import os
@@ -34,7 +31,6 @@ from http_resolver import HttpResolver, HttpResponse  # noqa: E402
 
 import c2pa  # noqa: E402
 import c2pa.c2pa  # noqa: E402
-from c2pa.c2pa import NetworkResource  # noqa: E402
 
 
 class TestResolverValidation(unittest.TestCase):
@@ -94,14 +90,6 @@ class TestNoShippedResolverTypes(unittest.TestCase):
                 "contract is fully duck-typed, with no shipped type. See "
                 "tests/network/http_resolver.py for a reference "
                 "implementation.")
-
-    def test_network_resource_importable_but_not_reexported(self):
-        # NetworkResource is the FFI binding, unlike the resolver contract
-        # types above -- it stays in c2pa.c2pa, just excluded from
-        # c2pa.__all__ next to Reader/Builder/Context.
-        self.assertNotIn("NetworkResource", c2pa.__all__)
-        self.assertFalse(hasattr(c2pa, "NetworkResource"))
-        self.assertTrue(NetworkResource)  # importable from c2pa.c2pa
 
 
 if __name__ == "__main__":

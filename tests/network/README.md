@@ -1,4 +1,4 @@
-## Using a custom HTTP resolver
+# On custom HTTP resolvers
 
 A custom HTTP resolver lets you intercept every HTTP request the SDK makes through a `Context`. You can use custom resolvers to add headers, cache responses, log traffic, or serve responses from memory in tests.
 
@@ -26,9 +26,9 @@ Two things to note before writing one:
 
 ### How a custom resolver works under the hood
 
-1. **The wiring.** `ContextBuilder.with_resolver(resolver)` stores the resolver, validating it eagerly. `Context.__init__` (whether reached via the builder or `Context(resolver=...)` directly) wraps it in `NetworkResource` — a private class in `c2pa.py` that owns the native `C2paHttpResolver` handle via `c2pa_http_resolver_create`, following the same `ManagedResource` lifecycle as `Reader`/`Builder`/`Signer`.
+1. **The wiring.** `ContextBuilder.with_resolver(resolver)` stores the resolver, validating it eagerly. `Context.__init__` (whether reached via the builder or `Context(resolver=...)` directly) wraps it in `Context._NativeHttpResolver` — a private nested class in `c2pa.py` that owns the native `C2paHttpResolver` handle via `c2pa_http_resolver_create`, following the same `ManagedResource` lifecycle as `Context._NativeBuilder`/`Reader`/`Builder`/`Signer`.
 
-2. **The trampoline.** Your resolver is wrapped into a ctypes `CFUNCTYPE` callback (`NetworkResource._make_trampoline`). The native side calls this callback for every HTTP request the SDK makes through that `Context` — remote manifest fetches, OCSP requests, RFC 3161 timestamp requests, and CAWG did:web resolution. The callback decodes the native `C2paHttpRequest` struct into plain Python `str`/`bytes`, calls your `resolve()`, and writes the result back into the native `C2paHttpResponse` struct.
+2. **The trampoline.** Your resolver is wrapped into a ctypes `CFUNCTYPE` callback (`_make_http_resolver_trampoline`, a module-private function in `c2pa.py`). The native side calls this callback for every HTTP request the SDK makes through that `Context` — remote manifest fetches, OCSP requests, RFC 3161 timestamp requests, and CAWG did:web resolution. The callback decodes the native `C2paHttpRequest` struct into plain Python `str`/`bytes`, calls your `resolve()`, and writes the result back into the native `C2paHttpResponse` struct.
 
 3. **Memory and ownership handling** — the part implementers most often get wrong:
    - A non-empty response body must be allocated with the *same C runtime malloc* the native library's `free()` will use (`ucrtbase` before `msvcrt` on Windows, the process's own libc elsewhere). Mismatched allocators cause heap corruption, not a leak. You don't need to worry about this yourself — the trampoline does the allocation and copy for you from the `bytes` your resolver returns.
@@ -43,7 +43,7 @@ The [`test_http_resolver_debug.py`](./test_http_resolver_debug.py) test exercise
 
 The [`test_http_resolver_cache.py`](./test_http_resolver_cache.py) test exercises `CachingHttpResolver`: an LRU cache with a TTL (defaults: 100 items, 120 seconds) that retries throttled requests. Only GET requests answered with 200 are cached.
 
-The [`test_http_resolver_contract.py`](./test_http_resolver_contract.py) test needs no network: it pins the eager-validation behavior above and that c2pa ships no resolver types at all (`HttpRequest`/`HttpResponse`/`HttpResolver` only exist in `http_resolver.py`, not in `c2pa.c2pa`), while `NetworkResource` — the FFI binding itself — stays importable from `c2pa.c2pa`, just not re-exported from the top-level `c2pa` package.
+The [`test_http_resolver_contract.py`](./test_http_resolver_contract.py) test needs no network: it pins the eager-validation behavior above and that c2pa ships no resolver types at all (`HttpRequest`/`HttpResponse`/`HttpResolver` only exist in `http_resolver.py`, not in `c2pa.c2pa`).
 
 The debug and cache tests use `tests/fixtures/cloud.jpg`, which has no embedded manifest, only a remote one, so they need network access; each test skips (rather than fails) when the resolver itself observes a transport failure. Run them with:
 
