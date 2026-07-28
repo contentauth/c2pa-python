@@ -189,8 +189,8 @@ class CachingHttpResolver(HttpResolver):
                 time.sleep(delay)
             except urllib.error.URLError as e:
                 # DNS failure, connection refused, timeout: recorded so
-                # network_test_helpers.skip_if_offline can tell this apart
-                # from a real bug.
+                # http_resolver_test_helpers.skip_if_offline can tell this
+                # apart from a real bug.
                 self.transport_errors.append(e)
                 raise
         raise RuntimeError("unreachable")
@@ -246,7 +246,7 @@ class DebugHttpResolver(HttpResolver):
             return HttpResponse(e.code, e.read())
         except urllib.error.URLError as e:
             # DNS failure, connection refused, timeout: recorded so
-            # network_test_helpers.skip_if_offline can tell this apart
-            # from a real bug.
+            # http_resolver_test_helpers.skip_if_offline can tell this
+            # apart from a real bug.
             self.transport_errors.append(e)
             raise

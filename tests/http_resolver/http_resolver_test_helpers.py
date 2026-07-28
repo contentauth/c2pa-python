@@ -11,7 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""Shared helpers for the tests/network resolver reference tests.
+"""Shared helpers for the tests/http_resolver reference tests.
 
 These tests exercise a custom HTTP resolver against the real network
 (tests/fixtures/cloud.jpg only has a remote manifest, no embedded one).

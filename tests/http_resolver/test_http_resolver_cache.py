@@ -11,7 +11,8 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""Tests for CachingHttpResolver (tests/network/http_resolver.py),
+"""Tests for CachingHttpResolver
+(tests/http_resolver/http_resolver_example_impl.py),
 exercised against the real network.
 
 Needs internet access to fetch the remote manifest for
@@ -26,8 +27,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from network_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
-from http_resolver import AlwaysFailResolver, CachingHttpResolver  # noqa: E402,E501
+from http_resolver_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
+from http_resolver_example_impl import (  # noqa: E402
+    AlwaysFailResolver, CachingHttpResolver)
 
 import c2pa  # noqa: E402
 

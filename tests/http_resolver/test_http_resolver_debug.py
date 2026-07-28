@@ -11,7 +11,8 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""Tests for DebugHttpResolver (tests/network/http_resolver.py), exercised
+"""Tests for DebugHttpResolver
+(tests/http_resolver/http_resolver_example_impl.py), exercised
 against the real network.
 
 Demonstrates intercepting every HTTP request the SDK makes through a
@@ -28,8 +29,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from network_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
-from http_resolver import DebugHttpResolver  # noqa: E402
+from http_resolver_test_helpers import FIXTURES, skip_if_offline  # noqa: E402
+from http_resolver_example_impl import DebugHttpResolver  # noqa: E402
 
 import c2pa  # noqa: E402
 
