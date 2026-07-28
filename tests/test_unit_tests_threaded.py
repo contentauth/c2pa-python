@@ -12,6 +12,7 @@
 # each license.
 
 import ctypes
+import gc
 import os
 import io
 import json
@@ -2921,6 +2922,8 @@ class TestManagedResourceCrossThread(unittest.TestCase):
     """
 
     def setUp(self):
+        # Flush pending finalizers through the real free first.
+        gc.collect()
         self.freed = []
         self._real_free = ManagedResource._free_native_ptr
         ManagedResource._free_native_ptr = staticmethod(self.freed.append)
@@ -2971,8 +2974,6 @@ class TestManagedResourceCrossThread(unittest.TestCase):
         self.assertEqual(counts, expected)
 
     def test_third_thread_gc_of_dropped_reference_frees_exactly_once(self):
-        import gc
-
         def make_and_drop(index):
             res = _ConcreteResource()
             res._activate(0x30000 + index)

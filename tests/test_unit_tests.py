@@ -1611,6 +1611,139 @@ class TestBuilderWithSigner(unittest.TestCase):
         signer = Signer.from_info(signer_info)
         signer.reserve_size()
 
+    def _local_signer(self):
+        """An es256 signer with no timestamp authority (keeps signing local).
+
+        ta_url=None maps to a NULL pointer, which is how the native side
+        spells "no TSA". An empty string is not equivalent: it is passed
+        through as a real, empty URL and signing then fails.
+        """
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=None,
+        )
+        signer = Signer.from_info(signer_info)
+        self.addCleanup(signer.close)
+        return signer
+
+    def _active_signature_info(self, signed_bytes):
+        """signature_info of the active manifest in a signed asset."""
+        signed_bytes.seek(0)
+        reader = Reader("image/jpeg", signed_bytes)
+        try:
+            manifest_store = json.loads(reader.json())
+        finally:
+            reader.close()
+        active = manifest_store["manifests"][
+            manifest_store["active_manifest"]]
+        return active.get("signature_info", {})
+
+    def test_signer_with_none_ta_url_signs_without_timestamp(self):
+        """ta_url=None must reach native as NULL, meaning "no TSA".
+        """
+        builder = Builder(self.manifestDefinitionV2)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(self._local_signer(), "image/jpeg", source, dest)
+
+        signature_info = self._active_signature_info(dest)
+        self.assertTrue(signature_info, "expected a signed active manifest")
+        self.assertNotIn(
+            "time", signature_info,
+            "no timestamp authority was configured, so the signature "
+            "must not carry a timestamp")
+
+    def _sign_with_ta_url(self, ta_url):
+        """Sign with ta_url as the only variable. Returns the dest buffer."""
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=ta_url,
+        )
+        signer = Signer.from_info(signer_info)
+        self.addCleanup(signer.close)
+
+        builder = Builder(self.manifestDefinitionV2)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(signer, "image/jpeg", source, dest)
+        return dest
+
+    def test_signer_with_empty_ta_url_is_not_a_no_tsa_path(self):
+        """An empty ta_url is a real (empty) URL, not "no TSA".
+        Only None means "no TSA".
+        """
+        with self.assertRaises(Error):
+            self._sign_with_ta_url(b"")
+
+    def test_empty_ta_url_is_rejected_as_a_malformed_url(self):
+        """b"" fails as a URL, which is why it cannot mean "no TSA".
+        """
+        malformed = [
+            (b"", "empty"),
+            (b"   ", "whitespace"),
+            (b"not-a-url", "no scheme or host"),
+        ]
+        for value, why in malformed:
+            with self.subTest(ta_url=value, reason=why):
+                with self.assertRaises(Error):
+                    self._sign_with_ta_url(value)
+
+        # The control: same signer, same asset, only ta_url differs.
+        signature_info = self._active_signature_info(
+            self._sign_with_ta_url(None))
+        self.assertNotIn("time", signature_info)
+
+    def test_signer_with_ta_url_signs_with_timestamp(self):
+        """Control for the None case: a real TSA does add a timestamp.
+        """
+        builder = Builder(self.manifestDefinitionV2)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(self.signer, "image/jpeg", source, dest)
+
+        signature_info = self._active_signature_info(dest)
+        self.assertIn(
+            "time", signature_info,
+            "a timestamp authority was configured, so the signature "
+            "must carry a timestamp")
+        self.assertTrue(signature_info["time"])
+
+    def test_none_and_empty_ta_url_reach_native_differently(self):
+        """None must marshal to NULL, b"" to a real (empty) string.
+
+        The native side reads a NULL ta_url as "no timestamp authority"
+        and any non-NULL pointer as a URL to use, including one pointing at "".
+        """
+        def struct_for(ta_url):
+            return C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=self.certs,
+                private_key=self.key,
+                ta_url=ta_url,
+            )
+
+        # ctypes surfaces a NULL c_char_p as None and an empty one as b"".
+        self.assertIsNone(struct_for(None).ta_url)
+        self.assertEqual(struct_for(b"").ta_url, b"")
+        # A str is encoded rather than passed through untouched.
+        self.assertEqual(
+            struct_for("http://timestamp.digicert.com").ta_url,
+            b"http://timestamp.digicert.com")
+
+    def test_signer_rejects_non_string_ta_url(self):
+        """Only None, str and bytes are accepted."""
+        with self.assertRaises(TypeError):
+            C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=self.certs,
+                private_key=self.key,
+                ta_url=1234,
+            )
+
     def test_signer_creation_error_alg(self):
         signer_info = C2paSignerInfo(
             alg=b"not-an-alg",
@@ -9290,6 +9423,19 @@ class TestErrorPlumbing(unittest.TestCase):
             c2pa_module._raise_typed_c2pa_error("Nonsense: detail")
         # Base class only: no subclass should claim an unknown tag.
         self.assertIs(type(ctx.exception), Error)
+
+    def test_pre_consume_tag_match_is_substring_not_prefix(self):
+        """The tags arrive mid-string, so the match must stay a substring one.
+
+        Guards the triage in _raise_consume_failure against being "cleaned up"
+        into error.startswith(tag), which would match nothing and silently
+        turn every retained handle into a consumed one.
+        """
+        wire_error = "Other: UntrackedPointer: 0xdeadb000"
+        tags = ManagedResource._PRE_CONSUME_ERROR_TAGS
+
+        self.assertTrue(any(tag in wire_error for tag in tags))
+        self.assertFalse(any(wire_error.startswith(tag) for tag in tags))
 
     def test_check_ffi_operation_result_raises_with_native_message(self):
         self._set_native_error("Io: disk exploded")

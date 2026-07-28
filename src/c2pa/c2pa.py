@@ -462,6 +462,13 @@ class ManagedResource:
         sticky and thread-local and the SDK does not clear it before the call,
         so this trusts that the failing native path set its own error.
 
+        That ordering is required:
+        c2pa_free on a handle the registry no longer tracks returns -1 and
+        overwrites the slot with its own "Other: UntrackedPointer: 0x..."
+        message. Freeing first would therefore replace the real failure
+        with another one and, because that substitute carries a pre-consume
+        tag, invert the retain/consume decision made below.
+
         Args:
             error_message: Format string with one placeholder, used when the
                 native layer offers no error of its own.
@@ -725,7 +732,8 @@ class C2paSignerInfo(ctypes.Structure):
             (will be converted accordingly to bytes for native library use)
             sign_cert: The signing certificate as a string
             private_key: The private key as a string
-            ta_url: The timestamp authority URL as bytes
+            ta_url: The timestamp authority URL as bytes, or None for no
+            timestamp authority.
         """
 
         if sign_cert is None:
@@ -754,8 +762,11 @@ class C2paSignerInfo(ctypes.Structure):
             )
 
         # Handle ta_url parameter:
-        # allow string or bytes, convert string to bytes as needed
-        if isinstance(ta_url, str):
+        # allow None, string or bytes, convert string to bytes as needed
+        if ta_url is None:
+            # NULL is how the native side spells "no timestamp authority".
+            pass
+        elif isinstance(ta_url, str):
             # String to bytes, as requested by native lib
             ta_url = ta_url.encode('utf-8')
         elif isinstance(ta_url, bytes):
@@ -763,7 +774,7 @@ class C2paSignerInfo(ctypes.Structure):
             pass
         else:
             raise TypeError(
-                f"ta_url must be string or bytes, got {type(ta_url)}"
+                f"ta_url must be None, string or bytes, got {type(ta_url)}"
             )
 
         # Call parent constructor with processed values
@@ -1138,7 +1149,6 @@ class _C2paVerify(C2paError):
 
 class _C2paUntrackedPointer(C2paError):
     """Exception raised when the native layer does not recognize a pointer.
-
     Raised when a consume-and-return call rejects the handle it was given
     before taking ownership of it, so the caller still owns that handle.
     """
@@ -1147,7 +1157,6 @@ class _C2paUntrackedPointer(C2paError):
 
 class _C2paWrongPointerType(C2paError):
     """Exception raised when a pointer is tracked under a different type.
-
     Like _C2paUntrackedPointer, this is rejected before ownership transfer,
     so the caller still owns the handle it passed in.
     """
@@ -1454,8 +1463,6 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         "Error loading settings",
         check=lambda r: r != 0)
 
-    return result
-
 
 def _get_mime_type_from_path(path: Union[str, Path]) -> str:
     """Attempt to guess the MIME type from a file path's extension.
@@ -1611,7 +1618,8 @@ class Settings(ManagedResource):
 
     @property
     def _c_settings(self):
-        """Expose the raw pointer for Context to consume."""
+        """Expose the raw pointer for c2pa_context_builder_set_settings.
+        """
         self._ensure_valid_state()
         return self._handle
 
@@ -2530,28 +2538,26 @@ class Reader(ManagedResource):
         """
         format_arg = _format_ffi_arg(format_bytes)
         if manifest_data is None:
-            reader_ptr = _lib.c2pa_reader_from_stream(
-                format_arg, stream_obj._stream)
+            def create():
+                return _lib.c2pa_reader_from_stream(
+                    format_arg, stream_obj._stream)
         else:
             if not isinstance(manifest_data, bytes):
                 raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
             manifest_array = (
                 ctypes.c_ubyte *
                 len(manifest_data)).from_buffer_copy(manifest_data)
-            reader_ptr = (
-                _lib.c2pa_reader_from_manifest_data_and_stream(
+
+            def create():
+                return _lib.c2pa_reader_from_manifest_data_and_stream(
                     format_arg,
                     stream_obj._stream,
                     manifest_array,
                     len(manifest_data),
                 )
-            )
 
-        _check_ffi_operation_result(
-            reader_ptr,
-            Reader._ERROR_MESSAGES['reader_error'])
-
-        self._activate(reader_ptr)
+        self._create_and_activate(
+            create, Reader._ERROR_MESSAGES['reader_error'])
 
     def _init_from_file(self, path, format_bytes,
                         manifest_data=None):
@@ -2722,7 +2728,11 @@ class Reader(ManagedResource):
             This reader instance, for method chaining.
 
         Raises:
-            C2paError: If there was an error processing the fragment
+            C2paError: If there was an error processing the fragment.
+                On failure the native call may already have consumed the
+                underlying object, in which case this Reader is closed and
+                cannot be retried: create a new one instead of reusing this
+                instance.
         """
         self._ensure_valid_state()
 
@@ -3014,7 +3024,12 @@ class Signer(ManagedResource):
         _check_ffi_operation_result(
             signer_ptr, "Failed to create signer from configured signer_info")
 
-        return cls(signer_ptr)
+        try:
+            return cls(signer_ptr)
+        except Exception:
+            # No instance took ownership, so the handle is still ours.
+            ManagedResource._free_native_ptr(signer_ptr)
+            raise
 
     @classmethod
     def from_callback(
@@ -3141,13 +3156,18 @@ class Signer(ManagedResource):
         _check_ffi_operation_result(signer_ptr,
                                     "Failed to create signer")
 
-        # Create and return the signer instance with the callback
-        signer_instance = cls(signer_ptr)
+        try:
+            # Create and return the signer instance with the callback
+            signer_instance = cls(signer_ptr)
 
-        # Keep callback alive on the object to prevent gc of the callback
-        # So the callback will live as long as the signer leaves,
-        # and there is a 1:1 relationship between signer and callback.
-        signer_instance._callback_cb = callback_cb
+            # Keep callback alive on the object to prevent gc of the callback.
+            # So the callback will live as long as the signer leaves,
+            # and there is a 1:1 relationship between signer and callback.
+            signer_instance._callback_cb = callback_cb
+        except Exception:
+            # No instance took ownership, so the handle is still ours.
+            ManagedResource._free_native_ptr(signer_ptr)
+            raise
 
         return signer_instance
 
@@ -3355,13 +3375,9 @@ class Builder(ManagedResource):
         if context is not None:
             self._init_from_context(context, json_str)
         else:
-            builder_ptr = _lib.c2pa_builder_from_json(json_str)
-
-            _check_ffi_operation_result(
-                builder_ptr,
+            self._create_and_activate(
+                lambda: _lib.c2pa_builder_from_json(json_str),
                 Builder._ERROR_MESSAGES['builder_error'])
-
-            self._activate(builder_ptr)
 
     def _init_from_context(self, context, json_str):
         """Initialize Builder from a ContextProvider.
@@ -3657,7 +3673,10 @@ class Builder(ManagedResource):
             This builder instance, for method chaining.
 
         Raises:
-            C2paError: If there was an error loading the archive
+            C2paError: If there was an error loading the archive. On failure
+                the native call may already have consumed the underlying
+                object, in which case this Builder is closed and cannot be
+                retried: create a new one instead of reusing this instance.
         """
         self._ensure_valid_state()
 
@@ -3780,7 +3799,11 @@ class Builder(ManagedResource):
         """
         source_stream = Stream(source)
         try:
-            if dest:
+            # Identity check, not truthiness: a caller-supplied destination
+            # that is falsy while empty (any stream-like object defining
+            # __bool__/__len__) would otherwise be silently swapped for the
+            # internal buffer and never receive the signed asset.
+            if dest is not None:
                 dest_stream = Stream(dest)
             else:
                 mem_buffer = io.BytesIO()
