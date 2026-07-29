@@ -8,7 +8,7 @@ A custom HTTP resolver lets you intercept every HTTP request the SDK makes throu
 
 c2pa ships no resolver types at all: there is no `HttpRequest`, `HttpResponse`, or `HttpResolver` to import from `c2pa`. `ContextBuilder.with_resolver()` (and the `Context(resolver=...)` constructor argument, also accepted by `Context.from_json`/`from_dict`) never does an `isinstance` check. It accepts either:
 
-- any callable taking one request argument, or
+- any callable taking one request argument;
 - any object with a `resolve(request)` method.
 
 The request handed to you exposes `.url` (str), `.method` (str), `.headers` (dict), and `.body` (bytes). The value you return only needs `.status` (int) and `.body` (bytes) attributes. The minimal form needs no imports at all:
@@ -22,7 +22,7 @@ context = c2pa.Context.builder().with_resolver(my_resolver).build()
 reader = c2pa.Reader("image/jpeg", stream, context=context)
 ```
 
-The resolver is validated immediately: something with neither shape raises `TypeError` from `with_resolver()` itself (or from the `Context` constructor on the direct path), not later at `.build()`. If a resolver object has both a `resolve()` method and is itself callable, `resolve()` wins.
+The resolver is validated immediately: something with a wrong shape raises `TypeError` from `with_resolver()` itself (or from the `Context` constructor on the direct path), not later at `.build()`. If a resolver object has both a `resolve()` method and is itself callable, `resolve()` wins.
 
 [`http_resolver_example_impl.py`](./http_resolver_example_impl.py) is an example implementation of that shape. It defines `HttpRequest`, `HttpResponse`, and an optional `HttpResolver` abstract base class (subclassing it is not required, it just gets you a documented, type-checkable contract instead of duck typing), plus three example resolvers: `DebugHttpResolver` (logs every request/response, delegates the transfer to `urllib`), `CachingHttpResolver` (TTL'd LRU cache plus retry/backoff for throttled requests), and `AlwaysFailResolver` (answers every request with a fixed status; needs no network). The module has no dependency on `c2pa` itself; only the tests import `c2pa`, to exercise the resolvers against real `Context`/`Reader`/`Builder` instances.
 
@@ -114,7 +114,9 @@ Default `multiprocessing` start methods differ: historically `fork` on Linux (`f
 - [`test_http_resolver_debug.py`](./test_http_resolver_debug.py): exercises `DebugHttpResolver`, verifying that a remote-manifest read logs a `GET`, that signing with a remote-manifest ingredient fetches it through the resolver, and that re-reading the signed (embedded-manifest) output performs no HTTP at all.
 - [`test_http_resolver_cache.py`](./test_http_resolver_cache.py): exercises `CachingHttpResolver` (reading twice / ingesting the same ingredient repeatedly hits the cache exactly as the hit/miss counters predict) and `AlwaysFailResolver` (a non-200 answer surfaces as a clean typed `C2paError`, with no network needed).
 
-Both network tests need internet access to fetch the remote manifest for `tests/fixtures/cloud.jpg`, and fail without it. If your Python has no CA bundle configured, every fetch fails with `CERTIFICATE_VERIFY_FAILED` (see the TLS section above); on macOS, prefix the commands with `SSL_CERT_FILE=$(python -m certifi)`.
+Those examples need network access to fetch the remote manifest for `tests/fixtures/cloud.jpg`, and fail without it.
+
+If your Python has no CA bundle configured, every fetch fails with `CERTIFICATE_VERIFY_FAILED` (see the TLS section above); on macOS, prefix the commands with `SSL_CERT_FILE=$(python -m certifi)`.
 
 Run them in a CLI with the commands:
 
