@@ -11,15 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""Tests for DebugHttpResolver
-(tests/http_resolver/http_resolver_example_impl.py), exercised
-against the real network.
-
-Demonstrates intercepting every HTTP request the SDK makes through a
-Context. Needs internet access to fetch the remote manifest for
-tests/fixtures/cloud.jpg: these tests fail without it. On a Python
-install with no CA bundle configured, run them with
-SSL_CERT_FILE=$(python -m certifi).
+"""Tests for DebugHttpResolver, an HTTP resolver that logs requests,
 """
 
 import json

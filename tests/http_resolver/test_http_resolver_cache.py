@@ -11,14 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""Tests for CachingHttpResolver
-(tests/http_resolver/http_resolver_example_impl.py),
-exercised against the real network.
-
-Needs internet access to fetch the remote manifest for
-tests/fixtures/cloud.jpg: these tests fail without it. On a Python
-install with no CA bundle configured, run them with
-SSL_CERT_FILE=$(python -m certifi).
+"""Tests for CachingHttpResolver, an HTTP resolver that caches on read.
 """
 
 import os
