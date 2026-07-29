@@ -82,7 +82,6 @@ class TestHttpResolverCache(unittest.TestCase):
             key = f.read()
 
         # ta_url is None, meaning "no timestamp authority".
-        # An empty string is treated as a URL and fails signing.
         signer_info = c2pa.C2paSignerInfo(
             alg=b"es256", sign_cert=certs, private_key=key, ta_url=None)
 
@@ -153,9 +152,8 @@ class TestHttpResolverCache(unittest.TestCase):
         self.assertEqual(resolver.cache.misses, 1)
         self.assertEqual(resolver.cache.hits, 2)
 
-    def test_failing_resolver_is_a_clean_error(self):
+    def test_failing_resolver_is_reported_as_error(self):
         """A final failure surfaces as a typed error, not a crash.
-
         Needs no network: the resolver answers without calling out.
         """
         with c2pa.Context.builder().with_resolver(

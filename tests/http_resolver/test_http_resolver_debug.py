@@ -133,8 +133,8 @@ class TestHttpResolverDebug(unittest.TestCase):
                     any(m == "GET" for m, _ in resolver.requests))
                 requests_before_reread = len(resolver.requests)
 
-                # Reading the signed file back uses its embedded
-                # manifest, so this makes no HTTP requests at all.
+                # Reading the signed file back uses its embedded manifest,
+                # so this makes no HTTP requests at all.
                 print("Re-reading the signed output "
                       "(should trigger no HTTP requests)")
                 with open(output_path, "rb") as f:
