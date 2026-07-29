@@ -198,7 +198,11 @@ Every public method calls `_ensure_valid_state()` before doing any work, which r
 
 ## Ways to clean up
 
-### Using a context manager
+You can clean up using a `with` statement, explicitly by calling `close()`, or by using destructor fallback.
+
+### Using a "with" statement
+
+The recommended cleanup method is to use a `with` statement, like this:
 
 ```python
 with Reader("image.jpg") as reader:
@@ -218,7 +222,7 @@ finally:
     reader.close()
 ```
 
-Calling `.close()` directly is equivalent to exiting a `with` block. It is idempotent: calling it multiple times is safe and does nothing after the first call.
+Calling `close()` directly is equivalent to exiting a `with` block. It is idempotent: calling it multiple times is safe and does nothing after the first call.
 
 ### Destructor fallback
 
