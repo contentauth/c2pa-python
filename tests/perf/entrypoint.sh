@@ -16,8 +16,14 @@ else
     PLATFORM="x86_64-unknown-linux-gnu"
 fi
 
-echo "Downloading c2pa native lib: $C2PA_VERSION / $PLATFORM"
-C2PA_LIBS_PLATFORM=$PLATFORM python scripts/download_artifacts.py "$C2PA_VERSION"
+# Skip the GitHub API round-trip when the lib is already on disk
+# Set C2PA_FORCE_DOWNLOAD=1 to override.
+if [ -z "$C2PA_FORCE_DOWNLOAD" ] && [ -f "artifacts/$PLATFORM/libc2pa_c.so" ]; then
+    echo "Using cached c2pa native lib: artifacts/$PLATFORM (set C2PA_FORCE_DOWNLOAD=1 to re-download)"
+else
+    echo "Downloading c2pa native lib: $C2PA_VERSION / $PLATFORM"
+    C2PA_LIBS_PLATFORM=$PLATFORM python scripts/download_artifacts.py "$C2PA_VERSION"
+fi
 
 # Replicate what setup.py copy_platform_libraries() does:
 # So the correct Linux library is here for the Dockerfile

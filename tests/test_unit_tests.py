@@ -11,9 +11,15 @@
 # specific language governing permissions and limitations under
 # each license.
 
+import gc
+import inspect
 import os
 import io
+import gzip
+import bz2
+import lzma
 import json
+import re
 import unittest
 import ctypes
 import warnings
@@ -30,7 +36,9 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable
+from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg
+import c2pa.c2pa as c2pa_module
+from pathlib import Path
 
 
 PROJECT_PATH = os.getcwd()
@@ -85,6 +93,173 @@ class TestC2paSdk(unittest.TestCase):
     def test_sdk_version(self):
         # This test verifies the native libraries used match the expected version.
         self.assertIn(parse_native_version(), sdk_version())
+
+
+class TestIsReadableStream(unittest.TestCase):
+    """ A stream is anything Stream will accept (read/write/seek/tell/flush).
+    """
+
+    def _tmp_path(self):
+        return os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
+
+    def test_paths_and_formats_are_not_streams(self):
+        for value in (None, "", "image/jpeg", "path/to/file.jpg",
+                      Path("x.jpg")):
+            self.assertFalse(Stream.is_read_stream(value), repr(value))
+
+    def test_non_stream_objects_are_not_streams(self):
+        for value in (b"bytes", bytearray(b"x"), 42, object()):
+            self.assertFalse(Stream.is_read_stream(value), repr(value))
+
+    def test_object_missing_methods_is_not_a_stream(self):
+        class OnlyRead:
+            def read(self):
+                return b""
+        self.assertFalse(Stream.is_read_stream(OnlyRead()))
+
+    def test_read_only_object_is_not_a_stream(self):
+        # Has read/seek/tell but no write/flush, so not a Stream for us.
+        class ReadOnly:
+            def read(self):
+                return b""
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+        self.assertFalse(Stream.is_read_stream(ReadOnly()))
+
+    def test_in_memory_streams_are_streams(self):
+        self.assertTrue(Stream.is_read_stream(io.BytesIO(b"x")))
+        self.assertTrue(Stream.is_read_stream(io.StringIO("x")))
+
+    def test_file_handles_are_streams(self):
+        path = self._tmp_path()
+        for opener in (
+            lambda: open(path, "rb"),
+            lambda: open(path, "rb", buffering=0),
+            lambda: io.BufferedReader(io.FileIO(path, "rb")),
+            lambda: open(path, "r+b"),
+            lambda: open(path, "r"),
+        ):
+            fh = opener()
+            try:
+                self.assertTrue(Stream.is_read_stream(fh), type(fh).__name__)
+            finally:
+                fh.close()
+
+    def test_spooled_temporary_file_is_a_stream(self):
+        with tempfile.SpooledTemporaryFile() as fh:
+            self.assertTrue(Stream.is_read_stream(fh))
+
+    def test_compressed_file_objects_are_streams(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for ext, opener in (
+                ("gz", gzip.open),
+                ("bz2", bz2.open),
+                ("xz", lzma.open),
+            ):
+                p = os.path.join(tmp, f"f.{ext}")
+                with opener(p, "wb") as fh:
+                    fh.write(b"data")
+                with opener(p, "rb") as fh:
+                    self.assertTrue(Stream.is_read_stream(fh), ext)
+
+    def test_placeholder_typed_object_with_all_methods_is_a_stream(self):
+        class Duck:
+            def read(self, *a):
+                return b""
+
+            def write(self, *a):
+                return 0
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+
+            def flush(self):
+                pass
+        self.assertTrue(Stream.is_read_stream(Duck()))
+
+
+class TestFormatValidation(unittest.TestCase):
+    """Unit tests for _encode_format.
+
+    The binding no longer validates the format against a supported list: the
+    native library is the authority and detects the type from the bytes, so a
+    given format is trimmed and passed straight through.
+    """
+
+    def test_strips_whitespace_from_query(self):
+        for value in (" image/jpeg", "image/jpeg ", "\timage/jpeg\n"):
+            self.assertEqual(
+                _encode_format(value, "Reader"),
+                b"image/jpeg")
+
+    def test_case_normalized_to_lowercase(self):
+        # MIME types are case-insensitive, so the format is lowercased before
+        # being handed to the native library.
+        for value in ("IMAGE/JPEG", "Image/Jpeg"):
+            self.assertEqual(
+                _encode_format(value, "Reader"),
+                b"image/jpeg")
+
+    def test_encodes_stripped_and_lowercased_key(self):
+        self.assertEqual(
+            _encode_format("  IMAGE/JPEG  ", "Reader"),
+            b"image/jpeg")
+
+    def test_production_supported_list_is_normalized(self):
+        # _get_supported_mime_types strips and lowercases every entry.
+        for entry in Reader.get_supported_mime_types():
+            self.assertEqual(entry, entry.strip().lower())
+
+    def test_none_autodetects(self):
+        # A missing format is None (auto-detect), not the empty-bytes sentinel.
+        self.assertIsNone(_encode_format(None, "Reader"))
+
+    def test_blank_autodetects(self):
+        for value in ("", "   ", "\t\n"):
+            self.assertIsNone(_encode_format(value, "Reader"))
+
+    def test_missing_format_rejected_when_autodetect_disabled(self):
+        for value in (None, "", "   "):
+            with self.assertRaises(Error.NotSupported):
+                _encode_format(value, "Builder", allow_autodetect=False)
+
+    def test_format_ffi_arg_maps_none_to_empty_bytes(self):
+        # The native library's "detect from bytes" flag is empty bytes, not a
+        # NULL c_char_p, so None must map to b"".
+        self.assertEqual(_format_ffi_arg(None), b"")
+        self.assertEqual(_format_ffi_arg(b"image/jpeg"), b"image/jpeg")
+
+    def test_resolve_format_bytes(self):
+        # Path form derives the format from the extension.
+        self.assertEqual(
+            Reader._resolve_format_bytes("photo.jpg", None), b"image/jpeg")
+        # Extensionless path -> auto-detect.
+        self.assertIsNone(
+            Reader._resolve_format_bytes("no_extension", None))
+        # Stream given: format_or_path is the format (or None for detect).
+        self.assertEqual(
+            Reader._resolve_format_bytes("image/jpeg", object()), b"image/jpeg")
+        self.assertIsNone(
+            Reader._resolve_format_bytes(None, object()))
+
+    def test_unknown_format_passes_through(self):
+        # No supported-list check: the format is encoded and handed to the
+        # native library, which is the authority on validity.
+        self.assertEqual(
+            _encode_format("application/x-nope", "Reader"),
+            b"application/x-nope")
+
+    def test_literal_none_string_passes_through(self):
+        # The string "None" is a plain string; it is trimmed, lowercased, and
+        # encoded like any other, not rejected in the binding.
+        self.assertEqual(_encode_format("None", "Reader"), b"none")
 
 
 class TestReader(unittest.TestCase):
@@ -251,10 +426,13 @@ class TestReader(unittest.TestCase):
             active_manifest_results = validation_results["activeManifest"]
             self.assertIsInstance(active_manifest_results, dict)
 
-    def test_reader_detects_unsupported_mimetype_on_stream(self):
+    def test_wrong_mimetype_corrected_from_bytes_on_stream(self):
+        # The binding passes the format straight through.
+        # The native library detects the JPEG container and ignores the mismatched format,
+        # so a valid asset still reads with a wrong (or bogus) mimetype.
         with open(self.testPath, "rb") as file:
-            with self.assertRaises(Error.NotSupported):
-              Reader("mimetype/does-not-exist", file)
+            with Reader("mimetype/does-not-exist", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_and_parse(self):
         with open(self.testPath, "rb") as file:
@@ -297,40 +475,376 @@ class TestReader(unittest.TestCase):
         # Just run and verify there is no crash
         json.loads(reader.json())
 
-    def test_stream_read_string_stream_mimetype_not_supported(self):
-        with self.assertRaises(Error.NotSupported):
-            # xyz is actually an extension that is recognized
-            # as mimetype chemical/x-xyz
-            Reader(os.path.join(FIXTURES_DIR, "C.xyz"))
+    def test_unreadable_asset_raises_not_supported(self):
+        # A plain-text file is not a recognizable asset. The binding no longer
+        # rejects it up front; the native library raises NotSupported when it
+        # fails to detect a container.
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = os.path.join(tmp, "C.txt")
+            with open(txt, "w") as f:
+                f.write("just some plain text, not an asset\n")
+            with self.assertRaises(Error.NotSupported):
+                Reader(txt)
 
-    def test_try_create_raises_mimetype_not_supported(self):
-        with self.assertRaises(Error.NotSupported):
-            # xyz is actually an extension that is recognized
-            # as mimetype chemical/x-xyz, but we don't support it
-            Reader.try_create(os.path.join(FIXTURES_DIR, "C.xyz"))
+    def test_try_create_unreadable_asset_raises_not_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = os.path.join(tmp, "C.txt")
+            with open(txt, "w") as f:
+                f.write("just some plain text, not an asset\n")
+            with self.assertRaises(Error.NotSupported):
+                Reader.try_create(txt)
 
-    def test_stream_read_string_stream_mimetype_not_recognized(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader(os.path.join(FIXTURES_DIR, "C.test"))
+    def test_none_format_matches_empty_string_on_stream(self):
+        # None and "" both request auto-detection and read the same asset.
+        with open(self.testPath, "rb") as file:
+            with Reader(None, file) as reader:
+                none_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                empty_json = reader.json()
+        self.assertEqual(none_json, empty_json)
+        self.assertNotIn("None", none_json[:64])
+        self.assertIn(DEFAULT_TEST_FILE_NAME, none_json)
 
-    def test_try_create_raises_mimetype_not_recognized(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader.try_create(os.path.join(FIXTURES_DIR, "C.test"))
+    def test_padded_format_accepted_on_stream(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(" image/jpeg ", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_none_format_matches_empty_string(self):
+        with open(self.testPath, "rb") as file:
+            none_reader = Reader.try_create(None, file)
+        self.assertIsNotNone(none_reader)
+        with open(self.testPath, "rb") as file:
+            empty_reader = Reader.try_create("", file)
+        self.assertIsNotNone(empty_reader)
+        if none_reader is not None and empty_reader is not None:
+            self.assertEqual(none_reader.json(), empty_reader.json())
+
+    def test_bare_stream_matches_empty_and_none_format(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(file) as reader:
+                bare_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                empty_json = reader.json()
+        with open(self.testPath, "rb") as file:
+            with Reader(None, file) as reader:
+                none_json = reader.json()
+        self.assertEqual(bare_json, empty_json)
+        self.assertEqual(bare_json, none_json)
+
+    def test_bare_stream_keyword_form(self):
+        with open(self.testPath, "rb") as file:
+            with Reader(stream=file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_bare_stream_in_memory(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        with Reader(io.BytesIO(data)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_bare_stream(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create(file)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+
+    def test_try_create_bare_stream_keyword(self):
+        with open(self.testPath, "rb") as file:
+            reader = Reader.try_create(stream=file)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+
+    def test_bare_stream_closed_handle_raises(self):
+        # Stream.is_read_stream only checks method presence
+        #  so a closed handle is accepted as a stream and fails at read time.
+        file = open(self.testPath, "rb")
+        file.close()
+        with self.assertRaises(Error):
+            Reader(file)
+
+    def test_bare_stream_with_manifest_data_keeps_manifest(self):
+        # The bare-stream shift must not swallow manifest_data.
+        with open(self.testPath, "rb") as file:
+            with Reader(file, manifest_data=None) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_path_string_still_opens_by_path(self):
+        with Reader(self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_path_object_still_opens_by_path(self):
+        with Reader(Path(self.testPath)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_format_plus_stream_still_means_format_and_stream(self):
+        with open(self.testPath, "rb") as file:
+            with Reader("image/jpeg", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+        with open(self.testPath, "rb") as file:
+            with Reader(" image/jpeg ", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_format_plus_path_string_still_opens_by_path(self):
+        with Reader("image/jpeg", self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_no_args_raises_clear_error(self):
+        with self.assertRaises(Error) as ctx:
+            Reader()
+        self.assertIn("stream", str(ctx.exception).lower())
+
+    def test_none_first_arg_no_stream_raises_clear_error(self):
+        with self.assertRaises(Error) as ctx:
+            Reader(None)
+        self.assertIn("stream", str(ctx.exception).lower())
+
+    def test_text_stream_matches_existing_explicit_form(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        text = data.decode("latin-1")
+
+        def outcome(call):
+            try:
+                r = call()
+                out = ("ok", r.json()[:0])
+                r.close()
+                return out
+            except Exception as e:
+                return ("err", type(e).__name__)
+        bare = outcome(lambda: Reader(io.StringIO(text)))
+        explicit = outcome(lambda: Reader("image/jpeg", io.StringIO(text)))
+        self.assertEqual(bare, explicit)
+
+    def test_read_only_object_not_treated_as_stream(self):
+        # read/seek/tell but no write/flush
+        class ReadOnly:
+            def read(self, *a):
+                return b""
+
+            def seek(self, *a):
+                return 0
+
+            def tell(self):
+                return 0
+        with self.assertRaises(Error):
+            Reader(ReadOnly())
+
+    def test_unrecognized_extension_defers_to_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "C.test")
+            shutil.copyfile(self.testPath, asset)
+            with Reader(asset) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_try_create_unrecognized_extension_defers_to_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "C.test")
+            shutil.copyfile(self.testPath, asset)
+            reader = Reader.try_create(asset)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                with reader:
+                    self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_string_stream(self):
         with Reader("image/jpeg", self.testPath) as reader:
             json_data = reader.json()
             self.assertIn(DEFAULT_TEST_FILE_NAME, json_data)
 
-    def test_reader_detects_unsupported_mimetype_on_file(self):
-        with self.assertRaises(Error.NotSupported):
-            Reader("mimetype/does-not-exist", self.testPath)
+    def test_wrong_mimetype_corrected_from_bytes_on_file(self):
+        # As with a stream: a valid asset opened by path still reads when the
+        # given mimetype is wrong, because the native library corrects it from
+        # the detected container.
+        with Reader("mimetype/does-not-exist", self.testPath) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_extensionless_file_path(self):
+        # Extensionless file triggers type auto-detection.
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "C")
+            shutil.copyfile(self.testPath, no_ext)
+            with Reader(no_ext) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_extensionless_stream_empty_format(self):
+        # An empty format string on a stream triggers auto-detection.
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_wrong_extension_corrected(self):
+        # A JPEG saved with a .png extension is corrected from the bytes.
+        # (Read is possible and does not fail due to wrong type).
+        with tempfile.TemporaryDirectory() as tmp:
+            wrong = os.path.join(tmp, "C.png")
+            shutil.copyfile(self.testPath, wrong)
+            with Reader(wrong) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_read_wrong_mime_corrected_on_stream(self):
+        # A wrong MIME hint on a stream is corrected from the bytes.
+        with open(self.testPath, "rb") as file:
+            with Reader("image/png", file) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_explicit_empty_format_forces_detection(self):
+        # Passing "" works even when the correct format is supported.
+        with open(self.testPath, "rb") as file:
+            with Reader("", file) as reader:
+                manifest_store = json.loads(reader.json())
+                self.assertIn("active_manifest", manifest_store)
+
+    def test_autodetect_multiformat(self):
+        fixtures = [
+            os.path.join(FIXTURES_DIR, "files-for-reading-tests", "CA.jpg"),
+            os.path.join(FIXTURES_DIR, "video1.mp4"),
+            os.path.join(FIXTURES_DIR, "files-for-reading-tests", "pdf-file.pdf"),
+            os.path.join(FIXTURES_DIR, "files-for-reading-tests", "sample1_signed.wav"),
+        ]
+        for path in fixtures:
+            with self.subTest(path=path):
+                with open(path, "rb") as file:
+                    with Reader("", file) as reader:
+                        self.assertIn("active_manifest", json.loads(reader.json()))
+
+    def test_dng_extension_still_special_cased(self):
+        dng_path = os.path.join(FIXTURES_DIR, "C.dng")
+        with Reader(dng_path) as reader:
+            self.assertIn("active_manifest", json.loads(reader.json()))
+
+    def test_garbage_stream_empty_format_raises(self):
+        # Unrecognized bytes with auto-detection raise rather than crash.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b"not an asset at all"))
+
+    def test_empty_stream_raises(self):
+        # A zero-byte stream cannot be detected and raises.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b""))
+
+    def test_truncated_corrupt_jpeg_raises(self):
+        with open(self.testPath, "rb") as file:
+            data = bytearray(file.read())
+        # Corrupt the body while keeping the leading JPEG magic intact.
+        # This will still raise errors.
+        for i in range(64, min(len(data), 4096)):
+            data[i] ^= 0xFF
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(bytes(data)))
+
+    def test_garbage_extensionless_file_raises(self):
+        # Random bytes in an extensionless file raise.
+        with tempfile.TemporaryDirectory() as tmp:
+            garbage = os.path.join(tmp, "garbage")
+            with open(garbage, "wb") as f:
+                f.write(b"this is not a media asset")
+            with self.assertRaises(Error):
+                Reader(garbage)
+
+    def test_try_create_garbage_stream_raises(self):
+        with self.assertRaises(Error) as context:
+            Reader.try_create("", io.BytesIO(b"not an asset at all"))
+        self.assertNotIn("ManifestNotFound", str(context.exception))
+
+    def test_try_create_extensionless_no_manifest_returns_none(self):
+        unsigned = os.path.join(
+            FIXTURES_DIR, "files-for-signing-tests", "earth_apollo17.jpg")
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "unsigned")
+            shutil.copyfile(unsigned, no_ext)
+            self.assertIsNone(Reader.try_create(no_ext))
+
+    def test_sub_magic_length_stream_raises(self):
+        # Fewer bytes than a full magic signature cannot be detected.
+        # This will raise too.
+        with self.assertRaises(Error):
+            Reader("", io.BytesIO(b"\xff\xd8\xff"))
+
+    def test_preseeked_stream_is_rewound(self):
+        with open(self.testPath, "rb") as file:
+            data = file.read()
+        stream = io.BytesIO(data)
+        stream.seek(len(data) // 2)
+        with Reader("", stream) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+
+    def test_dng_extension_with_jpeg_bytes_corrected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dng = os.path.join(tmp, "fake.dng")
+            shutil.copyfile(self.testPath, fake_dng)
+            with Reader(fake_dng) as reader:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_stream_read_filepath_as_stream_and_parse(self):
         with Reader("image/jpeg", self.testPath) as reader:
             manifest_store = json.loads(reader.json())
             title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
             self.assertEqual(title, DEFAULT_TEST_FILE_NAME)
+
+    def test_get_mime_type_from_path_dng_special_cased(self):
+        self.assertEqual(_get_mime_type_from_path("photo.dng"), "image/dng")
+
+    def test_get_mime_type_from_path_uppercase_dng(self):
+        self.assertEqual(_get_mime_type_from_path("PHOTO.DNG"), "image/dng")
+
+    def test_get_mime_type_from_path_jpeg(self):
+        self.assertEqual(_get_mime_type_from_path("photo.jpg"), "image/jpeg")
+
+    def test_get_mime_type_from_path_unknown_extension_returns_empty(self):
+        # An unrecognized extension yields "" so the caller can auto-detect.
+        self.assertEqual(_get_mime_type_from_path("asset.unknownext"), "")
+
+    def test_get_mime_type_from_path_no_suffix_returns_empty(self):
+        self.assertEqual(_get_mime_type_from_path("asset"), "")
+
+    def test_get_mime_type_from_path_multi_dot_uses_final_suffix(self):
+        # Only the final suffix determines the type.
+        self.assertEqual(
+            _get_mime_type_from_path("photo.final.jpg"), "image/jpeg")
+
+    def test_get_mime_type_from_path_compound_extension(self):
+        # mimetypes treats ".gz" as an encoding, not a type suffix,
+        # the type is derived from ".tar"
+        result = _get_mime_type_from_path("archive.tar.gz")
+        self.assertIsInstance(result, str)
+        self.assertNotIn(result, ("image/jpeg", "image/dng"))
+
+    def test_get_mime_type_from_path_hidden_dotfile_returns_empty(self):
+        # Check how we handle files without suffix (usually hidden files)
+        self.assertEqual(_get_mime_type_from_path(".gitignore"), "")
+
+    def test_get_mime_type_from_path_accepts_path_object(self):
+        self.assertEqual(
+            _get_mime_type_from_path(Path("dir/photo.jpg")), "image/jpeg")
+
+    def test_encode_format_blank_autodetects(self):
+        # A blank format requests auto-detection.
+        self.assertIsNone(_encode_format("", "Reader"))
+        self.assertIsNone(_encode_format("   ", "Reader"))
+
+    def test_encode_format_returns_bytes(self):
+        self.assertEqual(
+            _encode_format("image/jpeg", "Reader"), b"image/jpeg")
+
+    def test_encode_format_case_normalized(self):
+        self.assertEqual(
+            _encode_format("IMAGE/JPEG", "Reader"), b"image/jpeg")
+
+    def test_encode_format_unknown_passes_through(self):
+        # The native library decides validity.
+        self.assertEqual(
+            _encode_format("application/zip", "Reader"), b"application/zip")
+
+    def test_reader_accepts_path_object(self):
+        with Reader(Path(self.testPath)) as reader:
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
 
     def test_reader_double_close(self):
         with open(self.testPath, "rb") as file:
@@ -1097,6 +1611,139 @@ class TestBuilderWithSigner(unittest.TestCase):
         signer = Signer.from_info(signer_info)
         signer.reserve_size()
 
+    def _local_signer(self):
+        """An es256 signer with no timestamp authority (keeps signing local).
+
+        ta_url=None maps to a NULL pointer, which is how the native side
+        spells "no TSA". An empty string is not equivalent: it is passed
+        through as a real, empty URL and signing then fails.
+        """
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=None,
+        )
+        signer = Signer.from_info(signer_info)
+        self.addCleanup(signer.close)
+        return signer
+
+    def _active_signature_info(self, signed_bytes):
+        """signature_info of the active manifest in a signed asset."""
+        signed_bytes.seek(0)
+        reader = Reader("image/jpeg", signed_bytes)
+        try:
+            manifest_store = json.loads(reader.json())
+        finally:
+            reader.close()
+        active = manifest_store["manifests"][
+            manifest_store["active_manifest"]]
+        return active.get("signature_info", {})
+
+    def test_signer_with_none_ta_url_signs_without_timestamp(self):
+        """ta_url=None must reach native as NULL, meaning "no TSA".
+        """
+        builder = Builder(self.manifestDefinitionV2)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(self._local_signer(), "image/jpeg", source, dest)
+
+        signature_info = self._active_signature_info(dest)
+        self.assertTrue(signature_info, "expected a signed active manifest")
+        self.assertNotIn(
+            "time", signature_info,
+            "no timestamp authority was configured, so the signature "
+            "must not carry a timestamp")
+
+    def _sign_with_ta_url(self, ta_url):
+        """Sign with ta_url as the only variable. Returns the dest buffer."""
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=ta_url,
+        )
+        signer = Signer.from_info(signer_info)
+        self.addCleanup(signer.close)
+
+        builder = Builder(self.manifestDefinitionV2)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(signer, "image/jpeg", source, dest)
+        return dest
+
+    def test_signer_with_empty_ta_url_is_not_a_no_tsa_path(self):
+        """An empty ta_url is a real (empty) URL, not "no TSA".
+        Only None means "no TSA".
+        """
+        with self.assertRaises(Error):
+            self._sign_with_ta_url(b"")
+
+    def test_empty_ta_url_is_rejected_as_a_malformed_url(self):
+        """b"" fails as a URL, which is why it cannot mean "no TSA".
+        """
+        malformed = [
+            (b"", "empty"),
+            (b"   ", "whitespace"),
+            (b"not-a-url", "no scheme or host"),
+        ]
+        for value, why in malformed:
+            with self.subTest(ta_url=value, reason=why):
+                with self.assertRaises(Error):
+                    self._sign_with_ta_url(value)
+
+        # The control: same signer, same asset, only ta_url differs.
+        signature_info = self._active_signature_info(
+            self._sign_with_ta_url(None))
+        self.assertNotIn("time", signature_info)
+
+    def test_signer_with_ta_url_signs_with_timestamp(self):
+        """Control for the None case: a real TSA does add a timestamp.
+        """
+        builder = Builder(self.manifestDefinitionV2)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(self.signer, "image/jpeg", source, dest)
+
+        signature_info = self._active_signature_info(dest)
+        self.assertIn(
+            "time", signature_info,
+            "a timestamp authority was configured, so the signature "
+            "must carry a timestamp")
+        self.assertTrue(signature_info["time"])
+
+    def test_none_and_empty_ta_url_reach_native_differently(self):
+        """None must marshal to NULL, b"" to a real (empty) string.
+
+        The native side reads a NULL ta_url as "no timestamp authority"
+        and any non-NULL pointer as a URL to use, including one pointing at "".
+        """
+        def struct_for(ta_url):
+            return C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=self.certs,
+                private_key=self.key,
+                ta_url=ta_url,
+            )
+
+        # ctypes surfaces a NULL c_char_p as None and an empty one as b"".
+        self.assertIsNone(struct_for(None).ta_url)
+        self.assertEqual(struct_for(b"").ta_url, b"")
+        # A str is encoded rather than passed through untouched.
+        self.assertEqual(
+            struct_for("http://timestamp.digicert.com").ta_url,
+            b"http://timestamp.digicert.com")
+
+    def test_signer_rejects_non_string_ta_url(self):
+        """Only None, str and bytes are accepted."""
+        with self.assertRaises(TypeError):
+            C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=self.certs,
+                private_key=self.key,
+                ta_url=1234,
+            )
+
     def test_signer_creation_error_alg(self):
         signer_info = C2paSignerInfo(
             alg=b"not-an-alg",
@@ -1161,6 +1808,22 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.close()
             with self.assertRaises(Error):
               builder.sign(self.signer, "image/jpeg", file, output)
+
+    def test_sign_rejects_none_format(self):
+        # sign requires an explicit format; None must raise NotSupported.
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            with self.assertRaises(Error.NotSupported):
+                builder.sign(self.signer, None, file, output)
+
+    def test_sign_accepts_padded_format(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            output = io.BytesIO(bytearray())
+            manifest_bytes = builder.sign(
+                self.signer, " image/jpeg ", file, output)
+            self.assertTrue(len(manifest_bytes) > 0)
 
     def test_builder_does_not_allow_archiving_after_close(self):
         with open(self.testPath, "rb") as file:
@@ -2466,6 +3129,75 @@ class TestBuilderWithSigner(unittest.TestCase):
                     manifest_data = reader.json()
                     self.assertIn("Python Test", manifest_data)
 
+    def _detached_manifest_and_asset(self):
+        with open(self.testPath, "rb") as file:
+            builder = Builder(self.manifestDefinition)
+            builder.set_no_embed()
+            with io.BytesIO() as output_buffer:
+                manifest = builder.sign(
+                    self.signer, "image/jpeg", file, output_buffer)
+                return manifest, output_buffer.getvalue()
+
+    def test_bare_stream_with_real_manifest_data_is_used(self):
+        manifest, asset = self._detached_manifest_and_asset()
+        with Reader(io.BytesIO(asset), manifest_data=manifest) as reader:
+            self.assertIn("Python Test", reader.json())
+
+    def test_manifest_data_keyword_with_real_bytes(self):
+        # manifest_data passed by keyword (not positionally) with real bytes.
+        manifest, asset = self._detached_manifest_and_asset()
+        with Reader(
+                "image/jpeg", io.BytesIO(asset),
+                manifest_data=manifest) as reader:
+            self.assertIn("Python Test", reader.json())
+
+    def test_try_create_with_manifest_data(self):
+        manifest, asset = self._detached_manifest_and_asset()
+        reader = Reader.try_create(
+            "image/jpeg", io.BytesIO(asset), manifest)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn("Python Test", reader.json())
+            reader.close()
+
+    def test_try_create_with_manifest_data_keyword(self):
+        # try_create with manifest_data passed by keyword.
+        manifest, asset = self._detached_manifest_and_asset()
+        reader = Reader.try_create(
+            "image/jpeg", io.BytesIO(asset), manifest_data=manifest)
+        self.assertIsNotNone(reader)
+        if reader is not None:
+            self.assertIn("Python Test", reader.json())
+            reader.close()
+
+    def test_bare_stream_with_context_and_manifest(self):
+        # Stream and real manifest and context together.
+        manifest, asset = self._detached_manifest_and_asset()
+        context = Context()
+        try:
+            with Reader(io.BytesIO(asset), manifest_data=manifest,
+                        context=context) as reader:
+                self.assertIn("Python Test", reader.json())
+        finally:
+            context.close()
+
+    def test_try_create_format_plus_path_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = os.path.join(tmp, "signed.jpg")
+            with open(self.testPath, "rb") as file, open(asset, "wb") as out:
+                Builder(self.manifestDefinition).sign(
+                    self.signer, "image/jpeg", file, out)
+            reader = Reader.try_create("image/jpeg", asset)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn("Python Test", reader.json())
+                reader.close()
+
+    def test_non_context_wrong_type_manifest_raises_typeerror(self):
+        with open(self.testPath, "rb") as file:
+            with self.assertRaises(TypeError):
+                Reader("image/jpeg", file, "not-bytes")
+
     def test_remote_sign_using_returned_bytes_V2(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinitionV2)
@@ -2764,6 +3496,41 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.add_ingredient(ingredient_json, "image/png", f)
 
         builder.close()
+
+    def test_sign_with_any_format_spelling_keeps_thumbnail(self):
+        # The format reaches thumbnail generation,
+        # which matches a MIME type case sensitively,
+        # so an unnormalized spelling silently produces no thumbnail.
+        for fmt in ("image/jpeg", "IMAGE/JPEG", "Image/Jpeg", "jpg", "JPG"):
+            with self.subTest(format=fmt):
+                builder = Builder(self.manifestDefinition)
+                dest = io.BytesIO()
+                with open(self.testPath, "rb") as source:
+                    builder.sign(self.signer, fmt, source, dest)
+
+                dest.seek(0)
+                reader = Reader("image/jpeg", dest)
+                manifest_store = json.loads(reader.json())
+                active = manifest_store["manifests"][
+                    manifest_store["active_manifest"]]
+
+                self.assertIn(
+                    "thumbnail", active,
+                    f"signing with {fmt} dropped the claim thumbnail")
+                thumbnail = active["thumbnail"]
+                self.assertEqual(thumbnail["format"], "image/jpeg")
+
+                # The reference must resolve to a real JPEG, not just be present.
+                thumbnail_bytes = io.BytesIO()
+                reader.resource_to_stream(
+                    thumbnail["identifier"], thumbnail_bytes)
+                data = thumbnail_bytes.getvalue()
+                self.assertGreater(
+                    len(data), 1000,
+                    f"signing with {fmt} produced an empty claim thumbnail")
+                self.assertEqual(
+                    data[:3], b"\xff\xd8\xff",
+                    f"signing with {fmt} produced a thumbnail that is not a JPEG")
 
     def test_builder_add_multiple_ingredients_and_resources_interleaved(self):
         builder = Builder.from_json(self.manifestDefinition)
@@ -3331,6 +4098,44 @@ class TestBuilderWithSigner(unittest.TestCase):
           self.assertIn("Valid", json_data)
           output.close()
 
+    def test_encode_format_builder_blank_raises(self):
+        with self.assertRaises(Error.NotSupported):
+            _encode_format("", "Builder", allow_autodetect=False)
+
+    def test_sign_empty_format_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with open(self.testPath, "rb") as file:
+            output = io.BytesIO()
+            with self.assertRaises(Error.NotSupported):
+                builder.sign(self.signer, "", file, output)
+
+    def test_sign_file_extensionless_source_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "source")
+            shutil.copyfile(self.testPath, no_ext)
+            dest = os.path.join(tmp, "out.jpg")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(no_ext, dest, self.signer)
+
+    def test_sign_file_unrecognized_extension_raises(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            weird = os.path.join(tmp, "source.unknownextension")
+            shutil.copyfile(self.testPath, weird)
+            dest = os.path.join(tmp, "out.jpg")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(weird, dest, self.signer)
+
+    def test_sign_file_exceptions_preservation(self):
+        builder = Builder(self.manifestDefinition)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "source.txt")
+            shutil.copyfile(self.testPath, src)
+            dest = os.path.join(tmp, "out.txt")
+            with self.assertRaises(Error.NotSupported):
+                builder.sign_file(src, dest, self.signer)
+
     def test_sign_file_video(self):
         temp_dir = tempfile.mkdtemp()
         try:
@@ -3801,6 +4606,32 @@ class TestBuilderWithSigner(unittest.TestCase):
         circular_obj['self'] = circular_obj
         with self.assertRaises(Exception) as context:
             builder = Builder(circular_obj)
+
+    def test_construction_failure_before_native_call_is_collectable(self):
+        """Builder(None) fails encoding the manifest before any FFI call.
+        A half-built instance is UNINITIALIZED with no native handle.
+        """
+        captured = []
+        real_init_attrs = Builder._init_attrs
+
+        def recording_init_attrs(self):
+            real_init_attrs(self)
+            captured.append(self)
+
+        Builder._init_attrs = recording_init_attrs
+        try:
+            with self.assertRaises(Error):
+                Builder(None)
+        finally:
+            Builder._init_attrs = real_init_attrs
+
+        self.assertEqual(len(captured), 1,
+                         "_init_attrs did not run during the failed construction")
+        instance = captured[0]
+        self.assertEqual(instance._lifecycle_state, LifecycleState.UNINITIALIZED)
+        self.assertIsNone(instance._handle)
+
+        instance._release()
 
     def test_builder_state_transitions(self):
         """Test Builder state transitions during lifecycle."""
@@ -5997,6 +6828,16 @@ class TestReaderWithContext(TestContextAPIs):
         reader.close()
         context.close()
 
+    def test_reader_extensionless_path_with_context_autodetects(self):
+        context = Context()
+        with tempfile.TemporaryDirectory() as tmp:
+            no_ext = os.path.join(tmp, "asset")
+            shutil.copyfile(DEFAULT_TEST_FILE, no_ext)
+            reader = Reader(no_ext, context=context)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+        context.close()
+
     def test_reader_format_and_path_with_ctx(self):
         context = Context()
         reader = Reader("image/jpeg", DEFAULT_TEST_FILE, context=context)
@@ -6004,6 +6845,59 @@ class TestReaderWithContext(TestContextAPIs):
         self.assertIsNotNone(data)
         reader.close()
         context.close()
+
+    def test_reader_bare_stream_with_context(self):
+        # The bare-stream shift runs before the context branch, so
+        # Reader(fh, context=ctx) reads via context with auto-detect.
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader(file_handle, context=context)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            reader.close()
+        context.close()
+
+    def test_reader_path_object_with_context(self):
+        context = Context()
+        reader = Reader(Path(DEFAULT_TEST_FILE), context=context)
+        self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+        reader.close()
+        context.close()
+
+    def test_try_create_format_stream_with_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader.try_create(
+                "image/jpeg", file_handle, context=context)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+                reader.close()
+        context.close()
+
+    def test_try_create_bare_stream_with_context(self):
+        context = Context()
+        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
+            reader = Reader.try_create(file_handle, context=context)
+            self.assertIsNotNone(reader)
+            if reader is not None:
+                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+                reader.close()
+        context.close()
+
+    def test_context_only_no_source_raises(self):
+        # A context supplies settings, not the asset,
+        # so no path/stream is an error rather than open("None").
+        context = Context()
+        with self.assertRaises(Error) as ctx:
+            Reader(context=context)
+        self.assertIn("stream", str(ctx.exception).lower())
+        context.close()
+
+    def test_reader_with_closed_context_raises(self):
+        context = Context()
+        context.close()
+        with self.assertRaises(Error):
+            Reader(DEFAULT_TEST_FILE, context=context)
 
     def test_with_fragment_on_closed_reader_raises(self):
         context = Context()
@@ -6923,6 +7817,1736 @@ class TestStreamReferences(unittest.TestCase):
         self.assertEqual(seek_cb(None, 0, 0), -1)
         self.assertEqual(write_cb(None, None, 0), -1)
         self.assertEqual(flush_cb(None), -1)
+
+
+class TestManagedResourceLifecycle(unittest.TestCase):
+    """Lifecycle primitives (_activate, _swap_handle, _wrap_native_handle),
+    the _owner_pid stamp that governs which process may free a handle, and
+    the ownership hand-offs between Python and the native library.
+
+    For testing: setUp records frees instead of performing them,
+    so a miscount reads as memory handling issue.
+    Tests releasing real handles call _use_real_frees() first to
+    restore release behavior.
+    """
+
+    class _FakeHandleResource(ManagedResource):
+        """Concrete subclass with no resources of its own."""
+
+    class _CallbackHoldingResource(ManagedResource):
+        """Mimics Signer: its _release() reads an attribute that _init_attrs()
+        is responsible for defaulting."""
+
+        def _release(self):
+            if self._callback_cb:
+                self._callback_cb = None
+
+    class _ReleaseRecordingResource(ManagedResource):
+        """Records _release() calls for test asserts."""
+
+        def __init__(self):
+            super().__init__()
+            self.release_calls = 0
+
+        def _release(self):
+            self.release_calls += 1
+
+    class _ExtenderResource(ManagedResource):
+        """For testing: An extender that owns a raw handle and wraps it via
+        _wrap_native_handle. It carries several attributes of its own, all
+        defaulted in _init_attrs (not __init__), and _release reads them, so a
+        missing attribute would surface as an AttributeError on test teardown.
+        """
+
+        def _init_attrs(self):
+            super()._init_attrs()
+            self.label = "extender"
+            self.buffer = []
+            self.released = False
+
+        def _release(self):
+            # Reads attributes _init_attrs is responsible for defaulting.
+            self.buffer.append(self.label)
+            self.released = True
+
+    def setUp(self):
+        self.data_dir = FIXTURES_DIR
+        self.freed = []
+        self._real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
+
+    def tearDown(self):
+        ManagedResource._free_native_ptr = self._real_free
+
+    def _free_counts(self):
+        counts = {}
+        for handle in self.freed:
+            counts[handle] = counts.get(handle, 0) + 1
+        return counts
+
+    def _use_real_frees(self):
+        """Undo free recorder, so native handles are really freed."""
+        ManagedResource._free_native_ptr = self._real_free
+
+    def _make_signer(self):
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
+            certs = f.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as f:
+            key = f.read()
+        return Signer.from_info(C2paSignerInfo(
+            b"es256", certs, key, b"http://timestamp.digicert.com"))
+
+    def test_release_failure_still_frees_handle(self):
+        res = self._CallbackHoldingResource()
+        # _callback_cb is never set, so _release() raises AttributeError.
+        res._activate(0xBBBB)
+
+        res.close()
+
+        self.assertEqual(self.freed, [0xBBBB],
+                         "handle leaked when _release() raised")
+        self.assertIsNone(res._handle)
+
+    def test_release_failure_is_logged(self):
+        res = self._CallbackHoldingResource()
+        res._activate(0xBBBB)
+
+        with self.assertLogs('c2pa', level='ERROR') as captured:
+            res.close()
+
+        self.assertTrue(
+            any('Failed to release' in line for line in captured.output),
+            f"_release() failure was not logged: {captured.output}")
+
+    def test_activate_rejects_null_handle(self):
+        res = self._FakeHandleResource()
+
+        with self.assertRaises(Error) as ctx:
+            res._activate(None)
+
+        self.assertIn("null handle", str(ctx.exception))
+        self.assertEqual(res._lifecycle_state, LifecycleState.UNINITIALIZED)
+
+    def test_activate_rejects_double_activation(self):
+        res = self._FakeHandleResource()
+        res._activate(0x1111)
+
+        with self.assertRaises(Error) as ctx:
+            res._activate(0x2222)
+
+        self.assertIn("already activated", str(ctx.exception))
+        # The first handle is still owned, and is freed exactly once.
+        self.assertEqual(res._handle, 0x1111)
+        res.close()
+        self.assertEqual(self.freed, [0x1111])
+
+    def test_activate_rejects_reactivation_after_close(self):
+        res = self._FakeHandleResource()
+        res._activate(0x3333)
+        res.close()
+        self.freed.clear()
+
+        with self.assertRaises(Error):
+            res._activate(0x4444)
+
+        # Staying CLOSED is what prevents a second free of the handle.
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+        self.assertEqual(self.freed, [])
+
+    def test_activate_does_not_mutate_on_rejection(self):
+        res = self._FakeHandleResource()
+        res._activate(0x5555)
+
+        with self.assertRaises(Error):
+            res._activate(0x6666)
+
+        self.assertEqual(res._handle, 0x5555,
+                         "rejected activation replaced the handle")
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_swap_handle_does_not_free_consumed_handle(self):
+        res = self._FakeHandleResource()
+        res._activate(0xAAA1)
+
+        res._swap_handle(0xAAA2)
+
+        # The FFI already owns and frees the old pointer.
+        self.assertEqual(self.freed, [])
+        self.assertEqual(res._handle, 0xAAA2)
+
+        res.close()
+        self.assertEqual(self.freed, [0xAAA2])
+
+    def test_swap_handle_requires_active_resource(self):
+        uninitialized = self._FakeHandleResource()
+        with self.assertRaises(Error) as ctx:
+            uninitialized._swap_handle(0x1)
+        self.assertIn("not active", str(ctx.exception))
+
+        closed = self._FakeHandleResource()
+        closed._activate(0x2)
+        closed.close()
+        with self.assertRaises(Error):
+            closed._swap_handle(0x3)
+
+    def test_swap_handle_rejects_null_replacement(self):
+        res = self._FakeHandleResource()
+        res._activate(0x7777)
+
+        with self.assertRaises(Error) as ctx:
+            res._swap_handle(None)
+
+        self.assertIn("null handle", str(ctx.exception))
+        self.assertEqual(res._handle, 0x7777)
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_wrap_native_handle_bypasses_init(self):
+        seen = []
+
+        class Probe(ManagedResource):
+            def __init__(self):
+                raise AssertionError("__init__ must be bypassed")
+
+            def _init_attrs(self):
+                super()._init_attrs()
+                self._tag = 'from _init_attrs'
+
+            def _release(self):
+                seen.append(self._tag)
+
+        obj = Probe._wrap_native_handle(0xC0DE)
+
+        self.assertEqual(obj._tag, 'from _init_attrs')
+        self.assertEqual(obj._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(obj.is_valid)
+        self.assertTrue(hasattr(obj, '_owner_pid'))
+
+        obj.close()
+        self.assertEqual(seen, ['from _init_attrs'],
+                         "_release() could not see the class's own attrs")
+
+    def test_wrap_native_handle_rejects_null(self):
+        with self.assertRaises(Error):
+            self._FakeHandleResource._wrap_native_handle(None)
+
+    def test_close_after_wrap_is_idempotent(self):
+        obj = self._FakeHandleResource._wrap_native_handle(0xD00D)
+
+        obj.close()
+        obj.close()
+
+        self.assertEqual(self.freed, [0xD00D], "handle freed more than once")
+
+    def test_every_construction_path_records_owner_pid(self):
+        pid = os.getpid()
+
+        plain = self._FakeHandleResource()
+        self.assertEqual(plain._owner_pid, pid)
+
+        activated = self._FakeHandleResource()
+        activated._activate(0xA1)
+        self.assertEqual(activated._owner_pid, pid)
+
+        wrapped = self._FakeHandleResource._wrap_native_handle(0xA2)
+        self.assertEqual(wrapped._owner_pid, pid)
+
+        # A swap keeps the original stamp:
+        # the replacement handle was allocated by the same process
+        # that created the object.
+        wrapped._swap_handle(0xA3)
+        self.assertEqual(wrapped._owner_pid, pid)
+
+    def test_foreign_child_skips_free_for_wrapped_and_swapped(self):
+        wrapped = self._FakeHandleResource._wrap_native_handle(0xC1)
+        wrapped._owner_pid = os.getpid() + 1
+        wrapped.close()
+
+        swapped = self._FakeHandleResource()
+        swapped._activate(0xC2)
+        swapped._swap_handle(0xC3)
+        swapped._owner_pid = os.getpid() + 1
+        swapped.close()
+
+        self.assertEqual(self.freed, [],
+                         "forked child freed a pointer its parent still owns")
+        # The child must not free a pointer the parent still owns.
+        # The child does mark its own copies closed and nulls their handles,
+        # which stops the child from reusing a parent-owned handle.
+        self.assertEqual(wrapped._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(wrapped._handle)
+        self.assertEqual(swapped._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(swapped._handle)
+
+        # A second foreign teardown is a no-op.
+        wrapped.close()
+        swapped.close()
+        self.assertEqual(self.freed, [])
+
+    def test_owning_process_frees_wrapped_and_swapped_exactly_once(self):
+        wrapped = self._FakeHandleResource._wrap_native_handle(0xC4)
+        wrapped.close()
+        wrapped.close()
+
+        swapped = self._FakeHandleResource()
+        swapped._activate(0xC5)
+        swapped._swap_handle(0xC6)
+        swapped.close()
+
+        # 0xC5 was consumed by the test FFI swap.
+        # Only the replacement must be freed here.
+        self.assertEqual(self._free_counts(), {0xC4: 1, 0xC6: 1})
+
+    def test_foreign_child_skips_release(self):
+        foreign = self._ReleaseRecordingResource()
+        foreign._activate(0xD1)
+        foreign._owner_pid = os.getpid() + 1
+        foreign.close()
+        self.assertEqual(foreign.release_calls, 0)
+
+        owned = self._ReleaseRecordingResource()
+        owned._activate(0xD2)
+        owned.close()
+        self.assertEqual(owned.release_calls, 1)
+
+    def test_consumed_resource_frees_nothing_in_either_process(self):
+        owned = self._FakeHandleResource()
+        owned._activate(0xE1)
+        owned._teardown(free_handle=False)
+        owned.close()
+
+        foreign = self._FakeHandleResource()
+        foreign._activate(0xE2)
+        foreign._teardown(free_handle=False)
+        foreign._owner_pid = os.getpid() + 1
+        foreign.close()
+
+        self.assertEqual(self.freed, [])
+
+    # Consuming a handle hands the native pointer to a new owner.
+    # The Python-side resources are still ours to free.
+    def test_teardown_consumed_releases_python_resources(self):
+        res = self._ReleaseRecordingResource()
+        res._activate(0xF1)
+
+        res._teardown(free_handle=False)
+
+        self.assertEqual(res.release_calls, 1)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+        self.assertEqual(self.freed, [])
+
+    def test_teardown_consumed_swallows_failing_release(self):
+        res = self._CallbackHoldingResource()
+        res._activate(0xF2)
+
+        with self.assertLogs("c2pa", level="ERROR"):
+            res._teardown(free_handle=False)
+
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+
+    def test_teardown_consumed_in_foreign_process_skips_release(self):
+        res = self._ReleaseRecordingResource()
+        res._activate(0xF3)
+        res._owner_pid = os.getpid() + 1
+
+        res._teardown(free_handle=False)
+
+        self.assertEqual(res.release_calls, 0)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(res._handle)
+
+    def test_extender_wraps_handle_fully_built(self):
+        obj = self._ExtenderResource._wrap_native_handle(0xE0)
+
+        # Every attribute _init_attrs defaults is present,
+        # even though __init__ never ran.
+        self.assertEqual(obj.label, "extender")
+        self.assertEqual(obj.buffer, [])
+        self.assertFalse(obj.released)
+        self.assertTrue(obj.is_valid)
+        self.assertEqual(obj._owner_pid, os.getpid())
+
+        # _release reads those attributes, so a missing one will raise here.
+        obj.close()
+        obj.close()
+
+        self.assertTrue(obj.released)
+        self.assertEqual(obj.buffer, ["extender"])
+        self.assertEqual(self.freed, [0xE0], "wrapped handle freed once")
+
+    def test_extender_foreign_teardown_skips_native_free(self):
+        obj = self._ExtenderResource._wrap_native_handle(0xE1)
+        # Stamp a foreign owner:
+        # teardown runs in a process that did not create the handle,
+        # so it must not free the pointer or run _release.
+        obj._owner_pid = os.getpid() + 1
+
+        obj.close()
+
+        self.assertEqual(self.freed, [],
+                         "forked child freed a handle its parent still owns")
+        self.assertFalse(obj.released, "foreign teardown ran _release")
+        # The child marks its own copy closed and nulls the handle:
+        # the parent holds a separate copy and it stops the
+        # child reusing a parent-owned handle.
+        self.assertEqual(obj._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(obj._handle)
+
+        # A second foreign teardown stays a no-op,
+        # and any operation on the now-closed child copy fails.
+        obj.close()
+        self.assertEqual(self.freed, [])
+        with self.assertRaises(Error):
+            obj._ensure_valid_state()
+
+    def test_signer_init_rejects_null_pointer(self):
+        with self.assertRaises(Error):
+            Signer(None)
+
+    def test_builder_from_archive_wraps_handle(self):
+        self._use_real_frees()
+        archive = io.BytesIO()
+        Builder({"claim_generator": "test", "format": "image/jpeg"}).to_archive(
+            archive)
+
+        builder = Builder.from_archive(io.BytesIO(archive.getvalue()))
+
+        self.assertTrue(builder.is_valid)
+        self.assertIsNone(builder._context)
+        self.assertFalse(builder._has_context_signer)
+        builder.close()
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_context_build_failure_consumes_signer(self):
+        self._use_real_frees()
+        signer = self._make_signer()
+        real_build = c2pa_module._lib.c2pa_context_builder_build
+        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        try:
+            with self.assertRaises(Error):
+                Context(signer=signer)
+        finally:
+            c2pa_module._lib.c2pa_context_builder_build = real_build
+
+        self.assertIsNone(signer._handle,
+                          "Signer still holds a pointer the native side freed")
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+
+        # Nothing left to free, so close() must be a no-op.
+        freed = []
+        real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(freed.append)
+        try:
+            signer.close()
+        finally:
+            ManagedResource._free_native_ptr = real_free
+        self.assertEqual(freed, [])
+
+    def test_context_with_signer_consumes_it_on_success(self):
+        self._use_real_frees()
+        signer = self._make_signer()
+
+        context = Context(signer=signer)
+
+        self.assertTrue(context.is_valid)
+        self.assertIsNone(signer._handle)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        self.assertTrue(context.has_signer)
+        context.close()
+
+    def test_construction_failure_leaves_nothing_to_free(self):
+        # Activation happens after the null check, so a failed construction
+        # has no handle on the object that __del__ can find.
+        real_new = c2pa_module._lib.c2pa_context_new
+        c2pa_module._lib.c2pa_context_new = lambda: None
+        try:
+            with self.assertRaises(Error):
+                Context()
+        finally:
+            c2pa_module._lib.c2pa_context_new = real_new
+
+        real_json = c2pa_module._lib.c2pa_builder_from_json
+        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
+        try:
+            with self.assertRaises(Error):
+                Builder({"claim_generator": "test"})
+        finally:
+            c2pa_module._lib.c2pa_builder_from_json = real_json
+
+    def test_context_build_null_return_frees_builder(self):
+        # Set a pre-consume tag in the error slot to mock a pointer rejection.
+        settings = Settings()
+        c2pa_module._lib.c2pa_error_set_last(
+            b"UntrackedPointer: mocked pre-consume rejection")
+        real_build = c2pa_module._lib.c2pa_context_builder_build
+        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        try:
+            with self.assertRaises(Error):
+                Context(settings=settings)
+        finally:
+            c2pa_module._lib.c2pa_context_builder_build = real_build
+
+        # One free: the un-consumed builder.
+        # Settings borrows, so it is not freed here.
+        self.assertEqual(len(self.freed), 1,
+                         "un-consumed builder leaked on build failure")
+        settings.close()
+
+    def test_consume_no_replacement_marks_consumed_on_success(self):
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        res._consume_no_replacement(lambda h: 0, "set failed: {}")
+
+        # Native took ownership.
+        self.assertEqual(self.freed, [])
+        self.assertIsNone(res._handle)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_consume_no_replacement_retains_on_pre_consume_tag(self):
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = lambda: "UntrackedPointer: rejected"
+        try:
+            with self.assertRaises(Error):
+                res._consume_no_replacement(lambda h: -1, "set failed: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        # Rejected before ownership transferred: handle retained.
+        self.assertEqual(res._handle, 0xCAFE)
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(self.freed, [])
+        res.close()
+        self.assertEqual(self.freed, [0xCAFE])
+
+    def test_consume_no_replacement_marks_consumed_on_other_error(self):
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = lambda: "OtherError: boom"
+        try:
+            with self.assertRaises(Error):
+                res._consume_no_replacement(lambda h: -1, "set failed: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        # A non-tag error means native took ownership then failed and dropped
+        # the value itself: mark consumed, do not free.
+        self.assertEqual(self.freed, [])
+        self.assertIsNone(res._handle)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+
+
+class TestManagedResourceObjects(TestContextAPIs):
+    """Tests native resource handling management when managed manually.
+    """
+
+    @staticmethod
+    def _ptr_addr(ptr):
+        """Address a ctypes pointer points at, or None for a null pointer.
+
+        ctypes pointers compare by identity, not by value: two pointer objects
+        for the same address are unequal. Compare addresses instead.
+        """
+        if not ptr:
+            return None
+        return ctypes.cast(ptr, ctypes.c_void_p).value
+
+    def _instrument_frees(self):
+        """Record frees instead of performing them, and restore on teardown.
+        """
+        freed = []
+        real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(freed.append)
+        self.addCleanup(
+            lambda: setattr(
+                ManagedResource, '_free_native_ptr', real_free))
+        return freed
+
+    def _free_count(self, freed, handle):
+        """How many times `handle` was freed, ignoring unrelated frees."""
+        target = self._ptr_addr(handle)
+        self.assertIsNotNone(target, "cannot count frees of a null handle")
+        return sum(1 for ptr in freed if self._ptr_addr(ptr) == target)
+
+    def _make_archive(self, manifest=None):
+        archive = io.BytesIO()
+        builder = Builder(manifest or self.test_manifest)
+        try:
+            builder.to_archive(archive)
+        finally:
+            builder.close()
+        archive.seek(0)
+        return archive
+
+    def test_settings_activation_paths(self):
+        pid = os.getpid()
+        for label, factory in (
+            ("Settings()", lambda: Settings()),
+            ("from_json", lambda: Settings.from_json('{"version_major": 1}')),
+            ("from_dict", lambda: Settings.from_dict({"version_major": 1})),
+        ):
+            with self.subTest(path=label):
+                settings = factory()
+                try:
+                    self.assertTrue(settings.is_valid)
+                    self.assertEqual(settings._owner_pid, pid)
+                finally:
+                    settings.close()
+
+    def test_context_activation_paths(self):
+        pid = os.getpid()
+        settings = Settings.from_dict({"version_major": 1})
+        try:
+            for label, factory in (
+                # No settings and no signer takes the c2pa_context_new path.
+                ("Context()", lambda: Context()),
+                # Anything else goes through the ContextBuilder path.
+                ("Context(settings)", lambda: Context(settings)),
+                ("from_dict", lambda: Context.from_dict({"version_major": 1})),
+                ("builder()",
+                 lambda: Context.builder().with_settings(settings).build()),
+            ):
+                with self.subTest(path=label):
+                    context = factory()
+                    try:
+                        self.assertTrue(context.is_valid)
+                        self.assertEqual(context._owner_pid, pid)
+                    finally:
+                        context.close()
+        finally:
+            settings.close()
+
+    def test_reader_activation_paths(self):
+        pid = os.getpid()
+        context = Context()
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as f:
+                from_stream = Reader("image/jpeg", f)
+            self.addCleanup(from_stream.close)
+            self.assertEqual(from_stream._owner_pid, pid)
+
+            from_path = Reader(DEFAULT_TEST_FILE)
+            self.addCleanup(from_path.close)
+            self.assertEqual(from_path._owner_pid, pid)
+
+            with open(DEFAULT_TEST_FILE, "rb") as f:
+                with_context = Reader(DEFAULT_TEST_FILE, context=context)
+            self.addCleanup(with_context.close)
+            self.assertEqual(with_context._owner_pid, pid)
+
+            with open(DEFAULT_TEST_FILE, "rb") as f:
+                created = Reader.try_create("image/jpeg", f)
+            self.addCleanup(created.close)
+            self.assertEqual(created._owner_pid, pid)
+        finally:
+            context.close()
+
+    def test_builder_activation_paths(self):
+        pid = os.getpid()
+        context = Context()
+        try:
+            plain = Builder(self.test_manifest)
+            self.addCleanup(plain.close)
+            self.assertEqual(plain._owner_pid, pid)
+
+            from_json = Builder.from_json(self.test_manifest)
+            self.addCleanup(from_json.close)
+            self.assertEqual(from_json._owner_pid, pid)
+
+            with_context = Builder(self.test_manifest, context=context)
+            self.addCleanup(with_context.close)
+            self.assertEqual(with_context._owner_pid, pid)
+
+            # from_archive is the only caller of _wrap_native_handle,
+            # which bypasses __init__ entirely
+            wrapped = Builder.from_archive(self._make_archive())
+            self.addCleanup(wrapped.close)
+            self.assertEqual(wrapped._owner_pid, pid)
+            self.assertIsNone(wrapped._context)
+            self.assertFalse(wrapped._has_context_signer)
+        finally:
+            context.close()
+
+    def test_signer_activation_paths(self):
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+        self.assertTrue(signer.is_valid)
+        self.assertEqual(signer._owner_pid, os.getpid())
+
+        callback_signer = self._ctx_make_callback_signer()
+        self.addCleanup(callback_signer.close)
+        self.assertEqual(callback_signer._owner_pid, os.getpid())
+
+    def test_builder_with_archive_swaps_the_handle(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        original_handle = builder._handle
+        original_stamp = builder._owner_pid
+
+        result = builder.with_archive(self._make_archive())
+
+        self.assertIs(result, builder, "with_archive should return self")
+        self.assertNotEqual(builder._handle, original_handle,
+                            "the native handle was not replaced")
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        # The replacement came from this process, the stamp still applies.
+        self.assertEqual(builder._owner_pid, original_stamp)
+        self.assertEqual(builder._owner_pid, os.getpid())
+        builder.close()
+
+    def test_reader_with_fragment_swaps_the_handle(self):
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        context = Context()
+        self.addCleanup(context.close)
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init, context=context)
+        self.addCleanup(reader.close)
+        original_handle = reader._handle
+
+        # The Reader consumed the first handle, so the init stream is reopened.
+        with open(init_path, "rb") as init, open(fragment_path, "rb") as frag:
+            result = reader.with_fragment("video/mp4", init, frag)
+
+        self.assertIs(result, reader, "with_fragment should return self")
+        self.assertNotEqual(reader._handle, original_handle,
+                            "the native handle was not replaced")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(reader._owner_pid, os.getpid())
+
+    def test_swapped_builder_is_freed_exactly_once(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        original_handle = builder._handle
+        archive = self._make_archive()
+
+        # Instrument across the swap so a free of the consumed pointer is recorded.
+        freed = self._instrument_frees()
+        builder.with_archive(archive)
+        swapped_handle = builder._handle
+
+        self.assertEqual(self._free_count(freed, original_handle), 0,
+                         "the swap freed the consumed pointer")
+
+        builder.close()
+        builder.close()
+
+        # Only the replacement is must be freed here.
+        self.assertEqual(self._free_count(freed, swapped_handle), 1)
+        self.assertEqual(self._free_count(freed, original_handle), 0)
+
+    def test_repeated_swaps_on_one_builder(self):
+        # Each with_archive consumes the handle the previous one returned, so
+        # a chain of swaps is where a wrong swap surfaces: keeping the
+        # consumed pointer makes the next call raise UntrackedPointer from
+        # the native registry.
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        self.addCleanup(builder.close)
+
+        seen = [builder._handle]
+        for _ in range(5):
+            builder.with_archive(self._make_archive())
+            self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+            seen.append(builder._handle)
+
+        self.assertTrue(builder.is_valid)
+        self.assertEqual(builder._owner_pid, os.getpid())
+
+    def test_context_consumes_signer_but_not_settings(self):
+        settings = Settings.from_dict({"version_major": 1})
+        signer = self._ctx_make_signer()
+
+        context = Context(settings=settings, signer=signer)
+        self.addCleanup(context.close)
+
+        # The signer pointer moved to the native context builder.
+        self.assertIsNone(signer._handle)
+        self.assertEqual(signer._lifecycle_state, LifecycleState.CLOSED)
+        self.assertTrue(context.has_signer)
+
+        # Settings are copied, not consumed, so the caller still owns them.
+        self.assertTrue(settings.is_valid)
+        self.assertEqual(settings._owner_pid, os.getpid())
+        settings.close()
+
+    def test_consumed_signer_close_frees_nothing(self):
+        signer = self._ctx_make_signer()
+        # Captured before the context consumes it:
+        # close() nulls the handle, there is no pointer left to identify the free by.
+        signer_handle = signer._handle
+        context = Context(signer=signer)
+        self.addCleanup(context.close)
+
+        freed = self._instrument_frees()
+        signer.close()
+
+        self.assertEqual(self._free_count(freed, signer_handle), 0,
+                         "closing a consumed Signer freed a pointer the "
+                         "context now owns")
+
+    def test_builder_with_archive_null_return_marks_consumed(self):
+        builder = Builder(self.test_manifest)
+        released_handle = builder._handle
+        archive = self._make_archive()
+
+        # Mimic a non-tag error: native took ownership then failed and dropped
+        # the value itself, so the handle is marked consumed, not freed.
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
+        real_call = c2pa_module._lib.c2pa_builder_with_archive
+        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+
+        # Instrument before the failure...
+        freed = self._instrument_frees()
+        try:
+            with self.assertRaises(Error):
+                builder.with_archive(archive)
+        finally:
+            c2pa_module._lib.c2pa_builder_with_archive = real_call
+
+        # Nothing left to own after failing.
+        self.assertIsNone(builder._handle)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+        # A non-tag error marks consumed: no free (a free here would be a
+        # guarded no-op that dirties the error slot and races a recycled
+        # address in other threads).
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
+
+        # close() must not free it either.
+        builder.close()
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() freed a handle already marked consumed")
+
+    def test_reader_with_fragment_null_return_marks_consumed(self):
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        released_handle = reader._handle
+
+        # Mimic a non-tag error: native took ownership then failed and dropped
+        # the value itself, so the handle is marked consumed, not freed.
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+
+        # Instrument before failure so any free would be counted.
+        freed = self._instrument_frees()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+        # A non-tag error marks consumed: no free.
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
+
+        # close() must not free it either.
+        reader.close()
+        self.assertEqual(self._free_count(freed, released_handle), 0,
+                         "close() freed a handle already marked consumed")
+
+    def test_reader_with_fragment_ffi_raise_frees_self(self):
+        # If the ctypes call itself raises, the failure runs
+        # through the except BaseException branch, which frees the handle.
+        # with_fragment must free exactly once and leave nothing for close().
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        released_handle = reader._handle
+
+        def _raise(*_args):
+            raise RuntimeError("boom")
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = _raise
+
+        # Instrument before the failure so the eager free is counted.
+        freed = self._instrument_frees()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+        # The error path frees the old handle.
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "error path did not free the old handle exactly once")
+
+        # close() must not free it again.
+        reader.close()
+        self.assertEqual(self._free_count(freed, released_handle), 1,
+                         "close() freed a handle the error path already freed")
+
+    # Consume-and-return ownership: the native call can take the handle partway
+    # through the call, so a null return does not always say on its own
+    # whether the handle was consumed or not, warranting further checks/bookkeeping.
+
+    @staticmethod
+    def _is_pre_consume_rejection(error_message):
+        """True if this native error means ownership never transferred."""
+        if not error_message:
+            return False
+        return any(tag in error_message
+                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS)
+
+    def _stale_reader_handle(self):
+        """A freed, untracked pointer, captured before close() nulls it.
+
+        Take a fresh one per call: recycled addresses become tracked again.
+        """
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        with open(init_path, "rb") as init:
+            victim = Reader("video/mp4", init)
+        stale = ctypes.cast(victim._handle,
+                            ctypes.POINTER(c2pa_module.C2paReader))
+        victim.close()
+        return stale
+
+    @staticmethod
+    def _untracked_reader_handle():
+        """A pointer the native registry never handed out.
+
+        Rejected like a stale handle, but not a freed address, so it cannot
+        be recycled and start passing the registry lookup.
+        """
+        buf = ctypes.create_string_buffer(64)
+        return (ctypes.cast(buf, ctypes.POINTER(c2pa_module.C2paReader)),
+                buf)
+
+    def test_with_fragment_pre_consume_rejection_keeps_handle(self):
+        # Rejected before native lib took ownership,
+        # so nothing was consumed and the handle is still ours.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        reader._handle = self._stale_reader_handle()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+
+        self.assertIn("UntrackedPointer", str(caught.exception))
+        # Ownership never transferred, so the resource stays usable.
+        self.assertIsNotNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(reader.json())
+        reader.close()
+
+    def test_with_fragment_pre_consume_rejection_does_not_leak(self):
+        # A handle dropped on this path leaks one reader per call.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        for _ in range(25):
+            with open(init_path, "rb") as init:
+                reader = Reader("video/mp4", init)
+            real_handle = reader._handle
+            reader._handle = self._stale_reader_handle()
+            try:
+                with open(init_path, "rb") as init, \
+                        open(fragment_path, "rb") as frag:
+                    with self.assertRaises(Error):
+                        reader.with_fragment("video/mp4", init, frag)
+            finally:
+                reader._handle = real_handle
+            # Still owns a working handle every time round.
+            self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+            self.assertTrue(reader.json())
+            reader.close()
+
+    def test_with_archive_post_consume_failure_consumes_handle(self):
+        # Ownership taken, then the operation failed:
+        # The handle is gone, so close() must not free it again.
+        builder = Builder(json.dumps(
+            {"claim_generator_info": [{"name": "test", "version": "0.1"}],
+             "assertions": []}))
+        consumed_handle = builder._handle
+
+        with self.assertRaises(Error):
+            builder.with_archive(io.BytesIO(b"not a valid archive"))
+
+        self.assertIsNone(builder._handle)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        builder.close()
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle the FFI already consumed")
+
+    def test_with_fragment_marshalling_error_keeps_handle(self):
+        # Never reaches native code, so nothing was consumed.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        def _bad_marshalling(*_args):
+            raise ctypes.ArgumentError("wrong argument type")
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = _bad_marshalling
+        try:
+            with open(init_path, "rb") as init, \
+                    open(init_path, "rb") as frag:
+                with self.assertRaises(ctypes.ArgumentError):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIs(reader._handle, real_handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(reader.json(),
+                        "a marshalling failure never reached the FFI, so "
+                        "the reader must still be usable")
+
+        reader.close()
+
+    def test_unknown_failure_drops_handle_without_freeing(self):
+        # Ownership unknowable, so the handle is let go rather than freed.
+        # Needs a mock: every real null return sets an error.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        consumed_handle = reader._handle
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        # Unplaceable, so the handle is let go rather than freed twice.
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+        freed = self._instrument_frees()
+        reader.close()
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "close() freed a handle of unknown ownership")
+
+    def test_pre_consume_rejection_is_typed(self):
+        # Rejections arrive wrapped as "Other: UntrackedPointer: 0x...".
+        self.assertTrue(self._is_pre_consume_rejection(
+            "Other: UntrackedPointer: 0x600001234567"))
+        self.assertTrue(self._is_pre_consume_rejection(
+            "Other: WrongPointerType: 0x600001234567"))
+        self.assertFalse(self._is_pre_consume_rejection(
+            "Verify: invalid JUMBF header"))
+        self.assertFalse(self._is_pre_consume_rejection(None))
+        self.assertFalse(self._is_pre_consume_rejection(""))
+
+    def test_pre_consume_tags_still_match_the_native_wording(self):
+        # Classification keys on error text (the numeric code is not
+        # exported), so a native rename would silently misjudge ownership.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        reader._handle = self._stale_reader_handle()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+
+        message = str(caught.exception)
+        self.assertTrue(
+            self._is_pre_consume_rejection(message),
+            f"the native rejection wording changed and no longer matches "
+            f"_PRE_CONSUME_ERROR_TAGS; ownership will be misjudged: "
+            f"{message!r}")
+        reader.close()
+
+    def test_stale_handle_is_actually_rejected_every_time(self):
+        # A handle that stopped being rejected would quietly measure the
+        # success path. Uses the never-allocated buffer: freed addresses get
+        # recycled and start passing the registry lookup.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        for _ in range(25):
+            with open(init_path, "rb") as init:
+                reader = Reader("video/mp4", init)
+            real_handle = reader._handle
+            bogus, _buf = self._untracked_reader_handle()
+            reader._handle = bogus
+            try:
+                with open(init_path, "rb") as init, \
+                        open(fragment_path, "rb") as frag:
+                    with self.assertRaises(Error) as caught:
+                        reader.with_fragment("video/mp4", init, frag)
+                self.assertTrue(
+                    self._is_pre_consume_rejection(
+                        str(caught.exception)),
+                    "the bogus handle was not rejected, so this stopped "
+                    "exercising the pre-consume path")
+            finally:
+                reader._handle = real_handle
+                reader.close()
+
+    def test_perf_scenario_bogus_handle_is_rejected(self):
+        # The perf scenarios use a plain buffer so looping does not swamp
+        # the measurement. It still has to produce a real rejection.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+
+        bogus, _buf = self._untracked_reader_handle()
+        reader._handle = bogus
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+
+        self.assertTrue(
+            self._is_pre_consume_rejection(str(caught.exception)),
+            "the perf scenarios' bogus handle is no longer rejected, so "
+            "with_fragment_pre_consume_rejection measures nothing")
+        # Handle kept, so the reader still works and frees normally.
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertTrue(reader.json())
+        reader.close()
+
+    def test_every_null_return_sets_its_own_error(self):
+        # Reading the slot without clearing it is only sound because every
+        # null return sets an error. Check each path reports its own.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        # Leave a recognisable error behind, so anything stale shows up.
+        try:
+            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
+        except Error:
+            pass
+        self.assertIn("NotSupported", c2pa_module._read_native_error() or "")
+
+        # Pre-consume rejection: reports UntrackedPointer, not NotSupported.
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        real_handle = reader._handle
+        reader._handle = self._stale_reader_handle()
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error) as caught:
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            reader._handle = real_handle
+        self.assertIn("UntrackedPointer", str(caught.exception))
+        self.assertNotIn("NotSupported", str(caught.exception))
+        reader.close()
+
+        # Post-consume failure: reports the operation error, not the
+        # UntrackedPointer left by the step above.
+        builder = Builder(json.dumps(
+            {"claim_generator_info": [{"name": "test", "version": "0.1"}],
+             "assertions": []}))
+        with self.assertRaises(Error) as caught:
+            builder.with_archive(io.BytesIO(b"not a valid archive"))
+        self.assertNotIn("UntrackedPointer", str(caught.exception))
+        builder.close()
+
+    def test_pre_consume_classification_holds_across_threads(self):
+        # The error slot is thread-local, so concurrent calls do not mask
+        # each other's errors and misjudge ownership.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+        init_bytes = open(init_path, "rb").read()
+        frag_bytes = open(fragment_path, "rb").read()
+        problems = []
+
+        def worker():
+            for _ in range(10):
+                reader = Reader("video/mp4", io.BytesIO(init_bytes))
+                real_handle = reader._handle
+                # A never-allocated buffer, not a freed pointer: with several
+                # threads churning the allocator, a freed address gets reused
+                # and starts passing the registry lookup, which would end the
+                # iteration in a real consume instead of a rejection.
+                bogus, _buf = self._untracked_reader_handle()
+                reader._handle = bogus
+                try:
+                    reader.with_fragment("video/mp4",
+                                         io.BytesIO(init_bytes),
+                                         io.BytesIO(frag_bytes))
+                    problems.append("rejection did not raise")
+                except Error as e:
+                    if not self._is_pre_consume_rejection(str(e)):
+                        problems.append(f"misclassified: {str(e)[:60]}")
+                finally:
+                    reader._handle = real_handle
+                    if reader._lifecycle_state != LifecycleState.ACTIVE:
+                        problems.append("handle dropped on a rejection")
+                    reader.close()
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(problems, [],
+                         "ownership was misjudged under concurrency")
+
+    def test_reading_the_native_error_does_not_empty_the_slot(self):
+        # c2pa_error() peeks, so nothing Python can call empties the slot.
+        # _consume_and_swap depends on this.
+        try:
+            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
+        except Error:
+            pass
+
+        first = c2pa_module._read_native_error()
+        self.assertTrue(first, "expected a native error to have been set")
+
+        self.assertEqual(
+            c2pa_module._read_native_error(), first,
+            "reading emptied the native slot; the comments in "
+            "_consume_and_swap about a persistent error are now wrong")
+
+    def test_read_native_error_returns_none_for_an_empty_message(self):
+        # c2pa_error() returns an owned pointer to "" when no error is set,
+        # never NULL, so the pointer cannot be the "is there an error" test.
+        original = c2pa_module._lib.c2pa_error
+        empty = ctypes.create_string_buffer(b"")
+
+        try:
+            c2pa_module._lib.c2pa_error = lambda: ctypes.cast(
+                empty, ctypes.c_void_p).value
+            self.assertIsNone(
+                c2pa_module._read_native_error(),
+                "an empty native message must read as None, otherwise "
+                "callers' 'if error:' checks are only accidentally right")
+        finally:
+            c2pa_module._lib.c2pa_error = original
+
+    def test_mocked_null_without_error_is_a_known_limitation(self):
+        # A null with no error of its own is the case that breaks: the slot
+        # still holds whatever came before. No native path does this, so it
+        # is pinned here rather than defended in _consume_and_swap.
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        c2pa_module._lib.c2pa_error_set_last(
+            b"UntrackedPointer: 0xdeadbeef")
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("video/mp4", init, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+            # Nothing clears the slot, so a planted tag would follow other
+            # tests around and change how their failures are classified.
+            c2pa_module._lib.c2pa_error_set_last(
+                b"Other: cleared by test teardown")
+
+        # The stale tag wins, so the handle is kept. Safe here (the mock
+        # consumed nothing), and the reader is still usable.
+        self.assertIsNotNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        reader.close()
+
+    # Backfilling a pointer minted by a direct FFI call. Builder.from_archive
+    # is the only production caller of _wrap_native_handle, so these are the
+    # only tests that drive the primitive as the generic entry point it is.
+
+    def _raw_builder_handle(self):
+        manifest = json.dumps(
+            {"claim_generator": "raw_ffi_test", "format": "image/jpeg"}
+        ).encode("utf-8")
+        handle = c2pa_module._lib.c2pa_builder_from_json(manifest)
+        self.assertTrue(handle, "the FFI did not return a builder pointer")
+        return handle
+
+    def test_wrap_raw_ffi_builder_pointer(self):
+        builder = Builder._wrap_native_handle(self._raw_builder_handle())
+
+        self.assertTrue(builder.is_valid)
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(builder._owner_pid, os.getpid())
+
+        archive = io.BytesIO()
+        builder.to_archive(archive)
+        self.assertTrue(archive.getvalue())
+
+        builder.close()
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
+
+    def test_wrap_raw_ffi_settings_pointer(self):
+        handle = c2pa_module._lib.c2pa_settings_new()
+        self.assertTrue(handle)
+
+        settings = Settings._wrap_native_handle(handle)
+        try:
+            self.assertTrue(settings.is_valid)
+            self.assertEqual(settings._owner_pid, os.getpid())
+            settings.set("version_major", "1")
+        finally:
+            settings.close()
+
+    def test_wrap_raw_ffi_context_pointer(self):
+        handle = c2pa_module._lib.c2pa_context_new()
+        self.assertTrue(handle)
+
+        context = Context._wrap_native_handle(handle)
+        try:
+            self.assertTrue(context.is_valid)
+            self.assertEqual(context._owner_pid, os.getpid())
+            # Handing the wrapped pointer back to the FFI proves it is live.
+            builder = Builder(self.test_manifest, context=context)
+            self.assertTrue(builder.is_valid)
+            builder.close()
+        finally:
+            context.close()
+
+    def test_wrapped_raw_pointer_freed_exactly_once(self):
+        handle = self._raw_builder_handle()
+        freed = self._instrument_frees()
+
+        builder = Builder._wrap_native_handle(handle)
+        builder.close()
+        builder.close()
+        del builder
+        gc.collect()
+
+        self.assertEqual(self._free_count(freed, handle), 1,
+                         "wrapped handle not freed exactly once")
+
+    def test_wrap_supplies_defaults(self):
+        # _init_attrs() runs on the wrap path, so an instance built around a
+        # raw handle still has everything the rest of the class reads.
+        builder = Builder._wrap_native_handle(self._raw_builder_handle())
+        self.addCleanup(builder.close)
+
+        self.assertIsNone(builder._context)
+        self.assertFalse(builder._has_context_signer)
+
+    def test_init_attrs_covers_what_init_sets(self):
+        # Anything __init__ sets but _init_attrs() misses is absent on a
+        # wrapped instance, which is the trap _init_attrs() exists to close.
+        for cls in (Builder, Context, Reader, Signer):
+            with self.subTest(cls=cls.__name__):
+                defaulted = set(re.findall(
+                    r"self\.(_[a-z][a-z0-9_]*)\s*=",
+                    inspect.getsource(cls._init_attrs)))
+                assigned = set(re.findall(
+                    r"self\.(_[a-z][a-z0-9_]*)\s*=",
+                    inspect.getsource(cls.__init__)))
+                self.assertEqual(
+                    assigned - defaulted, set(),
+                    f"{cls.__name__}.__init__ sets attributes that "
+                    f"_init_attrs() does not default")
+
+    def test_init_attrs_overrides_chain_to_super(self):
+        # A subclass of these would silently lose the parent's defaults if
+        # the chain were broken.
+        for cls in (Builder, Context, Reader, Signer):
+            with self.subTest(cls=cls.__name__):
+                self.assertIn(
+                    "super()._init_attrs()",
+                    inspect.getsource(cls._init_attrs),
+                    f"{cls.__name__}._init_attrs() does not chain to super()")
+
+    def test_wrap_raw_ffi_signer_pointer(self):
+        # Signer._release() reads _callback_cb, so a wrap that skipped the
+        # defaults would fail during cleanup rather than at the wrap.
+        freed = self._instrument_frees()
+
+        signer = Signer._wrap_native_handle(0xABCD)
+        self.assertIsNone(signer._callback_cb)
+        self.assertEqual(signer._owner_pid, os.getpid())
+
+        # Cleanup swallows a failing _release(), so the error log is the only
+        # way to see one.
+        with self.assertNoLogs("c2pa", level="ERROR"):
+            signer.close()
+
+        self.assertEqual(freed, [0xABCD])
+
+    def test_signer_release_clears_callback(self):
+        signer = self._ctx_make_callback_signer()
+        self.assertIsNotNone(signer._callback_cb)
+
+        signer.close()
+
+        self.assertIsNone(signer._callback_cb)
+
+    def test_builder_release_clears_context(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+
+        builder.close()
+
+        self.assertIsNone(builder._context,
+                          "closed Builder still pins its Context")
+        # The Builder does not own the Context, so it must not close it.
+        self.assertTrue(context.is_valid)
+
+    def test_consumed_reader_closes_backing_file(self):
+        # A failed with_fragment consumes the reader.
+        # # Reader(path) opened the backing file itself,
+        # so nothing else will ever close it.
+        reader = Reader(DEFAULT_TEST_FILE)
+        backing_file = reader._backing_file
+        self.assertFalse(backing_file.closed)
+
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as main, \
+                    open(DEFAULT_TEST_FILE, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("image/jpeg", main, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertTrue(backing_file.closed,
+                        "consumed Reader leaked its backing file")
+
+    def test_consumed_builder_releases_context(self):
+        context = Context()
+        self.addCleanup(context.close)
+        builder = Builder(self.test_manifest, context=context)
+        archive = self._make_archive()
+
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
+        real_call = c2pa_module._lib.c2pa_builder_with_archive
+        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        try:
+            with self.assertRaises(Error):
+                builder.with_archive(archive)
+        finally:
+            c2pa_module._lib.c2pa_builder_with_archive = real_call
+
+        self.assertIsNone(builder._context,
+                          "consumed Builder still pins its Context")
+        self.assertTrue(context.is_valid)
+
+    def test_context_takes_callback_before_consuming_signer(self):
+        # Consuming the signer releases its callback reference,
+        # so the Context has to take it first or the callback dies with the signer.
+        signer = self._ctx_make_callback_signer()
+        callback = signer._callback_cb
+        self.assertIsNotNone(callback)
+
+        context = Context(signer=signer)
+        self.addCleanup(context.close)
+
+        self.assertIs(context._signer_callback_cb, callback)
+        self.assertIsNone(signer._callback_cb)
+
+    def test_reader_close_closes_backing_file(self):
+        # _close_streams reads the attrs _init_attrs() defaults, so this is
+        # the regression guard for reading them directly.
+        reader = Reader(DEFAULT_TEST_FILE)
+        reader.json()
+        backing_file = reader._backing_file
+        self.assertIsNotNone(backing_file)
+
+        reader.close()
+
+        self.assertTrue(backing_file.closed, "Reader left its file open")
+        self.assertIsNone(reader._backing_file)
+        self.assertIsNone(reader._manifest_json_str_cache)
+        self.assertIsNone(reader._manifest_data_cache)
+
+    def test_consumed_reader_clears_caches(self):
+        # Consuming marks the reader closed, so close() will not run later.
+        # Anything cleanup owes the object has to happen at consume time.
+        reader = Reader(DEFAULT_TEST_FILE)
+        reader.json()
+        self.assertIsNotNone(reader._manifest_json_str_cache)
+
+        # Simulate an error being set
+        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
+        real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        c2pa_module._lib.c2pa_reader_with_fragment = (
+            lambda r, f, s, frag: None)
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as main, \
+                    open(DEFAULT_TEST_FILE, "rb") as frag:
+                with self.assertRaises(Error):
+                    reader.with_fragment("image/jpeg", main, frag)
+        finally:
+            c2pa_module._lib.c2pa_reader_with_fragment = real_call
+
+        self.assertIsNone(reader._manifest_json_str_cache,
+                          "consumed Reader kept its manifest cache")
+        self.assertIsNone(reader._manifest_data_cache)
+
+    def test_reader_del_clears_caches(self):
+        # __del__ goes through _cleanup_resources, not close(), so cache
+        # clearing has to live somewhere both paths reach.
+        reader = Reader(DEFAULT_TEST_FILE)
+        reader.json()
+        self.assertIsNotNone(reader._manifest_json_str_cache)
+
+        # __del__ runs _cleanup_resources directly, so drive that rather than
+        # dropping the reference: the assertions need the object afterwards.
+        reader._cleanup_resources()
+
+        self.assertIsNone(reader._manifest_json_str_cache,
+                          "cleanup left the manifest cache alive")
+        self.assertIsNone(reader._manifest_data_cache)
+
+    def test_from_archive_frees_handle_when_wrap_fails(self):
+        # The wrap raising means no Python object took ownership, so
+        # from_archive still holds the handle and has to free it.
+        archive = self._make_archive()  # closes a Builder; keep it off the count
+        freed = self._instrument_frees()
+        real_wrap = Builder._wrap_native_handle
+
+        def _boom(*args, **kwargs):
+            raise Error("wrap failed")
+
+        Builder._wrap_native_handle = _boom
+        try:
+            with self.assertRaises(Error):
+                Builder.from_archive(archive)
+        finally:
+            Builder._wrap_native_handle = real_wrap
+
+        self.assertEqual(len(freed), 1,
+                         "from_archive leaked the handle when the wrap failed")
+
+    def test_sign_failure_chains_the_original_exception(self):
+        # The wrapper re-raises as C2paError; losing __cause__ hides which
+        # call actually failed.
+        builder = Builder(self.test_manifest)
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+
+        sentinel = RuntimeError("native call blew up")
+        real_sign = c2pa_module._lib.c2pa_builder_sign
+
+        def _boom(*args):
+            raise sentinel
+
+        c2pa_module._lib.c2pa_builder_sign = _boom
+        try:
+            with self.assertRaises(Error) as ctx:
+                builder.sign(signer, "image/jpeg",
+                             io.BytesIO(b"x"), io.BytesIO())
+        finally:
+            c2pa_module._lib.c2pa_builder_sign = real_sign
+
+        self.assertIs(ctx.exception.__cause__, sentinel,
+                      "signing error dropped the original exception")
+
+
+class TestErrorPlumbing(unittest.TestCase):
+    """Covers the error helpers themselves, which had no direct tests."""
+
+    def _set_native_error(self, text):
+        c2pa_module._lib.c2pa_error_set_last(text.encode('utf-8'))
+
+    def test_every_error_tag_maps_to_its_typed_subclass(self):
+        # The wire text is "Tag: message"; each tag gets its own subclass so
+        # callers can catch precisely.
+        tags = [
+            "Assertion", "AssertionNotFound", "Decoding", "Encoding",
+            "FileNotFound", "Io", "Json", "Manifest", "ManifestNotFound",
+            "NotSupported", "Other", "RemoteManifest", "ResourceNotFound",
+            "Signature", "Verify", "UntrackedPointer", "WrongPointerType",
+        ]
+        for tag in tags:
+            with self.subTest(tag=tag):
+                expected = getattr(Error, tag)
+                with self.assertRaises(expected):
+                    c2pa_module._raise_typed_c2pa_error(f"{tag}: detail")
+
+    def test_unmapped_tag_falls_back_to_base_error(self):
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._raise_typed_c2pa_error("Nonsense: detail")
+        # Base class only: no subclass should claim an unknown tag.
+        self.assertIs(type(ctx.exception), Error)
+
+    def test_pre_consume_tag_match_is_substring_not_prefix(self):
+        """The tags arrive mid-string, so the match must stay a substring one.
+
+        Guards the triage in _raise_consume_failure against being "cleaned up"
+        into error.startswith(tag), which would match nothing and silently
+        turn every retained handle into a consumed one.
+        """
+        wire_error = "Other: UntrackedPointer: 0xdeadb000"
+        tags = ManagedResource._PRE_CONSUME_ERROR_TAGS
+
+        self.assertTrue(any(tag in wire_error for tag in tags))
+        self.assertFalse(any(wire_error.startswith(tag) for tag in tags))
+
+    def test_check_ffi_operation_result_raises_with_native_message(self):
+        self._set_native_error("Io: disk exploded")
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(None, "fallback text")
+        self.assertIn("disk exploded", str(ctx.exception))
+
+    def test_check_ffi_operation_result_uses_fallback_when_slot_empty(self):
+        # The slot is sticky and thread-local, so a fresh thread is the only
+        # way to observe it unset.
+        captured = []
+
+        def run():
+            try:
+                c2pa_module._check_ffi_operation_result(None, "fallback text")
+            except BaseException as e:      # noqa: BLE001 - reported below
+                captured.append(e)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+
+        self.assertEqual(len(captured), 1, "expected a raise on failure")
+        self.assertIsInstance(captured[0], Error)
+        self.assertIn("fallback text", str(captured[0]))
+
+    def test_check_ffi_operation_result_passes_success_through(self):
+        self.assertEqual(
+            c2pa_module._check_ffi_operation_result(42, "unused"), 42)
+
+    def test_stream_creation_failure_reports_a_real_message(self):
+        # Regression: used to raise bare Exception("...: None") instead of the
+        # native error message.
+        real = c2pa_module._lib.c2pa_create_stream
+        c2pa_module._lib.c2pa_create_stream = lambda *a: None
+        try:
+            # With an error set, the message must carry it.
+            self._set_native_error("Io: stream refused")
+            with self.assertRaises(Error) as ctx:
+                c2pa_module.Stream(io.BytesIO(b"x"))
+            self.assertIn("stream refused", str(ctx.exception))
+
+            # With the slot unset, the old code raised bare Exception.
+            captured = []
+
+            def run():
+                try:
+                    c2pa_module.Stream(io.BytesIO(b"x"))
+                except BaseException as e:   # noqa: BLE001 - reported below
+                    captured.append(e)
+
+            t = threading.Thread(target=run)
+            t.start()
+            t.join()
+
+            self.assertEqual(len(captured), 1, "expected a raise on failure")
+            self.assertIsInstance(
+                captured[0], Error,
+                "stream failure must raise C2paError, not bare Exception")
+            self.assertNotIn("None", str(captured[0]))
+        finally:
+            c2pa_module._lib.c2pa_create_stream = real
+
+    def test_supported_mime_types_raises_instead_of_returning_empty(self):
+        # Regression: `if error:` was always False, so a native failure
+        # returned an empty list instead of raising. Only visible with the
+        # slot unset, hence the fresh thread.
+        captured = []
+
+        def run():
+            try:
+                captured.append(
+                    c2pa_module._get_supported_mime_types(
+                        lambda count: None, None))
+            except BaseException as e:      # noqa: BLE001 - reported below
+                captured.append(e)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+
+        self.assertIsInstance(
+            captured[0], Error,
+            "a failed MIME lookup returned data instead of raising")
+
+    def test_supported_mime_types_reports_the_native_message(self):
+        self._set_native_error("Io: mime lookup failed")
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._get_supported_mime_types(lambda count: None, None)
+        self.assertIn("mime lookup failed", str(ctx.exception))
+
+
+class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
+    """Each surface that lost a _clear_error_state() call still reports."""
+
+    def test_reader_on_garbage_raises(self):
+        with self.assertRaises(Error):
+            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
+
+    def test_signer_from_info_with_bad_certs_raises(self):
+        with self.assertRaises(Error):
+            c2pa_module.create_signer_from_info(C2paSignerInfo(
+                alg=b"es256",
+                sign_cert=b"not a certificate",
+                private_key=b"not a key",
+                ta_url=b"",
+            ))
+
+    def test_ed25519_sign_with_empty_data_raises(self):
+        with self.assertRaises(Error):
+            c2pa_module.ed25519_sign(b"", "not a key")
 
 
 if __name__ == '__main__':
