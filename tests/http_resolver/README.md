@@ -1,8 +1,8 @@
-# Custom HTTP resolvers
+# Custom HTTP resolver examples
 
 This document explains how (custom) HTTP resolvers work end to end, what the SDK does and does not do with HTTP, and the platform differences (Linux, Windows, macOS) that affect a resolver in practice.
 
-## HTTP resolvers overview
+## Overview
 
 A custom HTTP resolver intercepts every HTTP request the SDK makes through a `Context`, so an application can add headers, cache responses, or serve responses from memory in tests.
 
@@ -32,7 +32,7 @@ The resolver is validated immediately: something with a wrong shape raises `Type
 
 The module has no dependency on `c2pa` itself. Only the tests import `c2pa`, to exercise the resolvers against real `Context`/`Reader`/`Builder` instances.
 
-## How the SDK uses the network (and why http or https)
+## How the SDK uses the network
 
 The SDK asks the resolver whenever verifying or signing needs a remote resource.
 
@@ -75,20 +75,36 @@ A resolver attached to a `Context` handles **every** HTTP request the SDK makes 
 - `with_resolver()` can be called multiple times when creating a context to use: the last resolver set wins and will be used.
 - **Settings still gate the resolver.** With `verify.remote_manifest_fetch` set to `false`, the resolver is never invoked for a remote-manifest read. The read fails instead. A resolver is not a way to re-enable disabled fetching.
 
-## How resolution works, end to end
+## How resolution works end to end
 
-Conceptually the pipeline is: native code decides it needs an HTTP resource, calls back into Python, the custom resolver performs the transfer however it likes, then the response is copied back into native memory.
+The pipeline is: native code decides it needs an HTTP resource, calls back into Python, the custom resolver performs the transfer however it likes, then the response is copied back into native memory.
 
-The **trampoline** is the small ctypes callback that bridges the two sides. It is a function (built by `C2paHttpResolverBridge._make_trampoline`) that native code invokes through a raw C function pointer, and whose only job is to bounce that call into Python: decode the native request, call the custom resolver's `resolve()`, and encode the result back into native memory. It is a thin shim that exists only to redirect a call from one calling convention (here, the C ABI) into another (a Python callable). The call bounces off it into Python and the result bounces back across the C FFI boundary. It adapts between the two sides but does none of the HTTP work itself.
+```mermaid
+flowchart LR
+    subgraph N[Native side, C / Rust]
+        direction TB
+        SDK[SDK needs an HTTP resource]
+        DONE[Response in native memory]
+    end
+    subgraph P[Python side]
+        RES["Custom resolver: resolve()"]
+    end
+    SDK -->|1. request| TR(["trampoline<br/>(ctypes callback)"])
+    TR -->|2. decoded request| RES
+    RES -->|3. status + body bytes| TR
+    TR -->|4. encoded response| DONE
+```
 
-Concretely, step by step:
+The "trampoline" is the small ctypes callback that bridges the two sides. It is a function (built by `C2paHttpResolverBridge._make_trampoline`) that native code invokes through a raw C function pointer, and whose only job is to bounce that call into Python: decode the native request, call the custom resolver's `resolve()`, and encode the result back into native memory. It is a thin shim that exists only to redirect a call from one calling convention (here, the C ABI) into another (a Python callable). The call bounces off it into Python and the result bounces back across the C FFI boundary. It adapts between the two sides but does none of the HTTP work itself.
 
-1. **Wiring.** `Context.__init__` normalizes the custom resolver into a plain callable (the `resolve` bound method, or the callable itself) and wraps it in a ctypes trampoline (`C2paHttpResolverBridge._make_trampoline`). A short-lived native resolver handle is created via `c2pa_http_resolver_create` and consumed by `c2pa_context_builder_set_http_resolver`. The native context builder takes ownership, so there is nothing for the caller to free.
+Step by step:
+
+1. **Wiring.** `Context.__init__` normalizes the custom resolver into a callable (the `resolve` bound method, or the callable itself) and wraps it in a ctypes trampoline (`C2paHttpResolverBridge._make_trampoline`). A short-lived native resolver handle is created via `c2pa_http_resolver_create` and consumed by `c2pa_context_builder_set_http_resolver`. The native context builder takes ownership, so there is nothing for the caller to free.
 2. **Invocation.** Whenever the native library needs an HTTP resource through that context, it synchronously invokes the trampoline with a pointer to a native request struct and a pointer to a zero-initialized native response struct. The call blocks the SDK operation (`Reader(...)`, `builder.sign(...)`, `add_ingredient(...)`) that triggered it, and **there is no SDK-side timeout**. A resolver that hangs, hangs that SDK call. Timeouts are entirely the custom resolver's responsibility (the network-facing examples pass `timeout=` to `urllib.request.urlopen`).
 3. **Decode.** The trampoline copies everything out of the native request struct (URL, method, headers, body) into a plain Python object (`C2paHttpRequestData`) holding `str`/`bytes`. Because it is a copy, the request object stays valid after `resolve()` returns. Storing it (as `DebugHttpResolver` stores `(method, url)` tuples) is safe.
 4. **Resolve.** The custom resolver's `resolve()` runs and returns a response-shaped object, or raises.
 5. **Encode.** The trampoline validates the response (`.status` must be an `int`, `.body` must be `bytes`/`bytearray`), copies a non-empty body into a buffer allocated with the C runtime `malloc`, and writes status/body/length into the native response struct. Ownership of that buffer transfers to native code, which frees it on both the success and the error path. The custom resolver never allocates or frees anything. It only ever returns `bytes`.
-6. **Consume.** The native side copies the body out, frees the buffer, and hands the response to whatever validation or signing logic asked for it.
+6. **Consume.** The native side copies the body out, frees the buffer, and hands the response to whatever logic asked for it.
 
 ```mermaid
 sequenceDiagram
@@ -137,15 +153,15 @@ The SDK delegates the *transfer* entirely; the resolver *is* the HTTP client. Th
 
 ## Platform differences: Linux, Windows, macOS
 
-The trampoline itself behaves identically everywhere, but three areas differ per platform in ways that bite resolver implementers.
+Three things can affect the resolver depending on the platform.
 
 ### 1. The C runtime and the response buffer (why a resolver never allocates)
 
-The response body buffer must be allocated by the **same C runtime whose `free()` the native library calls** (on the Rust side that is `libc::free`). On Linux and macOS there is effectively one C runtime per process (glibc/musl, libSystem), so "the process's own libc" is always the right allocator. **Windows is different:** a process can host several C runtimes side by side, each with its own heap. Rust's MSVC targets link the Universal CRT, so `free` there is `ucrtbase`'s, while the legacy `msvcrt.dll` is a *different* heap. Allocating from one and freeing into the other is heap corruption, not a leak, and it corrupts silently until it crashes somewhere unrelated.
+The response body buffer must be allocated by the **same C runtime whose `free()` the native library calls** (on the native side that is `libc::free`). On Linux and macOS there is effectively one C runtime per process, so "the process's own libc" is always the right allocator. **Windows is different:** a process can host several C runtimes side by side, each with its own heap. The native library links the Universal CRT, so its `free` is `ucrtbase`'s, while the legacy `msvcrt.dll` is a *different* heap. Allocating from one and freeing into the other is heap corruption, and it corrupts silently until it crashes somewhere unrelated.
 
 This is the reason the bindings carry `ManagedResource._get_native_malloc()` rather than allocating the response buffer from Python's own memory or a plain `ctypes` call. The helper resolves, once and lazily, the exact `malloc` whose heap matches the native library's `free`:
 
-- On Windows it loads `ucrtbase` first and falls back to `msvcrt`, matching the CRT that Rust's `libc::free` uses.
+- On Windows it loads `ucrtbase` first and falls back to `msvcrt`, matching the CRT the native library's `free` uses.
 - On Linux and macOS it opens the process's own C library with `ctypes.CDLL(None)`, so its `malloc` and the native `free` come from the same libc.
 
 The helper also sets `malloc.restype = ctypes.c_void_p`. Without that, `ctypes` assumes a `c_int` return and truncates a 64-bit pointer to 32 bits. The truncated address handed to native `free` is a second, quieter way to corrupt the heap. The looked-up function is cached on the class, so the resolution happens at most once per process.
