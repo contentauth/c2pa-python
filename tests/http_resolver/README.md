@@ -116,7 +116,7 @@ Default `multiprocessing` start methods differ: historically `fork` on Linux (`f
 
 Those examples need network access to fetch the remote manifest for `tests/fixtures/cloud.jpg`, and fail without it.
 
-If your Python has no CA bundle configured, every fetch fails with `CERTIFICATE_VERIFY_FAILED` (see the TLS section above); on macOS, prefix the commands with `SSL_CERT_FILE=$(python -m certifi)`.
+If your Python has no CA bundle configured, every fetch fails with `CERTIFICATE_VERIFY_FAILED` (see the TLS section above); on macOS python.org builds this is the common case, so the commands below include the fix.
 
 Run them in a CLI with the commands:
 
@@ -126,4 +126,14 @@ python ./tests/http_resolver/test_http_resolver_cache.py
 
 # Or the whole directory via unittest discovery:
 python -m unittest discover -s tests/http_resolver -v
+```
+
+On some operating systems, if you hit CERTIFICATE_VERIFY_FAILED, this prefix on the commands fixes it:
+
+```bash
+SSL_CERT_FILE=$(python -m certifi) python ./tests/http_resolver/test_http_resolver_debug.py
+SSL_CERT_FILE=$(python -m certifi) python ./tests/http_resolver/test_http_resolver_cache.py
+
+# Or the whole directory via unittest discovery:
+SSL_CERT_FILE=$(python -m certifi) python -m unittest discover -s tests/http_resolver -v
 ```

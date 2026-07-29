@@ -49,15 +49,20 @@ class TestHttpResolverCache(unittest.TestCase):
         If the SDK ever adds another GET here, this count shifts -- that's
         expected and worth updating, not a false alarm.
         """
+        print('\n--- Reading using an HTTP resolver with a cache')
         resolver = CachingHttpResolver()
         with c2pa.Context.builder().with_resolver(
                 resolver).build() as context:
-            for _ in range(2):
+            for i in range(2):
+                print(f"Read #{i + 1} of cloud.jpg")
                 with open(os.path.join(FIXTURES, "cloud.jpg"),
                           "rb") as f:
                     with c2pa.Reader(
                             "image/jpeg", f, context=context) as reader:
                         reader.get_validation_state()
+                print(f"Cache state after read #{i + 1}: "
+                      f"hits={resolver.cache.hits} "
+                      f"misses={resolver.cache.misses}")
 
         self.assertEqual(resolver.cache.hits, 1)
         self.assertEqual(resolver.cache.misses, 1)
@@ -70,6 +75,7 @@ class TestHttpResolverCache(unittest.TestCase):
         context resolver, so three adds mean one network fetch and two
         cache hits.
         """
+        print('\n--- Reading and signing using an HTTP resolver with a cache')
         with open(os.path.join(FIXTURES, "es256_certs.pem"), "rb") as f:
             certs = f.read()
         with open(os.path.join(FIXTURES, "es256_private.key"), "rb") as f:
@@ -117,11 +123,15 @@ class TestHttpResolverCache(unittest.TestCase):
                       "rb") as ingredient:
                 for index in range(3):
                     ingredient.seek(0)
+                    print(f"Adding ingredient #{index + 1} of 3 "
+                          f"({ingredient_labels[index]})")
                     builder.add_ingredient(
                         {"title": f"cloud.jpg #{index + 1}",
                          "relationship": "componentOf",
                          "label": ingredient_labels[index]},
                         "image/jpeg", ingredient)
+                    print(f"Cache state: hits={resolver.cache.hits} "
+                          f"misses={resolver.cache.misses}")
 
             with tempfile.TemporaryDirectory() as output_dir:
                 output_path = os.path.join(
@@ -129,6 +139,7 @@ class TestHttpResolverCache(unittest.TestCase):
                 with open(os.path.join(FIXTURES, "A.jpg"),
                           "rb") as source:
                     with open(output_path, "wb") as dest:
+                        print(f"Signing asset A.jpg -> {output_path}")
                         builder.sign(
                             c2pa.Signer.from_info(signer_info),
                             "image/jpeg", source, dest)
@@ -136,6 +147,9 @@ class TestHttpResolverCache(unittest.TestCase):
         finally:
             context.close()
 
+        print(f"Final cache state: hits={resolver.cache.hits} "
+              f"misses={resolver.cache.misses} "
+              f"(expected 1 miss, 2 hits, across 3 identical ingredients)")
         self.assertEqual(resolver.cache.misses, 1)
         self.assertEqual(resolver.cache.hits, 2)
 
@@ -146,7 +160,7 @@ class TestHttpResolverCache(unittest.TestCase):
         """
         with c2pa.Context.builder().with_resolver(
                 AlwaysFailResolver(500)).build() as context:
-            with self.assertRaises(c2pa.C2paError):
+            with self.assertRaises(c2pa.C2paError) as ctx:
                 with open(os.path.join(FIXTURES, "cloud.jpg"), "rb") as f:
                     c2pa.Reader("image/jpeg", f, context=context)
 
