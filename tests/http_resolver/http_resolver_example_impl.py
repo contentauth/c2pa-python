@@ -18,8 +18,8 @@ the resolver passed to ContextBuilder.with_resolver()/Context(resolver=...)
 is never isinstance-checked, so any of these classes is a starting point to copy
 and adapt, not a required dependency.
 
-This module has no dependency on c2pa itself: it only needs to satisfy
-the attribute shape the SDK expects.
+The implementation satisfies the object format/contract the SDK
+expects when using custom resolvers.
 """
 
 import base64
