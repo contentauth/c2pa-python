@@ -1464,36 +1464,6 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         check=lambda r: r != 0)
 
 
-def _get_mime_type_from_path(path: Union[str, Path]) -> str:
-    """Attempt to guess the MIME type from a file path's extension.
-    When the extension is missing or unrecognized, this returns an empty
-    string so the caller hands it to the lib for auto-detection.
-    A recognized-but-wrong extension still returns a mimetype:
-    the native layer will attempt to correct it from the bytes when
-    reading (the real type still needs to be supported by the lib),
-    and if it can't, an error will happen then.
-
-    Args:
-        path: File path as string or Path object
-
-    Returns:
-        MIME type string, or an empty string
-          (when it cannot be determined from the extension).
-        An empty string here means the native lib should attempt auto-detect.
-    """
-    path_obj = Path(path)
-    file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
-
-    if file_extension == ".dng":
-        # mimetypes guesses the wrong type for dng,
-        # so we bypass it and set the correct type
-        return "image/dng"
-    else:
-        # Fall back to an empty string for extensionless or unknown files.
-        # Empty string flags this as a guess-type attempt.
-        return mimetypes.guess_type(str(path))[0] or ""
-
-
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
 
@@ -2154,6 +2124,46 @@ class Stream:
         """
         return self._initialized
 
+    @staticmethod
+    def is_read_stream(obj) -> bool:
+        """Return True if obj is a stream-like object this SDK can use.
+        Note: only method presence to identify streams are checked,
+        not that they work (a broken stream can fail later).
+        """
+        if obj is None or isinstance(obj, (str, Path)):
+            return False
+        return all(hasattr(obj, method) for method in Stream._REQUIRED_STREAM_METHODS)
+
+
+def _get_mime_type_from_path(path: Union[str, Path]) -> str:
+    """Attempt to guess the MIME type from a file path's extension.
+    When the extension is missing or unrecognized, this returns an empty
+    string so the caller hands it to the lib for auto-detection.
+    A recognized-but-wrong extension still returns a mimetype:
+    the native layer will attempt to correct it from the bytes when
+    reading (the real type still needs to be supported by the lib),
+    and if it can't, an error will happen then.
+
+    Args:
+        path: File path as string or Path object
+
+    Returns:
+        MIME type string, or an empty string
+          (when it cannot be determined from the extension).
+        An empty string here means the native lib should attempt auto-detect.
+    """
+    path_obj = Path(path)
+    file_extension = path_obj.suffix.lower() if path_obj.suffix else ""
+
+    if file_extension == ".dng":
+        # mimetypes guesses the wrong type for dng,
+        # so we bypass it and set the correct type
+        return "image/dng"
+    else:
+        # Fall back to an empty string for extensionless or unknown files.
+        # Empty string flags this as a guess-type attempt.
+        return mimetypes.guess_type(str(path))[0] or ""
+
 
 def _get_supported_mime_types(ffi_func, cache):
     """Shared helper to retrieve supported MIME types from the native library.
@@ -2267,16 +2277,6 @@ def _format_ffi_arg(fmt: Optional[bytes]) -> bytes:
     ``c_char_p``.
     """
     return fmt if fmt is not None else b""
-
-
-def _is_read_stream(obj) -> bool:
-    """Return True if obj is a stream-like object this SDK can use.
-    Note: only method presence to identify streams are checked,
-    not that they work (a broken stream can fail later).
-    """
-    if obj is None or isinstance(obj, (str, Path)):
-        return False
-    return all(hasattr(obj, method) for method in Stream._REQUIRED_STREAM_METHODS)
 
 
 class Reader(ManagedResource):
@@ -2478,7 +2478,7 @@ class Reader(ManagedResource):
         self._context = context
 
         # Only stream, no format: Reader(fh) must auto-detect on the stream.
-        if stream is None and _is_read_stream(format_or_path):
+        if stream is None and Stream.is_read_stream(format_or_path):
             stream = format_or_path
             format_or_path = None
         # A context supplies settings, not the asset, so a path or stream is
