@@ -11,7 +11,8 @@
 # specific language governing permissions and limitations under
 # each license.
 
-"""Tests for DebugHttpResolver, an HTTP resolver that logs requests,
+"""Tests for DebugHttpResolver, an HTTP resolver that logs requests and
+delegates the actual transfer to urllib.
 """
 
 import json

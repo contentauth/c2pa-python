@@ -27,9 +27,75 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
 FIXTURES = os.path.join(_REPO_ROOT, "tests", "fixtures")
 
 from http_resolver_example_impl import (  # noqa: E402
-    AlwaysFailResolver, CachingHttpResolver)
+    AlwaysFailResolver, CachingHttpResolver, HttpRequest)
 
 import c2pa  # noqa: E402
+
+
+class _StubFetchCachingResolver(CachingHttpResolver):
+    """CachingHttpResolver with the network swapped for a canned answer,
+    so the caching *decision* can be tested without a real HTTP call.
+    """
+
+    def __init__(self, status=200, body=b"payload"):
+        super().__init__()
+        self._canned = (status, body)
+        self.fetch_count = 0
+
+    def _fetch_with_retries(self, request):
+        self.fetch_count += 1
+        return self._canned
+
+
+class TestCachingDecision(unittest.TestCase):
+    """Tests for what CachingHttpResolver will and won't cache.
+    """
+
+    def test_opaque_encoded_get_is_never_cached(self):
+        """A GET whose URL ends in a long opaque token (the shape used by
+        e.g. a certificate revocation check) is fetched fresh every time,
+        never served from the cache.
+        """
+        resolver = _StubFetchCachingResolver()
+        request = HttpRequest(
+            url="https://ca.example/ocsp/" + ("a" * 60),
+            method="GET", headers={}, body=b"")
+
+        resolver.resolve(request)
+        resolver.resolve(request)
+
+        self.assertEqual(resolver.fetch_count, 2)
+        self.assertEqual(resolver.cache.hits, 0)
+
+    def test_post_is_never_cached(self):
+        """A request carrying a payload is never replayed from the cache."""
+        resolver = _StubFetchCachingResolver()
+        request = HttpRequest(
+            url="https://tsa.example/timestamp", method="POST",
+            headers={"content-type": "application/timestamp-query"},
+            body=b"query")
+
+        resolver.resolve(request)
+        resolver.resolve(request)
+
+        self.assertEqual(resolver.fetch_count, 2)
+        self.assertEqual(resolver.cache.hits, 0)
+
+    def test_ordinary_get_is_cached(self):
+        """A plain GET the resolver can't positively rule out is treated
+        as an ordinary resource fetch and cached, so the fix doesn't
+        disable caching for the case it's meant to serve.
+        """
+        resolver = _StubFetchCachingResolver()
+        request = HttpRequest(
+            url="https://cdn.example/manifests/x.c2pa", method="GET",
+            headers={}, body=b"")
+
+        resolver.resolve(request)
+        resolver.resolve(request)
+
+        self.assertEqual(resolver.fetch_count, 1)
+        self.assertEqual(resolver.cache.hits, 1)
 
 
 class TestHttpResolverCache(unittest.TestCase):
@@ -154,6 +220,7 @@ class TestHttpResolverCache(unittest.TestCase):
             with self.assertRaises(c2pa.C2paError) as ctx:
                 with open(os.path.join(FIXTURES, "cloud.jpg"), "rb") as f:
                     c2pa.Reader("image/jpeg", f, context=context)
+            self.assertIn("500", str(ctx.exception))
 
 
 if __name__ == "__main__":

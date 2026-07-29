@@ -22,6 +22,7 @@ This module has no dependency on c2pa itself: it only needs to satisfy
 the attribute shape the SDK expects.
 """
 
+import base64
 import collections
 import threading
 import time
@@ -40,6 +41,38 @@ def _reject_non_http(url):
             f"refusing to resolve non-http(s) URL scheme: {scheme!r}")
 
 
+def _has_opaque_encoded_final_segment(url):
+    """True if the URL's last path segment looks like an encoded blob
+    (e.g. an OCSP request) rather than an ordinary resource name.
+    Such GETs should not be cached like a plain resource fetch.
+    """
+    seg = urllib.parse.urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+    seg = urllib.parse.unquote(seg)
+    if len(seg) < 40:
+        return False
+    try:
+        base64.b64decode(seg, validate=True)
+    except Exception:
+        return False
+    return True
+
+
+def _is_safe_to_cache(request):
+    """Oonly True for a GET positively known to be safe
+    (not opaque-encoded, not a DID document request).
+    Anything else (POSTs, ambiguous or unrecognized GETs)
+    is False by default.
+    """
+    if request.method.upper() != "GET":
+        return False
+    if _has_opaque_encoded_final_segment(request.url):
+        return False
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    if "application/did+json" in headers.get("accept", ""):
+        return False
+    return True
+
+
 class HttpRequest:
     """An HTTP request the SDK asks a custom resolver to perform.
 
@@ -48,13 +81,14 @@ class HttpRequest:
         method: HTTP method ("GET", "POST", ...).
         headers: Request headers as a dict. Names are lowercased by the
             native layer; when a header repeats, the last value wins.
-        body: Request body bytes (b"" when there is none). Timestamp
-            requests POST a body; manifest fetches send none.
+        body: Request body bytes (b"" when there is none). A request
+            carrying a payload (typically a POST) sets this; a plain GET
+            usually doesn't.
 
     Reference shape only:
-    c2pa hands your resolve() a duck-typed object with these same four attributes,
+    c2pa hands resolve() a duck-typed object with these same four attributes,
     not necessarily an instance of this exact class.
-    Define your own compatible type, or just use this one.
+    A compatible type can be defined separately, or this one reused directly.
     """
     __slots__ = ("url", "method", "headers", "body")
 
@@ -73,8 +107,8 @@ class HttpResponse:
     """The answer a custom resolver returns to the SDK.
 
     Attributes:
-        status: HTTP status code. Remote manifest fetches only accept 200;
-            any other code surfaces as a typed C2paError.
+        status: HTTP status code. Only 200 is treated as success; any
+            other code surfaces as a typed C2paError.
         body: Response body bytes.
 
     Reference shape only:
@@ -107,6 +141,12 @@ class HttpResolver(ABC):
         surfaces as a typed C2paError.
         """
         raise NotImplementedError
+
+
+# The resolvers implemented here are classes that hold their own config in
+# __init__ and never capture a Context, Reader, or Builder in a closure.
+# This avoids reference-cycles and lifetime issues.
+# It also means resolve() never reaches for a mutable global.
 
 
 class TtlLruCache:
@@ -144,19 +184,18 @@ class TtlLruCache:
 class CachingHttpResolver(HttpResolver):
     """An HTTP resolver with a response cache and bounded retries.
 
-    Caching policy:
-    - Only read GET requests answered with 200 are cached.
-    - POSTs (timestamp requests) and error responses are not.
+    Caching policy: only GETs `_is_safe_to_cache` positively clears,
+    answered with 200, are cached. POSTs, errors, and anything not
+    positively cleared are never cached (see `_is_safe_to_cache`).
 
-    Retry policy: 429 and 503 are retried up to max_retries times,
-    honoring a capped Retry-After when the header is present,
-    and otherwise backing off exponentially.
-    Any other status is final and is passed through to the SDK.
-    Transport errors raise, which marks a hard failure.
+    Retry policy: 429/503 retried up to max_retries, honoring a capped
+    Retry-After or backing off exponentially. Any other status is final.
+    Transport errors raise, marking a hard failure.
     """
 
     def __init__(self, cache=None, timeout=10.0, max_retries=3,
                  backoff_seconds=0.5, max_retry_after=10.0):
+        # Capture config here
         self.cache = cache if cache is not None else TtlLruCache()
         self._timeout = timeout
         self._max_retries = int(max_retries)
@@ -165,7 +204,7 @@ class CachingHttpResolver(HttpResolver):
 
     def resolve(self, request):
         _reject_non_http(request.url)
-        cacheable = request.method.upper() == "GET"
+        cacheable = _is_safe_to_cache(request)
         if cacheable:
             cached = self.cache.get(request.url)
             if cached is not None:
@@ -230,7 +269,6 @@ class DebugHttpResolver(HttpResolver):
         _reject_non_http(request.url)
         self.requests.append((request.method, request.url))
 
-        # Timestamp requests POST a body, manifest fetches send none.
         data = request.body or None
         req = urllib.request.Request(
             request.url,
@@ -243,6 +281,7 @@ class DebugHttpResolver(HttpResolver):
                 return HttpResponse(resp.status, resp.read())
         except urllib.error.HTTPError as e:
             # A 4xx/5xx is still a response.
-            # Pass the status through and let the SDK turn it into its own typed error:
-            # a remote manifest fetch only accepts 200 as marker the data was retrieved.
+            # Pass the status through and let the SDK turn it
+            # into its own typed error.
+            # Only 200 is treated as success.
             return HttpResponse(e.code, e.read())

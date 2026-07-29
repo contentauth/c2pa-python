@@ -1967,6 +1967,9 @@ class ContextBuilder:
               never invoked and the read fails instead.
             - Do not call any other c2pa APIs from inside the resolver:
               reentering the FFI while a call is in flight is undefined behavior.
+            - The resolver is retained for the Context's lifetime; avoid
+              having it capture the Context, Reader, or Builder (that forms
+              a reference cycle that delays native cleanup).
         """
         self._resolve_fn = C2paHttpResolverBridge._coerce_resolver(resolver)
         self._resolver = resolver

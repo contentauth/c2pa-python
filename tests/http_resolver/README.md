@@ -36,30 +36,20 @@ The module has no dependency on `c2pa` itself. Only the tests import `c2pa`, to 
 
 The SDK asks the resolver whenever verifying or signing needs a remote resource.
 
-Four kinds of request flow through, all triggered by reading or signing an asset:
-
-- Remote manifest fetch: a `GET` for a manifest stored outside the asset (the asset carries only a URL). Happens while reading, and while signing when an ingredient has a remote manifest.
-- OCSP revocation: a request that checks whether the signing certificate has been revoked. The URL comes from the certificate's Authority Information Access extension, not from the custom resolver.
-- RFC 3161 timestamps: a `POST` to a timestamp authority while signing, so the signature carries a trusted time.
-- CAWG `did:web` resolution: a `GET` for the DID document backing an identity assertion, when a manifest uses CAWG identity.
-
-One HTTP(S) resolver, attached to one `Context`, is where all four pass through:
+What that means in practice changes with the SDK version and configuration — a remote manifest fetch, a certificate revocation check, a trusted-timestamp request, and an identity-document lookup are all current examples, not a closed list. All of it is triggered by reading or signing an asset, and all of it funnels through the one resolver attached to the `Context`:
 
 ```mermaid
 flowchart LR
     RB[Reader / Builder] --> C[Context]
     C --> RES[Custom resolver]
-    RES --> M[Remote manifest GET]
-    RES --> O[OCSP revocation]
-    RES --> T[RFC 3161 timestamp POST]
-    RES --> D[CAWG did:web GET]
+    RES --> NET[Whatever HTTP resource the SDK currently needs]
 ```
 
 ### Why http or why https
 
-The SDK does not pick the scheme. It uses whatever the URL carries (HTTP or HTTPS). That URL comes from outside the SDK: the manifest's remote reference, the certificate's OCSP URL, the configured timestamp authority, or the DID. The scheme is a property of the endpoint, not a setting the application controls.
+The SDK does not pick the scheme. It uses whatever the URL carries (HTTP or HTTPS). That URL comes from outside the SDK: a remote reference, a certificate extension, a configured authority, or similar. The scheme is a property of the endpoint, not a setting the application controls.
 
-Manifest fetches, timestamps, and `did:web` are normally `https`. OCSP is often plain `http`. An OCSP response is itself CMS-signed, so its integrity does not depend on TLS. Fetching revocation over `https` also risks a circular dependency: validating a certificate would require validating the OCSP responder's own certificate first. An `http` OCSP URL sitting next to `https` everywhere else is normal, not a downgrade.
+Most of what flows through is normally `https`. A certificate revocation check is a common example of one that can be plain `http` instead: its response is itself CMS-signed, so its integrity does not depend on TLS, and fetching it over `https` risks a circular dependency (validating a certificate would require validating the responder's own certificate first). An `http` URL sitting next to `https` everywhere else is normal, not a downgrade.
 
 Because the URL can be tweaked (it can come from whatever asset a caller supplies), a custom resolver should reject schemes it does not expect before making any request. The two network-facing examples, `DebugHttpResolver` and `CachingHttpResolver`, reject any URL whose scheme is not `http`/`https` for this reason (`AlwaysFailResolver` makes no request, so it does not). See the host-filtering note under [What the SDK leaves to the resolver](#what-the-sdk-leaves-to-the-resolver).
 
@@ -123,13 +113,13 @@ sequenceDiagram
 ## Request semantics
 
 - `url` is the absolute request URL.
-- `method` is the HTTP verb: `GET` for manifest fetches, `POST` for timestamp requests.
+- `method` is the HTTP verb (`GET`, `POST`, ...); which verb shows up depends on what's being fetched.
 - `headers` is a dict. Header names arrive **lowercased** by the native layer. Repeated headers are delivered as separate lines internally. In the dict, the **last occurrence wins**.
-- `body` is `b""` when there is no body (manifest fetches). Timestamp requests `POST` a body. `request.body or None` is the idiomatic way to hand it to `urllib.request.Request`, as the network-facing examples do.
+- `body` is `b""` when there is no body. A request with a payload (typically a `POST`) carries one. `request.body or None` is the idiomatic way to hand it to `urllib.request.Request`, as the network-facing examples do.
 
 ## Response and error semantics
 
-- **Status passes through.** Return the real status, and do not translate. For a remote manifest fetch, only `200` is accepted. Anything else surfaces to the SDK caller as a typed `C2paError`. `DebugHttpResolver` shows the right pattern for `urllib`: an `HTTPError` is still a response, so it returns `HttpResponse(e.code, e.read())` and lets the SDK produce its own error.
+- **Status passes through.** Return the real status, and do not translate. Only `200` is treated as success; anything else surfaces to the SDK caller as a typed `C2paError`. `DebugHttpResolver` shows the right pattern for `urllib`: an `HTTPError` is still a response, so it returns `HttpResponse(e.code, e.read())` and lets the SDK produce its own error.
 - **Raising marks a hard failure.** A transport-level problem (DNS failure, connection refused, timeout) is not a response. Raise, and the SDK reports the request as failed. The examples deliberately do *not* catch `urllib.error.URLError` for exactly this reason.
 - **A raised exception does not propagate as itself.** Exceptions cannot unwind across the ctypes/native boundary. The trampoline catches everything the custom resolver raises, including `BaseException` and `KeyboardInterrupt`, records its message in the native error slot, and the failure re-emerges as a typed `C2paError` raised from the `Reader`/`Builder` call that triggered the fetch. An `except MyCustomError:` around `c2pa.Reader(...)` will never fire. Callers should catch `c2pa.C2paError` and read the message.
 - **Shape errors are caught early.** Returning a `str` body, a `None` or `bool` status, or a status outside the 100-599 range is rejected inside the trampoline with a clear `TypeError` message, which then surfaces the same way (as a `C2paError`).
@@ -141,15 +131,27 @@ sequenceDiagram
 - **No reentrancy.** A custom resolver must not call c2pa APIs from inside `resolve()`. Re-entering the FFI while a call is in flight is undefined.
 - **Do not close while a call is in flight.** A `Context`/`Reader`/`Builder` must not be closed while a call is still running on that same object, including a resolver call it triggered. This is a general property of these objects, not something specific to resolvers.
 
-## What the SDK leaves to the resolver
+### A note on closures
 
-The SDK delegates the *transfer* entirely. The resolver *is* the HTTP client. That means:
+A resolver can be a plain function, a lambda, a bound method, or a `functools.partial`. It runs later on, when the resolver is needed/called.
 
-- **No redirects.** The SDK does not follow redirects. A `301`/`302` returned as-is is just a non-200. Delegating to `urllib.request` (as the network-facing examples do) gives redirect handling. Make sure to implement (or block) redirects as needed by the custom resolver.
-- **Host filtering is bypassed.** The `core.allowed_network_hosts` setting only filters the *built-in* resolver. A custom resolver receives every request regardless. One that needs an allowlist must enforce it in `resolve()` (raise or return an error status for disallowed hosts). The URL comes from a remote-manifest reference embedded in the asset. The network-facing examples reject any URL whose scheme is not `http`/`https` before doing anything else. Validating the host (and, depending on the deployment, the resolved address and port) is worth considering too.
-- **TLS belongs to the resolver.** Certificate verification, trust stores, and proxy handling all belong to whatever HTTP stack the custom resolver uses. The SDK sees only status and bytes. This is where most of the platform-specific behavior lives. See the platform section below.
-- **No Content-Length plumbing.** The resolver response carries no `Content-Length`, so remote manifests larger than 10 MB are truncated **without an error**. A resolver that serves large manifests should note the failure mode downstream is a validation error, not a size error.
-- **No caching, retries, or backoff.** Each needed resource is requested. Policy belongs to the custom resolver. `CachingHttpResolver` is the reference for a reasonable policy: cache only `GET`s answered with `200` (never `POST`s, since timestamp requests must not be replayed from cache, and never error responses), retry only `429`/`503` with a capped `Retry-After` or exponential backoff, and pass every other status through untouched.
+- **A closure captures the loop variable itself, not its value at creation time.** For instance, a resolver built inside a `for host in hosts:` loop shares one variable, `host`, across every iteration. By the time any resolver actually runs, the loop has finished and `host` holds whatever it was last set to, so every resolver built that way ends up using the same, final value. Giving the `lambda` its own `host` parameter, defaulted to `host`, fixes it. A default value is evaluated once, right when the `lambda` is created (on that specific loop iteration) — not later, when the `lambda` is finally called. So each `lambda` gets its own parameter holding a frozen copy of that iteration's `host`, shadowing the outer loop variable of the same name, instead of all of them reading the one shared loop variable after the loop has already finished:
+
+  ```py
+  resolvers = [lambda req, host=host: fetch(host, req) for host in hosts]
+  ```
+
+- **Capturing the `Context` (or a `Reader`/`Builder` made from it) creates a reference cycle that delays cleanup.** The SDK deliberately keeps the resolver alive for as long as the `Context` lives. If the resolver's closure also holds the `Context` (directly, or one step removed through a `Reader`/`Builder`, or via `functools.partial(fn, ctx)`), the two point at each other. Python's cyclic garbage collector still reclaims this — it is not a leak — but the native context handle is released later than expected, at an unpredictable time, instead of the moment the variable goes out of scope. Capturing only what the request actually needs (a session, a config), not the `Context`/`Reader`/`Builder` itself, avoids the cycle entirely:
+
+  ```py
+  session = make_session()
+  ctx = c2pa.Context.builder().with_resolver(lambda r: helper(session, r)).build()
+  ```
+
+- **The resolver, and anything it holds, stays alive for the whole `Context` lifetime — even without the application keeping its own reference to it.** With the `resolve()`-method form, the SDK holds the bound method, which holds its object. So an open HTTP session, connection pool, or background thread the resolver owns lives exactly as long as the `Context` does. It should not be relied on to be cleaned up early, and its teardown should not be tied to `Context.close()` — the resolver can still be invoked afterward (see above). Cleanup belongs to the resolver's own lifetime instead.
+- **If an object is both callable and has a `resolve()` method, `resolve()` wins.** One shape should be picked: a plain function/lambda, or an object whose `resolve(request)` does the work, not something that is quietly both.
+
+The trampoline captures only the resolver function plus library internals, never the `Context`. It never creates a cycle on its own: the resolver is held by a strong reference, never a `weakref`, so it can't be garbage-collected mid-call.
 
 ## Platform differences: Linux, Windows, macOS
 
@@ -182,7 +184,7 @@ flowchart TD
     E ==>|ownership transfers to native| F
     subgraph NA["Native side (SDK)"]
         F["copy the body out of the buffer"] --> G["free the buffer"]
-        G --> H["hand the bytes to the consumer:<br/>manifest validation, OCSP, timestamp, or did:web"]
+        G --> H["hand the bytes to whatever needed the resource"]
     end
 ```
 
