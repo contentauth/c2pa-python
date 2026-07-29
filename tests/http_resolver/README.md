@@ -8,8 +8,8 @@ A custom HTTP resolver intercepts every HTTP request the SDK makes through a `Co
 
 c2pa ships no resolver types at all: there is no `HttpRequest`, `HttpResponse`, or `HttpResolver` to import from `c2pa`. `ContextBuilder.with_resolver()` (and the `Context(resolver=...)` constructor argument, also accepted by `Context.from_json`/`from_dict`) never does an `isinstance` check. It accepts either:
 
-- any callable taking one request argument;
-- any object with a `resolve(request)` method.
+- any callable taking one request argument
+- any object with a `resolve(request)` method
 
 The request passed to the custom resolver exposes `.url` (str), `.method` (str), `.headers` (dict), and `.body` (bytes). The value it returns only needs `.status` (int) and `.body` (bytes) attributes. The minimal form needs no imports at all:
 
@@ -57,15 +57,15 @@ flowchart LR
 
 ### Why http or why https
 
-The SDK does not pick the scheme to use, since it uses a URL it sees in the data and uses the protocol suggested by the URL (HTTP or HTTPS). It uses whatever the URL carries, and that URL comes from outside the SDK: the manifest's remote reference, the certificate's OCSP URL, the configured timestamp authority, or the DID. The scheme is a property of the endpoint, not a setting the application controls.
+The SDK does not pick the scheme. It uses whatever the URL carries (HTTP or HTTPS). That URL comes from outside the SDK: the manifest's remote reference, the certificate's OCSP URL, the configured timestamp authority, or the DID. The scheme is a property of the endpoint, not a setting the application controls.
 
-Manifest fetches, timestamps, and `did:web` are normally `https`. OCSP is often plain `http`: an OCSP response is itself CMS-signed, so its integrity does not depend on TLS, and fetching revocation over `https` risks a circular dependency (validating a certificate would require validating the OCSP responder's own certificate first). An `http` OCSP URL sitting next to `https` everywhere else is normal, not a downgrade.
+Manifest fetches, timestamps, and `did:web` are normally `https`. OCSP is often plain `http`. An OCSP response is itself CMS-signed, so its integrity does not depend on TLS. Fetching revocation over `https` also risks a circular dependency: validating a certificate would require validating the OCSP responder's own certificate first. An `http` OCSP URL sitting next to `https` everywhere else is normal, not a downgrade.
 
 Because the URL can be tweaked (it can come from whatever asset a caller supplies), a custom resolver should reject schemes it does not expect before making any request. The two network-facing examples, `DebugHttpResolver` and `CachingHttpResolver`, reject any URL whose scheme is not `http`/`https` for this reason (`AlwaysFailResolver` makes no request, so it does not). See the host-filtering note under [What the SDK leaves to the resolver](#what-the-sdk-leaves-to-the-resolver).
 
 ## Notes on runtime
 
-The native library and the Python process must share a C runtime: buffers the HTTP resolver bridge allocates are freed on the native side with `libc::free`, so a native library built against a different C runtime (e.g. a static-musl `.so`) than the one the Python process loads will corrupt memory.
+The native library and the Python process must share a C runtime. The bridge allocates buffers that the native side frees with `libc::free`. A native library built against a different C runtime than the one the Python process loads (for example a static-musl `.so`) will corrupt memory.
 
 ## What traffic flows through a resolver (and when)
 
@@ -81,7 +81,7 @@ The pipeline is: native code decides it needs an HTTP resource, calls back into 
 
 ```mermaid
 flowchart LR
-    subgraph N[Native side, C / Rust]
+    subgraph N[Native side]
         direction TB
         SDK[SDK needs an HTTP resource]
         DONE[Response in native memory]
@@ -143,13 +143,13 @@ sequenceDiagram
 
 ## What the SDK leaves to the resolver
 
-The SDK delegates the *transfer* entirely; the resolver *is* the HTTP client. That means:
+The SDK delegates the *transfer* entirely. The resolver *is* the HTTP client. That means:
 
 - **No redirects.** The SDK does not follow redirects. A `301`/`302` returned as-is is just a non-200. Delegating to `urllib.request` (as the network-facing examples do) gives redirect handling. Make sure to implement (or block) redirects as needed by the custom resolver.
-- **Host filtering is bypassed.** The `core.allowed_network_hosts` setting only filters the *built-in* resolver. A custom resolver receives every request regardless; one that needs an allowlist must enforce it in `resolve()` (raise or return an error status for disallowed hosts). The URL comes from a remote-manifest reference embedded in the asset. The network-facing examples reject any URL whose scheme is not `http`/`https` before doing anything else. Validating the host (and, depending on the deployment, the resolved address and port) is worth considering too.
+- **Host filtering is bypassed.** The `core.allowed_network_hosts` setting only filters the *built-in* resolver. A custom resolver receives every request regardless. One that needs an allowlist must enforce it in `resolve()` (raise or return an error status for disallowed hosts). The URL comes from a remote-manifest reference embedded in the asset. The network-facing examples reject any URL whose scheme is not `http`/`https` before doing anything else. Validating the host (and, depending on the deployment, the resolved address and port) is worth considering too.
 - **TLS belongs to the resolver.** Certificate verification, trust stores, and proxy handling all belong to whatever HTTP stack the custom resolver uses. The SDK sees only status and bytes. This is where most of the platform-specific behavior lives. See the platform section below.
 - **No Content-Length plumbing.** The resolver response carries no `Content-Length`, so remote manifests larger than 10 MB are truncated **without an error**. A resolver that serves large manifests should note the failure mode downstream is a validation error, not a size error.
-- **No caching, retries, or backoff.** Each needed resource is requested; policy belongs to the custom resolver. `CachingHttpResolver` is the reference for a reasonable policy: cache only `GET`s answered with `200` (never `POST`s, since timestamp requests must not be replayed from cache, and never error responses), retry only `429`/`503` with a capped `Retry-After` or exponential backoff, and pass every other status through untouched.
+- **No caching, retries, or backoff.** Each needed resource is requested. Policy belongs to the custom resolver. `CachingHttpResolver` is the reference for a reasonable policy: cache only `GET`s answered with `200` (never `POST`s, since timestamp requests must not be replayed from cache, and never error responses), retry only `429`/`503` with a capped `Retry-After` or exponential backoff, and pass every other status through untouched.
 
 ## Platform differences: Linux, Windows, macOS
 
@@ -168,16 +168,22 @@ The helper also sets `malloc.restype = ctypes.c_void_p`. Without that, `ctypes` 
 
 The trampoline calls that `malloc`, copies the returned `bytes` into the buffer, and writes the pointer into the native response struct, and native code frees it afterwards. That is the whole reason a custom resolver returns `bytes` and nothing else: **it returns `bytes`, never a pointer, and never memory it allocated with `ctypes` itself.** The reason this rule exists is Windows.
 
-The body buffer's ownership follows one path:
+The response body crosses the Python/native boundary exactly once. Python fills the buffer and hands it over. Native code then frees it and passes the bytes to whatever needed the resource:
 
 ```mermaid
 flowchart TD
-    A[resolve returns bytes] --> B{body empty?}
-    B -- yes --> C[native body = NULL, len = 0<br/>nothing allocated, nothing to free]
-    B -- no --> D[trampoline malloc + memmove]
-    D --> E[write pointer and len into response struct]
-    E --> F[ownership transfers to native]
-    F --> G[native copies body out, then calls free]
+    subgraph PY["Python side"]
+        A["custom resolver: resolve() returns bytes"] -->|handoff to the trampoline| B{body empty?}
+        B -- no --> D["trampoline: malloc + memmove into a C buffer"]
+        B -- yes --> C["trampoline: leave body = NULL, len = 0"]
+        D --> E["trampoline: write pointer + len into the response struct"]
+        C --> E
+    end
+    E ==>|ownership transfers to native| F
+    subgraph NA["Native side (SDK)"]
+        F["copy the body out of the buffer"] --> G["free the buffer"]
+        G --> H["hand the bytes to the consumer:<br/>manifest validation, OCSP, timestamp, or did:web"]
+    end
 ```
 
 ### 2. TLS trust stores
