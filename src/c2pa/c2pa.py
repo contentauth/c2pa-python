@@ -1643,7 +1643,6 @@ class C2paHttpResolverBridge:
                 headers[name.strip()] = value.strip()
         return headers
 
-
     @staticmethod
     def _coerce_resolver(resolver):
         """Normalize a HTTP resolver into a callable taking an HttpRequest.
