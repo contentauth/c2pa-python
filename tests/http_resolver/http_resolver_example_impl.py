@@ -26,8 +26,18 @@ import collections
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
+
+
+def _reject_non_http(url):
+    """Raise if url's scheme is not http/https.
+    """
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(
+            f"refusing to resolve non-http(s) URL scheme: {scheme!r}")
 
 
 class HttpRequest:
@@ -155,6 +165,7 @@ class CachingHttpResolver(HttpResolver):
         self._max_retry_after = float(max_retry_after)
 
     def resolve(self, request):
+        _reject_non_http(request.url)
         cacheable = request.method.upper() == "GET"
         if cacheable:
             cached = self.cache.get(request.url)
@@ -218,6 +229,7 @@ class DebugHttpResolver(HttpResolver):
         self.requests = []
 
     def resolve(self, request):
+        _reject_non_http(request.url)
         self.requests.append((request.method, request.url))
 
         # Timestamp requests POST a body; manifest fetches send none.

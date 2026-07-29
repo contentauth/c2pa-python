@@ -837,8 +837,7 @@ class C2paContext(ctypes.Structure):
 
 
 class C2paHttpRequest(ctypes.Structure):
-    """Matches the native C2paHttpRequest going through the C FFI,
-    useful if planning to write custom HTTP resolvers.
+    """Internal ctypes for the native C2paHttpRequest struct.
 
     Read-only view:
     Every pointer borrows native memory that is only valid
@@ -860,8 +859,7 @@ class C2paHttpRequest(ctypes.Structure):
 
 
 class C2paHttpResponse(ctypes.Structure):
-    """Mirror of the native C2paHttpResponse,
-    useful if planning to write custom HTTP resolvers.
+    """Internal ctypes mirror of the native C2paHttpResponse struct.
 
     The HTTP resolver callback fills this data in.
     `body` must be allocated with the C runtime malloc
@@ -1645,6 +1643,7 @@ class C2paHttpResolverBridge:
                 headers[name.strip()] = value.strip()
         return headers
 
+
     @staticmethod
     def _coerce_resolver(resolver):
         """Normalize a HTTP resolver into a callable taking an HttpRequest.
@@ -1698,7 +1697,9 @@ class C2paHttpResolverBridge:
                         raw_headers),
                     body=body))
 
-                payload = result.body or b""
+                payload = result.body
+                if payload is None:
+                    payload = b""
                 if not isinstance(payload, (bytes, bytearray)):
                     raise TypeError(
                         "resolver response .body must be bytes, got "
@@ -1710,9 +1711,15 @@ class C2paHttpResolverBridge:
                     raise TypeError(
                         "resolver response .status must be an int, got "
                         f"{type(status).__name__}")
+                if not 100 <= status <= 599:
+                    raise TypeError(
+                        "resolver response .status out of range: "
+                        f"{status}")
 
+                # No fallible statement between the first write
+                # into `response` and `return 0`.
+                # `status` is written last, after the body field.
                 response = response_ptr.contents
-                response.status = status
                 if data:
                     length = len(data)
                     buf = ManagedResource._get_native_malloc()(length)
@@ -1731,10 +1738,11 @@ class C2paHttpResolverBridge:
                     # the native side skips its free when body_len is 0.
                     response.body = None
                     response.body_len = 0
+                response.status = status
                 return 0
             except BaseException as e:  # noqa: B036 - must not unwind native
                 # An exception escaping a ctypes callback cannot propagate
-                # into Rust, so it would be reported as a generic failure
+                # into native lib, so it would be reported as a generic failure
                 # with the real cause lost.
                 # Catching it here turns it into a typed error carrying
                 # the actual message.
@@ -1744,8 +1752,12 @@ class C2paHttpResolverBridge:
                 # so returning non-zero without setting it could otherwise
                 # surface a stale error.
                 try:
+                    # Returned message size limited here
+                    text = str(e).replace("\x00", "\\x00")
+                    if len(text) > 1024:
+                        text = text[:1024] + "...(truncated)"
                     _lib.c2pa_error_set_last(
-                        "Other: Python HTTP resolver failed: {}".format(e)
+                        f"Other: HTTP resolver trampoline failure: {text}"
                         .encode("utf-8", "replace"))
                 except BaseException:
                     pass

@@ -26,6 +26,10 @@ The resolver is validated immediately: something with neither shape raises `Type
 
 [`http_resolver_example_impl.py`](./http_resolver_example_impl.py) is an example implementation of that shape. It defines `HttpRequest`, `HttpResponse`, and an optional `HttpResolver` abstract base class (subclassing it is not required, it just gets you a documented, type-checkable contract instead of duck typing), plus three example resolvers: `DebugHttpResolver` (logs every request/response, delegates the transfer to `urllib`), `CachingHttpResolver` (TTL'd LRU cache plus retry/backoff for throttled requests), and `AlwaysFailResolver` (answers every request with a fixed status; needs no network). The module has no dependency on `c2pa` itself; only the tests import `c2pa`, to exercise the resolvers against real `Context`/`Reader`/`Builder` instances.
 
+## Notes on runtime
+
+The native library and the Python process must share a C runtime: buffers the HTTP resolver bridge allocates are freed on the native side with `libc::free`, so a native library built against a different C runtime (e.g. a static-musl `.so`) than the one your Python process loads will corrupt memory.
+
 ## What traffic flows through a resolver (and when)
 
 A resolver attached to a `Context` handles **every** HTTP request the SDK makes through that `Context`. Scope and gating to keep in mind:
@@ -64,13 +68,14 @@ Conceptually the pipeline is: native code decides it needs an HTTP resource, cal
 
 - **The resolver outlives `Context.close()`.** Native `Reader`/`Builder` instances hold their own reference to the underlying native context, so your resolver can still be invoked after the Python `Context` is closed, for as long as any `Reader` or `Builder` created from it is alive. Do not tear down resolver resources (close a session, release a pool) on `Context.close()`; tie them to the resolvers' own lifetime instead. The SDK internally pins the callback thunk to keep this safe, so there is nothing you need to hold onto yourself.
 - **No reentrancy.** Do not call c2pa APIs from inside `resolve()`. Re-entering the FFI while a call is in flight is undefined.
+- **Concurrent close() is unsafe.** Do not close a `Context`/`Reader`/`Builder` from one thread while another thread still has a call in flight on that same object, including a resolver call it triggered. This is a general property of these objects, not something specific to resolvers, but resolver users are the most likely to be multi-threaded.
 
 ## What the SDK does and does not do with HTTP
 
 The SDK delegates the *transfer* entirely; the resolver *is* the HTTP client. That means:
 
 - **No redirects.** The SDK does not follow redirects; a `301`/`302` returned as-is is just a non-200. Delegating to `urllib.request` (as both examples do) gives you redirect handling for free. A hand-rolled resolver must implement it.
-- **Host filtering is bypassed.** The `core.allowed_network_hosts` setting only filters the *built-in* resolver. A custom resolver receives every request regardless; if you need an allowlist, enforce it yourself in `resolve()` (raise or return an error status for disallowed hosts).
+- **Host filtering is bypassed.** The `core.allowed_network_hosts` setting only filters the *built-in* resolver. A custom resolver receives every request regardless; if you need an allowlist, enforce it yourself in `resolve()` (raise or return an error status for disallowed hosts). The URL is attacker-influenced: it comes from a remote-manifest reference embedded in whatever asset someone hands the application, so a resolver that hands it straight to a general-purpose HTTP client without a scheme check is a `file://` local-file-read and internal-network SSRF gadget. Both example resolvers reject any URL whose scheme is not `http`/`https` before doing anything else, for this reason.
 - **TLS is yours.** Certificate verification, trust stores, and proxy handling all belong to whatever HTTP stack your resolver uses. The SDK sees only status and bytes. This is where most of the platform-specific behavior lives; see the platform section below.
 - **No Content-Length plumbing.** The resolver response carries no `Content-Length`, so remote manifests larger than 10 MB are truncated **without an error**. If you serve large manifests, be aware the failure mode downstream is a validation error, not a size error.
 - **No caching, retries, or backoff.** Each needed resource is requested; policy is yours. `CachingHttpResolver` is the reference for a reasonable policy: cache only `GET`s answered with `200` (never `POST`s, since timestamp requests must not be replayed from cache, and never error responses), retry only `429`/`503` with a capped `Retry-After` or exponential backoff, and pass every other status through untouched.
