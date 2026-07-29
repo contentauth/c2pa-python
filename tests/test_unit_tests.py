@@ -36,7 +36,7 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg, _is_read_stream
+from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg
 import c2pa.c2pa as c2pa_module
 from pathlib import Path
 
@@ -105,17 +105,17 @@ class TestIsReadableStream(unittest.TestCase):
     def test_paths_and_formats_are_not_streams(self):
         for value in (None, "", "image/jpeg", "path/to/file.jpg",
                       Path("x.jpg")):
-            self.assertFalse(_is_read_stream(value), repr(value))
+            self.assertFalse(Stream.is_read_stream(value), repr(value))
 
     def test_non_stream_objects_are_not_streams(self):
         for value in (b"bytes", bytearray(b"x"), 42, object()):
-            self.assertFalse(_is_read_stream(value), repr(value))
+            self.assertFalse(Stream.is_read_stream(value), repr(value))
 
     def test_object_missing_methods_is_not_a_stream(self):
         class OnlyRead:
             def read(self):
                 return b""
-        self.assertFalse(_is_read_stream(OnlyRead()))
+        self.assertFalse(Stream.is_read_stream(OnlyRead()))
 
     def test_read_only_object_is_not_a_stream(self):
         # Has read/seek/tell but no write/flush, so not a Stream for us.
@@ -128,11 +128,11 @@ class TestIsReadableStream(unittest.TestCase):
 
             def tell(self):
                 return 0
-        self.assertFalse(_is_read_stream(ReadOnly()))
+        self.assertFalse(Stream.is_read_stream(ReadOnly()))
 
     def test_in_memory_streams_are_streams(self):
-        self.assertTrue(_is_read_stream(io.BytesIO(b"x")))
-        self.assertTrue(_is_read_stream(io.StringIO("x")))
+        self.assertTrue(Stream.is_read_stream(io.BytesIO(b"x")))
+        self.assertTrue(Stream.is_read_stream(io.StringIO("x")))
 
     def test_file_handles_are_streams(self):
         path = self._tmp_path()
@@ -145,13 +145,13 @@ class TestIsReadableStream(unittest.TestCase):
         ):
             fh = opener()
             try:
-                self.assertTrue(_is_read_stream(fh), type(fh).__name__)
+                self.assertTrue(Stream.is_read_stream(fh), type(fh).__name__)
             finally:
                 fh.close()
 
     def test_spooled_temporary_file_is_a_stream(self):
         with tempfile.SpooledTemporaryFile() as fh:
-            self.assertTrue(_is_read_stream(fh))
+            self.assertTrue(Stream.is_read_stream(fh))
 
     def test_compressed_file_objects_are_streams(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,7 +164,7 @@ class TestIsReadableStream(unittest.TestCase):
                 with opener(p, "wb") as fh:
                     fh.write(b"data")
                 with opener(p, "rb") as fh:
-                    self.assertTrue(_is_read_stream(fh), ext)
+                    self.assertTrue(Stream.is_read_stream(fh), ext)
 
     def test_placeholder_typed_object_with_all_methods_is_a_stream(self):
         class Duck:
@@ -182,7 +182,7 @@ class TestIsReadableStream(unittest.TestCase):
 
             def flush(self):
                 pass
-        self.assertTrue(_is_read_stream(Duck()))
+        self.assertTrue(Stream.is_read_stream(Duck()))
 
 
 class TestFormatValidation(unittest.TestCase):
@@ -562,7 +562,7 @@ class TestReader(unittest.TestCase):
             reader.close()
 
     def test_bare_stream_closed_handle_raises(self):
-        # _is_read_stream only checks method presence
+        # Stream.is_read_stream only checks method presence
         #  so a closed handle is accepted as a stream and fails at read time.
         file = open(self.testPath, "rb")
         file.close()
