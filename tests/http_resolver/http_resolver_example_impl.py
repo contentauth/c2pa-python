@@ -123,7 +123,6 @@ class TtlLruCache:
     def get(self, key):
         with self._lock:
             entry = self._entries.get(key)
-            # time.monotonic, not time.time: immune to wall-clock jumps.
             if entry is not None and entry[0] > time.monotonic():
                 self._entries.move_to_end(key)
                 self.hits += 1
@@ -192,8 +191,7 @@ class CachingHttpResolver(HttpResolver):
             except urllib.error.HTTPError as e:
                 retryable = e.code in (429, 503)
                 if not retryable or attempt == self._max_retries:
-                    # Final failure: pass the status back so the SDK can
-                    # report it.
+                    # Pass the status back so the SDK can report it.
                     return e.code, e.read()
                 delay = self._retry_delay(e, attempt)
                 time.sleep(delay)
@@ -232,7 +230,7 @@ class DebugHttpResolver(HttpResolver):
         _reject_non_http(request.url)
         self.requests.append((request.method, request.url))
 
-        # Timestamp requests POST a body; manifest fetches send none.
+        # Timestamp requests POST a body, manifest fetches send none.
         data = request.body or None
         req = urllib.request.Request(
             request.url,
@@ -244,7 +242,7 @@ class DebugHttpResolver(HttpResolver):
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 return HttpResponse(resp.status, resp.read())
         except urllib.error.HTTPError as e:
-            # A 4xx/5xx is still a response! Pass the status through and
-            # let the SDK turn it into its own typed error: a remote
-            # manifest fetch only accepts 200.
+            # A 4xx/5xx is still a response.
+            # Pass the status through and let the SDK turn it into its own typed error:
+            # a remote manifest fetch only accepts 200 as marker the data was retrieved.
             return HttpResponse(e.code, e.read())
