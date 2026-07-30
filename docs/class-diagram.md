@@ -1,4 +1,3 @@
-
 # Class diagram
 
 This diagram shows the public classes in the Python library and their relationships.

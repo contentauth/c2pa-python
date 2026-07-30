@@ -87,7 +87,7 @@ for path in image_paths:
         builder.sign_file(path, output_path(path), signer)
 ```
 
-### Using `set_intent` on the Builder
+### Using set_intent on the Builder
 
 Call `set_intent` directly on a `Builder` instance for one-off operations or when the intent is determined at runtime. For example:
 
@@ -166,7 +166,7 @@ flowchart LR
 
 For `Edit` and `Update` intents, `Builder` looks at the source stream, and if no `parentOf` ingredient has been added manually, it automatically creates one from that stream (and adds the needed action). The source stream *becomes* the parent ingredient. If a `parentOf` ingredient has already been added manually (via `add_ingredient`), `Builder` uses that one instead and does not automatically create one from the source.
 
-### How intent relates to `add_ingredient`
+### How intent relates to add_ingredient
 
 The `Builder` intent controls what the `Builder` does with the source stream (source asset) at sign time. The `add_ingredient` method adds other ingredients explicitly. These are separate concerns.
 
@@ -208,7 +208,7 @@ from c2pa import (
 )
 ```
 
-### Using `set_intent`
+### Using set_intent
 
 Use the `Builder.set_intent` method to specify the intent:
 

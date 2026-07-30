@@ -1,11 +1,8 @@
-# Native resource management (ManagedResource class)
+# Native resource management
 
 `ManagedResource` is the internal base class used by the C2PA Python SDK to wrap native (Rust/FFI) pointers. When adding new wrappers around native resources `ManagedResource` should be subclassed and follow the documented lifecycle rules.
 
-> [!NOTE]
-> `ManagedResource` and the lifecycle machinery described here are internal to the SDK. In most cases, code that reads and writes C2PA data should use the public wrappers (`Reader`, `Builder`, `Signer`, `Context`, `Settings`).
-
-## Why `ManagedResource`?
+## Why ManagedResource?
 
 `ManagedResource` is the internal base class responsible for managing native pointers owned by the C2PA Python SDK. It guarantees:
 
@@ -44,7 +41,7 @@ Python manages its own objects' memory automatically through garbage collection.
 
 This system works well for pure Python objects, but native memory sits outside of it entirely. The garbage collector sees the Python wrapper object (e.g. a `Reader` instance) and tracks references to it, but it has no visibility into the native memory that the wrapper's `_handle` attribute points to. Memory allocated by native libraries is invisible to the garbage collector: it does not know the size of that native allocation, cannot tell when it is no longer needed, and will not call the native library's `c2pa_free` function to release it. If the Python wrapper of those native resources is collected without first calling `c2pa_free`, the native memory is never released and leaks.
 
-### Why `__del__` is not reliable enough
+### Why __del__ is not reliable enough
 
 Python does offer `__del__` as a hook that runs when an object is collected (finalizer), and `ManagedResource` uses it as a fallback to possibly clean up leftover resources at that point. But `__del__` cannot be relied on as the primary cleanup mechanism: its timing is unpredictable (due to being called when the garbage collection runs, which is non-deterministic itself), it may not run at all during interpreter shutdown, and other Python implementations (PyPy, GraalPy) that do not use reference counting make its behavior even less deterministic.
 
@@ -87,7 +84,7 @@ Notes:
 > The MRO is computed using C3 linearization, which enforces two rules: children appear before their parents, and left-to-right order from the class definition is preserved. For `class Context(ManagedResource, ContextProvider)`:
 >
 > 1. `Context`: the class itself always comes first.
-> 2. `ManagedResource` :first listed parent, nothing else requires it to appear later.
+> 2. `ManagedResource`: first listed parent, nothing else requires it to appear later.
 > 3. `ContextProvider`: second listed parent, must come after `ManagedResource` to preserve declaration order.
 > 4. `ABC`: parent of `ContextProvider`, must come after its child.
 > 5. `object`: root of everything (all objects), always last.
@@ -105,7 +102,7 @@ Therefore, the managed resources have the following principles:
 - Each `ManagedResource` holds exactly one `_handle`. `_swap_handle()` replaces it with the pointer a consuming call returned and does not free the old value, since the native side took it (see [Consume-and-swap](#consume-and-swap)).
 - `_teardown(free_handle=False)`, `_consume_no_replacement()`, and `_consume_into()` all close or advance the object without calling `c2pa_free`, because ownership moved to the native side.
 - Only a few sites free a live handle. Two of them free a pointer this layer still provably owns: normal teardown (`_teardown(free_handle=True)`), and the create-then-validate path, which frees a freshly created pointer if activation fails. The third, `_release_handle()`, is a *guarded* free used only when ownership is genuinely unknown (a consuming call failed without setting an error, or a Python exception was raised before the native side reported anything): if the native side already took the pointer, its address is no longer in the registry and `c2pa_free` is a `-1` no-op, so the free touches no memory. No path frees a pointer known to have been consumed and reallocated (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)).
-- `_release()` drops stream wrappers, callbacks, and caches before the native pointer is freed (see [Subclass-specific cleanup with `_release()`](#subclass-specific-cleanup-with-_release)).
+- `_release()` drops stream wrappers, callbacks, and caches before the native pointer is freed (see [Subclass-specific cleanup with `_release()`](#subclass-specific-cleanup)).
 
 ### Double-free risk mitigations
 
@@ -201,7 +198,11 @@ Every public method calls `_ensure_valid_state()` before doing any work, which r
 
 ## Ways to clean up
 
-### Context manager (`with` statement)
+You can clean up using a `with` statement, explicitly by calling `close()`, or by using destructor fallback.
+
+### Using a "with" statement
+
+The recommended cleanup method is to use a `with` statement, like this:
 
 ```python
 with Reader("image.jpg") as reader:
@@ -211,7 +212,7 @@ with Reader("image.jpg") as reader:
 
 When the `with` block exits, `__exit__` calls `close()`, which frees the native pointer. This is the safest approach because cleanup happens even if the code inside the block raises an exception.
 
-### Explicit `.close()`
+### Explicit close
 
 ```python
 reader = Reader("image.jpg")
@@ -221,9 +222,9 @@ finally:
     reader.close()
 ```
 
-Calling `.close()` directly is equivalent to exiting a `with` block. It is idempotent: calling it multiple times is safe and does nothing after the first call.
+Calling `close()` directly is equivalent to exiting a `with` block. It is idempotent: calling it multiple times is safe and does nothing after the first call.
 
-### Destructor fallback (`__del__`)
+### Destructor fallback
 
 If neither the context manager nor an explicit `.close()` is used, `__del__` attempts to free the native pointer when Python garbage-collects the object. Per [Why `__del__` is not reliable enough](#why-__del__-is-not-reliable-enough), its timing is unpredictable and it may not run at all, so it is a safety net rather than a primary cleanup mechanism.
 
@@ -455,7 +456,7 @@ Always calling the guarded free instead, even where the value is known to be gon
 
 `_release_handle()` (a guarded free) is reserved for the two branches where ownership is not known for certain: a Python exception raised before native reports anything, and a failure that leaves the error slot empty (which no defined native failure is expected to produce). In both, a guarded free is a good default, since it is a real free when the handle is still ours and a `-1` no-op when the native side already took it.
 
-None of this is protected by a lock on the Python side: `ManagedResource` has no thread-safety mechanism of its own, and the retained-vs-consumed guarantee comes entirely from the native pointer registry and its thread-local error slot. As noted under [Which double-free risks this layer guards](#which-double-free-risks-this-layer-guards-and-which-it-leaves-to-the-caller), sharing one instance across threads without external synchronization is the caller's responsibility. This is a different hazard from [Fork safety](#fork-safety), which concerns a forked child process, not a thread within the same process.
+None of this is protected by a lock on the Python side: `ManagedResource` has no thread-safety mechanism of its own, and the retained-vs-consumed guarantee comes entirely from the native pointer registry and its thread-local error slot. As noted under [Which double-free risks this layer guards](#double-free-risk-mitigations), sharing one instance across threads without external synchronization is the caller's responsibility. This is a different hazard from [Fork safety](#fork-safety), which concerns a forked child process, not a thread within the same process.
 
 A consuming C FFI function first removes the pointer from its registry, then reconstructs the owned value from it. `untrack_or_return!` runs ahead of `Box::from_raw` in `c2pa_c_ffi`. If the address is unknown or the wrong type, the untrack step fails before ownership is taken and sets an error whose prefix (`UntrackedPointer:` or `WrongPointerType:`) identifies it as a pre-consume rejection. Once the value has been reconstructed, a later failure simply drops it, the same as any owned value going out of scope. The Python side stays defensive (and as generic as possible) rather than assuming any exact behavior: it retains the handle when it recognizes one of those rejection prefixes, and where the outcome is unclear it falls back to the guarded free. A native side that behaved differently would degrade in one of two bounded ways: If it kept a pointer the Python side treated as consumed, nothing would free that pointer and it would leak. If it had already released a pointer the Python side then tried to free, the registry would not find the address and the free would return `-1` without touching memory.
 
@@ -477,7 +478,7 @@ self._consume_and_swap(
 
 Activating a handle that is about to be handed to the native library looks backwards, and there are two reasons for it. `_consume_and_swap` needs an active resource to read the handle from and swap the result into. It also puts the intermediate pointer under normal cleanup before anything can go wrong with it: whichever way the consuming call goes, `close()` and `__del__` will free the pointer if the native side did not take it. The alternative, holding the pointer in a local variable across the call, means every failure path has to decide for itself whether to free it.
 
-## Subclass-specific cleanup with `_release()`
+## Subclass-specific cleanup
 
 Each subclass can override `_release()` to clean up its own resources before the native pointer is freed. The base implementation does nothing.
 
