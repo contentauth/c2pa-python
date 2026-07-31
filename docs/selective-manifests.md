@@ -1,6 +1,6 @@
 # Selective manifest construction
 
-You can use `Builder` and `Reader` together to selectively construct manifests&mdash;keeping only the parts you need and omitting the rest. This is useful when you don't want to include all ingredients in a working store (for example, when some ingredient assets are not visible).
+You can use `Builder` and `Reader` together to selectively construct manifests: keeping only the parts you need and omitting the rest. This is useful when you don't want to include all ingredients in a working store (for example, when some ingredient assets are not visible).
 
 This process is best described as *filtering* or *rebuilding* a working store:
 
@@ -10,7 +10,7 @@ This process is best described as *filtering* or *rebuilding* a working store:
 
 A manifest is a signed data structure attached to an asset that records provenance and which source assets (ingredients) contributed to it. It contains assertions (statements about the asset), ingredients (references to other assets), and references to binary resources (such as thumbnails).
 
-Since both `Reader` and `Builder` are **read-only** by design (neither has a `remove()` method), to exclude content you must **read what exists, filter to keep what you need, and create a new** `Builder` **with only that information**. This produces a new `Builder` instance—a "rebuild."
+Since both `Reader` and `Builder` are **read-only** by design (neither has a `remove()` method), to exclude content you must **read what exists, filter to keep what you need, and create a new** `Builder` **with only that information**. This produces a new `Builder` instance: a "rebuild."
 
 > [!IMPORTANT]
 > This process always creates a new `Builder`. The original signed asset and its manifest are never modified, neither is the starting working store. The `Reader` extracts data without side effects, and the `Builder` constructs a new manifest based on extracted data.
@@ -162,7 +162,7 @@ with open("signed_asset.jpg", "rb") as source:
 
 ### Start fresh and preserve provenance
 
-Sometimes all existing assertions and ingredients may need to be discarded but the provenance chain should be maintained nevertheless. This is done by creating a new `Builder` with a new manifest definition and adding the original signed asset as an ingredient using `add_ingredient()`.
+Sometimes all existing assertions and ingredients may need to be discarded but the provenance chain should be maintained nevertheless. Do this by creating a new `Builder` with a new manifest definition and adding the original signed asset as an ingredient using `add_ingredient()`.
 
 The function `add_ingredient()` does not copy the original's assertions into the new manifest. Instead, it stores the original's entire manifest store as opaque binary data inside the ingredient record. This means:
 
@@ -186,8 +186,6 @@ flowchart TD
     style NA fill:#efe,stroke:#090
     style NI fill:#efe,stroke:#090
 ```
-
-
 
 ```py
 ctx = Context.from_dict({
@@ -235,7 +233,6 @@ builder.add_action({
 
 ### Action JSON fields
 
-
 | Field | Required | Description |
 | --- | --- | --- |
 | `action` | Yes | Action identifier, e.g. `"c2pa.created"`, `"c2pa.opened"`, `"c2pa.placed"`, `"c2pa.color_adjustments"`, `"c2pa.filtered"` |
@@ -243,19 +240,18 @@ builder.add_action({
 | `description` | No | Human-readable description of what happened |
 | `digitalSourceType` | Sometimes, depending on action | URI describing the digital source type (typically for `c2pa.created`) |
 
-
 ### Linking actions to ingredients
 
 When an action involves a specific ingredient, the ingredient is linked to the action using `ingredientIds` (in the action's `parameters`), referencing a matching key in the ingredient.
 
-#### How `ingredientIds` resolution works
+#### How ingredientIds resolution works
 
 The SDK matches each value in `ingredientIds` against ingredients using this priority:
 
 1. `label` on the ingredient (primary): if set and non-empty, this is used as the linking key.
 2. `instance_id` on the ingredient (fallback): used when `label` is absent or empty.
 
-#### Linking with `label`
+#### Linking with label
 
 The `label` field on an ingredient is the **primary** linking key. Set a `label` on the ingredient and reference it in the action's `ingredientIds`. The label can be any string: it acts as a linking key between the ingredient and the action.
 
@@ -382,7 +378,7 @@ with Builder(manifest_json, context=ctx) as builder:
         builder.sign("image/jpeg", source, dest)
 ```
 
-#### Linking with `instance_id`
+#### Linking with instance_id
 
 When no `label` is set on an ingredient, the SDK matches `ingredientIds` against `instance_id`.
 
@@ -466,7 +462,7 @@ with open("signed_asset.jpg", "rb") as signed:
                     # matched is the ingredient linked to this action
 ```
 
-#### When to use `label` vs `instance_id`
+#### When to use label vs instance_id
 
 | Property | `label` | `instance_id` |
 | --- | --- | --- |
@@ -476,13 +472,12 @@ with open("signed_asset.jpg", "rb") as signed:
 | **Survives signing** | SDK may reassign the actual assertion label | Unchanged |
 | **Stable across rebuilds** | The caller controls the build-time value; the post-signing label may change | Yes, always the same set value |
 
-
 **Use `label`** when defining manifests in JSON.
 **Use `instance_id`** when working programmatically with ingredients whose identity comes from other sources, or when a stable identifier that persists unchanged across rebuilds is needed.
 
 ## Working with archives
 
-A `Builder` represents a **working store**: a manifest that is being assembled but has not yet been signed. Archives serialize this working store (definition + resources) to a `.c2pa` binary format, allowing to save, transfer, or resume the work later. For more background on working stores and archives, see [Working stores and archives](working-stores.md).
+A `Builder` represents a **working store**: a manifest that is being assembled but has not yet been signed. Archives serialize this working store (definition + resources) to a `.c2pa` binary format, allowing you to save, transfer, or resume the work later. For more background on working stores and archives, see [Working stores and archives](working-stores.md).
 
 There are two distinct types of archives, sharing the same binary format but being conceptually different: builder archives (working store archives) and ingredient archives.
 
@@ -533,8 +528,6 @@ flowchart TD
     style X fill:#f99,stroke:#c00
     style CTX fill:#e8f4fd,stroke:#4a90d9
 ```
-
-
 
 ```py
 ctx = Context.from_dict({
@@ -692,13 +685,13 @@ Action linking also changes between the two approaches. Legacy catalog code link
 
 #### Choosing between approaches
 
-The legacy read-filter-rebuild APIs fit when the catalog already exists as a single `.c2pa` builder archive that bundles all ingredients together and the consumer wants a subset—picked via `Reader` + manual JSON filtering. The dedicated ingredient archive APIs fit when ingredients are produced and consumed independently: each ingredient gets its own archive, so no Reader-based filtering is needed. Both produce the same signed output.
+The legacy read-filter-rebuild APIs fit when the catalog already exists as a single `.c2pa` builder archive that bundles all ingredients together and the consumer wants a subset, picked via `Reader` + manual JSON filtering. The dedicated ingredient archive APIs fit when ingredients are produced and consumed independently: each ingredient gets its own archive, so no Reader-based filtering is needed. Both produce the same signed output.
 
 ### Identifying ingredients in archives
 
 When building an ingredient archive, you can set `instance_id` on the ingredient to give it a stable, caller-controlled identifier. This field survives archiving and signing unchanged, so it can be used to look up a specific ingredient from a catalog archive. The `description` and `informational_URI` fields also survive and can carry additional metadata about the ingredient's origin.
 
-`instance_id` is only for identification and catalog lookups. It cannot be used as a linking key in `ingredientIds` when linking ingredient archives to actions — use `label` for that (see [Linking an archived ingredient to an action](#linking-an-archived-ingredient-to-an-action)).
+`instance_id` is only for identification and catalog lookups. It cannot be used as a linking key in `ingredientIds` when linking ingredient archives to actions: use `label` for that (see [Linking an archived ingredient to an action](#linking-an-archived-ingredient-to-an-action)).
 
 ```py
 # Set instance_id when adding the ingredient to the archive builder.
@@ -835,8 +828,6 @@ flowchart TD
 
     style CTX fill:#e8f4fd,stroke:#4a90d9
 ```
-
-
 
 **Step 1:** Build a working store and archive it:
 
@@ -1250,7 +1241,7 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 
 Some actions reference ingredients (via `parameters.ingredients[].url` after signing). If keeping an action that references an ingredient, **the corresponding ingredient and its binary resources must also be kept**. If an ingredient is dropped, any actions that reference it must also be dropped (or updated).
 
-#### `c2pa.opened` action
+#### c2pa.opened action
 
 The `c2pa.opened` action is special because it must be the first action and it references the asset that was opened (the `parentOf` ingredient). When filtering:
 
@@ -1258,7 +1249,7 @@ The `c2pa.opened` action is special because it must be the first action and it r
 - **Keep the ingredient it references**: the `parentOf` ingredient linked via its `parameters.ingredients[].url`.
 - Removing the ingredient that `c2pa.opened` points to will make the manifest invalid.
 
-#### `c2pa.placed` action
+#### c2pa.placed action
 
 The `c2pa.placed` action references a `componentOf` ingredient that was composited into the asset. When filtering:
 

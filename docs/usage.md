@@ -52,7 +52,7 @@ manifest_json = json.dumps({
 
 ## Settings, Context, and ContextProvider
 
-The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated. 
+The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated.
 
 See [Context and settings](context-settings.md) for details.
 
@@ -179,7 +179,7 @@ except Exception as err:
 ### Add a signed manifest
 
 > [!WARNING]
-> This example accesses the private key and security certificate directly from the local file system.  This is fine during development, but doing so in production is insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as show in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
+> This example accesses the private key and security certificate directly from the local file system. This is fine during development, but doing so in production is insecure. Instead, use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key, as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
 Pass a `Context` to the `Builder` to apply custom settings during signing. The signer is still passed explicitly to `builder.sign()`.
 
@@ -237,8 +237,8 @@ except Exception as err:
 
 ### Add a signed manifest to a stream
 
-> [!WARNING] 
-> This example accesses the private key and security certificate directly from the local file system. This is fine during development, but doing so in production IS insecure. Instead use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key; for example as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
+> [!WARNING]
+> This example accesses the private key and security certificate directly from the local file system. This is fine during development, but doing so in production is insecure. Instead, use a Key Management Service (KMS) or a hardware security module (HSM) to access the certificate and key, as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
 
 ```py
 try:

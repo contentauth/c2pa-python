@@ -12,7 +12,7 @@ Features:
 - Add assertions and ingredients to assets.
 - Examples and unit tests to demonstrate usage.
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/c2pa-c).
 
@@ -21,7 +21,7 @@ If you want to view the documentation in GitHub, see:
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
 - [Configuring the SDK using `Context` and `Settings`](docs/context-settings.md)
 - [Using Builder intents](docs/intents.md) to ensure spec-compliant manifests
-- Using [working stores and archvies](docs/working-stores.md)
+- Using [working stores and archives](docs/working-stores.md)
 - Selectively constructing manifests by [filtering actions and ingredients](docs/selective-manifests.md)
 - [Diagram of public classes in the Python library and their relationships](docs/class-diagram.md)
 - [Release notes](docs/release-notes.md)
@@ -72,7 +72,7 @@ export C2PA_RS_PATH=/path/to/c2pa-rs
 make build-from-source C2PA_RS_PATH=$C2PA_RS_PATH
 ```
 
-This does a clean build of the `c2pa-c-ffi` crate (with the `file_io` feature, which the Python wrapper requires), stages the resulting library under both `artifacts/` and `src/c2pa/libs/`, and installs the package in editable mode, replacing any prebuilt artifacts from `make download-native-artifacts`. The release profile is used by default; to build the debug profile instead, pass `EXTRA_BUILD_ARGS="--debug"`:
+This does a clean build of the `c2pa-c-ffi` crate (with the `file_io` feature, which the Python wrapper requires), stages the resulting library under both `artifacts/` and `src/c2pa/libs/`, and installs the package in editable mode, replacing any prebuilt artifacts from `make download-native-artifacts`. By default, the build uses the release profile; to build the debug profile instead, pass `EXTRA_BUILD_ARGS="--debug"`:
 
 ```sh
 make build-from-source C2PA_RS_PATH=$C2PA_RS_PATH EXTRA_BUILD_ARGS="--debug"
