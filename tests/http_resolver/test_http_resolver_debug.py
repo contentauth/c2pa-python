@@ -1,0 +1,150 @@
+# Copyright 2026 Adobe. All rights reserved.
+# This file is licensed to you under the Apache License,
+# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+# or the MIT license (http://opensource.org/licenses/MIT),
+# at your option.
+
+# Unless required by applicable law or agreed to in writing,
+# this software is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+# specific language governing permissions and limitations under
+# each license.
+
+"""Tests for DebugHttpResolver, an HTTP resolver that logs requests and
+delegates the actual transfer to urllib.
+"""
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
+sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
+
+FIXTURES = os.path.join(_REPO_ROOT, "tests", "fixtures")
+
+from http_resolver_example_impl import DebugHttpResolver  # noqa: E402
+
+import c2pa  # noqa: E402
+
+
+class TestHttpResolverDebug(unittest.TestCase):
+
+    def test_read_with_resolver(self):
+        """Reading an asset whose manifest lives at a remote URL logs a
+        GET for that fetch."""
+        print('\n--- Reading using an HTTP resolver logging requests')
+        resolver = DebugHttpResolver()
+        print("Reading using a Context with DebugHttpResolver as HTTP resolver")
+        with c2pa.Context.builder().with_resolver(
+                resolver).build() as context:
+            with open(os.path.join(FIXTURES, "cloud.jpg"), "rb") as f:
+                with c2pa.Reader(
+                        "image/jpeg", f, context=context) as reader:
+                    reader.get_validation_state()
+                    self.assertFalse(reader.is_embedded())
+                    self.assertTrue(reader.get_remote_url())
+                    print(f"Remote manifest url: {reader.get_remote_url()}")
+
+        print(f"Resolver saw {len(resolver.requests)} request(s): "
+              f"{resolver.requests}")
+        self.assertTrue(
+            any(method == "GET" for method, _ in resolver.requests))
+
+    def test_sign_with_resolver(self):
+        """Signing an asset with a remote-manifest ingredient logs a GET
+        for the ingredient's manifest, and reading the signed result back
+        makes no HTTP requests at all (its manifest is embedded)."""
+        print('\n--- Reading and signing using an HTTP resolver logging requests')
+        with open(os.path.join(FIXTURES, "es256_certs.pem"), "rb") as f:
+            certs = f.read()
+        with open(os.path.join(FIXTURES, "es256_private.key"), "rb") as f:
+            key = f.read()
+
+        # ta_url is None, meaning "no timestamp authority".
+        signer_info = c2pa.C2paSignerInfo(
+            alg=b"es256", sign_cert=certs, private_key=key, ta_url=None)
+
+        manifest_definition = {
+            "claim_generator": "http_resolver_debug",
+            "claim_generator_info": [
+                {"name": "http_resolver_debug", "version": "0.1"}],
+            "format": "image/jpeg",
+            "title": "Signed with a debug HTTP resolver",
+            "assertions": [{
+                "label": "c2pa.actions.v2",
+                "data": {"actions": [
+                    {
+                        "action": "c2pa.created",
+                        "digitalSourceType":
+                            "http://cv.iptc.org/newscodes/"
+                            "digitalsourcetype/digitalCreation",
+                    },
+                    {
+                        "action": "c2pa.placed",
+                        "parameters": {"ingredientIds": ["cloud-ingredient"]},
+                    },
+                ]},
+            }],
+        }
+
+        resolver = DebugHttpResolver()
+        context = (c2pa.Context.builder()
+                   .with_resolver(resolver)
+                   .with_signer(c2pa.Signer.from_info(signer_info))
+                   .build())
+        try:
+            builder = c2pa.Builder(manifest_definition, context=context)
+
+            print("Adding cloud.jpg as an ingredient...")
+            with open(os.path.join(FIXTURES, "cloud.jpg"),
+                      "rb") as ingredient:
+                builder.add_ingredient(
+                    {"title": "cloud.jpg", "relationship": "componentOf",
+                     "label": "cloud-ingredient"},
+                    "image/jpeg", ingredient)
+            print(f"Resolver saw {len(resolver.requests)} request(s) "
+                  f"after add_ingredient: {resolver.requests}")
+
+            with tempfile.TemporaryDirectory() as output_dir:
+                output_path = os.path.join(
+                    output_dir, "A_signed_resolver.jpg")
+                with open(os.path.join(FIXTURES, "A.jpg"),
+                          "rb") as source:
+                    with open(output_path, "wb") as dest:
+                        print(f"Signing A.jpg -> {output_path}")
+                        builder.sign(
+                            c2pa.Signer.from_info(signer_info),
+                            "image/jpeg", source, dest)
+
+                self.assertTrue(
+                    any(m == "GET" for m, _ in resolver.requests))
+                requests_before_reread = len(resolver.requests)
+
+                # Reading the signed file back uses its embedded manifest,
+                # so this makes no HTTP requests at all.
+                print("Re-reading the signed output "
+                      "(should trigger no HTTP requests)")
+                with open(output_path, "rb") as f:
+                    with c2pa.Reader("image/jpeg", f) as reader:
+                        store = json.loads(reader.json())
+                        manifest = store["manifests"][
+                            store["active_manifest"]]
+                        self.assertTrue(manifest.get("ingredients"))
+
+                print(f"Resolver saw {len(resolver.requests)} request(s) "
+                      f"total (expected {requests_before_reread}, "
+                      "unchanged since re-read is embedded-only)")
+                self.assertEqual(
+                    len(resolver.requests), requests_before_reread)
+        finally:
+            context.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
