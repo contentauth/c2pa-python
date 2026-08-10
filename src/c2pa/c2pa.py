@@ -1463,6 +1463,17 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         "Error loading settings",
         check=lambda r: r != 0)
 
+    # The native call above only wrote this thread's settings. Carry the same
+    # configuration to every other thread by rebinding the process-wide
+    # default Context, which readers and builders use when none is passed.
+    #
+    # Build the replacement first, then rebind: a failure here leaves the
+    # previous default in place rather than a half-configured one. The old
+    # Context is deliberately not closed, since another thread may be using
+    # it right now; refcounting frees it once nobody holds it.
+    global _default_context
+    _default_context = Context.from_json(settings_str)
+
 
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
@@ -1776,6 +1787,48 @@ class Context(ManagedResource, ContextProvider):
         """Return the raw C2paContext pointer."""
         self._ensure_valid_state()
         return self._handle
+
+
+# Process-wide default Context, used whenever a Reader or Builder is
+# constructed without an explicit one. Built eagerly at import so CPython's
+# import lock does the serializing; no lock of our own is needed.
+#
+# The native Context is an Arc on the Rust side and is safe to share across
+# threads, unlike the thread-local settings that c2pa_reader_from_stream
+# relies on. Routing the default path through it is what makes readers built
+# on worker threads see the configuration loaded on the main thread.
+#
+# load_settings() replaces this by rebinding the name to a brand new Context,
+# never by mutating this one. Rebinding is a single atomic bytecode under the
+# GIL, so a concurrent reader sees either the old Context or the new one.
+# Its lifetime is the process: it must never be closed by user code, and the
+# previous instance is left to refcounting rather than closed, since another
+# thread may still be mid-call on it.
+_default_context: Optional['Context'] = None
+
+
+def _get_default_context() -> Optional['Context']:
+    """Return the process-wide default Context.
+
+    Read without synchronization on purpose: the only writer rebinds the
+    module global (see load_settings), which is atomic under the GIL.
+    """
+    return _default_context
+
+
+# Escape hatch for the rollout: setting this to 1/true/yes sends context-less
+# readers back down the deprecated c2pa_reader_from_stream path so the old and
+# new behavior can be compared. Remove once callers have migrated.
+_LEGACY_READER_PATH_ENV = "C2PA_LEGACY_THREAD_LOCAL_READER"
+
+
+def _use_legacy_reader_path() -> bool:
+    """Whether to bypass the default Context and use the deprecated path."""
+    return os.environ.get(
+        _LEGACY_READER_PATH_ENV, "").strip().lower() in ("1", "true", "yes")
+
+
+_default_context = Context()
 
 
 class Stream:
@@ -2486,9 +2539,18 @@ class Reader(ManagedResource):
         if format_or_path is None and stream is None:
             raise C2paError("Reader requires a path or a stream")
 
-        if context is not None:
+        # Fall back to the process-wide default Context when the caller did
+        # not pass one. The legacy path below calls c2pa_reader_from_stream,
+        # which reads Rust thread-local settings and so silently validates
+        # against an empty trust list on any thread that never called
+        # load_settings(). Routing through a Context avoids that entirely.
+        effective_context = context
+        if effective_context is None and not _use_legacy_reader_path():
+            effective_context = _get_default_context()
+
+        if effective_context is not None:
             self._init_from_context(
-                context, format_or_path, stream,
+                effective_context, format_or_path, stream,
                 manifest_data,
             )
             return
@@ -2594,15 +2656,26 @@ class Reader(ManagedResource):
         # Determine format and open stream
         format_bytes = self._resolve_format_bytes(format_or_path, stream)
         format_arg = _format_ffi_arg(format_bytes)
-        if stream is None:
-            # A None format lets the native lib guess from the bytes.
-            self._backing_file = open(str(format_or_path), 'rb')
-            self._own_stream = Stream(self._backing_file)
-        elif isinstance(stream, str):
-            self._backing_file = open(stream, 'rb')
-            self._own_stream = Stream(self._backing_file)
-        else:
-            self._own_stream = Stream(stream)
+        # Opening happens under the same conversion _init_from_file uses, so a
+        # missing file raises C2paError.Io on this path too rather than a bare
+        # OSError.
+        try:
+            if stream is None:
+                # A None format lets the native lib guess from the bytes.
+                self._backing_file = open(str(format_or_path), 'rb')
+                self._own_stream = Stream(self._backing_file)
+            elif isinstance(stream, str):
+                self._backing_file = open(stream, 'rb')
+                self._own_stream = Stream(self._backing_file)
+            else:
+                self._own_stream = Stream(stream)
+        except C2paError:
+            self._close_streams()
+            raise
+        except Exception as e:
+            self._close_streams()
+            raise C2paError.Io(
+                Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
         try:
             # Adopt before the consuming call: _consume_and_swap needs an
@@ -3372,8 +3445,16 @@ class Builder(ManagedResource):
 
         json_str = _to_utf8_bytes(manifest_json, "manifest JSON")
 
-        if context is not None:
-            self._init_from_context(context, json_str)
+        # Same reasoning as Reader: the context-less builder path depends on
+        # Rust thread-local settings, so fall back to the process-wide default
+        # Context. _has_context_signer stays keyed off the caller's context
+        # above, since the default one never carries a signer.
+        effective_context = context
+        if effective_context is None and not _use_legacy_reader_path():
+            effective_context = _get_default_context()
+
+        if effective_context is not None:
+            self._init_from_context(effective_context, json_str)
         else:
             self._create_and_activate(
                 lambda: _lib.c2pa_builder_from_json(json_str),

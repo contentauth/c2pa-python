@@ -1997,8 +1997,13 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_str = reader.json()
+            # Read with an explicit trust-configured Context: the signing
+            # cert is only trusted under the test trust config, and relying
+            # on another test having called load_settings() first makes this
+            # test order-dependent.
+            with Context.from_dict(load_test_settings_json()) as context:
+                reader = Reader("image/jpeg", output, context=context)
+                json_str = reader.json()
             # Verify the manifest was created
             self.assertIsNotNone(json_str)
 
@@ -2029,9 +2034,9 @@ class TestBuilderWithSigner(unittest.TestCase):
 
             self.assertEqual(len(created_actions), 1)
 
-            # Needs trust configuration to be set up to validate as Trusted,
-            # or validation_status on read reports `signing certificate untrusted`.
-            self.assertEqual(manifest_data["validation_state"], "Valid")
+            # Read with the test trust config above, so the signing cert
+            # resolves as trusted rather than `signing certificate untrusted`.
+            self.assertEqual(manifest_data["validation_state"], "Trusted")
             output.close()
 
     def test_streams_sign_with_es256_alg_create_intent_2(self):
@@ -2049,8 +2054,13 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_str = reader.json()
+            # Read with an explicit trust-configured Context: the signing
+            # cert is only trusted under the test trust config, and relying
+            # on another test having called load_settings() first makes this
+            # test order-dependent.
+            with Context.from_dict(load_test_settings_json()) as context:
+                reader = Reader("image/jpeg", output, context=context)
+                json_str = reader.json()
 
             # Verify the manifest was created
             self.assertIsNotNone(json_str)
@@ -2108,9 +2118,9 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("digitalSourceType", created_action)
             self.assertIn("digitalCreation", created_action["digitalSourceType"])
 
-            # Needs trust configuration to be set up to validate as Trusted,
-            # or validation_status on read reports `signing certificate untrusted`.
-            self.assertEqual(manifest_data["validation_state"], "Valid")
+            # Read with the test trust config above, so the signing cert
+            # resolves as trusted rather than `signing certificate untrusted`.
+            self.assertEqual(manifest_data["validation_state"], "Trusted")
             output.close()
 
     def test_streams_sign_with_es256_alg_edit_intent(self):
@@ -2124,8 +2134,13 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
-            json_str = reader.json()
+            # Read with an explicit trust-configured Context: the signing
+            # cert is only trusted under the test trust config, and relying
+            # on another test having called load_settings() first makes this
+            # test order-dependent.
+            with Context.from_dict(load_test_settings_json()) as context:
+                reader = Reader("image/jpeg", output, context=context)
+                json_str = reader.json()
 
             # Verify the manifest was created
             self.assertIsNotNone(json_str)
@@ -2184,9 +2199,9 @@ class TestBuilderWithSigner(unittest.TestCase):
                 self.assertIn("url", ingredient)
                 self.assertIn("hash", ingredient)
 
-            # Needs trust configuration to be set up to validate as Trusted,
-            # or validation_status on read reports `signing certificate untrusted`.
-            self.assertEqual(manifest_data["validation_state"], "Valid")
+            # Read with the test trust config above, so the signing cert
+            # resolves as trusted rather than `signing certificate untrusted`.
+            self.assertEqual(manifest_data["validation_state"], "Trusted")
             output.close()
 
     def test_streams_sign_with_es256_alg_with_trust_config(self):
@@ -8267,12 +8282,25 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._lib.c2pa_context_new = real_new
 
-        real_json = c2pa_module._lib.c2pa_builder_from_json
-        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
+        # A context-less Builder now goes through the process-wide default
+        # Context, so c2pa_builder_from_context is the call that must fail.
+        real_from_ctx = c2pa_module._lib.c2pa_builder_from_context
+        c2pa_module._lib.c2pa_builder_from_context = lambda c: None
         try:
             with self.assertRaises(Error):
                 Builder({"claim_generator": "test"})
         finally:
+            c2pa_module._lib.c2pa_builder_from_context = real_from_ctx
+
+        # The legacy opt-in still routes through c2pa_builder_from_json.
+        real_json = c2pa_module._lib.c2pa_builder_from_json
+        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
+        os.environ[c2pa_module._LEGACY_READER_PATH_ENV] = "1"
+        try:
+            with self.assertRaises(Error):
+                Builder({"claim_generator": "test"})
+        finally:
+            os.environ.pop(c2pa_module._LEGACY_READER_PATH_ENV, None)
             c2pa_module._lib.c2pa_builder_from_json = real_json
 
     def test_context_build_null_return_frees_builder(self):

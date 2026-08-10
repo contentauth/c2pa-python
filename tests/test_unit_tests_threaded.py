@@ -3035,5 +3035,126 @@ class TestManagedResourceCrossThread(unittest.TestCase):
         self.assertEqual(settings._owner_pid, pid)
 
 
+class TestDefaultContextAcrossThreads(unittest.TestCase):
+    """Settings loaded on the main thread must reach worker threads.
+
+    c2pa_reader_from_stream reads Rust thread-local settings, so a reader
+    built on a pool worker used to validate against an empty trust list and
+    silently report the signer as untrusted. Context-less readers now go
+    through the process-wide default Context instead, which is an Arc on the
+    Rust side and is shared across threads.
+    """
+
+    def setUp(self):
+        with open(os.path.join(FIXTURES_FOLDER, "es256_certs.pem"), "rb") as f:
+            certs = f.read()
+        with open(os.path.join(FIXTURES_FOLDER,
+                               "es256_private.key"), "rb") as f:
+            key = f.read()
+        self.signer = Signer.from_info(C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        ))
+        self.manifest = {
+            "claim_generator_info": [
+                {"name": "threaded_default_context_test", "version": "1.0"},
+            ],
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {"actions": [{
+                    "action": "c2pa.created",
+                    # A created action without a source type is rejected as
+                    # assertion.action.malformed.
+                    "digitalSourceType":
+                        "http://cv.iptc.org/newscodes/digitalsourcetype/"
+                        "digitalCreation",
+                }]},
+            }],
+        }
+        with open(os.path.join(os.path.dirname(__file__),
+                               "trust_config_test_settings.json")) as f:
+            self.trust_config = json.load(f)
+
+        with open(DEFAULT_TEST_FILE, "rb") as source:
+            output = io.BytesIO(bytearray())
+            builder = Builder(self.manifest)
+            builder.sign(self.signer, "image/jpeg", source, output)
+        self.signed_bytes = output.getvalue()
+
+    def _validation_state(self):
+        reader = Reader("image/jpeg", io.BytesIO(self.signed_bytes))
+        return json.loads(reader.json()).get("validation_state")
+
+    def test_worker_thread_sees_main_thread_trust_config(self):
+        from c2pa.c2pa import load_settings
+        load_settings(self.trust_config)
+
+        main_state = self._validation_state()
+        self.assertEqual(main_state, "Trusted")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            worker_states = list(
+                pool.submit(self._validation_state).result()
+                for _ in range(4)
+            )
+
+        # The whole point: the worker agrees with the main thread rather than
+        # falling back to an empty trust list.
+        for state in worker_states:
+            self.assertEqual(state, main_state)
+
+    def test_worker_thread_without_load_settings_still_validates(self):
+        # No load_settings anywhere: the pristine default Context must still
+        # produce a working reader on a worker thread.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            states = [f.result() for f in [
+                pool.submit(self._validation_state) for _ in range(4)]]
+
+        for state in states:
+            self.assertIsNotNone(state)
+            self.assertNotEqual(state, "Invalid")
+
+    def test_rebinding_default_context_under_load_is_safe(self):
+        """load_settings() rebinds the global while readers are running.
+
+        Rebinding is a single atomic bytecode under the GIL, so a concurrent
+        reader must observe either the old Context or the new one, never a
+        torn or freed one. Without that property this deadlocks or crashes.
+        """
+        from c2pa.c2pa import load_settings
+
+        stop = threading.Event()
+        errors = []
+        observed = []
+
+        def reader_loop():
+            try:
+                while not stop.is_set():
+                    observed.append(self._validation_state())
+            except Exception as exc:  # noqa: BLE001 - recorded and re-raised
+                errors.append(exc)
+
+        threads = [threading.Thread(target=reader_loop) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        try:
+            for _ in range(15):
+                load_settings(self.trust_config)
+                load_settings({"version": 1})
+        finally:
+            stop.set()
+            for thread in threads:
+                thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertGreater(len(observed), 0)
+        # Every observation is a fully-formed state from one Context or the
+        # other; nothing half-applied leaks through.
+        for state in observed:
+            self.assertIn(state, ("Trusted", "Valid"))
+
+
 if __name__ == '__main__':
     unittest.main()
