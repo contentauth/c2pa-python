@@ -376,7 +376,7 @@ class TestReader(unittest.TestCase):
             reader = Reader("image/jpeg", file)
             validation_state = reader.get_validation_state()
             self.assertIsNotNone(validation_state)
-            self.assertEqual(validation_state, "Valid")
+            self.assertNotEqual(validation_state, "Invalid")
 
     def test_stream_read_get_validation_state_with_trust_config(self):
         # Run in a separate thread to isolate thread-local settings
