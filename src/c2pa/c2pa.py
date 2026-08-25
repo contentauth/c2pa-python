@@ -271,8 +271,9 @@ class ManagedResource:
         self._pending_teardown = None
         record_owner_pid(self)
 
-    def _lock(self):
-        """Return this resource's operation lock.
+    def _state_lock(self):
+        """Return this resource's raw operation lock, with no side effects
+        beyond mutual exclusion.
 
         Reentrant because it is possible to run a finalizer at any bytecode
         boundary, including inside a region this thread has already locked,
@@ -280,12 +281,7 @@ class ManagedResource:
         locked region.
 
         Falls back to a fresh lock when the attribute is missing.
-
-        Never hold this across a native call that drives stream callbacks
-        (construction, resource_to_stream, the Builder stream methods,
-        signing). Those calls release the GIL and re-enter caller-supplied
-        Python, which may call back into this API on another thread.
-        Only calls that touch no callbacks are serialized here.
+        Unlike _lock(), this does not open a native-error section.
         """
         lock = getattr(self, '_op_lock', None)
         if lock is None:
@@ -295,6 +291,19 @@ class ManagedResource:
             except Exception:
                 pass
         return lock
+
+    @contextlib.contextmanager
+    def _lock(self):
+        """Hold this resource's operation lock its duration,
+        and mark this thread as inside a native-error section.
+
+        Never hold this across a native call that drives stream callbacks.
+        Those calls release the GIL and re-enter caller-supplied
+        code, which may call back into this API on another thread.
+        Only calls that touch no callbacks are serialized here.
+        """
+        with self._state_lock(), _native_section():
+            yield
 
     @contextlib.contextmanager
     def _native_call(self):
@@ -309,25 +318,22 @@ class ManagedResource:
         The resource is marked closed as soon as the teardown is recorded, so
         a caller that closed it cannot keep using it while the free is
         pending.
+
+        Also opens a native-error section around the yielded body (see
+        _lock()): the in-flight guard alone only protects this resource's
+        own handle, not the shared thread-local error slot a caller inside
+        the block is about to read.
         """
-        with self._lock():
+        with self._state_lock():
             self._ensure_valid_state()
             self._inflight = getattr(self, '_inflight', 0) + 1
         try:
-            yield
+            with _native_section():
+                yield
         finally:
-            with self._lock():
+            with self._state_lock():
                 self._inflight -= 1
-                pending = (self._pending_teardown
-                           if self._inflight == 0 else None)
-                if pending is not None:
-                    self._pending_teardown = None
-            # Released the lock before the free:
-            # _teardown takes it again, and keeping the two acquisitions
-            # separate means the counter update is never held across
-            # the release work.
-            if pending is not None:
-                self._teardown(pending)
+            self._maybe_flush_pending()
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -387,33 +393,62 @@ class ManagedResource:
 
         Holds the operation lock so the free cannot happen between another
         thread's state check and its use of the handle in a native call.
+
+        Deferred (instead of run now) when either gate is blocking:
+        - this resource's own handle is in flight in a native call
+        - this thread is inside a native-error section for some call,
+        that may access the native error slot.
         """
-        with self._lock():
-            if getattr(self, '_inflight', 0) > 0:
-                # A native call is running that re-enters caller Python and
-                # is still using this handle. Record the intent and whichever
-                # caller leaves _native_call last performs the free.
-                # Mark the resource closed now so it cannot be used
-                # while the free is pending.
+        with self._state_lock():
+            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
+                # Mark the resource closed now so it cannot be used while
+                # the free is pending, but record the intent rather than
+                # freeing: whichever gate is blocking will call
+                # _maybe_flush_pending() once it clears.
                 self._pending_teardown = free_handle
                 self._lifecycle_state = LifecycleState.CLOSED
+                if _in_native_section():
+                    _register_for_section_flush(self)
                 return
 
-            if is_foreign_process(self):
-                self._handle = None
-                self._lifecycle_state = LifecycleState.CLOSED
-                return
+            self._finish_teardown(free_handle)
 
+    def _finish_teardown(self, free_handle: bool):
+        """The part of _teardown that only runs once nothing is blocking
+        teardown. Steps: release, null the handle, free if requested.
+
+        Not called directly outside _teardown/_maybe_flush_pending:
+        callers that want to close a resource still go through _teardown,
+        which decides whether this can run now or must be deferred.
+        """
+        if is_foreign_process(self):
+            self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
-            self._safe_release()
+            return
 
-            handle, self._handle = self._handle, None
-            if free_handle and handle:
-                try:
-                    ManagedResource._free_native_ptr(handle)
-                except Exception:
-                    logger.error("Failed to free native %s resources",
-                                 type(self).__name__, exc_info=True)
+        self._lifecycle_state = LifecycleState.CLOSED
+        self._safe_release()
+
+        handle, self._handle = self._handle, None
+        if free_handle and handle:
+            try:
+                ManagedResource._free_native_ptr(handle)
+            except Exception:
+                logger.error("Failed to free native %s resources",
+                             type(self).__name__, exc_info=True)
+
+    def _maybe_flush_pending(self):
+        """Called when a gate that may have been blocking a deferred
+        teardown clears (this resource's own _inflight dropping to 0, or
+        this thread's native-error section closing).
+        """
+        with self._state_lock():
+            if self._pending_teardown is None:
+                return
+            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
+                return
+            free_handle, self._pending_teardown = self._pending_teardown, None
+        self._finish_teardown(free_handle)
 
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
@@ -463,9 +498,11 @@ class ManagedResource:
         Raises:
             C2paError: If the pointer fails validation; it is freed first.
         """
-        ptr = ffi_call()
+        ptr = None
         try:
-            _check_ffi_operation_result(ptr, error_message, check=check)
+            with self._lock():
+                ptr = ffi_call()
+                _check_ffi_operation_result(ptr, error_message, check=check)
             self._activate(ptr)
         except Exception:
             if ptr:
@@ -803,6 +840,49 @@ def _read_native_error() -> Optional[str]:
     finally:
         _lib.c2pa_string_free(error)
     return message or None
+
+
+_native_section_state = threading.local()
+
+
+def _in_native_section() -> bool:
+    """True while this thread is between an FFI call and reading back the
+    native error it may have set (see _native_section())."""
+    return getattr(_native_section_state, 'depth', 0) > 0
+
+
+def _register_for_section_flush(resource):
+    """Record that `resource`'s teardown was deferred only because this
+    thread's native-error section was open."""
+    pending = getattr(_native_section_state, 'pending_resources', None)
+    if pending is not None:
+        pending.append(resource)
+
+
+@contextlib.contextmanager
+def _native_section():
+    """Mark this thread as inside a section where a native call's result is
+    about to be read back: an error-slot check, or a consuming call's
+    success/failure classification.
+
+    Reentrant: a call whose own native call triggers another one
+    recursively (same thread) nests correctly here -- only the outermost
+    span flushes, so nothing is freed before an inner, still-open span has
+    finished reading its own error.
+    """
+    state = _native_section_state
+    depth = getattr(state, 'depth', 0)
+    state.depth = depth + 1
+    if depth == 0:
+        state.pending_resources = []
+    try:
+        yield
+    finally:
+        state.depth -= 1
+        if state.depth == 0:
+            pending, state.pending_resources = state.pending_resources, []
+            for resource in pending:
+                resource._maybe_flush_pending()
 
 
 class C2paSignerInfo(ctypes.Structure):
@@ -1549,11 +1629,12 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     except (AttributeError, UnicodeEncodeError) as e:
         raise C2paError(f"Failed to encode settings to UTF-8: {e}")
 
-    result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
-    _check_ffi_operation_result(
-        result,
-        "Error loading settings",
-        check=lambda r: r != 0)
+    with _native_section():
+        result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
+        _check_ffi_operation_result(
+            result,
+            "Error loading settings",
+            check=lambda r: r != 0)
 
 
 class ContextProvider(ABC):
@@ -1786,11 +1867,12 @@ class Context(ManagedResource, ContextProvider):
             # a successful build consumes it, so close() is then a no-op.
             with self._NativeBuilder() as nb:
                 if settings is not None:
-                    _check_ffi_operation_result(
-                        _lib.c2pa_context_builder_set_settings(
-                            nb._handle, settings._c_settings),
-                        "Failed to set settings on Context",
-                        check=lambda r: r != 0)
+                    with nb._lock():
+                        _check_ffi_operation_result(
+                            _lib.c2pa_context_builder_set_settings(
+                                nb._handle, settings._c_settings),
+                            "Failed to set settings on Context",
+                            check=lambda r: r != 0)
 
                 if signer is not None:
                     # The signer's in-flight guard:
@@ -1811,9 +1893,10 @@ class Context(ManagedResource, ContextProvider):
                             "Failed to set signer on Context: {}")
                     self._has_signer = True
 
-                context_ptr = nb._consume_into(
-                    lambda h: _lib.c2pa_context_builder_build(h),
-                    "Failed to build Context: {}")
+                with nb._native_call():
+                    context_ptr = nb._consume_into(
+                        lambda h: _lib.c2pa_context_builder_build(h),
+                        "Failed to build Context: {}")
 
             self._activate(context_ptr)
 
@@ -2742,25 +2825,27 @@ class Reader(ManagedResource):
                 # Consume current reader,
                 # with manifest data and stream (C FFI pattern),
                 # to create a new one (switch out)
-                self._consume_and_swap(
-                    lambda handle: (
-                        _lib.c2pa_reader_with_manifest_data_and_stream(
-                            handle,
-                            format_arg,
-                            self._own_stream._stream,
-                            manifest_array,
-                            len(manifest_data),
-                        )
-                    ),
-                    Reader._ERROR_MESSAGES['reader_error'])
+                with self._native_call():
+                    self._consume_and_swap(
+                        lambda handle: (
+                            _lib.c2pa_reader_with_manifest_data_and_stream(
+                                handle,
+                                format_arg,
+                                self._own_stream._stream,
+                                manifest_array,
+                                len(manifest_data),
+                            )
+                        ),
+                        Reader._ERROR_MESSAGES['reader_error'])
             else:
                 # Consume reader with stream
-                self._consume_and_swap(
-                    lambda handle: _lib.c2pa_reader_with_stream(
-                        handle, format_arg,
-                        self._own_stream._stream,
-                    ),
-                    Reader._ERROR_MESSAGES['reader_error'])
+                with self._native_call():
+                    self._consume_and_swap(
+                        lambda handle: _lib.c2pa_reader_with_stream(
+                            handle, format_arg,
+                            self._own_stream._stream,
+                        ),
+                        Reader._ERROR_MESSAGES['reader_error'])
         except Exception:
             self._close_streams()
             raise
@@ -3175,10 +3260,12 @@ class Signer(ManagedResource):
         Raises:
             C2paError: If there was an error creating the signer
         """
-        signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
+        with _native_section():
+            signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
-        _check_ffi_operation_result(
-            signer_ptr, "Failed to create signer from configured signer_info")
+            _check_ffi_operation_result(
+                signer_ptr,
+                "Failed to create signer from configured signer_info")
 
         try:
             return cls(signer_ptr)
@@ -3301,16 +3388,17 @@ class Signer(ManagedResource):
         callback_cb = SignerCallback(wrapped_callback)
 
         # Create the signer with the wrapped callback
-        signer_ptr = _lib.c2pa_signer_create(
-            None,
-            callback_cb,
-            alg,
-            certs_bytes,
-            tsa_url_bytes
-        )
+        with _native_section():
+            signer_ptr = _lib.c2pa_signer_create(
+                None,
+                callback_cb,
+                alg,
+                certs_bytes,
+                tsa_url_bytes
+            )
 
-        _check_ffi_operation_result(signer_ptr,
-                                    "Failed to create signer")
+            _check_ffi_operation_result(signer_ptr,
+                                        "Failed to create signer")
 
         try:
             # Create and return the signer instance with the callback
@@ -3472,11 +3560,11 @@ class Builder(ManagedResource):
         stream_obj = Stream(stream)
 
         try:
-            handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
+            with _native_section():
+                handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
-            _check_ffi_operation_result(handle,
-                                        "Failed to create builder from archive"
-                                        )
+                _check_ffi_operation_result(
+                    handle, "Failed to create builder from archive")
 
             try:
                 # A builder from an archive here carries no context.
@@ -3555,10 +3643,11 @@ class Builder(ManagedResource):
                     context.execution_context),
                 Builder._ERROR_MESSAGES['builder_error'])
 
-        self._consume_and_swap(
-            lambda handle: _lib.c2pa_builder_with_definition(
-                handle, json_str),
-            Builder._ERROR_MESSAGES['builder_error'])
+        with self._native_call():
+            self._consume_and_swap(
+                lambda handle: _lib.c2pa_builder_with_definition(
+                    handle, json_str),
+                Builder._ERROR_MESSAGES['builder_error'])
 
     def _init_attrs(self):
         super()._init_attrs()
@@ -3890,9 +3979,10 @@ class Builder(ManagedResource):
 
         try:
             # _native_call covers the signing call only.
-            # The close() below is deliberately outside it,
-            # so the deferred teardown it records is performed
-            # on the way out rather than being deferred forever.
+            # The result check and the close() are deliberately
+            # outside of it: the check needs its own, later section,
+            # and close() runs only once that check has read whatever
+            # error this call set.
             with self._native_call():
                 if signer is not None:
                     # Signer needs its own in-flight guard.
@@ -3915,18 +4005,25 @@ class Builder(ManagedResource):
                         dest_stream._stream,
                         ctypes.byref(manifest_bytes_ptr),
                     )
-            # Sign borrows the Builder without taking ownership.
-            # Closing here ensures resources clean up,
-            # and single use/single sign done by a Builder.
-            self.close()
         except Exception as e:
             self.close()
             raise C2paError(f"Error during signing: {e}") from e
 
-        _check_ffi_operation_result(
-            result,
-            "Error during signing",
-            check=lambda r: r < 0)
+        try:
+            # Own section (the native_call already closed, so its
+            # own reads are done): close() can free this Builder,
+            # and freeing can write to the same thread-local error slot
+            # this check reads.
+            with _native_section():
+                _check_ffi_operation_result(
+                    result,
+                    "Error during signing",
+                    check=lambda r: r < 0)
+        finally:
+            # Sign borrows the Builder without taking ownership.
+            # Closing here ensures resources clean up, and single
+            # use/single sign done by a Builder.
+            self.close()
 
         # Capture the manifest bytes if available
         manifest_bytes = b""
@@ -4158,17 +4255,18 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     )
     result_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
-    result = _lib.c2pa_format_embeddable(
-        format_str,
-        manifest_array,
-        len(manifest_bytes),
-        ctypes.byref(result_bytes_ptr)
-    )
+    with _native_section():
+        result = _lib.c2pa_format_embeddable(
+            format_str,
+            manifest_array,
+            len(manifest_bytes),
+            ctypes.byref(result_bytes_ptr)
+        )
 
-    _check_ffi_operation_result(
-        result,
-        "Failed to format embeddable manifest",
-        check=lambda r: r < 0)
+        _check_ffi_operation_result(
+            result,
+            "Failed to format embeddable manifest",
+            check=lambda r: r < 0)
 
     size = result
     try:
@@ -4290,14 +4388,15 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
                 f"Invalid UTF-8 characters in private key: {str(e)}")
 
         # Perform the signing operation
-        signature_ptr = _lib.c2pa_ed25519_sign(
-            data_array,
-            data_size,
-            key_bytes
-        )
+        with _native_section():
+            signature_ptr = _lib.c2pa_ed25519_sign(
+                data_array,
+                data_size,
+                key_bytes
+            )
 
-        _check_ffi_operation_result(signature_ptr,
-                                    "Failed to sign data with Ed25519")
+            _check_ffi_operation_result(signature_ptr,
+                                        "Failed to sign data with Ed25519")
 
         try:
             # Ed25519 signatures are always 64 bytes

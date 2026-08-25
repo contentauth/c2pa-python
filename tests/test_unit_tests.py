@@ -8381,6 +8381,123 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         res.close()
         self.assertEqual(self.freed, [0xCAFE])
 
+    def test_native_section_defers_unrelated_finalizer_free(self):
+        """A finalizer for a completely unrelated resource firing mid
+        native-call must not free immediately.
+        """
+        victim = self._FakeHandleResource()
+        victim._activate(0xCAFE)
+        bystander = self._FakeHandleResource()
+        bystander._activate(0xB00B)
+
+        def clobbering_free(ptr):
+            self.freed.append(ptr)
+            # Stands in for c2pa_free's real behavior: freeing an
+            # untracked/foreign pointer writes its own error into the
+            # same thread-local slot.
+            c2pa_module._lib.c2pa_error_set_last(
+                "Other: UntrackedPointer: {:#x}".format(ptr).encode())
+            return -1
+        ManagedResource._free_native_ptr = staticmethod(clobbering_free)
+
+        def ffi_call(handle):
+            nonlocal bystander
+            del bystander  # last reference dropped: __del__ fires right here
+            return None  # the real call failed but set no error of its own
+
+        with victim._native_call():
+            with self.assertRaises(Error):
+                victim._consume_no_replacement(ffi_call, "op failed: {}")
+
+        self.assertIsNone(
+            victim._handle,
+            "victim was wrongly retained: bystander's deferred free still "
+            "clobbered the sentinel before it was read")
+        self.assertEqual(victim._lifecycle_state, LifecycleState.CLOSED)
+        self.assertEqual(self.freed, [0xB00B],
+                         "bystander's deferred free did not run exactly once")
+
+    def test_teardown_deferred_by_own_inflight_and_section_together(self):
+        """A resource blocked by its own handle being in-flight,
+        and a wholly separate native-error section is also open on this thread
+        must not free until both clear, and must free exactly once."""
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        call_cm = res._native_call()
+        call_cm.__enter__()
+        try:
+            section_cm = c2pa_module._native_section()
+            section_cm.__enter__()
+            try:
+                res.close()
+                self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+                self.assertEqual(self.freed, [],
+                                 "freed while still in flight")
+            finally:
+                section_cm.__exit__(None, None, None)
+            # The independent section closed, but res's own in-flight
+            # guard is still up: still not freed.
+            self.assertEqual(self.freed, [],
+                             "flushed while the in-flight guard still held")
+        finally:
+            call_cm.__exit__(None, None, None)
+        # Both gates clear only once native_call's own exit drops inflight
+        # to 0 -- that is what should finally trigger the free.
+        self.assertEqual(self.freed, [0xCAFE])
+
+    def test_nested_native_sections_flush_only_at_outermost_close(self):
+        """A native-error section opened inside another, already-open one
+        on the same thread must not flush anything until the outermost
+        one closes."""
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        outer = c2pa_module._native_section()
+        outer.__enter__()
+        try:
+            inner = c2pa_module._native_section()
+            inner.__enter__()
+            try:
+                res.close()
+                self.assertEqual(self.freed, [])
+            finally:
+                inner.__exit__(None, None, None)
+            # Inner closed, outer is still open: still deferred.
+            self.assertEqual(self.freed, [],
+                             "inner section flushed before the outer closed")
+        finally:
+            outer.__exit__(None, None, None)
+        self.assertEqual(self.freed, [0xCAFE])
+
+    def test_native_section_flush_isolates_exceptions(self):
+        """One deferred free raising during a section's flush must not
+        stop the rest of that flush from running."""
+        good = self._FakeHandleResource()
+        good._activate(0xC0FFEE)
+        bad = self._FakeHandleResource()
+        bad._activate(0xBAD)
+
+        def flaky_free(ptr):
+            if ptr == 0xBAD:
+                raise RuntimeError("simulated free failure")
+            self.freed.append(ptr)
+            return 0
+        ManagedResource._free_native_ptr = staticmethod(flaky_free)
+
+        with self.assertLogs('c2pa', level='ERROR') as captured:
+            with c2pa_module._native_section():
+                bad.close()
+                good.close()
+
+        self.assertEqual(self.freed, [0xC0FFEE],
+                         "a failing deferred free stopped the rest")
+        self.assertTrue(
+            any('Failed to free native' in line
+                for line in captured.output),
+            "the failing deferred free was not logged: "
+            "{}".format(captured.output))
+
 
 class TestManagedResourceObjects(TestContextAPIs):
     """Tests native resource handling management when managed manually.

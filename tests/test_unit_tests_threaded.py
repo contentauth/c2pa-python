@@ -32,7 +32,7 @@ from unittest.mock import MagicMock, patch
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
-from c2pa.c2pa import ManagedResource, Stream, LifecycleState
+from c2pa.c2pa import ManagedResource, Stream, LifecycleState, _native_section
 from c2pa.lib import is_foreign_process, record_owner_pid
 
 PROJECT_PATH = os.getcwd()
@@ -3375,31 +3375,35 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         held = threading.local()
         violations = []
         real_lock = ManagedResource._lock
+        real_state_lock = ManagedResource._state_lock
 
-        def tracking_lock(resource):
-            lock = real_lock(resource)
-            depth = getattr(held, 'stack', None)
-            if depth is None:
-                depth = held.stack = []
+        def make_tracking(real):
+            def tracking(resource):
+                lock = real(resource)
+                depth = getattr(held, 'stack', None)
+                if depth is None:
+                    depth = held.stack = []
 
-            class Tracked:
-                def __enter__(self):
-                    others = [r for r in depth if r is not resource]
-                    if others:
-                        violations.append(
-                            "{} while holding {}".format(
-                                type(resource).__name__,
-                                [type(o).__name__ for o in others]))
-                    depth.append(resource)
-                    return lock.__enter__()
+                class Tracked:
+                    def __enter__(self):
+                        others = [r for r in depth if r is not resource]
+                        if others:
+                            violations.append(
+                                "{} while holding {}".format(
+                                    type(resource).__name__,
+                                    [type(o).__name__ for o in others]))
+                        depth.append(resource)
+                        return lock.__enter__()
 
-                def __exit__(self, *exc):
-                    depth.pop()
-                    return lock.__exit__(*exc)
+                    def __exit__(self, *exc):
+                        depth.pop()
+                        return lock.__exit__(*exc)
 
-            return Tracked()
+                return Tracked()
+            return tracking
 
-        ManagedResource._lock = tracking_lock
+        ManagedResource._lock = make_tracking(real_lock)
+        ManagedResource._state_lock = make_tracking(real_state_lock)
         try:
             reader = Reader("image/jpeg", io.BytesIO(data))
             reader.json()
@@ -3409,6 +3413,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             reader.close()
         finally:
             ManagedResource._lock = real_lock
+            ManagedResource._state_lock = real_state_lock
 
         self.assertEqual(violations, [],
                          "a thread held two operation locks at once")
@@ -3449,6 +3454,49 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         stop.set()
         self._join_all(threads, "concurrent storm")
         self.assertEqual(errors, [])
+
+    def test_native_section_deferred_free_is_thread_local(self):
+        """Two threads each with their own open native-error section: one
+        thread's section closing must not flush a free deferred inside
+        the other thread's still-open section.
+        """
+        freed = self._counted_free()
+        resource = _ConcreteResource()
+        resource._activate(0x1001)
+
+        thread_ready = threading.Event()
+        release_thread = threading.Event()
+
+        def worker():
+            with _native_section():
+                resource.close()
+                thread_ready.set()
+                release_thread.wait(self.JOIN_TIMEOUT)
+            # Flush happens here, on the worker thread, once its own
+            # section closes.
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            self.assertTrue(
+                thread_ready.wait(self.JOIN_TIMEOUT),
+                "worker thread did not reach its open section in time")
+
+            # A section opened and closed entirely on this (main) thread,
+            # while the worker's section is still open on its own thread.
+            with _native_section():
+                pass
+
+            self.assertEqual(
+                freed, [],
+                "a different thread's section flushed this thread's "
+                "pending resource")
+        finally:
+            release_thread.set()
+        self._join_all([thread], "native-section worker")
+
+        self.assertEqual(freed, [0x1001],
+                         "worker thread's own section never flushed")
 
     def _counted_free(self):
         """Patch _free_native_ptr to count frees; returns the list."""
