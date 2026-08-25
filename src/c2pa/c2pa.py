@@ -2507,9 +2507,7 @@ class Reader(ManagedResource):
 
         else:
             # format_or_path is a format string, stream is a stream object
-            with Stream(stream) as stream_obj:
-                self._create_reader(
-                    format_bytes, stream_obj, manifest_data)
+            self._init_from_stream(stream, format_bytes, manifest_data)
 
     @staticmethod
     def _resolve_format_bytes(format_or_path, stream) -> Optional[bytes]:
@@ -2579,6 +2577,25 @@ class Reader(ManagedResource):
             self._close_streams()
             raise C2paError.Io(
                 Reader._ERROR_MESSAGES['io_error'].format(str(e)))
+
+    def _init_from_stream(self, stream, format_bytes,
+                          manifest_data=None):
+        """Create a reader from a caller-supplied stream object.
+        The native reader reads through this stream for as long as it is
+        alive, so the wrapper is stored on the instance and released by
+        _release().
+
+        Args:
+            stream: A stream-like object owned by the caller
+            format_bytes: UTF-8 encoded format/MIME type
+            manifest_data: Optional manifest bytes
+        """
+        try:
+            self._own_stream = Stream(stream)
+            self._create_reader(format_bytes, self._own_stream, manifest_data)
+        except Exception:
+            self._close_streams()
+            raise
 
     def _init_from_context(self, context, format_or_path,
                            stream, manifest_data=None):
