@@ -274,21 +274,18 @@ class ManagedResource:
     def _lock(self):
         """Return this resource's operation lock.
 
-        Reentrant because CPython can run a finalizer at any bytecode
+        Reentrant because it is possible to run a finalizer at any bytecode
         boundary, including inside a region this thread has already locked,
         and because a consuming call tears the handle down from inside the
-        locked region (_invoke_consume, _raise_consume_failure).
+        locked region.
 
-        Falls back to a fresh lock when the attribute is missing: an object
-        whose __init__ raised before the assignment is still finalized, and
-        __del__ must not raise.
+        Falls back to a fresh lock when the attribute is missing.
 
         Never hold this across a native call that drives stream callbacks
         (construction, resource_to_stream, the Builder stream methods,
         signing). Those calls release the GIL and re-enter caller-supplied
-        Python, which may call back into this API on another thread; holding
-        the lock across them deadlocks. Only calls that touch no callbacks
-        are serialized here, and no path holds two of these locks at once.
+        Python, which may call back into this API on another thread.
+        Only calls that touch no callbacks are serialized here.
         """
         lock = getattr(self, '_op_lock', None)
         if lock is None:
@@ -305,10 +302,9 @@ class ManagedResource:
         and forth to native layers.
 
         Calls that pass a Stream to the native library run caller-supplied
-        callbacks, so the lock cannot be held across them: the callback may
-        re-enter this API on another thread and deadlock. Instead the call is
-        counted as in flight, and a teardown arriving meanwhile records its
-        intent rather than freeing. The last caller out performs the free.
+        callbacks, so the lock cannot be held across them. Instead the call
+        is counted as in flight, and a teardown arriving meanwhile records
+        its intent rather than freeing. The last caller out performs the free.
 
         The resource is marked closed as soon as the teardown is recorded, so
         a caller that closed it cannot keep using it while the free is
@@ -326,9 +322,10 @@ class ManagedResource:
                            if self._inflight == 0 else None)
                 if pending is not None:
                     self._pending_teardown = None
-            # Released the lock before the free: _teardown takes it again,
-            # and keeping the two acquisitions separate means the counter
-            # update is never held across the release work.
+            # Released the lock before the free:
+            # _teardown takes it again, and keeping the two acquisitions
+            # separate means the counter update is never held across
+            # the release work.
             if pending is not None:
                 self._teardown(pending)
 
@@ -388,16 +385,16 @@ class ManagedResource:
         """Close the object: run _release, optionally free the handle, null it.
         free_handle=False (consumed) frees nothing, the new owner needs to free.
 
-        Holds the operation lock so the free cannot land between another
+        Holds the operation lock so the free cannot happen between another
         thread's state check and its use of the handle in a native call.
         """
         with self._lock():
             if getattr(self, '_inflight', 0) > 0:
                 # A native call is running that re-enters caller Python and
-                # is still using this handle. Record the intent; whichever
-                # caller leaves _native_call last performs the free. Mark the
-                # resource closed now so it cannot be used while the free is
-                # pending.
+                # is still using this handle. Record the intent and whichever
+                # caller leaves _native_call last performs the free.
+                # Mark the resource closed now so it cannot be used
+                # while the free is pending.
                 self._pending_teardown = free_handle
                 self._lifecycle_state = LifecycleState.CLOSED
                 return
@@ -1781,10 +1778,10 @@ class Context(ManagedResource, ContextProvider):
                         check=lambda r: r != 0)
 
                 if signer is not None:
-                    # The signer's own in-flight guard: this hands its handle
-                    # to native, so a signer.close() on another thread must
-                    # not free it between the state check and the call. The
-                    # guard also makes the check and the consume atomic.
+                    # The signer's in-flight guard:
+                    # this hands its handle to native,
+                    # so a signer.close() on another thread must not
+                    # free it between the state check and the call.
                     #
                     # _consume_no_replacement tears the signer down from
                     # inside this region. A teardown recorded while the guard
@@ -2672,9 +2669,8 @@ class Reader(ManagedResource):
     def _init_from_stream(self, stream, format_bytes,
                           manifest_data=None):
         """Create a reader from a caller-supplied stream object.
-        The native reader reads through this stream for as long as it is
-        alive, so the wrapper is stored on the instance and released by
-        _release().
+        The native reader reads through this stream as long as it's alive,
+        so the wrapper is stored on the instance and released by _release().
 
         Args:
             stream: A stream-like object owned by the caller
@@ -2714,10 +2710,7 @@ class Reader(ManagedResource):
 
         try:
             # The Context is caller-supplied and may be shared, so its handle
-            # needs its own in-flight guard across the native call: the
-            # execution_context property validates and returns the handle, and
-            # without the guard a context.close() on another thread could free
-            # it before c2pa_reader_from_context reads it.
+            # needs its own in-flight guard across the native call.
             with context._native_call():
                 # Adopt before the consuming call: _consume_and_swap needs an
                 # active resource, and cleanup then owns the pointer either
@@ -2765,7 +2758,7 @@ class Reader(ManagedResource):
         self._backing_file = None
 
         # Fragment streams handed to the native reader by with_fragment,
-        # which it keeps reading from for the rest of its life.
+        # which it keeps reading from for the rest of its lifecycle.
         self._fragment_streams = []
 
         # Caches for manifest JSON string and parsed data.
@@ -2861,8 +2854,8 @@ class Reader(ManagedResource):
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
-        # The native reader keeps reading through both streams after this
-        # returns, so they are owned here and released by _release() rather
+        # The native reader keeps reading through both streams after this returns,
+        # so they are owned here and released by _release() rather
         # than at the end of a with block.
         main_obj = Stream(stream)
         frag_obj = Stream(fragment_stream)
@@ -2881,8 +2874,8 @@ class Reader(ManagedResource):
             frag_obj.close()
             raise
 
-        # Replace the streams this reader owned, closing the previous ones so
-        # repeated calls do not accumulate them.
+        # Replace the streams this reader owned,
+        # closing the previous ones so repeated calls do not accumulate them.
         previous = self._own_stream
         self._own_stream = main_obj
         self._fragment_streams.append(frag_obj)
@@ -2911,10 +2904,7 @@ class Reader(ManagedResource):
             C2paError: If there was an error getting the JSON
         """
 
-        # The state check and the handle read are one critical section: a
-        # finalizer on another thread frees the handle while it is still
-        # non-null, so a check made outside the lock says nothing about the
-        # handle this call goes on to pass to native code.
+        # Lock due to checks on native handles.
         with self._lock():
             self._ensure_valid_state()
 
@@ -3540,13 +3530,11 @@ class Builder(ManagedResource):
         if not context.is_valid:
             raise C2paError("Context is not valid")
 
-        # The Context is caller-supplied and may be shared, so its handle
-        # needs its own in-flight guard across the native call: without it a
-        # context.close() on another thread frees the handle between the
-        # is_valid check and c2pa_builder_from_context reading it.
+        # The Context is caller-supplied and may be shared,
+        # so its handle needs its own in-flight guard across
+        # the native call, especially for state checks.
         with context._native_call():
-            # Adopt before the consuming call: _consume_and_swap needs an
-            # active resource, and cleanup then owns the pointer either way.
+            # Adopt before the consuming call.
             self._create_and_activate(
                 lambda: _lib.c2pa_builder_from_context(
                     context.execution_context),
@@ -3886,19 +3874,15 @@ class Builder(ManagedResource):
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         try:
-            # _native_call covers the signing call only. The close() below is
-            # deliberately outside it, so the deferred teardown it records is
-            # performed on the way out rather than being deferred forever.
+            # _native_call covers the signing call only.
+            # The close() below is deliberately outside it,
+            # so the deferred teardown it records is performed
+            # on the way out rather than being deferred forever.
             with self._native_call():
                 if signer is not None:
-                    # c2pa_builder_sign borrows the signer's handle, so the
-                    # signer needs its own in-flight guard: the Builder's
-                    # guard holds only the Builder's handle valid, and a
-                    # signer.close() on another thread would otherwise free
-                    # this handle mid-call. Entered inside self's guard so
-                    # concurrent signs sharing objects acquire in one order.
-                    # The check above is a fast-fail; this re-check inside
-                    # the guard is the one that makes check-then-use atomic.
+                    # Signer needs its own in-flight guard.
+                    # Entered inside self's guard so concurrent signs
+                    # sharing objects (Signers) acquire in one order.
                     with signer._native_call():
                         result = _lib.c2pa_builder_sign(
                             self._handle,
