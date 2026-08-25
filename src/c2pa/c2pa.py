@@ -1781,13 +1781,22 @@ class Context(ManagedResource, ContextProvider):
                         check=lambda r: r != 0)
 
                 if signer is not None:
-                    signer._ensure_valid_state()
-                    # A rejected signer is retained, not closed and leaked.
-                    self._signer_callback_cb = signer._callback_cb
-                    signer._consume_no_replacement(
-                        lambda h: _lib.c2pa_context_builder_set_signer(
-                            nb._handle, h),
-                        "Failed to set signer on Context: {}")
+                    # The signer's own in-flight guard: this hands its handle
+                    # to native, so a signer.close() on another thread must
+                    # not free it between the state check and the call. The
+                    # guard also makes the check and the consume atomic.
+                    #
+                    # _consume_no_replacement tears the signer down from
+                    # inside this region. A teardown recorded while the guard
+                    # is held is deferred and performed as the guard unwinds,
+                    # which is still before __init__ returns.
+                    with signer._native_call():
+                        # A rejected signer is retained, not closed and leaked.
+                        self._signer_callback_cb = signer._callback_cb
+                        signer._consume_no_replacement(
+                            lambda h: _lib.c2pa_context_builder_set_signer(
+                                nb._handle, h),
+                            "Failed to set signer on Context: {}")
                     self._has_signer = True
 
                 context_ptr = nb._consume_into(
@@ -2704,12 +2713,19 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Adopt before the consuming call: _consume_and_swap needs an
-            # active resource, and cleanup then owns the pointer either way.
-            self._create_and_activate(
-                lambda: _lib.c2pa_reader_from_context(
-                    context.execution_context),
-                Reader._ERROR_MESSAGES['reader_error'])
+            # The Context is caller-supplied and may be shared, so its handle
+            # needs its own in-flight guard across the native call: the
+            # execution_context property validates and returns the handle, and
+            # without the guard a context.close() on another thread could free
+            # it before c2pa_reader_from_context reads it.
+            with context._native_call():
+                # Adopt before the consuming call: _consume_and_swap needs an
+                # active resource, and cleanup then owns the pointer either
+                # way.
+                self._create_and_activate(
+                    lambda: _lib.c2pa_reader_from_context(
+                        context.execution_context),
+                    Reader._ERROR_MESSAGES['reader_error'])
 
             if manifest_data is not None:
                 manifest_array = (
@@ -3869,14 +3885,23 @@ class Builder(ManagedResource):
             # performed on the way out rather than being deferred forever.
             with self._native_call():
                 if signer is not None:
-                    result = _lib.c2pa_builder_sign(
-                        self._handle,
-                        format_arg,
-                        source_stream._stream,
-                        dest_stream._stream,
-                        signer._handle,
-                        ctypes.byref(manifest_bytes_ptr)
-                    )
+                    # c2pa_builder_sign borrows the signer's handle, so the
+                    # signer needs its own in-flight guard: the Builder's
+                    # guard holds only the Builder's handle valid, and a
+                    # signer.close() on another thread would otherwise free
+                    # this handle mid-call. Entered inside self's guard so
+                    # concurrent signs sharing objects acquire in one order.
+                    # The check above is a fast-fail; this re-check inside
+                    # the guard is the one that makes check-then-use atomic.
+                    with signer._native_call():
+                        result = _lib.c2pa_builder_sign(
+                            self._handle,
+                            format_arg,
+                            source_stream._stream,
+                            dest_stream._stream,
+                            signer._handle,
+                            ctypes.byref(manifest_bytes_ptr)
+                        )
                 else:
                     result = _lib.c2pa_builder_sign_context(
                         self._handle,

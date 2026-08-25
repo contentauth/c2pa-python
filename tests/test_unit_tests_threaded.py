@@ -11,6 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
+import ast
 import ctypes
 import gc
 import os
