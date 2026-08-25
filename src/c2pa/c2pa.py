@@ -21,11 +21,18 @@ import sys
 import os
 import warnings
 import weakref
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
-from .lib import dynamically_load_library, record_owner_pid, is_foreign_process
+from .lib import (
+    dynamically_load_library,
+    record_owner_pid,
+    is_foreign_process,
+    record_owner_thread,
+    is_foreign_thread,
+)
 import mimetypes
 from itertools import count
 
@@ -265,6 +272,7 @@ class ManagedResource:
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
         record_owner_pid(self)
+        record_owner_thread(self)
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -602,7 +610,23 @@ class ManagedResource:
         self.close()
 
     def __del__(self):
-        """Free native resources if close() was not called."""
+        """Free native resources if close() was not called.
+
+        Only the finalizer path is thread-guarded: an explicit close() from a
+        foreign thread is a explicit, supported operation and still frees.
+        A finalizer running on a foreign thread is collector-driven, not
+        explicit, and freeing there can race a recycled address on the
+        thread that actually owns the handle.
+        """
+        if is_foreign_thread(self):
+            logger.debug(
+                "Skipping native free for %s: finalizing thread %s is not "
+                "the owning thread (foreign_thread), handle %s",
+                type(self).__name__, threading.get_ident(),
+                getattr(self, '_handle', None))
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
         self._cleanup_resources()
 
 
@@ -2014,6 +2038,7 @@ class Stream:
 
         self._initialized = True
         record_owner_pid(self)
+        record_owner_thread(self)
 
     def __enter__(self):
         """Context manager entry."""
@@ -2038,6 +2063,16 @@ class Stream:
             if hasattr(self, '_closed') and not self._closed:
                 stream = self._stream
                 if hasattr(self, '_stream') and stream:
+                    if is_foreign_thread(self):
+                        logger.debug(
+                            "Skipping native free for Stream: finalizing "
+                            "thread %s is not the owning thread "
+                            "(foreign_thread), handle %s",
+                            threading.get_ident(), stream)
+                        self._stream = None
+                        self._closed = True
+                        self._initialized = False
+                        return
                     # Use internal cleanup to avoid calling close() which could
                     # cause issues
                     try:

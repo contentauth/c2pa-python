@@ -9,6 +9,7 @@ import sys
 import ctypes
 import logging
 import platform
+import threading
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -324,3 +325,22 @@ def is_foreign_process(obj):
     Defensive default: if _owner_pid was never set, returns False (no regression)."""
     owner = getattr(obj, '_owner_pid', None)
     return owner is not None and owner != os.getpid()
+
+
+def record_owner_thread(obj):
+    """Keep the identifier of the thread that created this native-handle wrapper.
+    """
+    obj._owner_thread = threading.get_ident()
+
+
+def is_foreign_thread(obj):
+    """Return True when this object is being finalized on a different thread
+    than the one that created it. Freeing a native handle from a thread that
+    never made the owning call can race an allocator that has already handed
+    the freed address to a live object on a third thread, destroying it.
+    Callers must skip native frees when this returns True.
+    Default: if _owner_thread was never set, returns False.
+    """
+
+    owner = getattr(obj, '_owner_thread', None)
+    return owner is not None and owner != threading.get_ident()

@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
 from c2pa.c2pa import ManagedResource, Stream, LifecycleState
-from c2pa.lib import is_foreign_process, record_owner_pid
+from c2pa.lib import is_foreign_process, record_owner_pid, is_foreign_thread, record_owner_thread
 
 PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -60,6 +60,27 @@ def _make_stream(pid_offset):
     obj._stream = MagicMock()  # non-None stream handle
     if pid_offset is not None:
         obj._owner_pid = os.getpid() + pid_offset
+    return obj
+
+
+def _make_resource_with_thread(thread_offset):
+    """Construct a ManagedResource-like object stamped with a synthetic
+    owner thread.
+    thread_offset=0: simulates same-thread teardown
+    thread_offset=1: simulates a foreign-thread teardown
+    thread_offset=None: no _owner_thread stamp
+    """
+    obj = _make_resource(pid_offset=0)
+    if thread_offset is not None:
+        obj._owner_thread = threading.get_ident() + thread_offset
+    return obj
+
+
+def _make_stream_with_thread(thread_offset):
+    """Construct a Stream-like object stamped with a synthetic owner thread."""
+    obj = _make_stream(pid_offset=0)
+    if thread_offset is not None:
+        obj._owner_thread = threading.get_ident() + thread_offset
     return obj
 
 
@@ -178,6 +199,49 @@ class TestManagedResourceForkGuard(unittest.TestCase):
         self.assertFalse(obj._initialized)
 
 
+class TestManagedResourceForeignThreadGuard(unittest.TestCase):
+    """Unit tests for the finalizer-only thread guard.
+
+    Verifies that a collector-driven teardown (__del__) running on a
+    different thread than the one that created the object skips the native
+    free, to avoid freeing recycled addresses that got reused.
+
+    A foreign owner is simulated by setting _owner_thread
+    to a value that isn't the current thread's id.
+    """
+
+    def test_foreign_thread_skips_free_via_del(self):
+        obj = _make_resource_with_thread(thread_offset=1)
+        with patch.object(ManagedResource, '_free_native_ptr') as mock_free:
+            obj.__del__()
+        mock_free.assert_not_called()
+        self.assertEqual(obj._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(obj._handle)
+
+    def test_own_thread_calls_free_via_del(self):
+        obj = _make_resource_with_thread(thread_offset=0)
+        expected_handle = obj._handle
+        with patch.object(ManagedResource, '_free_native_ptr') as mock_free:
+            obj.__del__()
+        mock_free.assert_called_once_with(expected_handle)
+
+    def test_no_stamp_calls_free_via_del(self):
+        """No _owner_thread (backward-compat) must NOT suppress cleanup."""
+        obj = _make_resource_with_thread(thread_offset=None)
+        with patch.object(ManagedResource, '_free_native_ptr') as mock_free:
+            obj.__del__()
+        mock_free.assert_called_once()
+
+    def test_foreign_thread_close_still_frees(self):
+        """Explicit close() from a foreign thread is deliberate and must
+        still free -- only the finalizer path is thread-guarded."""
+        obj = _make_resource_with_thread(thread_offset=1)
+        expected_handle = obj._handle
+        with patch.object(ManagedResource, '_free_native_ptr') as mock_free:
+            obj._cleanup_resources()
+        mock_free.assert_called_once_with(expected_handle)
+
+
 class TestHelpers(unittest.TestCase):
 
     def test_record_and_detect_own_pid(self):
@@ -193,6 +257,20 @@ class TestHelpers(unittest.TestCase):
     def test_no_stamp_not_foreign(self):
         obj = MagicMock(spec=[])  # no _owner_pid attribute
         self.assertFalse(is_foreign_process(obj))
+
+    def test_record_and_detect_own_thread(self):
+        obj = MagicMock()
+        record_owner_thread(obj)
+        self.assertFalse(is_foreign_thread(obj))
+
+    def test_detect_foreign_thread(self):
+        obj = MagicMock()
+        obj._owner_thread = threading.get_ident() + 1
+        self.assertTrue(is_foreign_thread(obj))
+
+    def test_no_thread_stamp_not_foreign(self):
+        obj = MagicMock(spec=[])  # no _owner_thread attribute
+        self.assertFalse(is_foreign_thread(obj))
 DEFAULT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "C.jpg")
 INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "A.jpg")
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "cloud.jpg")
