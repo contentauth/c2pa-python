@@ -3048,6 +3048,17 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     JOIN_TIMEOUT = 30
 
+    @classmethod
+    def setUpClass(cls):
+        with open(DEFAULT_TEST_FILE, 'rb') as handle:
+            cls.image_bytes = handle.read()
+        with open(os.path.join(FIXTURES_FOLDER,
+                               "es256_certs.pem"), 'rb') as handle:
+            cls.certs = handle.read()
+        with open(os.path.join(FIXTURES_FOLDER,
+                               "es256_private.key"), 'rb') as handle:
+            cls.private_key = handle.read()
+
     def _join_all(self, threads, what):
         for thread in threads:
             thread.join(self.JOIN_TIMEOUT)
@@ -3160,7 +3171,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     def test_close_racing_json_does_not_deadlock(self):
         """close() on one thread against json() on another."""
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         errors = []
 
         def rounds():
@@ -3189,7 +3200,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     def test_context_manager_exit_racing_json_does_not_deadlock(self):
         """__exit__ closes while another thread is calling json()."""
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         errors = []
 
         def body():
@@ -3228,7 +3239,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         with_fragment on a JPEG returns NotSupported, which routes through
         _raise_consume_failure.
         """
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         errors = []
 
         def body():
@@ -3253,11 +3264,9 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         """_sign_internal calls self.close() inside its own try block, so
         signing re-enters the lock on the signing thread.
         """
-        certs = open(os.path.join(FIXTURES_FOLDER,
-                                  "es256_certs.pem"), 'rb').read()
-        key = open(os.path.join(FIXTURES_FOLDER,
-                                "es256_private.key"), 'rb').read()
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        certs = self.certs
+        key = self.private_key
+        data = self.image_bytes
         signer_info = C2paSignerInfo(
             alg=b"es256",
             sign_cert=certs,
@@ -3295,7 +3304,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
         This passes only because construction does not hold the lock.
         """
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         other = Reader("image/jpeg", io.BytesIO(data))
         errors = []
 
@@ -3327,7 +3336,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         A lock held across construction deadlocks here, whether it is global
         or per-object. This is the test that pins the scoping decision.
         """
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         target = Reader("image/jpeg", io.BytesIO(data))
         errors = []
 
@@ -3366,7 +3375,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         That property, not the tests above, is what makes the design
         deadlock-free: with only one lock ever held, no cycle can form.
         """
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         held = threading.local()
         violations = []
         real_lock = ManagedResource._lock
@@ -3410,7 +3419,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     def test_concurrent_storm_terminates(self):
         """Readers, closers and collection running together must all finish."""
-        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        data = self.image_bytes
         stop = threading.Event()
         shared = [Reader("image/jpeg", io.BytesIO(data))]
         errors = []
