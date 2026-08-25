@@ -50,6 +50,15 @@ INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 
+def _fail_with_native_error(tag_bytes):
+    """Build a mock FFI callable that sets a native error and returns None.
+    """
+    def _mock(*args):
+        c2pa_module._lib.c2pa_error_set_last(tag_bytes)
+        return None
+    return _mock
+
+
 def load_test_settings_json():
     """
     Load default (legacy) trust configuration test settings from a
@@ -8276,12 +8285,11 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             c2pa_module._lib.c2pa_builder_from_json = real_json
 
     def test_context_build_null_return_frees_builder(self):
-        # Set a pre-consume tag in the error slot to mock a pointer rejection.
+        # Mock a pointer rejection.
         settings = Settings()
-        c2pa_module._lib.c2pa_error_set_last(
-            b"UntrackedPointer: mocked pre-consume rejection")
         real_build = c2pa_module._lib.c2pa_context_builder_build
-        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        c2pa_module._lib.c2pa_context_builder_build = _fail_with_native_error(
+            b"UntrackedPointer: mocked pre-consume rejection")
         try:
             with self.assertRaises(Error):
                 Context(settings=settings)
@@ -8339,6 +8347,39 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [])
         self.assertIsNone(res._handle)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_invoke_consume_success_does_not_consult_error_slot(self):
+        """A successful consuming call must not read the error slot at all:
+        only a failure inspects it."""
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        res._consume_no_replacement(lambda h: 0, "set failed: {}")
+
+        self.assertEqual(
+            c2pa_module._read_native_error(),
+            ManagedResource._NO_NATIVE_ERROR.decode('utf-8'))
+
+    def test_consume_no_replacement_retains_on_tag_set_by_the_call_itself(self):
+        """Only a *stale* tag left over from before the call is the
+        thing being defended against."""
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        def fake_call(handle):
+            c2pa_module._lib.c2pa_error_set_last(
+                b"UntrackedPointer: rejected by the call itself")
+            return -1
+
+        with self.assertRaises(Error):
+            res._consume_no_replacement(fake_call, "set failed: {}")
+
+        # Rejected before ownership transferred: handle retained.
+        self.assertEqual(res._handle, 0xCAFE)
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(self.freed, [])
+        res.close()
+        self.assertEqual(self.freed, [0xCAFE])
 
 
 class TestManagedResourceObjects(TestContextAPIs):
@@ -8601,9 +8642,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         # Mimic a non-tag error: native took ownership then failed and dropped
         # the value itself, so the handle is marked consumed, not freed.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
-        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        c2pa_module._lib.c2pa_builder_with_archive = _fail_with_native_error(
+            b"Other: mocked test error")
 
         # Instrument before the failure...
         freed = self._instrument_frees()
@@ -8637,11 +8678,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         # Mimic a non-tag error: native took ownership then failed and dropped
         # the value itself, so the handle is marked consumed, not freed.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
-
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
 
         # Instrument before failure so any free would be counted.
         freed = self._instrument_frees()
@@ -8843,10 +8882,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         consumed_handle = reader._handle
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -9069,22 +9107,29 @@ class TestManagedResourceObjects(TestContextAPIs):
         finally:
             c2pa_module._lib.c2pa_error = original
 
-    def test_mocked_null_without_error_is_a_known_limitation(self):
-        # A null with no error of its own is the case that breaks: the slot
-        # still holds whatever came before. No native path does this, so it
-        # is pinned here rather than defended in _consume_and_swap.
+    def test_null_return_with_no_native_error_is_treated_as_consumed(self):
+        # A null with no error of its own used to be the case that broke:
+        # the slot still held whatever an unrelated, earlier call on this same
+        # (pooled) thread left behind, and a stale UntrackedPointer/
+        # WrongPointerType tag would make this call believe it still owned a
+        # handle the native side already dropped.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
 
+        # A stale, unrelated tag left by a prior call on this thread.
         c2pa_module._lib.c2pa_error_set_last(
             b"UntrackedPointer: 0xdeadbeef")
 
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
+        consumed_handle = reader._handle
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        # The fake native call sets no error of its own,
+        # the planted sentinel _invoke_consume is left in the slot.
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
+        freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -9092,16 +9137,12 @@ class TestManagedResourceObjects(TestContextAPIs):
                     reader.with_fragment("video/mp4", init, frag)
         finally:
             c2pa_module._lib.c2pa_reader_with_fragment = real_call
-            # Nothing clears the slot, so a planted tag would follow other
-            # tests around and change how their failures are classified.
-            c2pa_module._lib.c2pa_error_set_last(
-                b"Other: cleared by test teardown")
 
-        # The stale tag wins, so the handle is kept. Safe here (the mock
-        # consumed nothing), and the reader is still usable.
-        self.assertIsNotNone(reader._handle)
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-        reader.close()
+        # The sentinel survived, not the stale tag.
+        self.assertIsNone(reader._handle)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        self.assertEqual(self._free_count(freed, consumed_handle), 0,
+                         "consumed handle was freed instead of marked consumed")
 
     # Backfilling a pointer minted by a direct FFI call. Builder.from_archive
     # is the only production caller of _wrap_native_handle, so these are the
@@ -9250,10 +9291,9 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertFalse(backing_file.closed)
 
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with open(DEFAULT_TEST_FILE, "rb") as main, \
                     open(DEFAULT_TEST_FILE, "rb") as frag:
@@ -9272,9 +9312,9 @@ class TestManagedResourceObjects(TestContextAPIs):
         archive = self._make_archive()
 
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
-        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        c2pa_module._lib.c2pa_builder_with_archive = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with self.assertRaises(Error):
                 builder.with_archive(archive)
@@ -9321,10 +9361,9 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNotNone(reader._manifest_json_str_cache)
 
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with open(DEFAULT_TEST_FILE, "rb") as main, \
                     open(DEFAULT_TEST_FILE, "rb") as frag:

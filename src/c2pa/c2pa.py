@@ -502,6 +502,10 @@ class ManagedResource:
     # so it is still ours to deal with.
     _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
 
+    # Planted right before a consuming call so that a failure which
+    # sets no error of its own is distinguishable from a stale error.
+    _NO_NATIVE_ERROR = b"Other: c2pa-python-no-native-error"
+
     def _invoke_consume(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle, returning its raw result.
 
@@ -521,6 +525,8 @@ class ManagedResource:
             ctypes.ArgumentError: If marshalling failed; handle untouched.
             C2paError: If the call raised any other exception.
         """
+        # Same thread that makes the call, same thread-local slot.
+        _lib.c2pa_error_set_last(ManagedResource._NO_NATIVE_ERROR)
         try:
             return ffi_call(self._handle)
         except ctypes.ArgumentError:
@@ -535,16 +541,13 @@ class ManagedResource:
         """Raise the error from an FFI handler consuming call.
 
         The native error is read before any free so a free's own
-        pointer-tracking error cannot overwrite it: the native error slot is
-        sticky and thread-local and the SDK does not clear it before the call,
-        so this trusts that the failing native path set its own error.
-
-        That ordering is required:
-        c2pa_free on a handle the registry no longer tracks returns -1 and
-        overwrites the slot with its own "Other: UntrackedPointer: 0x..."
-        message. Freeing first would therefore replace the real failure
-        with another one and, because that substitute carries a pre-consume
-        tag, invert the retain/consume decision made below.
+        pointer-tracking error cannot overwrite it.
+        The native error slot is sticky and thread-local,
+        and the native SDK does not clear it before the call.
+        _invoke_consume plants a sentinel here right before a consuming call,
+        so a failure that sets no error of its own is read back as
+        the sentinel rather than a stale tag left by an earlier call
+        on the same pooled thread.
 
         Args:
             error_message: Format string with one placeholder, used when the
@@ -564,6 +567,16 @@ class ManagedResource:
                     error)
                 _raise_typed_c2pa_error(error)
 
+            if error == ManagedResource._NO_NATIVE_ERROR.decode('utf-8'):
+                # The planted sentinel survives:
+                # This failure set no error of its own. Treat as consumed.
+                logger.debug(
+                    "%s: consuming call failed without setting its own "
+                    "native error; treating as consumed",
+                    type(self).__name__)
+                self._teardown(free_handle=False)
+                raise C2paError(error_message.format("Unknown error"))
+
             # A non-tag error means the native side took ownership then failed,
             # dropping the value itself: mark consumed, do not free (a free here
             # would be a guarded no-op that dirties the error slot and races a
@@ -571,8 +584,9 @@ class ManagedResource:
             self._teardown(free_handle=False)
             _raise_typed_c2pa_error(error)
 
-        # No error in the slot: ownership is unknown, so free defensively.
-        self._release_handle()
+        # No error in the slot at all. Ownership is unknown, so treat as consumed:
+        # a free here can race a recycled address in other threads.
+        self._teardown(free_handle=False)
         raise C2paError(error_message.format("Unknown error"))
 
     def _consume_and_swap(self, ffi_call, error_message):
@@ -909,6 +923,7 @@ _setup_function(
 # Set up function prototypes not attached to an API object
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
+_setup_function(_lib.c2pa_error_set_last, [ctypes.c_char_p], ctypes.c_int)
 _setup_function(_lib.c2pa_string_free, [ctypes.c_void_p], None)
 _setup_function(
     _lib.c2pa_load_settings, [
