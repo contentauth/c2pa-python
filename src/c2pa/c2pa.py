@@ -19,6 +19,7 @@ import json
 import logging
 import sys
 import os
+import threading
 import warnings
 import weakref
 from abc import ABC, abstractmethod
@@ -264,7 +265,36 @@ class ManagedResource:
     def __init__(self):
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
+        self._op_lock = threading.RLock()
         record_owner_pid(self)
+
+    def _lock(self):
+        """Return this resource's operation lock.
+
+        Reentrant because CPython can run a finalizer at any bytecode
+        boundary, including inside a region this thread has already locked,
+        and because a consuming call tears the handle down from inside the
+        locked region (_invoke_consume, _raise_consume_failure).
+
+        Falls back to a fresh lock when the attribute is missing: an object
+        whose __init__ raised before the assignment is still finalized, and
+        __del__ must not raise.
+
+        Never hold this across a native call that drives stream callbacks
+        (construction, resource_to_stream, the Builder stream methods,
+        signing). Those calls release the GIL and re-enter caller-supplied
+        Python, which may call back into this API on another thread; holding
+        the lock across them deadlocks. Only calls that touch no callbacks
+        are serialized here, and no path holds two of these locks at once.
+        """
+        lock = getattr(self, '_op_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            try:
+                self._op_lock = lock
+            except Exception:
+                pass
+        return lock
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -321,22 +351,26 @@ class ManagedResource:
     def _teardown(self, free_handle: bool):
         """Close the object: run _release, optionally free the handle, null it.
         free_handle=False (consumed) frees nothing, the new owner needs to free.
+
+        Holds the operation lock so the free cannot land between another
+        thread's state check and its use of the handle in a native call.
         """
-        if is_foreign_process(self):
-            self._handle = None
+        with self._lock():
+            if is_foreign_process(self):
+                self._handle = None
+                self._lifecycle_state = LifecycleState.CLOSED
+                return
+
             self._lifecycle_state = LifecycleState.CLOSED
-            return
+            self._safe_release()
 
-        self._lifecycle_state = LifecycleState.CLOSED
-        self._safe_release()
-
-        handle, self._handle = self._handle, None
-        if free_handle and handle:
-            try:
-                ManagedResource._free_native_ptr(handle)
-            except Exception:
-                logger.error("Failed to free native %s resources",
-                             type(self).__name__, exc_info=True)
+            handle, self._handle = self._handle, None
+            if free_handle and handle:
+                try:
+                    ManagedResource._free_native_ptr(handle)
+                except Exception:
+                    logger.error("Failed to free native %s resources",
+                                 type(self).__name__, exc_info=True)
 
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
@@ -1548,16 +1582,17 @@ class Settings(ManagedResource):
         Returns:
             self, for method chaining.
         """
-        self._ensure_valid_state()
-
         path_bytes = _to_utf8_bytes(path, "settings path")
         value_bytes = _to_utf8_bytes(value, "settings value")
 
-        _check_ffi_operation_result(
-            _lib.c2pa_settings_set_value(
-                self._handle, path_bytes, value_bytes),
-            "Failed to set settings value",
-            check=lambda r: r != 0)
+        with self._lock():
+            self._ensure_valid_state()
+
+            _check_ffi_operation_result(
+                _lib.c2pa_settings_set_value(
+                    self._handle, path_bytes, value_bytes),
+                "Failed to set settings value",
+                check=lambda r: r != 0)
 
         return self
 
@@ -1574,15 +1609,16 @@ class Settings(ManagedResource):
         Returns:
             self, for method chaining.
         """
-        self._ensure_valid_state()
-
         data_bytes = _to_utf8_bytes(data, "settings data")
 
-        _check_ffi_operation_result(
-            _lib.c2pa_settings_update_from_string(
-                self._handle, data_bytes, b"json"),
-            "Failed to update settings",
-            check=lambda r: r != 0)
+        with self._lock():
+            self._ensure_valid_state()
+
+            _check_ffi_operation_result(
+                _lib.c2pa_settings_update_from_string(
+                    self._handle, data_bytes, b"json"),
+                "Failed to update settings",
+                check=lambda r: r != 0)
 
         return self
 
@@ -2784,19 +2820,24 @@ class Reader(ManagedResource):
             C2paError: If there was an error getting the JSON
         """
 
-        self._ensure_valid_state()
+        # The state check and the handle read are one critical section: a
+        # finalizer on another thread frees the handle while it is still
+        # non-null, so a check made outside the lock says nothing about the
+        # handle this call goes on to pass to native code.
+        with self._lock():
+            self._ensure_valid_state()
 
-        # Return cached result if available
-        if self._manifest_json_str_cache is not None:
+            # Return cached result if available
+            if self._manifest_json_str_cache is not None:
+                return self._manifest_json_str_cache
+
+            result = _lib.c2pa_reader_json(self._handle)
+            _check_ffi_operation_result(
+                result, "Error during manifest parsing in Reader")
+
+            # Cache the result and return it
+            self._manifest_json_str_cache = _convert_to_py_string(result)
             return self._manifest_json_str_cache
-
-        result = _lib.c2pa_reader_json(self._handle)
-        _check_ffi_operation_result(result,
-                                    "Error during manifest parsing in Reader")
-
-        # Cache the result and return it
-        self._manifest_json_str_cache = _convert_to_py_string(result)
-        return self._manifest_json_str_cache
 
     def detailed_json(self) -> str:
         """Get the detailed JSON representation of the C2PA manifest store.
@@ -2814,13 +2855,14 @@ class Reader(ManagedResource):
                       the Reader has been closed.
         """
 
-        self._ensure_valid_state()
+        with self._lock():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_detailed_json(self._handle)
-        _check_ffi_operation_result(
-            result, "Error during detailed manifest parsing in Reader")
+            result = _lib.c2pa_reader_detailed_json(self._handle)
+            _check_ffi_operation_result(
+                result, "Error during detailed manifest parsing in Reader")
 
-        return _convert_to_py_string(result)
+            return _convert_to_py_string(result)
 
     def crjson(self) -> str:
         """Get the manifest store as a crJSON string.
@@ -2836,12 +2878,13 @@ class Reader(ManagedResource):
                       call returns null.
         """
 
-        self._ensure_valid_state()
+        with self._lock():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_crjson(self._handle)
-        _check_ffi_operation_result(result, "Error parsing crJSON")
+            result = _lib.c2pa_reader_crjson(self._handle)
+            _check_ffi_operation_result(result, "Error parsing crJSON")
 
-        return _convert_to_py_string(result)
+            return _convert_to_py_string(result)
 
     def _get_manifest_field(self, extractor):
         """Extract a field from (cached) manifest data, or None if unavailable.
@@ -2981,11 +3024,12 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error checking the embedded status
         """
-        self._ensure_valid_state()
+        with self._lock():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_is_embedded(self._handle)
+            result = _lib.c2pa_reader_is_embedded(self._handle)
 
-        return bool(result)
+            return bool(result)
 
     def get_remote_url(self) -> Optional[str]:
         """Get the remote URL of the manifest if it was obtained remotely.
@@ -2998,17 +3042,18 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the remote URL
         """
-        self._ensure_valid_state()
+        with self._lock():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_remote_url(self._handle)
+            result = _lib.c2pa_reader_remote_url(self._handle)
 
-        if result is None:
-            # No remote URL set (manifest is embedded)
-            return None
+            if result is None:
+                # No remote URL set (manifest is embedded)
+                return None
 
-        # Convert the C string to Python string
-        url_str = _convert_to_py_string(result)
-        return url_str
+            # Convert the C string to Python string
+            url_str = _convert_to_py_string(result)
+            return url_str
 
 
 class Signer(ManagedResource):
@@ -3226,16 +3271,17 @@ class Signer(ManagedResource):
         Raises:
             C2paError: If there was an error getting the size
         """
-        self._ensure_valid_state()
+        with self._lock():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_signer_reserve_size(self._handle)
+            result = _lib.c2pa_signer_reserve_size(self._handle)
 
-        _check_ffi_operation_result(
-            result,
-            "Failed to get reserve size",
-            check=lambda r: r < 0)
+            _check_ffi_operation_result(
+                result,
+                "Failed to get reserve size",
+                check=lambda r: r < 0)
 
-        return result
+            return result
 
 
 class Builder(ManagedResource):
@@ -3433,8 +3479,9 @@ class Builder(ManagedResource):
         into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
-        self._ensure_valid_state()
-        _lib.c2pa_builder_set_no_embed(self._handle)
+        with self._lock():
+            self._ensure_valid_state()
+            _lib.c2pa_builder_set_no_embed(self._handle)
 
     def set_remote_url(self, remote_url: str):
         """Set the remote URL.
@@ -3448,15 +3495,17 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error setting the remote URL
         """
-        self._ensure_valid_state()
-
         url_bytes = _to_utf8_bytes(remote_url, "remote URL")
-        result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
 
-        _check_ffi_operation_result(
-            result,
-            Builder._ERROR_MESSAGES['url_error'],
-            check=lambda r: r != 0)
+        with self._lock():
+            self._ensure_valid_state()
+
+            result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
+
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['url_error'],
+                check=lambda r: r != 0)
 
     def set_intent(
         self,
@@ -3484,18 +3533,19 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error setting the intent
         """
-        self._ensure_valid_state()
+        with self._lock():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_builder_set_intent(
-            self._handle,
-            ctypes.c_uint(intent),
-            ctypes.c_uint(digital_source_type),
-        )
+            result = _lib.c2pa_builder_set_intent(
+                self._handle,
+                ctypes.c_uint(intent),
+                ctypes.c_uint(digital_source_type),
+            )
 
-        _check_ffi_operation_result(
-            result,
-            Builder._ERROR_MESSAGES['intent_error'],
-            check=lambda r: r != 0)
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['intent_error'],
+                check=lambda r: r != 0)
 
     def add_resource(self, uri: str, stream: Any):
         """Add a resource to the builder.
@@ -3599,15 +3649,17 @@ class Builder(ManagedResource):
             C2paError: If there was an error adding the action
             C2paError.Encoding: If the action JSON contains invalid UTF-8 chars
         """
-        self._ensure_valid_state()
-
         action_str = _to_utf8_bytes(action_json, "action JSON")
-        result = _lib.c2pa_builder_add_action(self._handle, action_str)
 
-        _check_ffi_operation_result(
-            result,
-            Builder._ERROR_MESSAGES['action_error'],
-            check=lambda r: r != 0)
+        with self._lock():
+            self._ensure_valid_state()
+
+            result = _lib.c2pa_builder_add_action(self._handle, action_str)
+
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['action_error'],
+                check=lambda r: r != 0)
 
     def to_archive(self, stream: Any) -> None:
         """Write an archive of the builder to a stream.

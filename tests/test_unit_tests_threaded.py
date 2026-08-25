@@ -16,6 +16,9 @@ import gc
 import os
 import io
 import json
+import subprocess
+import sys
+import textwrap
 import unittest
 import threading
 import concurrent.futures
@@ -3033,6 +3036,414 @@ class TestManagedResourceCrossThread(unittest.TestCase):
             self.assertEqual(context_pid, pid)
             self.assertTrue(valid)
         self.assertEqual(settings._owner_pid, pid)
+
+
+class TestManagedResourceLockDeadlock(unittest.TestCase):
+    """Tests for the operation lock that serializes native calls against
+    teardown.
+
+    Every join here is bounded: a deadlock must fail the test, not hang the
+    suite.
+    """
+
+    JOIN_TIMEOUT = 30
+
+    def _join_all(self, threads, what):
+        for thread in threads:
+            thread.join(self.JOIN_TIMEOUT)
+        stuck = [t for t in threads if t.is_alive()]
+        self.assertEqual(
+            stuck, [],
+            "{} did not finish within {}s: deadlock".format(
+                what, self.JOIN_TIMEOUT))
+
+    def _run_isolated(self, body, timeout=180):
+        """Run body in a subprocess and return it.
+
+        A segfault kills the interpreter, so a crash cannot be asserted on
+        in-process: it would take the test runner with it.
+        """
+        source = textwrap.dedent(body)
+        return subprocess.run(
+            [sys.executable, "-c", source],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True,
+            timeout=timeout,
+        )
+
+    def test_json_racing_finalizer_does_not_crash(self):
+        """Readers used on one thread while others are collected.
+
+        Without the lock this segfaults inside c2pa_reader_json: the
+        finalizer frees the handle between the state check and the call.
+        """
+        result = self._run_isolated("""
+            import sys, io, gc, random, threading, time
+            sys.path.insert(0, "src")
+            from c2pa import Reader
+
+            data = open("tests/fixtures/C.jpg", "rb").read()
+            stop = threading.Event()
+            pool, lock = [], threading.Lock()
+
+            def worker():
+                while not stop.is_set():
+                    choice = random.random()
+                    try:
+                        if choice < 0.40:
+                            reader = Reader("image/jpeg", io.BytesIO(data))
+                            with lock:
+                                pool.append(reader)
+                        elif choice < 0.75:
+                            with lock:
+                                snapshot = list(pool)
+                            if snapshot:
+                                reader = random.choice(snapshot)
+                                reader._manifest_json_str_cache = None
+                                reader.json()
+                        elif choice < 0.90:
+                            with lock:
+                                reader = pool.pop(0) if pool else None
+                            if reader:
+                                reader.close()
+                        else:
+                            with lock:
+                                if len(pool) > 20:
+                                    del pool[0:5]
+                            gc.collect()
+                    except Exception:
+                        pass
+
+            threads = [threading.Thread(target=worker) for _ in range(12)]
+            for thread in threads:
+                thread.start()
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                time.sleep(0.05)
+            stop.set()
+            for thread in threads:
+                thread.join(30)
+        """)
+        self.assertEqual(
+            result.returncode, 0,
+            "reader churn crashed with {} "
+            "(139=SIGSEGV, 134=SIGABRT): {}".format(
+                result.returncode, result.stderr.decode()[-800:]))
+
+    def test_finalizer_inside_locked_operation(self):
+        """A finalizer can run at any bytecode boundary, including inside a
+        region this same thread has locked. A non-reentrant lock deadlocks
+        here; RLock does not.
+        """
+        resource = _ConcreteResource()
+        resource._activate(0x51000)
+        observed = []
+
+        class Dropped:
+            def __del__(self):
+                # Runs on this thread, inside the locked region below.
+                with resource._lock():
+                    observed.append(True)
+
+        def body():
+            with resource._lock():
+                dropped = Dropped()
+                del dropped
+                gc.collect()
+
+        thread = threading.Thread(target=body)
+        thread.start()
+        self._join_all([thread], "finalizer inside locked region")
+        self.assertEqual(observed, [True],
+                         "finalizer did not re-enter the lock")
+        resource.close()
+
+    def test_close_racing_json_does_not_deadlock(self):
+        """close() on one thread against json() on another."""
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        errors = []
+
+        def rounds():
+            try:
+                for _ in range(40):
+                    reader = Reader("image/jpeg", io.BytesIO(data))
+                    closer = threading.Thread(target=reader.close)
+                    closer.start()
+                    try:
+                        reader._manifest_json_str_cache = None
+                        reader.json()
+                    except Error:
+                        pass
+                    closer.join(self.JOIN_TIMEOUT)
+                    if closer.is_alive():
+                        errors.append("closer stuck")
+                        return
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        threads = [threading.Thread(target=rounds) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "close/json race")
+        self.assertEqual(errors, [])
+
+    def test_context_manager_exit_racing_json_does_not_deadlock(self):
+        """__exit__ closes while another thread is calling json()."""
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        errors = []
+
+        def body():
+            try:
+                for _ in range(40):
+                    reader = Reader("image/jpeg", io.BytesIO(data))
+
+                    def use():
+                        for _ in range(5):
+                            try:
+                                reader._manifest_json_str_cache = None
+                                reader.json()
+                            except Error:
+                                pass
+
+                    user = threading.Thread(target=use)
+                    user.start()
+                    with reader:
+                        pass
+                    user.join(self.JOIN_TIMEOUT)
+                    if user.is_alive():
+                        errors.append("user stuck")
+                        return
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        thread = threading.Thread(target=body)
+        thread.start()
+        self._join_all([thread], "__exit__/json race")
+        self.assertEqual(errors, [])
+
+    def test_consume_failure_teardown_does_not_deadlock(self):
+        """A failing consuming call tears the handle down from inside the
+        operation, re-entering the lock on the same thread.
+
+        with_fragment on a JPEG returns NotSupported, which routes through
+        _raise_consume_failure.
+        """
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        errors = []
+
+        def body():
+            try:
+                for _ in range(20):
+                    reader = Reader("image/jpeg", io.BytesIO(data))
+                    try:
+                        reader.with_fragment(
+                            "image/jpeg", io.BytesIO(data), io.BytesIO(data))
+                    except Error:
+                        pass
+                    reader.close()
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        thread = threading.Thread(target=body)
+        thread.start()
+        self._join_all([thread], "consume-failure teardown")
+        self.assertEqual(errors, [])
+
+    def test_close_during_sign_does_not_deadlock(self):
+        """_sign_internal calls self.close() inside its own try block, so
+        signing re-enters the lock on the signing thread.
+        """
+        certs = open(os.path.join(FIXTURES_FOLDER,
+                                  "es256_certs.pem"), 'rb').read()
+        key = open(os.path.join(FIXTURES_FOLDER,
+                                "es256_private.key"), 'rb').read()
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=certs,
+            private_key=key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        manifest = {
+            "claim_generator": "python_test",
+            "claim_generator_info": [
+                {"name": "python_test", "version": "0.0.1"}],
+            "format": "image/jpeg",
+            "assertions": [],
+        }
+        errors = []
+
+        def body():
+            try:
+                for _ in range(3):
+                    signer = Signer.from_info(signer_info)
+                    builder = Builder(manifest)
+                    builder.sign(signer, "image/jpeg",
+                                 io.BytesIO(data), io.BytesIO())
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        threads = [threading.Thread(target=body) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "sign with internal close")
+        self.assertEqual(errors, [])
+
+    def test_stream_callback_reentering_api_does_not_deadlock(self):
+        """Construction drives caller-supplied stream callbacks, and a caller
+        may legitimately call back into the API from one.
+
+        This passes only because construction does not hold the lock.
+        """
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        other = Reader("image/jpeg", io.BytesIO(data))
+        errors = []
+
+        class ReentrantStream(io.BytesIO):
+            def readinto(self, buffer):
+                try:
+                    other.json()
+                except Exception:
+                    pass
+                return super().readinto(buffer)
+
+        def body():
+            try:
+                for _ in range(10):
+                    Reader("image/jpeg", ReentrantStream(data))
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        thread = threading.Thread(target=body)
+        thread.start()
+        self._join_all([thread], "callback re-entering API")
+        self.assertEqual(errors, [])
+        other.close()
+
+    def test_stream_callback_blocking_on_other_thread_does_not_deadlock(self):
+        """The adversarial case: a stream callback that blocks on another
+        thread which touches the same object.
+
+        A lock held across construction deadlocks here, whether it is global
+        or per-object. This is the test that pins the scoping decision.
+        """
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        target = Reader("image/jpeg", io.BytesIO(data))
+        errors = []
+
+        class BlockingStream(io.BytesIO):
+            def readinto(self, buffer):
+                def use():
+                    try:
+                        target._manifest_json_str_cache = None
+                        target.json()
+                    except Exception:
+                        pass
+
+                helper = threading.Thread(target=use)
+                helper.start()
+                helper.join(10)
+                if helper.is_alive():
+                    errors.append("helper stuck inside stream callback")
+                return super().readinto(buffer)
+
+        def body():
+            try:
+                for _ in range(5):
+                    Reader("image/jpeg", BlockingStream(data))
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        thread = threading.Thread(target=body)
+        thread.start()
+        self._join_all([thread], "callback blocking on another thread")
+        self.assertEqual(errors, [])
+        target.close()
+
+    def test_no_nested_op_locks(self):
+        """No code path may hold two resources' operation locks at once.
+
+        That property, not the tests above, is what makes the design
+        deadlock-free: with only one lock ever held, no cycle can form.
+        """
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        held = threading.local()
+        violations = []
+        real_lock = ManagedResource._lock
+
+        def tracking_lock(resource):
+            lock = real_lock(resource)
+            depth = getattr(held, 'stack', None)
+            if depth is None:
+                depth = held.stack = []
+
+            class Tracked:
+                def __enter__(self):
+                    others = [r for r in depth if r is not resource]
+                    if others:
+                        violations.append(
+                            "{} while holding {}".format(
+                                type(resource).__name__,
+                                [type(o).__name__ for o in others]))
+                    depth.append(resource)
+                    return lock.__enter__()
+
+                def __exit__(self, *exc):
+                    depth.pop()
+                    return lock.__exit__(*exc)
+
+            return Tracked()
+
+        ManagedResource._lock = tracking_lock
+        try:
+            reader = Reader("image/jpeg", io.BytesIO(data))
+            reader.json()
+            reader.detailed_json()
+            reader.is_embedded()
+            reader.get_remote_url()
+            reader.close()
+        finally:
+            ManagedResource._lock = real_lock
+
+        self.assertEqual(violations, [],
+                         "a thread held two operation locks at once")
+
+    def test_concurrent_storm_terminates(self):
+        """Readers, closers and collection running together must all finish."""
+        data = open(DEFAULT_TEST_FILE, 'rb').read()
+        stop = threading.Event()
+        shared = [Reader("image/jpeg", io.BytesIO(data))]
+        errors = []
+
+        def reader_worker():
+            while not stop.is_set():
+                try:
+                    current = shared[0]
+                    current._manifest_json_str_cache = None
+                    current.json()
+                except Exception:
+                    pass
+
+        def closer_worker():
+            while not stop.is_set():
+                try:
+                    shared[0].close()
+                    shared[0] = Reader("image/jpeg", io.BytesIO(data))
+                    gc.collect()
+                except Exception as exc:
+                    errors.append(repr(exc))
+                    return
+
+        threads = [threading.Thread(target=reader_worker) for _ in range(6)]
+        threads += [threading.Thread(target=closer_worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            time.sleep(0.05)
+        stop.set()
+        self._join_all(threads, "concurrent storm")
+        self.assertEqual(errors, [])
 
 
 if __name__ == '__main__':
