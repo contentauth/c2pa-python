@@ -3840,6 +3840,29 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                     names.add(arg.value.id)
             return names
 
+        def locally_owned(method):
+            """Names bound to an object this method itself constructed.
+
+            A resource created inside the method never escapes to another
+            thread, so nothing can close it mid-call and it needs no guard.
+            Only handles reaching the method from outside (parameters,
+            attributes) are exposed to a concurrent teardown.
+            """
+            owned = set()
+            for node in ast.walk(method):
+                # `with self._NativeBuilder() as nb:` / `x = Foo()`
+                if isinstance(node, (ast.With, ast.AsyncWith)):
+                    for item in node.items:
+                        if (isinstance(item.context_expr, ast.Call)
+                                and isinstance(item.optional_vars, ast.Name)):
+                            owned.add(item.optional_vars.id)
+                elif isinstance(node, ast.Assign):
+                    if isinstance(node.value, ast.Call):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                owned.add(target.id)
+            return owned
+
         unguarded = []
         checked = 0
 
@@ -3850,6 +3873,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                 if not isinstance(method, (ast.FunctionDef,
                                            ast.AsyncFunctionDef)):
                     continue
+                owned = locally_owned(method)
 
                 # Walk the body tracking which guards are open, so a borrowed
                 # handle is only accepted when its own guard encloses the use.
@@ -3858,7 +3882,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                     if isinstance(node, (ast.With, ast.AsyncWith)):
                         active = active | guarded_names(node)
                     if isinstance(node, ast.Call):
-                        for name in borrowed_in_call(node):
+                        for name in borrowed_in_call(node) - owned:
                             checked += 1
                             if name not in active:
                                 unguarded.append(
