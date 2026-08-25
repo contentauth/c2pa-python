@@ -3045,8 +3045,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
     """Tests for the operation lock that serializes native calls against
     teardown.
 
-    Every join here is bounded: a deadlock must fail the test, not hang the
-    suite.
+    Every join here is bounded:
+    A deadlock must fail the test when timing out, not hang the suite.
     """
 
     JOIN_TIMEOUT = 30
@@ -3072,10 +3072,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                 what, self.JOIN_TIMEOUT))
 
     def _run_isolated(self, body, timeout=180):
-        """Run body in a subprocess and return it.
-
-        A segfault kills the interpreter, so a crash cannot be asserted on
-        in-process: it would take the test runner with it.
+        """Run body in a subprocess and return it,
+        so that crashes can be caught and do not crash the suite itself.
         """
         source = textwrap.dedent(body)
         return subprocess.run(
@@ -3087,9 +3085,6 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     def test_json_racing_finalizer_does_not_crash(self):
         """Readers used on one thread while others are collected.
-
-        Without the lock this segfaults inside c2pa_reader_json: the
-        finalizer frees the handle between the state check and the call.
         """
         result = self._run_isolated("""
             import sys, io, gc, random, threading, time
@@ -3146,8 +3141,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     def test_finalizer_inside_locked_operation(self):
         """A finalizer can run at any bytecode boundary, including inside a
-        region this same thread has locked. A non-reentrant lock deadlocks
-        here; RLock does not.
+        region this same thread has locked.
+        A non-reentrant lock deadlocks here, but RLock does not.
         """
         resource = _ConcreteResource()
         resource._activate(0x51000)
@@ -3240,7 +3235,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         operation, re-entering the lock on the same thread.
 
         with_fragment on a JPEG returns NotSupported, which routes through
-        _raise_consume_failure.
+        _raise_consume_failure (on purpose).
         """
         data = self.image_bytes
         errors = []
@@ -3264,8 +3259,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_close_during_sign_does_not_deadlock(self):
-        """_sign_internal calls self.close() inside its own try block, so
-        signing re-enters the lock on the signing thread.
+        """_sign_internal calls self.close() inside its own try block,
+        so signing re-enters the lock on the signing thread.
         """
         certs = self.certs
         key = self.private_key
@@ -3302,10 +3297,10 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_stream_callback_reentering_api_does_not_deadlock(self):
-        """Construction drives caller-supplied stream callbacks, and a caller
-        may legitimately call back into the API from one.
+        """Construction drives caller-supplied stream callbacks,
+        and a caller may call back into the API from one.
 
-        This passes only because construction does not hold the lock.
+        This passes because construction does not hold the lock.
         """
         data = self.image_bytes
         other = Reader("image/jpeg", io.BytesIO(data))
@@ -3333,11 +3328,11 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         other.close()
 
     def test_stream_callback_blocking_on_other_thread_does_not_deadlock(self):
-        """The adversarial case: a stream callback that blocks on another
-        thread which touches the same object.
+        """A stream callback that blocks on another thread
+        which touches the same object.
 
         A lock held across construction deadlocks here, whether it is global
-        or per-object. This is the test that pins the scoping decision.
+        or per-object.
         """
         data = self.image_bytes
         target = Reader("image/jpeg", io.BytesIO(data))
@@ -3374,9 +3369,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
 
     def test_no_nested_op_locks(self):
         """No code path may hold two resources' operation locks at once.
-
-        That property, not the tests above, is what makes the design
-        deadlock-free: with only one lock ever held, no cycle can form.
+        With only one lock ever held, no cycle can form here.
         """
         data = self.image_bytes
         held = threading.local()
@@ -3505,7 +3498,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
     def test_cross_thread_close_during_callback_defers_free(self):
-        """Same race, with the close arriving from another thread."""
+        """A close() from inside a stream callback must not free the handle
+        the native call is still using."""
         freed = self._counted_free()
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
         uri = self._thumbnail_uri(reader)
@@ -3558,8 +3552,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertIsNone(reader._handle)
 
     def test_use_after_deferred_close_is_rejected(self):
-        """Deferring must not leave the resource usable: the free is pending,
-        so the handle is about to go away."""
+        """Deferring must not leave the resource usable:
+        the free is pending, so the handle is about to go away."""
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
         uri = self._thumbnail_uri(reader)
         states = []
@@ -3584,8 +3578,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertEqual(states[1], "json rejected")
 
     def test_exception_from_callback_still_frees(self):
-        """An exception unwinding through the native call must not strand the
-        in-flight counter, or the handle is never freed."""
+        """An exception unwinding through the native call must not
+        leave the inflight-handler hanging."""
         freed = self._counted_free()
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
         uri = self._thumbnail_uri(reader)
@@ -3635,8 +3629,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertIsNone(reader._handle)
 
     def test_release_raising_during_deferred_teardown_does_not_leak(self):
-        """The deferred free survives a failing _release: the handle must
-        still be freed."""
+        """The deferred free survives a failing _release:
+        the handle must still be freed."""
         freed = self._counted_free()
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
         uri = self._thumbnail_uri(reader)
@@ -3659,8 +3653,9 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertEqual(len(freed), 1, "handle leaked when _release raised")
 
     def test_concurrent_closes_during_callback_free_once(self):
-        """Many threads closing while one native call is in flight must
-        produce exactly one free."""
+        """Many threads closing while one native call is in flight
+        must produce exactly one free (avoid double-frees,
+        or freeing something the object wouldn't own)."""
         freed = self._counted_free()
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
         uri = self._thumbnail_uri(reader)
@@ -3692,8 +3687,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         self.assertEqual(reader._inflight, 0)
 
     def test_sign_with_internal_close_frees_once(self):
-        """_sign_internal closes the Builder inside its own try, so the close
-        defers and the free happens on the way out."""
+        """_sign_internal closes the Builder inside its own try,
+        so the close defers and the free happens on the way out."""
         freed = self._counted_free()
         signer_info = C2paSignerInfo(
             alg=b"es256",
@@ -3722,9 +3717,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                          io.BytesIO(self.image_bytes), io.BytesIO())
 
     def test_class_a_construction_is_not_guarded(self):
-        """Construction is deliberately unguarded: no external caller holds a
-        reference yet, and guarding it would reintroduce the deadlock where a
-        stream callback re-enters the API."""
+        """Construction is unguarded: no external caller holds a reference yet.
+        """
         entered = []
         real = ManagedResource._native_call
 
@@ -3743,12 +3737,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                          "reintroduces the callback deadlock")
 
     def test_every_callback_running_method_is_guarded(self):
-        """Coverage check: every method that hands a Stream to the native
-        library must be guarded, except the three construction paths.
-
-        A method missed here keeps the use-after-free, and the symptom is a
-        rare segfault rather than a failing test, so this is checked
-        mechanically rather than by eye.
+        """Every method that hands a Stream to the native lib must be guarded,
+        except the construction paths.
         """
         source = inspect.getsource(sys.modules[Reader.__module__])
         lines = source.split("\n")
@@ -3798,14 +3788,11 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
                 unguarded))
 
     def test_every_borrowed_handle_is_guarded(self):
-        """Coverage check: when a method hands a *second* object's handle to
-        the native library, that object needs its own _native_call() guard.
+        """When a method hands a second object's handle to the native library,
+        that object needs its own _native_call() guard.
 
-        test_every_callback_running_method_is_guarded only asks whether the
-        string "_native_call()" appears in the method body, which cannot
-        express *whose* handle is guarded. A method that guards self while
-        passing signer._handle to native passes that check and still has the
-        use-after-free, so the ownership is checked structurally here.
+        This can happen in callbacks, where you can't express whose handle
+        is the one needing attention.
         """
         module = sys.modules[Reader.__module__]
         tree = ast.parse(inspect.getsource(module))
@@ -3841,12 +3828,8 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             return names
 
         def locally_owned(method):
-            """Names bound to an object this method itself constructed.
-
-            A resource created inside the method never escapes to another
+            """A resource created inside the method never escapes to another
             thread, so nothing can close it mid-call and it needs no guard.
-            Only handles reaching the method from outside (parameters,
-            attributes) are exposed to a concurrent teardown.
             """
             owned = set()
             for node in ast.walk(method):
@@ -3933,7 +3916,7 @@ class TestSharedSignerTeardownRace(unittest.TestCase):
         """Rotate a shared signer while other threads sign with it.
 
         Runs in a subprocess: the failure mode is a segfault, which would
-        take the test runner down with it rather than reporting a failure.
+        take the test runner down with it otherwise.
         """
         source = textwrap.dedent("""
             import io, os, sys, threading
