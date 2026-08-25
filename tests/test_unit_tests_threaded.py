@@ -14,6 +14,8 @@
 import ctypes
 import gc
 import os
+import re
+import inspect
 import io
 import json
 import subprocess
@@ -3453,6 +3455,346 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
         stop.set()
         self._join_all(threads, "concurrent storm")
         self.assertEqual(errors, [])
+
+    def _counted_free(self):
+        """Patch _free_native_ptr to count frees; returns the list."""
+        freed = []
+        real = ManagedResource._free_native_ptr
+
+        def counting(ptr):
+            freed.append(ptr)
+            return real(ptr)
+
+        ManagedResource._free_native_ptr = staticmethod(counting)
+        self.addCleanup(
+            lambda: setattr(ManagedResource, '_free_native_ptr', real))
+        return freed
+
+    def _thumbnail_uri(self, reader):
+        manifests = json.loads(reader.json()).get("manifests", {})
+        for manifest in manifests.values():
+            thumbnail = manifest.get("thumbnail")
+            if thumbnail and thumbnail.get("identifier"):
+                return thumbnail["identifier"]
+        self.skipTest("fixture has no thumbnail resource to stream")
+
+    def test_close_inside_callback_defers_free(self):
+        """A close() from inside a stream callback must not free the handle
+        the native call is still using."""
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+        during = []
+
+        class Closer(io.BytesIO):
+            def write(self, buffer):
+                reader.close()
+                during.append(len(freed))
+                return super().write(buffer)
+
+        try:
+            reader.resource_to_stream(uri, Closer())
+        except Error:
+            pass
+
+        self.assertEqual(during, [0], "handle was freed mid-call")
+        self.assertEqual(len(freed), 1, "deferred free did not run once")
+        self.assertEqual(reader._inflight, 0)
+        self.assertIsNone(reader._pending_teardown)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_cross_thread_close_during_callback_defers_free(self):
+        """Same race, with the close arriving from another thread."""
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+        during = []
+        started = threading.Event()
+
+        class Slow(io.BytesIO):
+            def write(self, buffer):
+                started.set()
+                time.sleep(0.3)
+                during.append(len(freed))
+                return super().write(buffer)
+
+        def closer():
+            started.wait(self.JOIN_TIMEOUT)
+            reader.close()
+
+        thread = threading.Thread(target=closer)
+        thread.start()
+        try:
+            reader.resource_to_stream(uri, Slow())
+        except Error:
+            pass
+        self._join_all([thread], "cross-thread closer")
+
+        self.assertEqual(during, [0], "handle was freed mid-call")
+        self.assertEqual(len(freed), 1)
+        self.assertEqual(reader._inflight, 0)
+
+    def test_deferred_teardown_still_closes(self):
+        """After a deferred free the resource is closed and a later close()
+        is a no-op rather than a second free."""
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+
+        class Closer(io.BytesIO):
+            def write(self, buffer):
+                reader.close()
+                return super().write(buffer)
+
+        try:
+            reader.resource_to_stream(uri, Closer())
+        except Error:
+            pass
+
+        self.assertEqual(len(freed), 1)
+        reader.close()
+        self.assertEqual(len(freed), 1, "second close() freed again")
+        self.assertIsNone(reader._handle)
+
+    def test_use_after_deferred_close_is_rejected(self):
+        """Deferring must not leave the resource usable: the free is pending,
+        so the handle is about to go away."""
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+        states = []
+
+        class Closer(io.BytesIO):
+            def write(self, buffer):
+                reader.close()
+                states.append(reader._lifecycle_state)
+                try:
+                    reader.json()
+                    states.append("json succeeded")
+                except Error:
+                    states.append("json rejected")
+                return super().write(buffer)
+
+        try:
+            reader.resource_to_stream(uri, Closer())
+        except Error:
+            pass
+
+        self.assertEqual(states[0], LifecycleState.CLOSED)
+        self.assertEqual(states[1], "json rejected")
+
+    def test_exception_from_callback_still_frees(self):
+        """An exception unwinding through the native call must not strand the
+        in-flight counter, or the handle is never freed."""
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+
+        class Exploding(io.BytesIO):
+            def write(self, buffer):
+                reader.close()
+                raise RuntimeError("callback failure")
+
+        try:
+            reader.resource_to_stream(uri, Exploding())
+        except Exception:
+            pass
+
+        self.assertEqual(reader._inflight, 0, "in-flight counter stranded")
+        self.assertEqual(len(freed), 1, "deferred free did not run")
+
+    def test_inflight_cleared_before_deferred_free(self):
+        """The counter must reach zero before the deferred free runs.
+
+        _teardown defers whenever _inflight is above zero, so performing the
+        free while the counter is still raised would defer it a second time
+        and the handle would never be released.
+        """
+        seen = []
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+        real_release = Reader._release
+
+        def probing_release(self):
+            seen.append(self._inflight)
+            return real_release(self)
+
+        class Closer(io.BytesIO):
+            def write(self, buffer):
+                reader.close()
+                return super().write(buffer)
+
+        with patch.object(Reader, '_release', probing_release):
+            try:
+                reader.resource_to_stream(uri, Closer())
+            except Error:
+                pass
+
+        self.assertEqual(seen, [0],
+                         "deferred free ran while still counted in flight")
+        self.assertIsNone(reader._handle)
+
+    def test_release_raising_during_deferred_teardown_does_not_leak(self):
+        """The deferred free survives a failing _release: the handle must
+        still be freed."""
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+
+        def boom(self):
+            raise RuntimeError("release failure")
+
+        class Closer(io.BytesIO):
+            def write(self, buffer):
+                reader.close()
+                return super().write(buffer)
+
+        with patch.object(Reader, '_release', boom):
+            try:
+                reader.resource_to_stream(uri, Closer())
+            except Error:
+                pass
+
+        self.assertEqual(reader._inflight, 0)
+        self.assertEqual(len(freed), 1, "handle leaked when _release raised")
+
+    def test_concurrent_closes_during_callback_free_once(self):
+        """Many threads closing while one native call is in flight must
+        produce exactly one free."""
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        uri = self._thumbnail_uri(reader)
+        started = threading.Event()
+        closers = []
+
+        class Slow(io.BytesIO):
+            def write(self, buffer):
+                started.set()
+                time.sleep(0.3)
+                return super().write(buffer)
+
+        def closer():
+            started.wait(self.JOIN_TIMEOUT)
+            reader.close()
+
+        for _ in range(8):
+            thread = threading.Thread(target=closer)
+            closers.append(thread)
+            thread.start()
+        try:
+            reader.resource_to_stream(uri, Slow())
+        except Error:
+            pass
+        self._join_all(closers, "concurrent closers")
+
+        self.assertEqual(len(freed), 1,
+                         "racing closers freed {} times".format(len(freed)))
+        self.assertEqual(reader._inflight, 0)
+
+    def test_sign_with_internal_close_frees_once(self):
+        """_sign_internal closes the Builder inside its own try, so the close
+        defers and the free happens on the way out."""
+        freed = self._counted_free()
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.private_key,
+            ta_url=b"http://timestamp.digicert.com",
+        )
+        manifest = {
+            "claim_generator": "python_test",
+            "claim_generator_info": [
+                {"name": "python_test", "version": "0.0.1"}],
+            "format": "image/jpeg",
+            "assertions": [],
+        }
+        signer = Signer.from_info(signer_info)
+        builder = Builder(manifest)
+        builder.sign(signer, "image/jpeg",
+                     io.BytesIO(self.image_bytes), io.BytesIO())
+
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertEqual(builder._inflight, 0)
+        builder_frees = [f for f in freed if f is not None]
+        self.assertGreaterEqual(len(builder_frees), 1)
+        with self.assertRaises(Error):
+            builder.sign(signer, "image/jpeg",
+                         io.BytesIO(self.image_bytes), io.BytesIO())
+
+    def test_class_a_construction_is_not_guarded(self):
+        """Construction is deliberately unguarded: no external caller holds a
+        reference yet, and guarding it would reintroduce the deadlock where a
+        stream callback re-enters the API."""
+        entered = []
+        real = ManagedResource._native_call
+
+        def recording(resource):
+            entered.append(type(resource).__name__)
+            return real(resource)
+
+        ManagedResource._native_call = recording
+        try:
+            Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        finally:
+            ManagedResource._native_call = real
+
+        self.assertEqual(entered, [],
+                         "construction entered _native_call: guarding it "
+                         "reintroduces the callback deadlock")
+
+    def test_every_callback_running_method_is_guarded(self):
+        """Coverage check: every method that hands a Stream to the native
+        library must be guarded, except the three construction paths.
+
+        A method missed here keeps the use-after-free, and the symptom is a
+        rare segfault rather than a failing test, so this is checked
+        mechanically rather than by eye.
+        """
+        source = inspect.getsource(sys.modules[Reader.__module__])
+        lines = source.split("\n")
+        class_a = {
+            ("Reader", "_create_reader"),
+            ("Reader", "_init_from_context"),
+            ("Builder", "from_archive"),
+        }
+        stream_use = re.compile(
+            r"(_stream|stream_obj|source_stream|dest_stream|main_obj"
+            r"|frag_obj)\._stream")
+
+        bodies = {}
+        current_class = current_method = None
+        start = None
+        for index, line in enumerate(lines):
+            if re.match(r"^class ", line):
+                current_class = line.split("(")[0].replace(
+                    "class ", "").strip(":")
+            if re.match(r"^def ", line):
+                current_class = None
+            match = re.match(r"^    def (\w+)", line)
+            if match:
+                if current_class and current_method and start is not None:
+                    bodies[(current_class, current_method)] = "\n".join(
+                        lines[start:index])
+                current_method = match.group(1)
+                start = index
+        if current_class and current_method and start is not None:
+            bodies[(current_class, current_method)] = "\n".join(lines[start:])
+
+        unguarded = []
+        checked = 0
+        for key, body in bodies.items():
+            if not stream_use.search(body):
+                continue
+            checked += 1
+            if key in class_a:
+                continue
+            if "_native_call()" not in body:
+                unguarded.append("{}.{}".format(*key))
+
+        self.assertGreater(checked, 0, "coverage scan found no methods")
+        self.assertEqual(
+            unguarded, [],
+            "these hand a Stream to native without _native_call(): {}".format(
+                unguarded))
 
 
 if __name__ == '__main__':
