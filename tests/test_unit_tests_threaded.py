@@ -269,8 +269,9 @@ class TestHelpers(unittest.TestCase):
         self.assertTrue(is_foreign_thread(obj))
 
     def test_no_thread_stamp_not_foreign(self):
-        obj = MagicMock(spec=[])  # no _owner_thread attribute
+        obj = MagicMock(spec=[])
         self.assertFalse(is_foreign_thread(obj))
+
 DEFAULT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "C.jpg")
 INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "A.jpg")
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_FOLDER, "cloud.jpg")
