@@ -3540,11 +3540,17 @@ class Builder(ManagedResource):
         if not context.is_valid:
             raise C2paError("Context is not valid")
 
-        # Adopt before the consuming call: _consume_and_swap needs an
-        # active resource, and cleanup then owns the pointer either way.
-        self._create_and_activate(
-            lambda: _lib.c2pa_builder_from_context(context.execution_context),
-            Builder._ERROR_MESSAGES['builder_error'])
+        # The Context is caller-supplied and may be shared, so its handle
+        # needs its own in-flight guard across the native call: without it a
+        # context.close() on another thread frees the handle between the
+        # is_valid check and c2pa_builder_from_context reading it.
+        with context._native_call():
+            # Adopt before the consuming call: _consume_and_swap needs an
+            # active resource, and cleanup then owns the pointer either way.
+            self._create_and_activate(
+                lambda: _lib.c2pa_builder_from_context(
+                    context.execution_context),
+                Builder._ERROR_MESSAGES['builder_error'])
 
         self._consume_and_swap(
             lambda handle: _lib.c2pa_builder_with_definition(

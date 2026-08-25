@@ -3797,6 +3797,187 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             "these hand a Stream to native without _native_call(): {}".format(
                 unguarded))
 
+    def test_every_borrowed_handle_is_guarded(self):
+        """Coverage check: when a method hands a *second* object's handle to
+        the native library, that object needs its own _native_call() guard.
+
+        test_every_callback_running_method_is_guarded only asks whether the
+        string "_native_call()" appears in the method body, which cannot
+        express *whose* handle is guarded. A method that guards self while
+        passing signer._handle to native passes that check and still has the
+        use-after-free, so the ownership is checked structurally here.
+        """
+        module = sys.modules[Reader.__module__]
+        tree = ast.parse(inspect.getsource(module))
+
+        # Attributes that carry a native handle out of an object.
+        handle_attrs = {"_handle", "execution_context"}
+
+        def guarded_names(node):
+            """Names X with an active `with X._native_call():` at this node."""
+            found = set()
+            for item in getattr(node, "items", []):
+                call = item.context_expr
+                if (isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "_native_call"
+                        and isinstance(call.func.value, ast.Name)):
+                    found.add(call.func.value.id)
+            return found
+
+        def borrowed_in_call(call):
+            """Names X whose handle this _lib.* call receives, X not self."""
+            if not (isinstance(call.func, ast.Attribute)
+                    and isinstance(call.func.value, ast.Name)
+                    and call.func.value.id == "_lib"):
+                return set()
+            names = set()
+            for arg in ast.walk(call):
+                if (isinstance(arg, ast.Attribute)
+                        and arg.attr in handle_attrs
+                        and isinstance(arg.value, ast.Name)
+                        and arg.value.id != "self"):
+                    names.add(arg.value.id)
+            return names
+
+        unguarded = []
+        checked = 0
+
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for method in cls.body:
+                if not isinstance(method, (ast.FunctionDef,
+                                           ast.AsyncFunctionDef)):
+                    continue
+
+                # Walk the body tracking which guards are open, so a borrowed
+                # handle is only accepted when its own guard encloses the use.
+                def visit(node, active):
+                    nonlocal checked
+                    if isinstance(node, (ast.With, ast.AsyncWith)):
+                        active = active | guarded_names(node)
+                    if isinstance(node, ast.Call):
+                        for name in borrowed_in_call(node):
+                            checked += 1
+                            if name not in active:
+                                unguarded.append(
+                                    "{}.{} passes {}._handle to native "
+                                    "without {}._native_call()".format(
+                                        cls.name, method.name, name, name))
+                    for child in ast.iter_child_nodes(node):
+                        visit(child, active)
+
+                visit(method, frozenset())
+
+        self.assertGreater(
+            checked, 0,
+            "ownership scan found no borrowed handles: the scan is broken")
+        self.assertEqual(
+            unguarded, [],
+            "borrowed handles used without their own guard:\n  "
+            + "\n  ".join(unguarded))
+
+
+class TestSharedSignerTeardownRace(unittest.TestCase):
+    """A Signer shared across threads must not be freed mid-sign.
+
+    Builder.sign borrows the signer's handle for the duration of the native
+    call. Without a guard on the signer itself, a close() on another thread
+    frees that handle while c2pa_builder_sign is using it, and the process
+    dies with SIGSEGV instead of raising.
+    """
+
+    def setUp(self):
+        self.data_dir = os.path.join(os.path.dirname(__file__), "fixtures")
+        with open(os.path.join(self.data_dir, "C.jpg"), "rb") as f:
+            self.image_bytes = f.read()
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
+            self.certs = f.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as f:
+            self.key = f.read()
+        self.manifest = {
+            "claim_generator_info": [{"name": "test", "version": "0.1"}],
+            "assertions": [],
+        }
+
+    def _make_signer(self):
+        return Signer.from_info(C2paSignerInfo(
+            SigningAlg.ES256, self.certs, self.key, None))
+
+    def test_close_during_concurrent_sign_does_not_crash(self):
+        """Rotate a shared signer while other threads sign with it.
+
+        Runs in a subprocess: the failure mode is a segfault, which would
+        take the test runner down with it rather than reporting a failure.
+        """
+        source = textwrap.dedent("""
+            import io, os, sys, threading
+            from c2pa import (Builder, Signer, C2paSignerInfo,
+                              C2paSigningAlg as SigningAlg)
+
+            data_dir = sys.argv[1]
+            certs = open(os.path.join(data_dir, "es256_certs.pem"), "rb").read()
+            key = open(os.path.join(data_dir, "es256_private.key"), "rb").read()
+            img = open(os.path.join(data_dir, "C.jpg"), "rb").read()
+            manifest = {"claim_generator_info":
+                        [{"name": "test", "version": "0.1"}],
+                        "assertions": []}
+
+            def make():
+                return Signer.from_info(C2paSignerInfo(
+                    SigningAlg.ES256, certs, key, None))
+
+            box = {"signer": make(), "stop": False}
+
+            def rotate():
+                while not box["stop"]:
+                    old = box["signer"]
+                    try:
+                        box["signer"] = make()
+                        old.close()
+                    except Exception:
+                        pass
+
+            def sign():
+                for _ in range(120):
+                    if box["stop"]:
+                        return
+                    try:
+                        b = Builder(manifest)
+                        b.sign(box["signer"], "image/jpeg",
+                               io.BytesIO(img), io.BytesIO())
+                        b.close()
+                    except Exception:
+                        # A closed signer may legitimately be rejected;
+                        # only a crash is a failure here.
+                        pass
+
+            rot = threading.Thread(target=rotate, daemon=True)
+            rot.start()
+            threads = [threading.Thread(target=sign) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            box["stop"] = True
+            rot.join(timeout=5)
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, self.data_dir],
+            capture_output=True, text=True, timeout=300)
+
+        self.assertNotEqual(
+            result.returncode, -11,
+            "SIGSEGV: a signer was freed while a sign was using its handle")
+        self.assertEqual(
+            result.returncode, 0,
+            "shared-signer teardown race failed (rc={}):\n{}".format(
+                result.returncode, result.stderr[-2000:]))
+        self.assertIn("OK", result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
