@@ -8389,15 +8389,14 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         bystander = self._FakeHandleResource()
         bystander._activate(0xB00B)
 
-        def clobbering_free(ptr):
+        def polluting_free(ptr):
             self.freed.append(ptr)
-            # Stands in for c2pa_free's real behavior: freeing an
-            # untracked/foreign pointer writes its own error into the
+            # Freeing and untracked/ pointer writes its own error into the
             # same thread-local slot.
             c2pa_module._lib.c2pa_error_set_last(
                 "Other: UntrackedPointer: {:#x}".format(ptr).encode())
             return -1
-        ManagedResource._free_native_ptr = staticmethod(clobbering_free)
+        ManagedResource._free_native_ptr = staticmethod(polluting_free)
 
         def ffi_call(handle):
             nonlocal bystander
@@ -8410,8 +8409,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         self.assertIsNone(
             victim._handle,
-            "victim was wrongly retained: bystander's deferred free still "
-            "clobbered the sentinel before it was read")
+            "victim was wrongly retained")
         self.assertEqual(victim._lifecycle_state, LifecycleState.CLOSED)
         self.assertEqual(self.freed, [0xB00B],
                          "bystander's deferred free did not run exactly once")

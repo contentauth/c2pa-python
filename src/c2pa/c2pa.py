@@ -926,9 +926,9 @@ def _native_section():
     success/failure classification.
 
     Reentrant: a call whose own native call triggers another one
-    recursively (same thread) nests correctly here -- only the outermost
-    span flushes, so nothing is freed before an inner, still-open span has
-    finished reading its own error.
+    recursively (same thread) nests correctly here. Only the outermost
+    span flushes, so nothing is freed before an inner, still-open span is
+    done reading its own error.
     """
     state = _native_section_state
     depth = getattr(state, 'depth', 0)
