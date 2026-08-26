@@ -4158,6 +4158,48 @@ class TestLocking(unittest.TestCase):
                          "racing closers freed {} times".format(len(freed)))
         self.assertEqual(reader._inflight, 0)
 
+    def test_deferred_consume_is_not_upgraded_to_free(self):
+        """A deferred consuming teardown must not be overwritten by a later
+        free intent arriving while the same call is still in flight.
+
+        Scenario: a Signer shared across concurrent signs: sign borrows
+        the handle (holding the in-flight guard) while Context.__init__
+        consumes it.
+        """
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        releases = []
+        orig_release = reader._release
+
+        def counting_release():
+            releases.append(1)
+            orig_release()
+
+        reader._release = counting_release
+
+        with reader._native_call():
+            # The consuming call: native took ownership, so nothing here frees.
+            reader._teardown(free_handle=False)
+            self.assertFalse(
+                reader._pending_teardown,
+                "consuming teardown did not record free_handle=False")
+
+            # A free intent arriving behind it, past a stale state check.
+            reader._teardown(free_handle=True)
+            self.assertFalse(
+                reader._pending_teardown,
+                "recorded consume was upgraded back to a free")
+
+        self.assertEqual(
+            freed, [],
+            "freed a handle the native library already owns")
+        self.assertEqual(
+            len(releases), 1,
+            "_release() ran {} times, expected once".format(len(releases)))
+        self.assertEqual(reader._inflight, 0)
+        self.assertIsNone(reader._pending_teardown)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
     def test_concurrent_close_runs_release_once(self):
         """Two racing close() calls on one instance must run _release()
         exactly once.

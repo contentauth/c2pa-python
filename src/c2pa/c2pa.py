@@ -413,19 +413,32 @@ class ManagedResource:
         with self._lock():
             if getattr(self, '_released', False):
                 # A racing close()/__del__ already ran the release branch
-                # under this lock. Idempotent: nothing left to release or free.
+                # under this lock.
+                # Idempotent: nothing left to release or free.
                 # Keyed on the release having happened, not on CLOSED: the
                 # deferred path below sets CLOSED without releasing, and still
                 # owes a release performed by _native_call()'s finally.
                 return
             if getattr(self, '_inflight', 0) > 0:
-                # A native call is running that re-enters calling non-native code
-                # and is still using this handle.
+                # A native call is running that re-enters calling non-native
+                # code and is still using this handle.
                 # Record the intent and whichever caller leaves
                 # _native_call last performs the free.
                 # Mark the resource closed now so it cannot be used
                 # while the free is pending.
-                self._pending_teardown = free_handle
+                #
+                # free_handle=False records that a consuming call handed
+                # ownership to the native library. Ownership does not come
+                # back, so a later teardown cannot restore the right to free:
+                # the recorded value only ever moves True -> False, never the
+                # reverse. Without this, a _teardown(True) arriving second
+                # (from _release_handle, whose state check is read outside
+                # this lock and can go stale) frees a pointer native owns.
+                if self._pending_teardown is None:
+                    self._pending_teardown = free_handle
+                else:
+                    self._pending_teardown = (
+                        self._pending_teardown and free_handle)
                 self._lifecycle_state = LifecycleState.CLOSED
                 return
 
