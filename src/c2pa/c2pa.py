@@ -2788,6 +2788,10 @@ class Reader(ManagedResource):
         # which it keeps reading from for the rest of its lifecycle.
         self._fragment_streams = []
 
+        # Serializes with_fragment against itself.
+        # Held across the native call, unlike _op_lock. Only with_fragment takes it.
+        self._fragment_lock = threading.RLock()
+
         # Caches for manifest JSON string and parsed data.
         # These are invalidated when with_fragment() is called.
         self._manifest_json_str_cache = None
@@ -2881,54 +2885,61 @@ class Reader(ManagedResource):
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
-        # The native reader keeps reading through both streams after this returns,
-        # so they are owned here and released by _release() rather
-        # than at the end of a with block.
-        main_obj = Stream(stream)
-        frag_obj = Stream(fragment_stream)
-        try:
-            with self._native_call():
-                self._consume_and_swap(
-                    lambda handle: _lib.c2pa_reader_with_fragment(
-                        handle,
-                        format_arg,
-                        main_obj._stream,
-                        frag_obj._stream,
-                    ),
-                    Reader._ERROR_MESSAGES['fragment_error'])
-        except Exception:
-            main_obj.close()
-            frag_obj.close()
-            raise
+        # A forked child cannot wait on a lock no surviving thread will
+        # release, so it reports the same error _lock() does.
+        if is_foreign_process(self):
+            raise C2paError(f"{type(self).__name__} is closed")
 
-        # Locked so a concurrent close() cannot run _release()
-        # between the check and the field swap.
-        with self._lock():
+        # The native call and the ownership transfer are one unit.
+        with self._fragment_lock:
+            # The native reader keeps reading through both streams.
+            main_obj = Stream(stream)
+            frag_obj = Stream(fragment_stream)
             try:
-                self._ensure_valid_state()
+                with self._native_call():
+                    self._consume_and_swap(
+                        lambda handle: _lib.c2pa_reader_with_fragment(
+                            handle,
+                            format_arg,
+                            main_obj._stream,
+                            frag_obj._stream,
+                        ),
+                        Reader._ERROR_MESSAGES['fragment_error'])
             except Exception:
                 main_obj.close()
                 frag_obj.close()
                 raise
 
-            # Replace the streams this reader owned, closing the previous
-            # ones (only the current fragment is retained).
-            previous = self._own_stream
-            previous_fragments = self._fragment_streams
-            self._own_stream = main_obj
-            self._fragment_streams = [frag_obj]
-            if previous is not None and previous is not main_obj:
+            # Locked so a concurrent close() cannot run _release()
+            # between the check and the field swap.
+            with self._lock():
                 try:
-                    previous.close()
+                    self._ensure_valid_state()
                 except Exception:
-                    logger.warning("Failed to close previous Reader stream")
-            for fragment in previous_fragments:
-                if fragment is frag_obj:
-                    continue
-                try:
-                    fragment.close()
-                except Exception:
-                    logger.warning("Failed to close Reader fragment stream")
+                    main_obj.close()
+                    frag_obj.close()
+                    raise
+
+                # Replace the streams this reader owned, closing the previous
+                # ones (only the current fragment is retained).
+                previous = self._own_stream
+                previous_fragments = self._fragment_streams
+                self._own_stream = main_obj
+                self._fragment_streams = [frag_obj]
+                if previous is not None and previous is not main_obj:
+                    try:
+                        previous.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to close previous Reader stream")
+                for fragment in previous_fragments:
+                    if fragment is frag_obj:
+                        continue
+                    try:
+                        fragment.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to close Reader fragment stream")
 
         # Invalidate caches: processing a new BMFF fragment updates the native
         # reader's state, which can change the manifest data it returns.

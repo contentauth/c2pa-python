@@ -200,7 +200,7 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
 
     _TIMEOUT = 5.0
 
-    def _foreign_reader_with_lock_held(self):
+    def _foreign_reader_with_lock_held(self, fragment_lock=False):
         """A Reader in the state a forked child inherits:
         lock held by another thread, and stamped with a PID other than this process's.
         """
@@ -210,7 +210,9 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         release = threading.Event()
 
         def hold_the_lock():
-            with reader._lock():
+            held = (reader._fragment_lock if fragment_lock
+                    else reader._lock())
+            with held:
                 holding.set()
                 release.wait(30)
 
@@ -255,6 +257,16 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         self.assertIsNotNone(
             outcome,
             "resource_to_stream() blocked on a lock inherited from the parent")
+        self.assertIsInstance(outcome, Error)
+
+    def test_fragment_lock_path_raises_instead_of_blocking(self):
+        reader = self._foreign_reader_with_lock_held(fragment_lock=True)
+        outcome = self._run_with_timeout(
+            lambda: reader.with_fragment(
+                "video/mp4", io.BytesIO(b""), io.BytesIO(b"")))
+        self.assertIsNotNone(
+            outcome,
+            "with_fragment() blocked on a lock inherited from the parent")
         self.assertIsInstance(outcome, Error)
 
     def test_close_still_completes(self):
@@ -319,14 +331,27 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         self.assertNotIn("DeprecationWarning", result.stderr)
 
 
-class TestReaderWithFragmentConcurrentClose(unittest.TestCase):
-    """with_fragment's post-native-call bookkeeping must not race close()."""
+class TestReaderWithFragmentConcurrency(unittest.TestCase):
+    """with_fragment's native call and its stream-ownership transfer
+    must must not interleave with another with_fragment on the same Reader.
+    """
+
+    def setUp(self):
+        self.init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        self.fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+        with open(self.init_path, "rb") as f:
+            self.init_bytes = f.read()
+        with open(self.fragment_path, "rb") as f:
+            self.fragment_bytes = f.read()
+
+    def _advance(self, reader):
+        reader.with_fragment(
+            "video/mp4",
+            io.BytesIO(self.init_bytes),
+            io.BytesIO(self.fragment_bytes))
 
     def test_close_during_with_fragment_does_not_double_close_stream(self):
-        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
-        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
-
-        with open(init_path, "rb") as init:
+        with open(self.init_path, "rb") as init:
             reader = Reader("video/mp4", init)
 
         entered_gap = threading.Event()
@@ -338,7 +363,7 @@ class TestReaderWithFragmentConcurrentClose(unittest.TestCase):
         def gated_native_call():
             with real_native_call():
                 yield
-            # Pauses right in with_fragment's unlocked window before it reassigns _own_stream/_fragment_streams.
+            # Pauses in with_fragment's window before it reassigns _own_stream/_fragment_streams.
             entered_gap.set()
             release_gap.wait(5)
 
@@ -348,8 +373,8 @@ class TestReaderWithFragmentConcurrentClose(unittest.TestCase):
 
         def run_with_fragment():
             try:
-                with open(init_path, "rb") as init, \
-                        open(fragment_path, "rb") as frag:
+                with open(self.init_path, "rb") as init, \
+                        open(self.fragment_path, "rb") as frag:
                     reader.with_fragment("video/mp4", init, frag)
                 result["outcome"] = "ok"
             except BaseException as e:      # noqa: BLE001 - asserted below
@@ -375,6 +400,107 @@ class TestReaderWithFragmentConcurrentClose(unittest.TestCase):
         # with_fragment must not resurrect these fields on a reader close() already tore down.
         self.assertIsNone(reader._own_stream)
         self.assertEqual(reader._fragment_streams, [])
+
+    def test_interleaved_with_fragment_leaves_reader_consistent(self):
+        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
+
+        # Parks one call between its native call
+        # and its native handle bookkeeping.
+        real_native_call = reader._native_call
+        in_gap = threading.Event()
+        contended = threading.Event()
+        leave_gap = threading.Event()
+
+        @contextlib.contextmanager
+        def gated_native_call():
+            with real_native_call():
+                yield
+            if not in_gap.is_set():
+                in_gap.set()
+                leave_gap.wait(10)
+
+        reader._native_call = gated_native_call
+
+        class ContentionReportingLock:
+            """Flags when a caller has to wait for the lock it wraps."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __enter__(self):
+                if not self._inner.acquire(blocking=False):
+                    contended.set()
+                    self._inner.acquire()
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                self._inner.release()
+                return False
+
+        real_fragment_lock = reader._fragment_lock
+        reader._fragment_lock = ContentionReportingLock(real_fragment_lock)
+
+        outcomes = {}
+        installed_by_second = {}
+
+        def first():
+            try:
+                self._advance(reader)
+                outcomes["first"] = "ok"
+            except Error as e:
+                outcomes["first"] = e
+
+        def second():
+            try:
+                self._advance(reader)
+                outcomes["second"] = "ok"
+                # The streams matching the handle this call swapped in.
+                installed_by_second["own"] = reader._own_stream
+                installed_by_second["fragments"] = list(
+                    reader._fragment_streams)
+            except Error as e:
+                outcomes["second"] = e
+
+        t1 = threading.Thread(target=first, daemon=True)
+        t1.start()
+        self.assertTrue(in_gap.wait(10), "never reached the bookkeeping gap")
+
+        t2 = threading.Thread(target=second, daemon=True)
+        t2.start()
+        # Unset when the lock is bypassed, which is the case this test guards against.
+        contended.wait(5)
+
+        leave_gap.set()
+        t1.join(10)
+        self.assertFalse(t1.is_alive(), "first with_fragment hung")
+        t2.join(10)
+        self.assertFalse(t2.is_alive(), "second with_fragment hung")
+
+        try:
+            if outcomes.get("second") != "ok":
+                # A refused second call never swapped,
+                # so the first call's streams are the right ones.
+                self.assertIsInstance(outcomes["second"], Error)
+            else:
+                # Both swapped, so the reader must retain one call's streams.
+                self.assertIs(
+                    reader._own_stream, installed_by_second["own"],
+                    "reader retains a different call's stream than the one "
+                    "its live native handle reads through")
+                self.assertEqual(
+                    list(reader._fragment_streams),
+                    installed_by_second["fragments"])
+
+            retained = [reader._own_stream] + list(reader._fragment_streams)
+            for wrapper in retained:
+                self.assertIsNotNone(wrapper)
+                self.assertFalse(
+                    wrapper._closed,
+                    "reader retained a released stream wrapper")
+        finally:
+            reader._native_call = real_native_call
+            reader._fragment_lock = real_fragment_lock
+            reader.close()
 
 
 class TestHelpers(unittest.TestCase):
