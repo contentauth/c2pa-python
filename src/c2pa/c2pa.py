@@ -591,7 +591,7 @@ class ManagedResource:
             C2paError: If the call raised any other exception.
         """
         # Same thread that makes the call, same thread-local slot.
-        _lib.c2pa_error_set_last(_NO_NATIVE_ERROR)
+        _mark_sentinel_no_native_error()
         try:
             return ffi_call(self._handle)
         except ctypes.ArgumentError:
@@ -844,19 +844,36 @@ class C2paStream(ctypes.Structure):
     ]
 
 
-# Written into the native slot to mark it as carrying no error of our own.
-# Planted before a consuming call so a failure that sets no error is
-# distinguishable from a stale one, and written back after every read so an
-# error is reportable only by the caller that observes it.
-# _read_native_error() maps it to None, so it never reaches a caller.
-_NO_NATIVE_ERROR_MARKER = b"c2pa-python-no-native-error"
-_NO_NATIVE_ERROR = b"Other: " + _NO_NATIVE_ERROR_MARKER
+# Unaligned address passed to c2pa_free to plant a marker
+# in the native error slot.
+# Never a real handle: allocations are aligned, and the Python
+# layer only passes real handles or this constant to c2pa_free.
+_MARKER_ADDR = 1
+
+# Exact text the native lib writes for a failed free of _MARKER_ADDR.
+# Learned at import by _learn_sentinel_no_native_error_text().
+# The format is a native implementation detail,
+# so it is read back rather than hardcoded.
+_NO_NATIVE_ERROR_TEXT = None
+
+
+def _mark_sentinel_no_native_error():
+    """Write the no-error marker into this thread's native error slot.
+
+    A c2pa_free of an address the registry does not track writes
+    an expected error message learned at import into the
+    thread-local error slot and returns -1.
+
+    This marker mechanism exists to distinguish a consuming call that
+    failed without setting its own error from a stale message left
+    by an earlier call on the same thread.
+    """
+    _lib.c2pa_free(_MARKER_ADDR)
 
 
 def _is_no_native_error(message: str) -> bool:
-    """True for the marker meaning "no error of our own", in either spelling."""
-    marker = _NO_NATIVE_ERROR_MARKER.decode('utf-8')
-    return message == marker or message == f"Other: {marker}"
+    """True for the sentinel marker meaning "no current error of our own"."""
+    return message == _NO_NATIVE_ERROR_TEXT
 
 
 def _read_native_error() -> Optional[str]:
@@ -866,10 +883,8 @@ def _read_native_error() -> Optional[str]:
     given error is reported once, by the caller that observes it. The native
     slot is thread-local and sticky, so a message left in place stays readable
     indefinitely and is available to be reported again by a later,
-    unrelated call that failed without setting an error of its own.
-    With no error set the native side still returns an owned pointer to an
-    empty string, so the pointer alone does not tell us whether there is an
-    error. Only a non-empty message counts as one.
+    unrelated call that failed without setting an error of its own
+    (or a missing clear of an error slot).
     """
     error = _lib.c2pa_error()
     if not error:
@@ -881,7 +896,7 @@ def _read_native_error() -> Optional[str]:
     if not message:
         return None
 
-    _lib.c2pa_error_set_last(_NO_NATIVE_ERROR)
+    _mark_sentinel_no_native_error()
     if _is_no_native_error(message):
         return None
     return message
@@ -1048,7 +1063,6 @@ _setup_function(
 # Set up function prototypes not attached to an API object
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
-_setup_function(_lib.c2pa_error_set_last, [ctypes.c_char_p], ctypes.c_int)
 _setup_function(_lib.c2pa_string_free, [ctypes.c_void_p], None)
 _setup_function(
     _lib.c2pa_load_settings, [
@@ -1252,6 +1266,38 @@ _setup_function(
     ctypes.POINTER(C2paBuilder)
 )
 _setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
+
+
+def _learn_sentinel_no_native_error_text():
+    """Plant the marker once and read back the exact text the native lib
+    produces for it, so equality checks match this build of the lib.
+
+    Runs on the importing thread; the text is a format constant, so the
+    learned value holds for every thread. Raises at import when the read
+    back text is empty, because the marker mechanism cannot work then.
+    """
+    _mark_sentinel_no_native_error()
+    raw = _lib.c2pa_error()
+    if not raw:
+        raise ImportError(
+            "c2pa native library did not report an error for a free of "
+            "an untracked pointer; the error-slot marker cannot work")
+    try:
+        text = ctypes.string_at(raw).decode('utf-8')
+    finally:
+        _lib.c2pa_string_free(raw)
+    if not text:
+        raise ImportError(
+            "c2pa native library reported an empty error for a free of "
+            "an untracked pointer; the error-slot marker cannot work")
+    return text
+
+
+_NO_NATIVE_ERROR_TEXT = _learn_sentinel_no_native_error_text()
+assert "0x1" in _NO_NATIVE_ERROR_TEXT, (
+    "c2pa native library's untracked-pointer error text no longer "
+    "includes the planted address; the error-slot marker assumption "
+    "no longer holds")
 
 _setup_function(
     _lib.c2pa_context_builder_set_signer,

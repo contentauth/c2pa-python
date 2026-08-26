@@ -8496,6 +8496,26 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             "the failing deferred free was not logged: "
             "{}".format(captured.output))
 
+    def test_stale_error_not_misattributed_after_preset_error(self):
+        """A stale tag left by an earlier, unrelated call on this thread
+        must not be read as this call's own error."""
+        # A stale tag from an earlier, unrelated call.
+        c2pa_module._lib.c2pa_error_set_last(
+            b"Other: UntrackedPointer: 0xdeadbeef")
+
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        # Fails without setting any error of its own.
+        # The sentinel inside _invoke_consume must have cleared
+        # the stale tag, so this routes to the "no error of our own" branch.
+        with self.assertRaises(Error):
+            res._consume_no_replacement(lambda h: -1, "op failed: {}")
+
+        self.assertIsNone(res._handle)
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+        self.assertEqual(self.freed, [], "consumed branch must not free")
+
 
 class TestManagedResourceObjects(TestContextAPIs):
     """Tests native resource handling management when managed manually.
@@ -9879,18 +9899,40 @@ class TestErrorPlumbing(unittest.TestCase):
 
     def test_the_no_native_error_sentinel_never_reaches_a_caller(self):
         """The sentinel is an internal marker, not a message for users."""
-        sentinel = c2pa_module._NO_NATIVE_ERROR.decode("utf-8")
+        sentinel = c2pa_module._NO_NATIVE_ERROR_TEXT
 
-        c2pa_module._lib.c2pa_error_set_last(c2pa_module._NO_NATIVE_ERROR)
+        c2pa_module._mark_sentinel_no_native_error()
         self.assertIsNone(
             c2pa_module._read_native_error(),
             "the sentinel was reported as if it were a native error")
 
-        c2pa_module._lib.c2pa_error_set_last(c2pa_module._NO_NATIVE_ERROR)
+        c2pa_module._mark_sentinel_no_native_error()
         with self.assertRaises(Error) as ctx:
             c2pa_module._check_ffi_operation_result(None, "fallback: {}")
         self.assertNotIn(sentinel, str(ctx.exception))
         self.assertIn("Unknown error", str(ctx.exception))
+
+    def test_mark_sentinel_writes_the_learned_text(self):
+        c2pa_module._mark_sentinel_no_native_error()
+        raw = c2pa_module._lib.c2pa_error()
+        try:
+            text = ctypes.string_at(raw).decode('utf-8')
+        finally:
+            c2pa_module._lib.c2pa_string_free(raw)
+        self.assertEqual(text, c2pa_module._NO_NATIVE_ERROR_TEXT)
+
+    def test_read_native_error_maps_sentinel_to_none(self):
+        c2pa_module._mark_sentinel_no_native_error()
+        self.assertIsNone(c2pa_module._read_native_error())
+
+    def test_runtime_does_not_call_error_set_last(self):
+        """The marker mechanism must not depend on c2pa_error_set_last,
+        so this module loads against native builds that lack it."""
+        for fn in (c2pa_module.ManagedResource._invoke_consume,
+                  c2pa_module._read_native_error,
+                  c2pa_module._mark_sentinel_no_native_error):
+            self.assertNotIn(
+                'c2pa_error_set_last', inspect.getsource(fn))
 
 
 class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
