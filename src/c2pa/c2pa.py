@@ -539,10 +539,6 @@ class ManagedResource:
     # so it is still ours to deal with.
     _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
 
-    # Planted right before a consuming call so that a failure which
-    # sets no error of its own is distinguishable from a stale error.
-    _NO_NATIVE_ERROR = b"Other: c2pa-python-no-native-error"
-
     def _invoke_consume(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle, returning its raw result.
 
@@ -563,7 +559,7 @@ class ManagedResource:
             C2paError: If the call raised any other exception.
         """
         # Same thread that makes the call, same thread-local slot.
-        _lib.c2pa_error_set_last(ManagedResource._NO_NATIVE_ERROR)
+        _lib.c2pa_error_set_last(_NO_NATIVE_ERROR)
         try:
             return ffi_call(self._handle)
         except ctypes.ArgumentError:
@@ -581,10 +577,9 @@ class ManagedResource:
         pointer-tracking error cannot overwrite it.
         The native error slot is sticky and thread-local,
         and the native SDK does not clear it before the call.
-        _invoke_consume plants a sentinel here right before a consuming call,
-        so a failure that sets no error of its own is read back as
-        the sentinel rather than a stale tag left by an earlier call
-        on the same pooled thread.
+        _invoke_consume marks the slot as carrying no error right before a
+        consuming call, so a failure that sets no error of its own reads back
+        as no error rather than as a stale one left by an earlier call.
 
         Args:
             error_message: Format string with one placeholder, used when the
@@ -604,16 +599,6 @@ class ManagedResource:
                     error)
                 _raise_typed_c2pa_error(error)
 
-            if error == ManagedResource._NO_NATIVE_ERROR.decode('utf-8'):
-                # The planted sentinel survives:
-                # This failure set no error of its own. Treat as consumed.
-                logger.debug(
-                    "%s: consuming call failed without setting its own "
-                    "native error; treating as consumed",
-                    type(self).__name__)
-                self._teardown(free_handle=False)
-                raise C2paError(error_message.format("Unknown error"))
-
             # A non-tag error means the native side took ownership then failed,
             # dropping the value itself: mark consumed, do not free (a free here
             # would be a guarded no-op that dirties the error slot and races a
@@ -621,8 +606,14 @@ class ManagedResource:
             self._teardown(free_handle=False)
             _raise_typed_c2pa_error(error)
 
-        # No error in the slot at all. Ownership is unknown, so treat as consumed:
-        # a free here can race a recycled address in other threads.
+        # The call failed without setting an error of its own,
+        # so ownership is unknown.
+        # Treat as consumed: a free here can race a recycled address
+        # in other threads.
+        logger.debug(
+            "%s: consuming call failed without setting its own "
+            "native error; treating as consumed",
+            type(self).__name__)
         self._teardown(free_handle=False)
         raise C2paError(error_message.format("Unknown error"))
 
@@ -821,16 +812,32 @@ class C2paStream(ctypes.Structure):
     ]
 
 
+# Written into the native slot to mark it as carrying no error of our own.
+# Planted before a consuming call so a failure that sets no error is
+# distinguishable from a stale one, and written back after every read so an
+# error is reportable only by the caller that observes it.
+# _read_native_error() maps it to None, so it never reaches a caller.
+_NO_NATIVE_ERROR_MARKER = b"c2pa-python-no-native-error"
+_NO_NATIVE_ERROR = b"Other: " + _NO_NATIVE_ERROR_MARKER
+
+
+def _is_no_native_error(message: str) -> bool:
+    """True for the marker meaning "no error of our own", in either spelling."""
+    marker = _NO_NATIVE_ERROR_MARKER.decode('utf-8')
+    return message == marker or message == f"Other: {marker}"
+
+
 def _read_native_error() -> Optional[str]:
     """Read the last error from the native library, or None if unset.
 
-    Peeks: the error stays in the native slot,
-    until the next error overwrites it.
-
+    The slot is marked as carrying no error before returning, so a
+    given error is reported once, by the caller that observes it. The native
+    slot is thread-local and sticky, so a message left in place stays readable
+    indefinitely and is available to be reported again by a later,
+    unrelated call that failed without setting an error of its own.
     With no error set the native side still returns an owned pointer to an
     empty string, so the pointer alone does not tell us whether there is an
-    error. Only a non-empty message counts as one; the empty string still
-    has to be freed.
+    error. Only a non-empty message counts as one.
     """
     error = _lib.c2pa_error()
     if not error:
@@ -839,7 +846,13 @@ def _read_native_error() -> Optional[str]:
         message = ctypes.string_at(error).decode('utf-8')
     finally:
         _lib.c2pa_string_free(error)
-    return message or None
+    if not message:
+        return None
+
+    _lib.c2pa_error_set_last(_NO_NATIVE_ERROR)
+    if _is_no_native_error(message):
+        return None
+    return message
 
 
 _native_section_state = threading.local()

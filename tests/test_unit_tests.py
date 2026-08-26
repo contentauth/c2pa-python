@@ -8356,9 +8356,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         res._consume_no_replacement(lambda h: 0, "set failed: {}")
 
-        self.assertEqual(
-            c2pa_module._read_native_error(),
-            ManagedResource._NO_NATIVE_ERROR.decode('utf-8'))
+        self.assertIsNone(c2pa_module._read_native_error())
 
     def test_consume_no_replacement_retains_on_tag_set_by_the_call_itself(self):
         """Only a *stale* tag left over from before the call is the
@@ -9112,17 +9110,14 @@ class TestManagedResourceObjects(TestContextAPIs):
         reader.close()
 
     def test_every_null_return_sets_its_own_error(self):
-        # Reading the slot without clearing it is only sound because every
-        # null return sets an error. Check each path reports its own.
+        # Each null-returning path must report the error it set itself, never
+        # one left behind by an earlier call.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
 
-        # Leave a recognisable error behind, so anything stale shows up.
-        try:
-            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
-        except Error:
-            pass
-        self.assertIn("NotSupported", c2pa_module._read_native_error() or "")
+        # Set a recognizable error, so anything stale shows up below.
+        c2pa_module._lib.c2pa_error_set_last(
+            b"NotSupported: planted by the test")
 
         # Pre-consume rejection: reports UntrackedPointer, not NotSupported.
         with open(init_path, "rb") as init:
@@ -9192,21 +9187,19 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertEqual(problems, [],
                          "ownership was misjudged under concurrency")
 
-    def test_reading_the_native_error_does_not_empty_the_slot(self):
-        # c2pa_error() peeks, so nothing Python can call empties the slot.
-        # _consume_and_swap depends on this.
-        try:
-            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
-        except Error:
-            pass
+    def test_reading_the_native_error_consumes_it(self):
+        # c2pa_error() itself peeks, so _read_native_error marks the slot as
+        # carrying no error once it has read one.
+        # An error belongs to the caller that observes it;
+        # leaving it readable lets a later, unrelated failure report it as its own.
+        c2pa_module._lib.c2pa_error_set_last(b"Io: read me exactly once")
 
         first = c2pa_module._read_native_error()
         self.assertTrue(first, "expected a native error to have been set")
 
-        self.assertEqual(
-            c2pa_module._read_native_error(), first,
-            "reading emptied the native slot; the comments in "
-            "_consume_and_swap about a persistent error are now wrong")
+        self.assertIsNone(
+            c2pa_module._read_native_error(),
+            "the native error stayed readable after being reported once")
 
     def test_read_native_error_returns_none_for_an_empty_message(self):
         # c2pa_error() returns an owned pointer to "" when no error is set,
@@ -9552,6 +9545,36 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIs(ctx.exception.__cause__, sentinel,
                       "signing error dropped the original exception")
 
+    def test_sign_reports_the_native_error_it_set(self):
+        """sign() reads its error in a later section than the call itself.
+        The signing call runs inside one _native_call() block and the result
+        check runs in a separate _native_section() afterwards, so anything
+        that marks the slot as carrying no error on section exit would discard
+        the real message between the two.
+        """
+        builder = Builder(self.test_manifest)
+        signer = self._ctx_make_signer()
+        self.addCleanup(signer.close)
+
+        real_sign = c2pa_module._lib.c2pa_builder_sign
+
+        def _fail(*args):
+            c2pa_module._lib.c2pa_error_set_last(
+                b"Signature: native signing refused")
+            return -1
+
+        c2pa_module._lib.c2pa_builder_sign = _fail
+        try:
+            with self.assertRaises(Error) as ctx:
+                builder.sign(signer, "image/jpeg",
+                             io.BytesIO(b"x"), io.BytesIO())
+        finally:
+            c2pa_module._lib.c2pa_builder_sign = real_sign
+
+        self.assertIn("native signing refused", str(ctx.exception),
+                      "the native signing error was lost before it was read")
+        self.assertIsInstance(ctx.exception, Error.Signature)
+
 
 class TestErrorPlumbing(unittest.TestCase):
     """Covers the error helpers themselves, which had no direct tests."""
@@ -9682,6 +9705,65 @@ class TestErrorPlumbing(unittest.TestCase):
         with self.assertRaises(Error) as ctx:
             c2pa_module._get_supported_mime_types(lambda count: None, None)
         self.assertIn("mime lookup failed", str(ctx.exception))
+
+    def test_reading_an_error_does_not_leave_it_readable(self):
+        """An error is reportable once, by the reader that observes it.
+        """
+        self._set_native_error("Io: read me once")
+
+        self.assertEqual(
+            c2pa_module._read_native_error(), "Io: read me once")
+        self.assertIsNone(
+            c2pa_module._read_native_error(),
+            "the same native error was reported a second time")
+
+    def test_handled_error_does_not_survive_later_operations(self):
+        """A caught failure must not leave its error in-place
+        (tests the slot is cleaned up).
+        """
+        with self.assertRaises(Error):
+            Reader("image/jpeg", io.BytesIO(b"not an image"))
+
+        for _ in range(20):
+            c2pa_module.Stream(io.BytesIO(b"x"))
+
+        self.assertIsNone(
+            c2pa_module._read_native_error(),
+            "a handled error was still resident after 20 successful calls")
+
+    def test_later_failure_does_not_inherit_a_handled_errors_type(self):
+        """A failure with no error of its own must not see an older one.
+        """
+        with self.assertRaises(Error) as first:
+            Reader("image/jpeg", io.BytesIO(b"not an image"))
+        self.assertIsInstance(first.exception, Error.NotSupported)
+
+        with self.assertRaises(Error) as second:
+            c2pa_module._check_ffi_operation_result(
+                None, "Later unrelated failure: {}")
+
+        self.assertNotIsInstance(
+            second.exception, Error.NotSupported,
+            "the later failure inherited the handled error's type")
+        self.assertIn("Unknown error", str(second.exception))
+        self.assertNotIn(
+            "type is unsupported", str(second.exception),
+            "the later failure reported the handled error's message")
+
+    def test_the_no_native_error_sentinel_never_reaches_a_caller(self):
+        """The sentinel is an internal marker, not a message for users."""
+        sentinel = c2pa_module._NO_NATIVE_ERROR.decode("utf-8")
+
+        c2pa_module._lib.c2pa_error_set_last(c2pa_module._NO_NATIVE_ERROR)
+        self.assertIsNone(
+            c2pa_module._read_native_error(),
+            "the sentinel was reported as if it were a native error")
+
+        c2pa_module._lib.c2pa_error_set_last(c2pa_module._NO_NATIVE_ERROR)
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(None, "fallback: {}")
+        self.assertNotIn(sentinel, str(ctx.exception))
+        self.assertIn("Unknown error", str(ctx.exception))
 
 
 class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
