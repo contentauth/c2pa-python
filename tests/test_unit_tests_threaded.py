@@ -272,24 +272,49 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
 
     def test_parent_copy_unaffected(self):
         """The child closing its copy must leave the parent's usable.
+
+        Runs in a subprocess so that the fork happens in a single-threaded
+        process. Operations that reach the network, such as reading an asset
+        with a remote manifest, start background native threads that outlive
+        the object that triggered them, and forking a multi-threaded process
+        can lead to issues.
         """
-        with open(DEFAULT_TEST_FILE, "rb") as asset:
-            reader = Reader("image/jpeg", asset)
-        self.addCleanup(reader.close)
-        before = reader.json()
+        source = textwrap.dedent("""
+            import os, sys
+            from c2pa import Reader
+            from c2pa.c2pa import LifecycleState
 
-        pid = os.fork()
-        if pid == 0:
-            try:
-                reader.close()
-                os._exit(0)
-            except BaseException:
-                os._exit(1)
-        _, status = os.waitpid(pid, 0)
+            asset_path = sys.argv[1]
+            with open(asset_path, "rb") as asset:
+                reader = Reader("image/jpeg", asset)
+            before = reader.json()
 
-        self.assertEqual(status >> 8, 0, "child could not close its own copy")
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertEqual(reader.json(), before)
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    reader.close()
+                    os._exit(0)
+                except BaseException:
+                    os._exit(1)
+            _, status = os.waitpid(pid, 0)
+
+            assert status >> 8 == 0, "child could not close its own copy"
+            assert reader._lifecycle_state == LifecycleState.ACTIVE
+            assert reader.json() == before
+            reader.close()
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, DEFAULT_TEST_FILE],
+            capture_output=True, text=True, timeout=120)
+
+        self.assertEqual(
+            result.returncode, 0,
+            "parent copy was affected by the child (rc={}):\n{}".format(
+                result.returncode, result.stderr[-2000:]))
+        self.assertIn("OK", result.stdout)
+        self.assertNotIn("DeprecationWarning", result.stderr)
 
 
 class TestHelpers(unittest.TestCase):
@@ -813,12 +838,12 @@ class TestBuilderWithThreads(unittest.TestCase):
         with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
             self.key = key_file.read()
 
-        # Create a local Es256 signer with certs and a timestamp server
+        # Create a local Es256 signer with certs and no timestamp server.
         self.signer_info = C2paSignerInfo(
             alg=b"es256",
             sign_cert=self.certs,
             private_key=self.key,
-            ta_url=b"http://timestamp.digicert.com"
+            ta_url=None
         )
         self.signer = Signer.from_info(self.signer_info)
 
@@ -3377,7 +3402,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             alg=b"es256",
             sign_cert=certs,
             private_key=key,
-            ta_url=b"http://timestamp.digicert.com",
+            ta_url=None,
         )
         manifest = {
             "claim_generator": "python_test",
@@ -3802,7 +3827,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             alg=b"es256",
             sign_cert=self.certs,
             private_key=self.private_key,
-            ta_url=b"http://timestamp.digicert.com",
+            ta_url=None,
         )
         manifest = {
             "claim_generator": "python_test",
