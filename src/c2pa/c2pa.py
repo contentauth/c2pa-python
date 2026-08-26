@@ -410,6 +410,11 @@ class ManagedResource:
         Holds the operation lock so the free cannot happen between another
         thread's state check and its use of the handle in a native call.
 
+        Deferred (instead of run now) when either gate is blocking:
+        - this resource's own handle is in flight in a native call
+        - this thread is inside a native-error section for some call,
+        that may access the native error slot.
+
         The forked-child case is handled before the lock is taken, because
         _lock() refuses in a child: this path has to finish rather than report
         an error, so it cannot rely on acquiring.
@@ -422,13 +427,11 @@ class ManagedResource:
             return
 
         with self._state_lock():
-            if getattr(self, '_inflight', 0) > 0:
-                # A native call is running that re-enters calling non-native code
-                # and is still using this handle.
-                # Record the intent and whichever caller leaves
-                # _native_call last performs the free.
-                # Mark the resource closed now so it cannot be used
-                # while the free is pending.
+            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
+                # Mark the resource closed now so it cannot be used while
+                # the free is pending, but record the intent:
+                # whichever check is blocking will call
+                # _maybe_flush_pending() once it clears.
                 self._pending_teardown = free_handle
                 self._lifecycle_state = LifecycleState.CLOSED
                 if _in_native_section():
