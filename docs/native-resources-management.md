@@ -126,7 +126,21 @@ A lock (Python's `threading.Lock`) can be acquired once, and a second `acquire()
 
 The lock is never held across a native call that drives a stream callback: construction, `resource_to_stream`, the Builder stream methods, and signing all release the GIL and call back into caller-supplied Python, which may itself call into this API on another thread. Holding `_op_lock` there would deadlock against that reentry. Those calls go through `_native_call()` instead: a context manager that increments `_inflight` under the lock, yields to run the native call unlocked, then decrements `_inflight` on the way out. If `_teardown()` runs while a call is in flight, it records the requested `free_handle` value in `_pending_teardown` and marks the resource `CLOSED` immediately, so no other caller can start using it, but defers the actual free. The last `_native_call()` to exit picks up `_pending_teardown` and runs `_teardown()` for real.
 
-`Context.__init__` wraps the signer hand-off in `signer._native_call()`, so a `signer.close()` on another thread cannot free the handle between the state check and the consuming call. `Builder._sign_internal` wraps the sign call in `self._native_call()` and, when an explicit `Signer` is passed, nests `signer._native_call()` inside it in that fixed order, so two concurrent `sign()` calls sharing one `Signer` cannot deadlock by acquiring the two locks in opposite orders. The Builder's `close()` after signing runs outside its own `_native_call()` block, so a teardown deferred during the call still executes once the call returns.
+`Context.__init__` does not wrap the signer hand-off in `signer._native_call()`: the consuming call marks the signer `CLOSED` under its own lock before calling native, which is what stops a `signer.close()` on another thread from freeing the handle mid-transfer (see [Borrowing versus consuming](#borrowing-versus-consuming)). `Builder._sign_internal` wraps the sign call in `self._native_call()` and, when an explicit `Signer` is passed, nests `signer._native_call()` inside it in that fixed order, so two concurrent `sign()` calls sharing one `Signer` cannot deadlock by acquiring the two locks in opposite orders. The Builder's `close()` after signing runs outside its own `_native_call()` block, so a teardown deferred during the call still executes once the call returns.
+
+### Borrowing versus consuming
+
+Deferring a teardown protects a consuming call against a racing `close()`. It does not protect a borrowing call against a racing consume, which is a different risk with a different mitigation.
+
+A borrowing call passes the handle to native and gets it back unchanged. A consuming call hands ownership over, and the native side frees the pointer during the call. A borrowing call validates the pointer once on entry, then holds it for the duration of the operation. The pointer registry is never consulted again. So a consume starting midway through a borrow frees memory the borrowing call is still reading, and the usual `-1` rejection never happens because validation already succeeded.
+
+`ManagedResource` therefore refuses the consume rather than allowing it to start. `_begin_consume()` runs `_ensure_not_borrowed()`, which rejects the call when `_inflight` is nonzero, and then marks the resource `CLOSED` before releasing `_op_lock`.
+
+The check catches a borrow already in flight. The `CLOSED` mark catches one arriving afterwards: `_native_call()` calls `_ensure_valid_state()` under the same lock, so a borrow that starts later is refused instead of reaching a pointer about to be freed. The lock cannot simply be held across the native call, because those calls run caller-supplied stream callbacks that re-enter this API.
+
+The mark is provisional. `_abort_consume()` restores the previous state when the native call turns out not to have taken the handle, which keeps the retained branch of the [ownership-taken triage](#why-an-ownership-taken-failure-does-not-free) handing back a usable object.
+
+`_consume_and_swap()` is excluded. `_swap_handle()` requires the resource to stay `ACTIVE` and the object remains usable with its replacement pointer, so there is no `CLOSED` mark to make and no check. Its callers (`Reader.with_fragment`, `Builder.with_archive`) pass streams whose callbacks re-enter this API, so they hold their own `_native_call()`, and they act on resources the caller is required to serialize.
 
 ## Guarantees provided by ManagedResource
 

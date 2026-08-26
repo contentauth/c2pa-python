@@ -307,6 +307,18 @@ class ManagedResource:
                 pass
         return lock
 
+    def _ensure_not_borrowed(self):
+        """Raise if a native call is in flight on this handle.
+
+        Raises:
+            C2paError: If a native call is in flight on this resource.
+        """
+        if getattr(self, '_inflight', 0) > 0:
+            name = type(self).__name__
+            raise C2paError(
+                f"{name} is in use by another operation and "
+                f"cannot be consumed")
+
     @contextlib.contextmanager
     def _native_call(self):
         """Hold the handle valid across a native call that goes back
@@ -619,10 +631,44 @@ class ManagedResource:
         self._release_handle()
         raise C2paError(error_message.format("Unknown error"))
 
+    def _begin_consume(self):
+        """Reserve this handle for a consuming call, or raise.
+
+        Returns:
+            The lifecycle state to restore if the call turns out not to have
+            consumed the handle.
+
+        Raises:
+            C2paError: If a native call is in flight on this resource.
+        """
+        with self._lock():
+            # A consumed or closed resource has no handle left to hand over;
+            # without this the call would pass a null pointer to native.
+            self._ensure_valid_state()
+            self._ensure_not_borrowed()
+            previous = self._lifecycle_state
+            self._lifecycle_state = LifecycleState.CLOSED
+            return previous
+
+    def _abort_consume(self, previous_state):
+        """Undo _begin_consume() after a call that did not take the handle.
+
+        A pre-consume rejection leaves the handle ours,
+        so the resource has to become usable again.
+        """
+        with self._lock():
+            if self._lifecycle_state == LifecycleState.CLOSED and self._handle:
+                self._lifecycle_state = previous_state
+
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a replacement.
         On success the native lib consumed the handle and returned a new one,
         which we swap in. A null return is a failure.
+
+        Unlike the consuming teardown paths this neither refuses a borrowed
+        handle nor pre-marks the resource CLOSED: _swap_handle() requires it to
+        stay ACTIVE, and the object remains usable afterwards with its new
+        pointer.
         """
         new_ptr = self._invoke_consume(ffi_call, error_message)
         if new_ptr:
@@ -636,10 +682,16 @@ class ManagedResource:
         handle. A non-zero status is a failure routed to
         _raise_consume_failure.
         """
-        result = self._invoke_consume(ffi_call, error_message)
+        previous_state = self._begin_consume()
+        try:
+            result = self._invoke_consume(ffi_call, error_message)
+        except Exception:
+            self._abort_consume(previous_state)
+            raise
         if result == 0:
             self._teardown(free_handle=False)
             return
+        self._abort_consume(previous_state)
         self._raise_consume_failure(error_message)
 
     def _consume_into(self, ffi_call, error_message):
@@ -648,10 +700,16 @@ class ManagedResource:
         and the new pointer is returned for the caller to own. A null return is
         a failure routed to _raise_consume_failure.
         """
-        result = self._invoke_consume(ffi_call, error_message)
+        previous_state = self._begin_consume()
+        try:
+            result = self._invoke_consume(ffi_call, error_message)
+        except Exception:
+            self._abort_consume(previous_state)
+            raise
         if result:
             self._teardown(free_handle=False)
             return result
+        self._abort_consume(previous_state)
         self._raise_consume_failure(error_message)
 
     @classmethod
@@ -1822,22 +1880,21 @@ class Context(ManagedResource, ContextProvider):
                         check=lambda r: r != 0)
 
                 if signer is not None:
-                    # The signer's in-flight guard:
-                    # this hands its handle to native,
-                    # so a signer.close() on another thread must not
-                    # free it between the state check and the call.
+                    # No in-flight guard around the hand-off: the consume
+                    # marks the signer CLOSED under its lock before calling
+                    # native, which is what stops a signer.close() on another
+                    # thread from freeing the handle mid-transfer. That mark
+                    # also makes the consume refuse to start while another
+                    # thread is borrowing the handle to sign with.
                     #
-                    # _consume_no_replacement tears the signer down from
-                    # inside this region. A teardown recorded while the guard
-                    # is held is deferred and performed as the guard unwinds,
-                    # which is still before __init__ returns.
-                    with signer._native_call():
-                        # A rejected signer is retained, not closed and leaked.
-                        self._signer_callback_cb = signer._callback_cb
-                        signer._consume_no_replacement(
-                            lambda h: _lib.c2pa_context_builder_set_signer(
-                                nb._handle, h),
-                            "Failed to set signer on Context: {}")
+                    # Pin the callback first: a rejected signer is retained,
+                    # not closed and leaked, and _release() nulls _callback_cb
+                    # once the signer is torn down.
+                    self._signer_callback_cb = signer._callback_cb
+                    signer._consume_no_replacement(
+                        lambda h: _lib.c2pa_context_builder_set_signer(
+                            nb._handle, h),
+                        "Failed to set signer on Context: {}")
                     self._has_signer = True
 
                 context_ptr = nb._consume_into(
