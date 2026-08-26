@@ -3,7 +3,7 @@
     "memray_version": "1.19.3",
     "python_version": "3.12.13",
     "c2pa_native_version": "c2pa-v0.90.15",
-    "iterations": 100,
+    "iterations": 200,
     "perf_env": "python-3.12-slim",
     "arch": "aarch64"
   },
