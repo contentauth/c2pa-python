@@ -2842,22 +2842,25 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the JSON
         """
-        if self._manifest_data_cache is None:
-            if self._manifest_json_str_cache is None:
-                self._manifest_json_str_cache = self.json()
+        # Locked so the cache fields can't be read and written
+        # across concurrent handle swaps.
+        with self._lock():
+            if self._manifest_data_cache is None:
+                if self._manifest_json_str_cache is None:
+                    self._manifest_json_str_cache = self.json()
 
-            try:
-                self._manifest_data_cache = json.loads(
-                    self._manifest_json_str_cache
-                )
-            except json.JSONDecodeError:
-                # Reset cache to reattempt read, possibly
-                self._manifest_data_cache = None
-                self._manifest_json_str_cache = None
-                # Failed to parse manifest JSON
-                return None
+                try:
+                    self._manifest_data_cache = json.loads(
+                        self._manifest_json_str_cache
+                    )
+                except json.JSONDecodeError:
+                    # Reset cache to reattempt read, possibly
+                    self._manifest_data_cache = None
+                    self._manifest_json_str_cache = None
+                    # Failed to parse manifest JSON
+                    return None
 
-        return self._manifest_data_cache
+            return self._manifest_data_cache
 
     def with_fragment(self, format: Optional[str], stream,
                       fragment_stream) -> "Reader":
@@ -2941,12 +2944,10 @@ class Reader(ManagedResource):
                         logger.warning(
                             "Failed to close Reader fragment stream")
 
-        # Invalidate caches: processing a new BMFF fragment updates the native
-        # reader's state, which can change the manifest data it returns.
-        # The cached JSON string and parsed dict may now be stale, so clear
-        # them to force a fresh read from the native layer on next access.
-        self._manifest_json_str_cache = None
-        self._manifest_data_cache = None
+                # Cleared here because these describe the replaced handle,
+                # and a reader must never be served them.
+                self._manifest_json_str_cache = None
+                self._manifest_data_cache = None
 
         return self
 

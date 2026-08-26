@@ -401,6 +401,157 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         self.assertIsNone(reader._own_stream)
         self.assertEqual(reader._fragment_streams, [])
 
+    def _manifest_before_and_after_fragment(self):
+        """Tests the manifest a fresh Reader reports,
+        and the one it reports once a fragment has been processed.
+        """
+        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
+        try:
+            before = reader.json()
+        finally:
+            reader.close()
+
+        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
+        try:
+            self._advance(reader)
+            after = reader.json()
+        finally:
+            reader.close()
+        return before, after
+
+    def test_read_during_swap_never_serves_the_previous_handles_manifest(self):
+        before, after = self._manifest_before_and_after_fragment()
+        self.assertNotEqual(
+            before, after,
+            "fixtures must differ before and after the fragment for this "
+            "test to mean anything")
+
+        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
+        # Populates the cache with the soon to be replaced handle.
+        self.assertEqual(reader.json(), before)
+
+        real_lock = reader._lock
+        at_gap = threading.Event()
+        leave_gap = threading.Event()
+        # _native_call takes this lock before the swap does,
+        # so park on the acquisition that actually performed the swap.
+        swapped = []
+
+        class GatedLock:
+            """Parks once after the swap's locked region releases."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __enter__(self):
+                return self._inner.__enter__()
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                performed_swap = reader._own_stream is not None and (
+                    reader._own_stream not in swapped)
+                result = self._inner.__exit__(exc_type, exc_val, exc_tb)
+                if performed_swap and not at_gap.is_set():
+                    at_gap.set()
+                    leave_gap.wait(10)
+                return result
+
+        swapped.append(reader._own_stream)
+        reader._lock = lambda: GatedLock(real_lock())
+
+        served = {}
+
+        def advance():
+            try:
+                self._advance(reader)
+            except Error as e:
+                served["advance"] = e
+
+        def read_in_gap():
+            try:
+                served["json"] = reader.json()
+            except Error as e:
+                served["json"] = e
+
+        advancer = threading.Thread(target=advance, daemon=True)
+        advancer.start()
+        self.assertTrue(at_gap.wait(10), "never reached the post-swap gap")
+
+        gap_reader = threading.Thread(target=read_in_gap, daemon=True)
+        gap_reader.start()
+        gap_reader.join(10)
+
+        leave_gap.set()
+        advancer.join(10)
+
+        try:
+            self.assertFalse(gap_reader.is_alive(), "json() hung in the gap")
+            # Smoke test comparison.
+            names = {before: "the replaced handle's manifest",
+                     after: "the current handle's manifest"}
+            self.assertEqual(
+                names.get(served.get("json"), "something else"),
+                "the current handle's manifest",
+                "json() must not be served a manifest cached from the "
+                "handle with_fragment already replaced")
+        finally:
+            reader._lock = real_lock
+            reader.close()
+
+    def test_manifest_accessors_stay_consistent_while_fragments_advance(self):
+        """get_active_manifest() parses the cached JSON,
+        so its read and write of the cache must not prevent a clean handle swap.
+        """
+        before, after = self._manifest_before_and_after_fragment()
+        valid = {before, after}
+
+        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
+        stop = threading.Event()
+        unexpected = []
+        served = []
+
+        def read_manifest():
+            while not stop.is_set():
+                try:
+                    if reader.get_active_manifest() is not None:
+                        served.append(reader.json())
+                except Error:
+                    pass
+                except BaseException as e:      # noqa: BLE001 - asserted below
+                    unexpected.append(repr(e))
+
+        def advance():
+            while not stop.is_set():
+                try:
+                    self._advance(reader)
+                except Error:
+                    pass
+                except BaseException as e:      # noqa: BLE001 - asserted below
+                    unexpected.append(repr(e))
+
+        workers = ([threading.Thread(target=read_manifest, daemon=True)
+                    for _ in range(3)]
+                   + [threading.Thread(target=advance, daemon=True)
+                      for _ in range(2)])
+        for t in workers:
+            t.start()
+        time.sleep(0.3)
+        stop.set()
+        for t in workers:
+            t.join(10)
+
+        try:
+            self.assertFalse(
+                [t for t in workers if t.is_alive()],
+                "a manifest accessor or fragment advance hung")
+            self.assertEqual(unexpected, [])
+            self.assertTrue(served, "no manifest was ever read")
+            self.assertTrue(
+                set(served) <= valid,
+                "a manifest was served that matches neither the pre- nor the "
+                "post-fragment state")
+        finally:
+            reader.close()
+
     def test_interleaved_with_fragment_leaves_reader_consistent(self):
         reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
 
