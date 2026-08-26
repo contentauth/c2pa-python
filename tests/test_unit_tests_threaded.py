@@ -4355,6 +4355,116 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             "borrowed handles used without their own guard:\n  "
             + "\n  ".join(unguarded))
 
+    def test_no_conflicting_lock_acquisition_order(self):
+        """No two locks may be nested in opposite orders by different methods.
+
+        Two methods nesting the same pair of locks in opposite order is a
+        AB/BA deadlock shape: thread 1 holds A and waits for B while
+        thread 2 holds B and waits for A.
+
+        This scans the code to check.
+        """
+        module = sys.modules[Reader.__module__]
+        tree = ast.parse(inspect.getsource(module))
+
+        # Every self._X = threading.Lock()/RLock()/Condition() assignment,
+        # grouped by the class that owns it.
+        lock_attrs_by_class = {}
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            found = set()
+            for node in ast.walk(cls):
+                if not (isinstance(node, ast.Assign)
+                        and len(node.targets) == 1):
+                    continue
+                target = node.targets[0]
+                if not (isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"):
+                    continue
+                value = node.value
+                if (isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Attribute)
+                        and value.func.attr in
+                        ("Lock", "RLock", "Condition")):
+                    found.add(target.attr)
+            if found:
+                lock_attrs_by_class[cls.name] = found
+
+        def lock_name_for_with(item):
+            """The lock attribute a `with` item enters, or None."""
+            ctx = item.context_expr
+            # with self._fragment_lock:
+            if (isinstance(ctx, ast.Attribute)
+                    and isinstance(ctx.value, ast.Name)
+                    and ctx.value.id == "self"
+                    and any(ctx.attr in attrs
+                            for attrs in lock_attrs_by_class.values())):
+                return ctx.attr
+            # with self._lock(): returns _op_lock itself.
+            if (isinstance(ctx, ast.Call)
+                    and isinstance(ctx.func, ast.Attribute)
+                    and ctx.func.attr == "_lock"
+                    and isinstance(ctx.func.value, ast.Name)
+                    and ctx.func.value.id == "self"):
+                return "_op_lock"
+            return None
+
+        def orders_in(node, stack, pairs):
+            """Record (outer, inner) for every nesting this node contains."""
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                names = [n for n in (lock_name_for_with(i)
+                                     for i in node.items) if n]
+                for name in names:
+                    if stack:
+                        pairs.add((stack[-1], name))
+                    stack.append(name)
+                for child in node.body:
+                    orders_in(child, stack, pairs)
+                for _ in names:
+                    stack.pop()
+                return
+            for child in ast.iter_child_nodes(node):
+                orders_in(child, stack, pairs)
+
+        pairs_by_method = {}
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for method in cls.body:
+                if not isinstance(method, (ast.FunctionDef,
+                                           ast.AsyncFunctionDef)):
+                    continue
+                pairs = set()
+                orders_in(method, [], pairs)
+                if pairs:
+                    pairs_by_method[(cls.name, method.name)] = pairs
+
+        all_pairs = set().union(*pairs_by_method.values()) \
+            if pairs_by_method else set()
+        conflicts = []
+        for (outer, inner) in all_pairs:
+            # Each conflicting pair appears twice in all_pairs, once per direction.
+            if outer >= inner or (inner, outer) not in all_pairs:
+                continue
+            forward = [k for k, v in pairs_by_method.items()
+                      if (outer, inner) in v]
+            backward = [k for k, v in pairs_by_method.items()
+                       if (inner, outer) in v]
+            conflicts.append(
+                "{} nests {} inside {}, but {} nests {} inside {}".format(
+                    forward[0], inner, outer, backward[0], outer, inner))
+
+        self.assertGreater(
+            len(pairs_by_method), 0,
+            "lock nesting scan found no nested lock acquisitions: "
+            "the scan is broken")
+        self.assertEqual(
+            conflicts, [],
+            "conflicting lock acquisition order:\n  "
+            + "\n  ".join(sorted(set(conflicts))))
+
 
 class TestSharedSignerTeardownRace(unittest.TestCase):
     """A Signer shared across threads must not be freed mid-sign.
