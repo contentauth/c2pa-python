@@ -4158,6 +4158,75 @@ class TestLocking(unittest.TestCase):
                          "racing closers freed {} times".format(len(freed)))
         self.assertEqual(reader._inflight, 0)
 
+    def test_concurrent_close_runs_release_once(self):
+        """Two racing close() calls on one instance must run _release()
+        exactly once.
+
+        The native free is already single (the handle is nulled after the
+        first teardown), so a free-counting test cannot see this: it is
+        _release() -- the Python-side stream/cache cleanup a subclass
+        overrides -- that must not run twice. _teardown() has to be
+        idempotent under its own lock.
+
+        Gate _teardown so the first close() pauses on entry, before taking
+        the lock; the second then runs a full teardown (release + free +
+        mark closed); the first resumes and must find the resource already
+        released and do nothing.
+        """
+        join_timeout = self.JOIN_TIMEOUT
+        orig_teardown = ManagedResource._teardown
+
+        for _ in range(20):
+            reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+            release_calls = []
+            orig_release = reader._release
+
+            def counting_release(_orig=orig_release, _calls=release_calls):
+                _calls.append(1)
+                _orig()
+
+            reader._release = counting_release
+
+            call_count = {"n": 0}
+            count_lock = threading.Lock()
+            first_arrived = threading.Event()
+            release_first = threading.Event()
+
+            def gated_teardown(self, free_handle, _target=reader,
+                               _timeout=join_timeout):
+                if self is _target:
+                    with count_lock:
+                        call_count["n"] += 1
+                        is_first = call_count["n"] == 1
+                    if is_first:
+                        first_arrived.set()
+                        release_first.wait(_timeout)
+                return orig_teardown(self, free_handle)
+
+            with patch.object(ManagedResource, '_teardown', gated_teardown):
+                t1 = threading.Thread(target=reader.close)
+                t1.start()
+                self.assertTrue(
+                    first_arrived.wait(join_timeout),
+                    "first close() never reached _teardown()")
+
+                t2 = threading.Thread(target=reader.close)
+                t2.start()
+                t2.join(join_timeout)
+                self.assertFalse(
+                    t2.is_alive(),
+                    "second close() should complete unblocked while the "
+                    "first is paused")
+
+                release_first.set()
+                self._join_all([t1], "paused close() resuming")
+
+            self.assertEqual(
+                len(release_calls), 1,
+                "_release() ran {} times for one instance across racing "
+                "close() calls; _teardown() must be idempotent under its "
+                "own lock".format(len(release_calls)))
+
     def test_sign_with_internal_close_frees_once(self):
         """_sign_internal closes the Builder inside its own try,
         so the close defers and the free happens on the way out."""

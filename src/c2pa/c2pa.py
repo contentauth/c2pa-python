@@ -269,6 +269,7 @@ class ManagedResource:
         self._op_lock = threading.RLock()
         self._inflight = 0
         self._pending_teardown = None
+        self._released = False
         record_owner_pid(self)
 
     def _lock(self):
@@ -410,6 +411,13 @@ class ManagedResource:
             return
 
         with self._lock():
+            if getattr(self, '_released', False):
+                # A racing close()/__del__ already ran the release branch
+                # under this lock. Idempotent: nothing left to release or free.
+                # Keyed on the release having happened, not on CLOSED: the
+                # deferred path below sets CLOSED without releasing, and still
+                # owes a release performed by _native_call()'s finally.
+                return
             if getattr(self, '_inflight', 0) > 0:
                 # A native call is running that re-enters calling non-native code
                 # and is still using this handle.
@@ -421,6 +429,7 @@ class ManagedResource:
                 self._lifecycle_state = LifecycleState.CLOSED
                 return
 
+            self._released = True
             self._lifecycle_state = LifecycleState.CLOSED
             self._safe_release()
 
