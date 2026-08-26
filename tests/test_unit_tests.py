@@ -30,6 +30,7 @@ import tempfile
 import shutil
 import ctypes
 import threading
+import concurrent.futures
 
 # Suppress deprecation warnings
 warnings.simplefilter("ignore", category=DeprecationWarning)
@@ -9933,6 +9934,103 @@ class TestErrorPlumbing(unittest.TestCase):
                   c2pa_module._mark_sentinel_no_native_error):
             self.assertNotIn(
                 'c2pa_error_set_last', inspect.getsource(fn))
+
+
+class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
+    """The marker is needed for reasons independent of pointer ownership.
+
+    The native error slot is sticky and thread-local, so failure paths
+    that carry no still need to tell an error this call set from an
+    earlier, unrelated call left behind.
+    """
+
+    def setUp(self):
+        # Leave no message from an earlier test in this thread's slot.
+        c2pa_module._mark_sentinel_no_native_error()
+
+    def test_non_consuming_failure_does_not_inherit_a_read_error(self):
+        c2pa_module._lib.c2pa_error_set_last(b"Signature: earlier task")
+        # The rightful owner reports it, which re-marks the slot.
+        self.assertEqual(
+            c2pa_module._read_native_error(), "Signature: earlier task")
+
+        # A later, unrelated failure that sets no error of its own must
+        # report its own fallback, not the message above.
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(
+                0, "later op failed: {}", check=lambda r: r == 0)
+
+        self.assertNotIn("earlier task", str(ctx.exception))
+        self.assertIn("Unknown error", str(ctx.exception))
+        self.assertNotIsInstance(ctx.exception, Error.Signature)
+
+    def test_settings_set_failure_reports_its_own_error(self):
+        settings = Settings()
+        self.addCleanup(settings.close)
+
+        c2pa_module._lib.c2pa_error_set_last(b"Signature: earlier task")
+        self.assertEqual(
+            c2pa_module._read_native_error(), "Signature: earlier task")
+
+        with self.assertRaises(Error) as ctx:
+            settings.set("builder.thumbnail.enabled", "not-a-json-value")
+
+        self.assertNotIn("earlier task", str(ctx.exception))
+
+    def test_marker_is_per_thread_across_pooled_reuse(self):
+        """The slot is thread-local, so a pooled worker must not hand one
+        task's error to the next task that runs on it."""
+        def failing_task():
+            c2pa_module._lib.c2pa_error_set_last(b"Io: first task")
+            return c2pa_module._read_native_error()
+
+        def quiet_task():
+            # Sets no error; must not see the previous task's message.
+            return c2pa_module._read_native_error()
+
+        # One worker guarantees both tasks run on the same OS thread.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            self.assertEqual(pool.submit(failing_task).result(),
+                             "Io: first task")
+            self.assertIsNone(
+                pool.submit(quiet_task).result(),
+                "a pooled thread carried an error across unrelated tasks")
+
+    def test_one_thread_marker_does_not_clear_another_threads_error(self):
+        """Marking on one thread must leave another thread's pending error
+        readable: the slot is per thread, and so is the marker."""
+        set_on_worker = threading.Event()
+        marked_on_main = threading.Event()
+        seen = {}
+
+        def worker():
+            c2pa_module._lib.c2pa_error_set_last(b"Io: worker error")
+            set_on_worker.set()
+            self.assertTrue(marked_on_main.wait(5))
+            seen["worker"] = c2pa_module._read_native_error()
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        self.assertTrue(set_on_worker.wait(5))
+
+        c2pa_module._mark_sentinel_no_native_error()
+        marked_on_main.set()
+        thread.join(5)
+
+        self.assertEqual(seen.get("worker"), "Io: worker error")
+
+    def test_marker_path_is_reached_without_any_consuming_call(self):
+        """The non-consuming path reaches the marker through _read_native_error,
+        never through _invoke_consume."""
+        self.assertIn("_read_native_error",
+                      inspect.getsource(
+                          c2pa_module._check_ffi_operation_result))
+        self.assertNotIn("_invoke_consume",
+                         inspect.getsource(
+                             c2pa_module._check_ffi_operation_result))
+        # _read_native_error is what re-marks the slot after every read.
+        self.assertIn("_mark_sentinel_no_native_error",
+                      inspect.getsource(c2pa_module._read_native_error))
 
 
 class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
