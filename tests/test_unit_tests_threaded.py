@@ -12,6 +12,7 @@
 # each license.
 
 import ast
+import contextlib
 import ctypes
 import gc
 import os
@@ -64,6 +65,7 @@ def _make_stream(pid_offset):
     obj._closed = False
     obj._initialized = True
     obj._stream = MagicMock()  # non-None stream handle
+    obj._close_lock = threading.Lock()
     if pid_offset is not None:
         obj._owner_pid = os.getpid() + pid_offset
     return obj
@@ -182,6 +184,197 @@ class TestManagedResourceForkGuard(unittest.TestCase):
             obj.close()
         self.assertTrue(obj._closed)
         self.assertFalse(obj._initialized)
+
+
+class TestForkedChildDoesNotDeadlock(unittest.TestCase):
+    """A forked child must never block on a lock the parent held at fork().
+
+    Locking a resource for the duration of an operation means a child that
+    forks while some thread holds that lock inherits it locked, with the owner
+    thread gone. Anything in the child that acquires it waits forever.
+
+    The failure mode is a hang: each operation runs on a worker thread and
+    is joined with a timeout: a test that called it directly would hang the
+    runner instead of failing.
+    """
+
+    _TIMEOUT = 5.0
+
+    def _foreign_reader_with_lock_held(self):
+        """A Reader in the state a forked child inherits:
+        lock held by another thread, and stamped with a PID other than this process's.
+        """
+        with open(DEFAULT_TEST_FILE, "rb") as asset:
+            reader = Reader("image/jpeg", asset)
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_lock():
+            with reader._lock():
+                holding.set()
+                release.wait(30)
+
+        holder = threading.Thread(target=hold_the_lock, daemon=True)
+        holder.start()
+        self.assertTrue(holding.wait(self._TIMEOUT),
+                        "helper thread never acquired the lock")
+        self.addCleanup(holder.join, self._TIMEOUT)
+        self.addCleanup(release.set)
+
+        reader._owner_pid = os.getpid() + 1
+        return reader
+
+    def _run_with_timeout(self, operation):
+        """Run operation on a worker; return 'ok', the exception, or None if it
+        was still running when the timeout expired."""
+        result = {}
+
+        def run():
+            try:
+                operation()
+                result["outcome"] = "ok"
+            except BaseException as e:      # noqa: BLE001 - asserted on below
+                result["outcome"] = e
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(self._TIMEOUT)
+        return result.get("outcome")
+
+    def test_locked_read_raises_instead_of_blocking(self):
+        reader = self._foreign_reader_with_lock_held()
+        outcome = self._run_with_timeout(reader.json)
+        self.assertIsNotNone(
+            outcome, "json() blocked on a lock inherited from the parent")
+        self.assertIsInstance(outcome, Error)
+
+    def test_native_call_path_raises_instead_of_blocking(self):
+        reader = self._foreign_reader_with_lock_held()
+        outcome = self._run_with_timeout(
+            lambda: reader.resource_to_stream("any-uri", io.BytesIO()))
+        self.assertIsNotNone(
+            outcome,
+            "resource_to_stream() blocked on a lock inherited from the parent")
+        self.assertIsInstance(outcome, Error)
+
+    def test_close_still_completes(self):
+        reader = self._foreign_reader_with_lock_held()
+        self.assertEqual(self._run_with_timeout(reader.close), "ok",
+                         "close() must neither block nor raise")
+
+    def test_teardown_still_completes(self):
+        # Cleanup has to finish, not report an error.
+        reader = self._foreign_reader_with_lock_held()
+        self.assertEqual(
+            self._run_with_timeout(
+                lambda: reader._teardown(free_handle=True)), "ok",
+            "_teardown() must neither block nor raise")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(reader._handle)
+
+    def test_parent_copy_unaffected(self):
+        """The child closing its copy must leave the parent's usable.
+
+        Runs in a subprocess so that the fork happens in a single-threaded
+        process. Operations that reach the network, such as reading an asset
+        with a remote manifest, start background native threads that outlive
+        the object that triggered them, and forking a multi-threaded process
+        can lead to issues.
+        """
+        source = textwrap.dedent("""
+            import os, sys
+            from c2pa import Reader
+            from c2pa.c2pa import LifecycleState
+
+            asset_path = sys.argv[1]
+            with open(asset_path, "rb") as asset:
+                reader = Reader("image/jpeg", asset)
+            before = reader.json()
+
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    reader.close()
+                    os._exit(0)
+                except BaseException:
+                    os._exit(1)
+            _, status = os.waitpid(pid, 0)
+
+            assert status >> 8 == 0, "child could not close its own copy"
+            assert reader._lifecycle_state == LifecycleState.ACTIVE
+            assert reader.json() == before
+            reader.close()
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, DEFAULT_TEST_FILE],
+            capture_output=True, text=True, timeout=120)
+
+        self.assertEqual(
+            result.returncode, 0,
+            "parent copy was affected by the child (rc={}):\n{}".format(
+                result.returncode, result.stderr[-2000:]))
+        self.assertIn("OK", result.stdout)
+        self.assertNotIn("DeprecationWarning", result.stderr)
+
+
+class TestReaderWithFragmentConcurrentClose(unittest.TestCase):
+    """with_fragment's post-native-call bookkeeping must not race close()."""
+
+    def test_close_during_with_fragment_does_not_double_close_stream(self):
+        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        entered_gap = threading.Event()
+        release_gap = threading.Event()
+
+        real_native_call = reader._native_call
+
+        @contextlib.contextmanager
+        def gated_native_call():
+            with real_native_call():
+                yield
+            # Pauses right in with_fragment's unlocked window before it reassigns _own_stream/_fragment_streams.
+            entered_gap.set()
+            release_gap.wait(5)
+
+        reader._native_call = gated_native_call
+
+        result = {}
+
+        def run_with_fragment():
+            try:
+                with open(init_path, "rb") as init, \
+                        open(fragment_path, "rb") as frag:
+                    reader.with_fragment("video/mp4", init, frag)
+                result["outcome"] = "ok"
+            except BaseException as e:      # noqa: BLE001 - asserted below
+                result["outcome"] = e
+
+        worker = threading.Thread(target=run_with_fragment, daemon=True)
+        worker.start()
+        self.assertTrue(
+            entered_gap.wait(5),
+            "with_fragment never reached the post-native-call gap")
+
+        # close() must win the race cleanly, not leave with_fragment hung, crashed, or silently successful.
+        reader.close()
+        release_gap.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive(), "with_fragment hung")
+        self.assertIsInstance(
+            result.get("outcome"), Error,
+            "with_fragment must raise C2paError when it loses the race, "
+            "not hang, crash, or silently succeed")
+
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        # with_fragment must not resurrect these fields on a reader close() already tore down.
+        self.assertIsNone(reader._own_stream)
+        self.assertEqual(reader._fragment_streams, [])
 
 
 class TestHelpers(unittest.TestCase):
@@ -705,12 +898,12 @@ class TestBuilderWithThreads(unittest.TestCase):
         with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
             self.key = key_file.read()
 
-        # Create a local Es256 signer with certs and a timestamp server
+        # Create a local Es256 signer with certs and no timestamp server.
         self.signer_info = C2paSignerInfo(
             alg=b"es256",
             sign_cert=self.certs,
             private_key=self.key,
-            ta_url=b"http://timestamp.digicert.com"
+            ta_url=None
         )
         self.signer = Signer.from_info(self.signer_info)
 
@@ -3269,7 +3462,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             alg=b"es256",
             sign_cert=certs,
             private_key=key,
-            ta_url=b"http://timestamp.digicert.com",
+            ta_url=None,
         )
         manifest = {
             "claim_generator": "python_test",
@@ -3742,7 +3935,7 @@ class TestManagedResourceLockDeadlock(unittest.TestCase):
             alg=b"es256",
             sign_cert=self.certs,
             private_key=self.private_key,
-            ta_url=b"http://timestamp.digicert.com",
+            ta_url=None,
         )
         manifest = {
             "claim_generator": "python_test",

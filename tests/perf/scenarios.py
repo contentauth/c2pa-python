@@ -524,6 +524,30 @@ def scenario_reader_with_fragment_swap(iterations: int = 100) -> None:
             reader.close()
 
 
+def scenario_reader_with_fragment_repeated(iterations: int = 100) -> None:
+    """Loop Reader.with_fragment() against a SINGLE long-lived Reader.
+
+    The Reader is built outside the loop on purpose. Every other fragment
+    scenario constructs one per iteration and closes it, which releases the
+    streams each time round and so cannot show anything retained across calls.
+    Only repeated calls on one instance expose a fragment stream that is kept
+    instead of released, and each one held open pins a native C2paStream, its
+    four ctypes callbacks and the caller's buffer.
+    """
+    init_bytes = DASH_INIT_MP4.read_bytes()
+    fragment_bytes = DASH_FRAGMENT.read_bytes()
+    reader = Reader("video/mp4", io.BytesIO(init_bytes))
+    try:
+        for _ in _iterate(iterations):
+            reader.with_fragment(
+                "video/mp4",
+                io.BytesIO(init_bytes),
+                io.BytesIO(fragment_bytes),
+            )
+    finally:
+        reader.close()
+
+
 def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
     """Loop Builder.from_archive() itself (context-less alternate constructor),
     then sign. Regression guard for the classmethod's native-handle wrapping.
@@ -1370,6 +1394,7 @@ SCENARIOS = {
     "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
     "builder_with_archive_swap": scenario_builder_with_archive_swap,
     "reader_with_fragment_swap": scenario_reader_with_fragment_swap,
+    "reader_with_fragment_repeated": scenario_reader_with_fragment_repeated,
     "with_fragment_pre_consume_rejection":
         scenario_reader_with_fragment_pre_consume_rejection,
     "with_archive_post_consume_failure":

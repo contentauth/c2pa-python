@@ -282,7 +282,23 @@ class ManagedResource:
 
         Falls back to a fresh lock when the attribute is missing.
         Unlike _lock(), this does not open a native-error section.
+
+        Never hold this across a native call that drives stream callbacks
+        (construction, resource_to_stream, the Builder stream methods,
+        signing). Those calls release the GIL and re-enter caller-supplied
+        Python, which may call back into this API on another thread.
+        Only calls that touch no callbacks are serialized here.
+
+        Raises in a forked child rather than returning the lock.
+        A child inherits this lock in whatever state it had at fork(),
+        and a thread holding it does not exist in the child to release it,
+        so acquiring it there waits and waits and waits.
+        The child's copy is unusable for the same reason a closed resource is,
+        and reports the same error.
         """
+        if is_foreign_process(self):
+            raise C2paError(f"{type(self).__name__} is closed")
+
         lock = getattr(self, '_op_lock', None)
         if lock is None:
             lock = threading.RLock()
@@ -394,17 +410,25 @@ class ManagedResource:
         Holds the operation lock so the free cannot happen between another
         thread's state check and its use of the handle in a native call.
 
-        Deferred (instead of run now) when either gate is blocking:
-        - this resource's own handle is in flight in a native call
-        - this thread is inside a native-error section for some call,
-        that may access the native error slot.
+        The forked-child case is handled before the lock is taken, because
+        _lock() refuses in a child: this path has to finish rather than report
+        an error, so it cannot rely on acquiring.
         """
+        if is_foreign_process(self):
+            # The parent owns the handle and frees its own copy. Mark this one
+            # closed and drop the pointer so the child cannot use or free it.
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
         with self._state_lock():
-            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
-                # Mark the resource closed now so it cannot be used while
-                # the free is pending, but record the intent rather than
-                # freeing: whichever gate is blocking will call
-                # _maybe_flush_pending() once it clears.
+            if getattr(self, '_inflight', 0) > 0:
+                # A native call is running that re-enters calling non-native code
+                # and is still using this handle.
+                # Record the intent and whichever caller leaves
+                # _native_call last performs the free.
+                # Mark the resource closed now so it cannot be used
+                # while the free is pending.
                 self._pending_teardown = free_handle
                 self._lifecycle_state = LifecycleState.CLOSED
                 if _in_native_section():
@@ -537,7 +561,12 @@ class ManagedResource:
     # Errors set by native lib, hinting at the cause of the error
     # These errors here means the pointer got somehow rejected by the lib,
     # so it is still ours to deal with.
-    _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
+    _PRE_CONSUME_ERROR_TAGS = (
+        "UntrackedPointer:",
+        "WrongPointerType:",
+        "NullParameter:",
+        "InvalidBufferSize:",
+    )
 
     def _invoke_consume(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle, returning its raw result.
@@ -2012,6 +2041,8 @@ class Stream:
         self._closed = False
         self._initialized = False
         self._stream = None
+        # Serializes close() and __del__ against a concurrent double-free.
+        self._close_lock = threading.Lock()
 
         # Generate unique stream ID using object ID and counter
         stream_counter = next(Stream._stream_id_counter)
@@ -2233,22 +2264,22 @@ class Stream:
         try:
             if is_foreign_process(self):
                 return
-            # Only cleanup if not already closed and we have a valid stream
-            if hasattr(self, '_closed') and not self._closed:
-                stream = self._stream
-                if hasattr(self, '_stream') and stream:
-                    # Use internal cleanup to avoid calling close() which could
-                    # cause issues
-                    try:
-                        _lib.c2pa_release_stream(stream)
-                    except Exception:
-                        # Destructors shouldn't raise exceptions
-                        logger.error("Failed to release Stream")
-                        pass
-                    finally:
-                        self._stream = None
-                        self._closed = True
-                        self._initialized = False
+            lock = getattr(self, '_close_lock', None)
+            with lock if lock is not None else contextlib.nullcontext():
+                # Only cleanup if not already closed and we have a valid stream
+                if hasattr(self, '_closed') and not self._closed:
+                    stream = self._stream
+                    if hasattr(self, '_stream') and stream:
+                        try:
+                            _lib.c2pa_release_stream(stream)
+                        except Exception:
+                            # Destructors shouldn't raise exceptions
+                            logger.error("Failed to release Stream")
+                            pass
+                        finally:
+                            self._stream = None
+                            self._closed = True
+                            self._initialized = False
         except Exception:
             # Destructors must not raise exceptions
             pass
@@ -2261,45 +2292,48 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        if self._closed:
-            return
-        if is_foreign_process(self):
-            self._closed = True
-            self._initialized = False
-            return
+        # Serializes against __del__ / a concurrent close().
+        with self._close_lock:
+            if self._closed:
+                return
+            if is_foreign_process(self):
+                self._closed = True
+                self._initialized = False
+                return
 
-        try:
-            # Clean up stream first as it depends on callbacks
-            # Note: We don't close self._file_like_stream as we don't own it,
-            # the opener owns it.
-            stream = self._stream
-            if stream:
-                try:
-                    _lib.c2pa_release_stream(stream)
-                except Exception as e:
-                    logger.error(
-                        Stream._ERROR_MESSAGES['stream_error'].format(
-                            str(e)))
-                finally:
-                    self._stream = None
-
-            # Clean up callbacks
-            for attr in ['_read_cb', '_seek_cb', '_write_cb', '_flush_cb']:
-                if hasattr(self, attr):
+            try:
+                # Clean up stream first as it depends on callbacks
+                # Note: We don't close self._file_like_stream as we don't
+                # own it, the opener owns it.
+                stream = self._stream
+                if stream:
                     try:
-                        setattr(self, attr, None)
+                        _lib.c2pa_release_stream(stream)
                     except Exception as e:
                         logger.error(
-                            Stream._ERROR_MESSAGES['callback_error'].format(
-                                attr, str(e)))
+                            Stream._ERROR_MESSAGES['stream_error'].format(
+                                str(e)))
+                    finally:
+                        self._stream = None
 
-        except Exception as e:
-            logger.error(
-                Stream._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)))
-        finally:
-            self._closed = True
-            self._initialized = False
+                # Clean up callbacks
+                for attr in [
+                        '_read_cb', '_seek_cb', '_write_cb', '_flush_cb']:
+                    if hasattr(self, attr):
+                        try:
+                            setattr(self, attr, None)
+                        except Exception as e:
+                            logger.error(
+                                Stream._ERROR_MESSAGES['callback_error']
+                                .format(attr, str(e)))
+
+            except Exception as e:
+                logger.error(
+                    Stream._ERROR_MESSAGES['cleanup_error'].format(
+                        str(e)))
+            finally:
+                self._closed = True
+                self._initialized = False
 
     def write_to_target(self, dest_stream):
         self._file_like_stream.seek(0)
@@ -2987,16 +3021,34 @@ class Reader(ManagedResource):
             frag_obj.close()
             raise
 
-        # Replace the streams this reader owned,
-        # closing the previous ones so repeated calls do not accumulate them.
-        previous = self._own_stream
-        self._own_stream = main_obj
-        self._fragment_streams.append(frag_obj)
-        if previous is not None and previous is not main_obj:
+        # Locked so a concurrent close() cannot run _release()
+        # between the check and the field swap.
+        with self._lock():
             try:
-                previous.close()
+                self._ensure_valid_state()
             except Exception:
-                logger.warning("Failed to close previous Reader stream")
+                main_obj.close()
+                frag_obj.close()
+                raise
+
+            # Replace the streams this reader owned, closing the previous
+            # ones (only the current fragment is retained).
+            previous = self._own_stream
+            previous_fragments = self._fragment_streams
+            self._own_stream = main_obj
+            self._fragment_streams = [frag_obj]
+            if previous is not None and previous is not main_obj:
+                try:
+                    previous.close()
+                except Exception:
+                    logger.warning("Failed to close previous Reader stream")
+            for fragment in previous_fragments:
+                if fragment is frag_obj:
+                    continue
+                try:
+                    fragment.close()
+                except Exception:
+                    logger.warning("Failed to close Reader fragment stream")
 
         # Invalidate caches: processing a new BMFF fragment updates the native
         # reader's state, which can change the manifest data it returns.
