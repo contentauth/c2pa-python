@@ -184,6 +184,114 @@ class TestManagedResourceForkGuard(unittest.TestCase):
         self.assertFalse(obj._initialized)
 
 
+class TestForkedChildDoesNotDeadlock(unittest.TestCase):
+    """A forked child must never block on a lock the parent held at fork().
+
+    Locking a resource for the duration of an operation means a child that
+    forks while some thread holds that lock inherits it locked, with the owner
+    thread gone. Anything in the child that acquires it waits forever.
+
+    The failure mode is a hang: each operation runs on a worker thread and
+    is joined with a timeout: a test that called it directly would hang the
+    runner instead of failing.
+    """
+
+    _TIMEOUT = 5.0
+
+    def _foreign_reader_with_lock_held(self):
+        """A Reader in the state a forked child inherits:
+        lock held by another thread, and stamped with a PID other than this process's.
+        """
+        with open(DEFAULT_TEST_FILE, "rb") as asset:
+            reader = Reader("image/jpeg", asset)
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_lock():
+            with reader._lock():
+                holding.set()
+                release.wait(30)
+
+        holder = threading.Thread(target=hold_the_lock, daemon=True)
+        holder.start()
+        self.assertTrue(holding.wait(self._TIMEOUT),
+                        "helper thread never acquired the lock")
+        self.addCleanup(holder.join, self._TIMEOUT)
+        self.addCleanup(release.set)
+
+        reader._owner_pid = os.getpid() + 1
+        return reader
+
+    def _run_with_timeout(self, operation):
+        """Run operation on a worker; return 'ok', the exception, or None if it
+        was still running when the timeout expired."""
+        result = {}
+
+        def run():
+            try:
+                operation()
+                result["outcome"] = "ok"
+            except BaseException as e:      # noqa: BLE001 - asserted on below
+                result["outcome"] = e
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(self._TIMEOUT)
+        return result.get("outcome")
+
+    def test_locked_read_raises_instead_of_blocking(self):
+        reader = self._foreign_reader_with_lock_held()
+        outcome = self._run_with_timeout(reader.json)
+        self.assertIsNotNone(
+            outcome, "json() blocked on a lock inherited from the parent")
+        self.assertIsInstance(outcome, Error)
+
+    def test_native_call_path_raises_instead_of_blocking(self):
+        reader = self._foreign_reader_with_lock_held()
+        outcome = self._run_with_timeout(
+            lambda: reader.resource_to_stream("any-uri", io.BytesIO()))
+        self.assertIsNotNone(
+            outcome,
+            "resource_to_stream() blocked on a lock inherited from the parent")
+        self.assertIsInstance(outcome, Error)
+
+    def test_close_still_completes(self):
+        reader = self._foreign_reader_with_lock_held()
+        self.assertEqual(self._run_with_timeout(reader.close), "ok",
+                         "close() must neither block nor raise")
+
+    def test_teardown_still_completes(self):
+        # Cleanup has to finish, not report an error.
+        reader = self._foreign_reader_with_lock_held()
+        self.assertEqual(
+            self._run_with_timeout(
+                lambda: reader._teardown(free_handle=True)), "ok",
+            "_teardown() must neither block nor raise")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(reader._handle)
+
+    def test_parent_copy_unaffected(self):
+        """The child closing its copy must leave the parent's usable.
+        """
+        with open(DEFAULT_TEST_FILE, "rb") as asset:
+            reader = Reader("image/jpeg", asset)
+        self.addCleanup(reader.close)
+        before = reader.json()
+
+        pid = os.fork()
+        if pid == 0:
+            try:
+                reader.close()
+                os._exit(0)
+            except BaseException:
+                os._exit(1)
+        _, status = os.waitpid(pid, 0)
+
+        self.assertEqual(status >> 8, 0, "child could not close its own copy")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertEqual(reader.json(), before)
+
+
 class TestHelpers(unittest.TestCase):
 
     def test_record_and_detect_own_pid(self):

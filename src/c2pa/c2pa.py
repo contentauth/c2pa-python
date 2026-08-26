@@ -286,7 +286,17 @@ class ManagedResource:
         signing). Those calls release the GIL and re-enter caller-supplied
         Python, which may call back into this API on another thread.
         Only calls that touch no callbacks are serialized here.
+
+        Raises in a forked child rather than returning the lock.
+        A child inherits this lock in whatever state it had at fork(),
+        and a thread holding it does not exist in the child to release it,
+        so acquiring it there waits and waits and waits.
+        The child's copy is unusable for the same reason a closed resource is,
+        and reports the same error.
         """
+        if is_foreign_process(self):
+            raise C2paError(f"{type(self).__name__} is closed")
+
         lock = getattr(self, '_op_lock', None)
         if lock is None:
             lock = threading.RLock()
@@ -387,20 +397,27 @@ class ManagedResource:
 
         Holds the operation lock so the free cannot happen between another
         thread's state check and its use of the handle in a native call.
+
+        The forked-child case is handled before the lock is taken, because
+        _lock() refuses in a child: this path has to finish rather than report
+        an error, so it cannot rely on acquiring.
         """
+        if is_foreign_process(self):
+            # The parent owns the handle and frees its own copy. Mark this one
+            # closed and drop the pointer so the child cannot use or free it.
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
         with self._lock():
             if getattr(self, '_inflight', 0) > 0:
-                # A native call is running that re-enters caller Python and
-                # is still using this handle. Record the intent and whichever
-                # caller leaves _native_call last performs the free.
+                # A native call is running that re-enters calling non-native code
+                # and is still using this handle.
+                # Record the intent and whichever caller leaves
+                # _native_call last performs the free.
                 # Mark the resource closed now so it cannot be used
                 # while the free is pending.
                 self._pending_teardown = free_handle
-                self._lifecycle_state = LifecycleState.CLOSED
-                return
-
-            if is_foreign_process(self):
-                self._handle = None
                 self._lifecycle_state = LifecycleState.CLOSED
                 return
 
