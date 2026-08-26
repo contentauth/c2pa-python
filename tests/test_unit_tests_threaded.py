@@ -12,6 +12,7 @@
 # each license.
 
 import ast
+import contextlib
 import ctypes
 import gc
 import os
@@ -64,6 +65,7 @@ def _make_stream(pid_offset):
     obj._closed = False
     obj._initialized = True
     obj._stream = MagicMock()  # non-None stream handle
+    obj._close_lock = threading.Lock()
     if pid_offset is not None:
         obj._owner_pid = os.getpid() + pid_offset
     return obj
@@ -315,6 +317,64 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
                 result.returncode, result.stderr[-2000:]))
         self.assertIn("OK", result.stdout)
         self.assertNotIn("DeprecationWarning", result.stderr)
+
+
+class TestReaderWithFragmentConcurrentClose(unittest.TestCase):
+    """with_fragment's post-native-call bookkeeping must not race close()."""
+
+    def test_close_during_with_fragment_does_not_double_close_stream(self):
+        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+
+        entered_gap = threading.Event()
+        release_gap = threading.Event()
+
+        real_native_call = reader._native_call
+
+        @contextlib.contextmanager
+        def gated_native_call():
+            with real_native_call():
+                yield
+            # Pauses right in with_fragment's unlocked window before it reassigns _own_stream/_fragment_streams.
+            entered_gap.set()
+            release_gap.wait(5)
+
+        reader._native_call = gated_native_call
+
+        result = {}
+
+        def run_with_fragment():
+            try:
+                with open(init_path, "rb") as init, \
+                        open(fragment_path, "rb") as frag:
+                    reader.with_fragment("video/mp4", init, frag)
+                result["outcome"] = "ok"
+            except BaseException as e:      # noqa: BLE001 - asserted below
+                result["outcome"] = e
+
+        worker = threading.Thread(target=run_with_fragment, daemon=True)
+        worker.start()
+        self.assertTrue(
+            entered_gap.wait(5),
+            "with_fragment never reached the post-native-call gap")
+
+        # close() must win the race cleanly, not leave with_fragment hung, crashed, or silently successful.
+        reader.close()
+        release_gap.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive(), "with_fragment hung")
+        self.assertIsInstance(
+            result.get("outcome"), Error,
+            "with_fragment must raise C2paError when it loses the race, "
+            "not hang, crash, or silently succeed")
+
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+        # with_fragment must not resurrect these fields on a reader close() already tore down.
+        self.assertIsNone(reader._own_stream)
+        self.assertEqual(reader._fragment_streams, [])
 
 
 class TestHelpers(unittest.TestCase):
