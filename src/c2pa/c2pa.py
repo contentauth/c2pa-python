@@ -517,7 +517,12 @@ class ManagedResource:
     # Errors set by native lib, hinting at the cause of the error
     # These errors here means the pointer got somehow rejected by the lib,
     # so it is still ours to deal with.
-    _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
+    _PRE_CONSUME_ERROR_TAGS = (
+        "UntrackedPointer:",
+        "WrongPointerType:",
+        "NullParameter:",
+        "InvalidBufferSize:",
+    )
 
     def _invoke_consume(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle, returning its raw result.

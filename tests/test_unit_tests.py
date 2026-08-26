@@ -8786,6 +8786,99 @@ class TestManagedResourceObjects(TestContextAPIs):
             self.assertTrue(reader.json())
             reader.close()
 
+    def _reader_from_context(self):
+        """A Reader holding a fresh native handle and nothing else.
+
+        Built through the FFI so the consuming call can be
+        set up with one deliberately invalid argument.
+        """
+        context = Context()
+        self.addCleanup(context.close)
+        reader = Reader.__new__(Reader)
+        ManagedResource.__init__(reader)
+        reader._init_attrs()
+        with context._native_call():
+            reader._create_and_activate(
+                lambda: c2pa_module._lib.c2pa_reader_from_context(
+                    context.execution_context),
+                "Failed to create reader: {}")
+        return reader
+
+    def test_null_parameter_rejection_retains_the_handle(self):
+        """A null argument is rejected before the reader is untracked.
+        Ownership never transferred, so the handle is still ours to free.
+        Treating it as consumed leaks one reader per call.
+        """
+        reader = self._reader_from_context()
+        handle = reader._handle
+        freed = self._instrument_frees()
+
+        with self.assertRaises(Error) as caught:
+            with reader._native_call():
+                reader._consume_and_swap(
+                    lambda h: c2pa_module._lib.c2pa_reader_with_stream(
+                        h, b"image/jpeg", None),
+                    "Failed to configure reader: {}")
+
+        self.assertIn("NullParameter", str(caught.exception))
+        self.assertIsNotNone(reader._handle, "the retained handle was dropped")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+
+        reader.close()
+        self.assertEqual(
+            self._free_count(freed, handle), 1,
+            "a handle the native side never took was leaked")
+
+    def test_invalid_buffer_size_rejection_retains_the_handle(self):
+        """A zero-length manifest buffer is rejected before the untrack..
+        """
+        reader = self._reader_from_context()
+        handle = reader._handle
+        freed = self._instrument_frees()
+        empty = (ctypes.c_ubyte * 4)()
+
+        with Stream(io.BytesIO(b"abc")) as stream_obj:
+            with self.assertRaises(Error) as caught:
+                with reader._native_call():
+                    reader._consume_and_swap(
+                        lambda h: (
+                            c2pa_module._lib
+                            .c2pa_reader_with_manifest_data_and_stream(
+                                h, b"image/jpeg", stream_obj._stream,
+                                empty, 0)
+                        ),
+                        "Failed to configure reader: {}")
+
+        self.assertIn("InvalidBufferSize", str(caught.exception))
+        self.assertIsNotNone(reader._handle, "the retained handle was dropped")
+        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+
+        reader.close()
+        self.assertEqual(
+            self._free_count(freed, handle), 1,
+            "a handle the native side never took was leaked")
+
+    def test_repeated_rejections_do_not_accumulate_handles(self):
+        """Every rejected call must give its handle back, not just the first.
+        """
+        handles = []
+        freed = self._instrument_frees()
+
+        for _ in range(10):
+            reader = self._reader_from_context()
+            handles.append(reader._handle)
+            with self.assertRaises(Error):
+                with reader._native_call():
+                    reader._consume_and_swap(
+                        lambda h: c2pa_module._lib.c2pa_reader_with_stream(
+                            h, b"image/jpeg", None),
+                        "Failed to configure reader: {}")
+            reader.close()
+
+        leaked = [h for h in handles if self._free_count(freed, h) == 0]
+        self.assertEqual(
+            leaked, [], f"{len(leaked)} of {len(handles)} handles leaked")
+
     def test_repeated_with_fragment_does_not_accumulate_streams(self):
         """Repeated calls on one Reader must not pile up fragment streams.
 
