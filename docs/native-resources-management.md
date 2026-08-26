@@ -106,15 +106,27 @@ Therefore, the managed resources have the following principles:
 
 ### Double-free risk mitigations
 
-Three distinct risks. Two have a mechanism in this layer; the third is the caller's to synchronize:
+Three distinct risks, each with its own mechanism in this layer:
 
 | Hazard | Covered by | How |
 | --- | --- | --- |
-| Freeing a pointer a consuming call already took (single flow) | `_swap_handle` / `_teardown(free_handle=False)` triage | The consumed pointer is abandoned, never freed. The retained-vs-consumed decision reads the native error tag (`UntrackedPointer:` / `WrongPointerType:` mean not taken). |
+| Freeing a pointer a consuming call already took (single flow) | `_swap_handle` / `_teardown(free_handle=False)` triage | The consumed pointer is abandoned, never freed. The retained-vs-consumed decision reads the native error tag (`UntrackedPointer:` / `WrongPointerType:` / `NullParameter:` / `InvalidBufferSize:` mean not taken). |
 | A forked child freeing a pointer its parent owns | PID stamp (`record_owner_pid` / `is_foreign_process`) | Cleanup in a process that did not allocate the pointer nulls the handle and marks `CLOSED` without freeing (see [Fork safety](#fork-safety)). |
-| Two **threads** in one process racing frees on distinct objects, where the allocator recycles a just-freed address | Not covered here | `ManagedResource` has no lock and no thread stamping. The PID stamp cannot see it: sibling threads share a PID. Safety for genuinely shared handles must come from the caller's own synchronization or from the native registry, not this layer. |
+| Two **threads** racing a `close()` against an in-flight native call on the same object, where the allocator recycles a just-freed address | `_op_lock` / `_native_call()` / `_pending_teardown` | A close arriving while a native call is in flight is recorded rather than applied. The last caller to leave `_native_call()` performs the deferred free (see [Locking and in-flight tracking](#locking-and-in-flight-tracking)). |
 
-The PID stamp is fork-only: it compares process IDs, and two threads in the same process always match. Sharing one `ManagedResource` instance across threads without external synchronization is outside what this layer protects against.
+The PID stamp is fork-only: it compares process IDs, and two threads in the same process always match on that PID. Sharing one `ManagedResource` instance across threads still needs locks: nothing here protects two threads racing on genuinely distinct objects that happen to share an allocator.
+
+## Locking and in-flight tracking
+
+Each `ManagedResource` holds a reentrant lock, `_op_lock`, and a counter, `_inflight`, that together serialize teardown against concurrent use from other threads.
+
+A lock (Python's `threading.Lock`) can be acquired once, and a second `acquire()` from the same thread on that lock blocks forever, waiting on a lock that thread itself is holding. A reentrant lock (`threading.RLock`) tracks which thread holds it and how many times: the owning thread can acquire it again without blocking, and the lock is only released once that thread has released it the same number of times it acquired it. A different thread still blocks until the owner releases fully.
+
+`_op_lock` is an `RLock` rather than a plain `Lock` for two reasons specific to this code. First, a finalizer (`__del__`) can run at any bytecode boundary — including one in the middle of a method that has already acquired the lock on this same thread — so `__del__` calling back into locked code must not deadlock against itself. Second, a consuming call tears the handle down from inside the locked region it is already holding: `_teardown()` is called while `_op_lock` is held, and it needs to acquire the same lock again rather than re-entering as a different, blocked acquisition. `_lock()` returns it, except in a forked child: there it raises `C2paError` immediately rather than blocking, because the thread that might hold the lock at fork time does not exist in the child to release it, and waiting on it would hang forever (see [Fork safety](#fork-safety)).
+
+The lock is never held across a native call that drives a stream callback: construction, `resource_to_stream`, the Builder stream methods, and signing all release the GIL and call back into caller-supplied Python, which may itself call into this API on another thread. Holding `_op_lock` there would deadlock against that reentry. Those calls go through `_native_call()` instead: a context manager that increments `_inflight` under the lock, yields to run the native call unlocked, then decrements `_inflight` on the way out. If `_teardown()` runs while a call is in flight, it records the requested `free_handle` value in `_pending_teardown` and marks the resource `CLOSED` immediately, so no other caller can start using it, but defers the actual free. The last `_native_call()` to exit picks up `_pending_teardown` and runs `_teardown()` for real.
+
+`Context.__init__` wraps the signer hand-off in `signer._native_call()`, so a `signer.close()` on another thread cannot free the handle between the state check and the consuming call. `Builder._sign_internal` wraps the sign call in `self._native_call()` and, when an explicit `Signer` is passed, nests `signer._native_call()` inside it in that fixed order, so two concurrent `sign()` calls sharing one `Signer` cannot deadlock by acquiring the two locks in opposite orders. The Builder's `close()` after signing runs outside its own `_native_call()` block, so a teardown deferred during the call still executes once the call returns.
 
 ## Guarantees provided by ManagedResource
 
@@ -317,6 +329,8 @@ While `ACTIVE`, callers can use `.add_ingredient()`, `.add_action()`, etc. repea
 
 The native sign call borrows the builder's pointer rather than taking ownership of it, so `Builder` never marks it consumed and the pointer is freed normally through `c2pa_free`. The close enforces single use; it is not a memory-management requirement.
 
+The sign call runs inside `self._native_call()`, nesting `signer._native_call()` when the caller passes an explicit `Signer`, and `close()` runs after that block exits (see [Locking and in-flight tracking](#locking-and-in-flight-tracking) for why the order matters and what it protects against).
+
 ## Ownership transfer
 
 Some operations transfer a native pointer from one object to another. When this happens, the original object must stop managing the pointer (e.g. so it is not freed twice).
@@ -338,6 +352,8 @@ sequenceDiagram
     C->>X: Context(settings, signer)
     X->>B: with _NativeBuilder() (owns the builder, close() frees it on any failure)
     X->>S: _ensure_valid_state()
+    X->>S: enter _native_call()
+    Note right of S: Pins the Signer active for the duration:<br/>a close() on another thread now waits<br/>instead of freeing the handle mid-transfer
     X->>X: copy signer._callback_cb to _signer_callback_cb
     Note right of X: Pin the callback first:<br/>the Signer is about to be consumed
     X->>S: _consume_no_replacement(set_signer)
@@ -346,12 +362,13 @@ sequenceDiagram
     alt status 0 (success)
         S->>S: _teardown(free_handle=False)
         Note right of S: Consumed: native took the signer
-    else pre-consume rejection (UntrackedPointer / WrongPointerType)
+    else pre-consume rejection (one of _PRE_CONSUME_ERROR_TAGS)
         Note right of S: Rejected before ownership moved:<br/>Signer retained, typed error raised
     else other error
         S->>S: _teardown(free_handle=False)
         Note right of S: Native took it then failed and dropped it
     end
+    X->>S: exit _native_call()
 
     X->>B: _consume_into(build)
     B->>N: c2pa_context_builder_build(builder_ptr)
@@ -362,7 +379,8 @@ sequenceDiagram
 Details in that sequence that are easy to get wrong:
 
 - The callback is copied to the Context *before* the transfer. A successful consume runs `_release()`, which drops the Signer's reference to the callback; a Context that copied it afterwards would be pointing at a callback nothing keeps alive.
-- `set_signer` does not always take the pointer. A pre-consume rejection (`UntrackedPointer:` / `WrongPointerType:`) leaves the Signer `ACTIVE` and retained, so the triage must read the native error before deciding to close it. Treating every failure as "consumed" would close a signer the native side never took.
+- The state check and the consuming call both run inside `signer._native_call()`, so a `signer.close()` racing on another thread cannot free the handle in the gap between them. If a close does arrive while the transfer is in flight, it is recorded as a pending teardown and applied once the transfer finishes (see [Locking and in-flight tracking](#locking-and-in-flight-tracking)).
+- `set_signer` does not always take the pointer. A pre-consume rejection (one of `_PRE_CONSUME_ERROR_TAGS`) leaves the Signer `ACTIVE` and retained, so the triage must read the native error before deciding to close it. Treating every failure as "consumed" would close a signer the native side never took.
 - A `ctypes.ArgumentError` from `set_signer` is re-raised untouched by `_invoke_consume`: marshalling failed, the native function never ran, and the Signer still owns its handle. Only calls that reached native go through the consumed/retained triage.
 - The builder is never held as a raw local across the signer and build calls. `_NativeBuilder`'s `with` block owns it: a settings error, a retained-signer error, a build rejection, or an async interrupt all free it through `close()`, and a successful build consumes it so `close()` is then a no-op. The old raw-pointer recovery block that used to free `builder_ptr` on the un-reached-build path is gone.
 
@@ -396,6 +414,8 @@ stateDiagram-v2
 
 On success the object stays `ACTIVE` because the Python-side object is still valid: it has a live native pointer, its public methods still work, and callers may continue using it (e.g. reading the updated manifest or feeding in another fragment). The lifecycle state does not change because from `ManagedResource`'s perspective nothing has closed. Only the underlying native pointer has been swapped. This is different from a consumed teardown (`_teardown(free_handle=False)`), where the object transitions to `CLOSED` and becomes unusable. On the success path the old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call. The failure path is different and is covered by the triage in [`_consume_and_swap()`](#_consume_and_swap).
 
+`Reader.with_fragment()` runs the swap inside `self._native_call()`, and keeps a `_fragment_streams` list holding the `Stream` wrapper for the current fragment. Each call to `with_fragment()` replaces that list rather than appending to it, closing the previous fragment's wrapper immediately: the native reader never reads a superseded fragment back, and each open wrapper pins a native stream, its callbacks, and the caller's buffer.
+
 ### `_consume_and_swap()`
 
 Every call of this shape goes through one helper, which takes the FFI call as a callable and handles the outcomes:
@@ -428,7 +448,7 @@ The two failure paths are indistinguishable from the return value alone. Only th
 
 | Native error | Who owns the handle | What the helper does |
 | --- | --- | --- |
-| `UntrackedPointer:` or `WrongPointerType:` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
+| One of `_PRE_CONSUME_ERROR_TAGS` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
 | Any other error | Taken, then the operation failed | `_teardown(free_handle=False)`: the native side already dropped the value, so nothing is freed here. Resource goes `CLOSED`, error typed from the native message. |
 | No error at all | Unknown | `_release_handle()` guarded free, the caller's message is raised with `"Unknown error"` filled in. |
 
@@ -448,17 +468,17 @@ Three consume helpers share this triage; they differ only in what the FFI call r
 
 A consuming FFI call can fail. It may reject the borrowed pointer before taking it, or it may take ownership first and then, on a later failure, drop the value itself.
 
-The native error message indicates which of the errors happened. A rejection carries one of the `_PRE_CONSUME_ERROR_TAGS` (`UntrackedPointer:` or `WrongPointerType:`), which means the handle was never taken and is retained. Any other error message means the native side may have taken ownership and already dropped the value. On top of those, preparing the call's own arguments can fail in Python before the native function ever runs (for example, encoding a bad value or a ctypes marshalling error other than `ArgumentError`), and that outcome is handled separately.
+The native error message indicates which of the errors happened. A rejection carries one of the `_PRE_CONSUME_ERROR_TAGS`, which means the handle was never taken and is retained. Any other error message means the native side may have taken ownership and already dropped the value. On top of those, preparing the call's own arguments can fail in Python before the native function ever runs (for example, encoding a bad value or a ctypes marshalling error other than `ArgumentError`), and that outcome is handled separately.
 
-The two settled branches each take the exact action their ownership implies. A pre-consume rejection (an error prefixed `UntrackedPointer:` or `WrongPointerType:`) means the handle is still the caller's, so it is retained and freed later by normal cleanup. Any other native error means the value is already gone, so `_teardown(free_handle=False)` runs the Python-side cleanup without freeing anything.
+The two settled branches each take the exact action their ownership implies. A pre-consume rejection (one of the `_PRE_CONSUME_ERROR_TAGS`) means the handle is still the caller's, so it is retained and freed later by normal cleanup. Any other native error means the value is already gone, so `_teardown(free_handle=False)` runs the Python-side cleanup without freeing anything.
 
 Always calling the guarded free instead, even where the value is known to be gone, is tempting because a stale free looks like a harmless `-1` no-op. It is only harmless while the freed address stays unclaimed. The native registry rejects an address it no longer tracks, but once another thread allocates a fresh tracked object at that recycled address, the registry does track it again — and a stale free aimed at the old value would now find a live entry and destroy a different thread's object. The scenario is unlikely, but not unreachable: it needs a second thread inside its own FFI call, an allocator that hands back the exact address just freed, and that reuse to happen during the (narrow) window between the native drop and this free. But the window is real under concurrent use. The failure is a silent cross-thread corruption rather than a clean error, and the free is not needed in the first place on this branch. So where the value is known to be consumed, the free is skipped rather than issued and left to the registry to reject. The native error slot stays sticky: it holds whatever it last held until the next error overwrites it, and nothing clears it in between. Issuing an unneeded free would set an untracked-pointer error there that a later caller could mistake for the failure it actually asked about, so skipping the free keeps the slot free for the next real error.
 
 `_release_handle()` (a guarded free) is reserved for the two branches where ownership is not known for certain: a Python exception raised before native reports anything, and a failure that leaves the error slot empty (which no defined native failure is expected to produce). In both, a guarded free is a good default, since it is a real free when the handle is still ours and a `-1` no-op when the native side already took it.
 
-None of this is protected by a lock on the Python side: `ManagedResource` has no thread-safety mechanism of its own, and the retained-vs-consumed guarantee comes entirely from the native pointer registry and its thread-local error slot. As noted under [Which double-free risks this layer guards](#double-free-risk-mitigations), sharing one instance across threads without external synchronization is the caller's responsibility. This is a different hazard from [Fork safety](#fork-safety), which concerns a forked child process, not a thread within the same process.
+The retained-vs-consumed decision itself comes entirely from the native pointer registry and its thread-local error slot, not from a Python-side lock: `_op_lock` guards concurrent teardown against a call still in flight (see [Locking and in-flight tracking](#locking-and-in-flight-tracking)), but it plays no part in reading which rejection prefix the native side set. That is a different hazard from [Fork safety](#fork-safety), which concerns a forked child process, not a thread within the same process.
 
-A consuming C FFI function first removes the pointer from its registry, then reconstructs the owned value from it. `untrack_or_return!` runs ahead of `Box::from_raw` in `c2pa_c_ffi`. If the address is unknown or the wrong type, the untrack step fails before ownership is taken and sets an error whose prefix (`UntrackedPointer:` or `WrongPointerType:`) identifies it as a pre-consume rejection. Once the value has been reconstructed, a later failure simply drops it, the same as any owned value going out of scope. The Python side stays defensive (and as generic as possible) rather than assuming any exact behavior: it retains the handle when it recognizes one of those rejection prefixes, and where the outcome is unclear it falls back to the guarded free. A native side that behaved differently would degrade in one of two bounded ways: If it kept a pointer the Python side treated as consumed, nothing would free that pointer and it would leak. If it had already released a pointer the Python side then tried to free, the registry would not find the address and the free would return `-1` without touching memory.
+A consuming C FFI function first removes the pointer from its registry, then reconstructs the owned value from it. `untrack_or_return!` runs ahead of `Box::from_raw` in `c2pa_c_ffi`. If the address is unknown or the wrong type, the untrack step fails before ownership is taken and sets an error whose prefix (one of the `_PRE_CONSUME_ERROR_TAGS`) identifies it as a pre-consume rejection. Once the value has been reconstructed, a later failure simply drops it, the same as any owned value going out of scope. The Python side stays defensive (and as generic as possible) rather than assuming any exact behavior: it retains the handle when it recognizes one of those rejection prefixes, and where the outcome is unclear it falls back to the guarded free. A native side that behaved differently would degrade in one of two bounded ways: a pointer the native side still held but Python treated as consumed would leak, since nothing would free it; a pointer the native side had already released but Python then tried to free would return `-1` from the registry without touching memory.
 
 ### Adopting the handle before giving it away
 
@@ -530,6 +550,8 @@ sequenceDiagram
 ```
 
 Both `_cleanup_resources()` and the consumed teardown take this branch. Neither simply skips the work: they null the handle and mark the object `CLOSED` so the child cannot go on to use it or try to free it later. Mutating the child's copy has no effect on the parent's, which is untouched and still valid.
+
+`_teardown()` checks `is_foreign_process()` before taking `_op_lock`, not after, so the foreign-process branch above never tries to acquire a lock in the child. The lock itself would raise there anyway (see [Locking and in-flight tracking](#locking-and-in-flight-tracking)), but `_teardown()` needs to finish its cleanup rather than raise. Therefore, it settles the fork case first and only reaches for the lock once it knows this process owns the pointer.
 
 The memory the child skips is not lost for good. A child that calls `exec()` replaces its address space; a child that exits has its memory reclaimed by the OS. Even a long-lived child (a `multiprocessing` worker using the fork start method) retains at most the objects it inherited at fork time, which is a bounded, one-off amount rather than a growing leak. Anything the child allocates itself carries the child's own PID and is freed normally.
 
