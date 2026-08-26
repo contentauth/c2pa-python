@@ -13,6 +13,7 @@
 
 # Version: 0.37.8
 
+import contextlib
 import ctypes
 import enum
 import json
@@ -266,26 +267,25 @@ class ManagedResource:
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
         self._op_lock = threading.RLock()
+        self._inflight = 0
+        self._pending_teardown = None
         record_owner_pid(self)
 
     def _lock(self):
         """Return this resource's operation lock.
 
-        Reentrant because CPython can run a finalizer at any bytecode
+        Reentrant because it is possible to run a finalizer at any bytecode
         boundary, including inside a region this thread has already locked,
         and because a consuming call tears the handle down from inside the
-        locked region (_invoke_consume, _raise_consume_failure).
+        locked region.
 
-        Falls back to a fresh lock when the attribute is missing: an object
-        whose __init__ raised before the assignment is still finalized, and
-        __del__ must not raise.
+        Falls back to a fresh lock when the attribute is missing.
 
         Never hold this across a native call that drives stream callbacks
         (construction, resource_to_stream, the Builder stream methods,
         signing). Those calls release the GIL and re-enter caller-supplied
-        Python, which may call back into this API on another thread; holding
-        the lock across them deadlocks. Only calls that touch no callbacks
-        are serialized here, and no path holds two of these locks at once.
+        Python, which may call back into this API on another thread.
+        Only calls that touch no callbacks are serialized here.
         """
         lock = getattr(self, '_op_lock', None)
         if lock is None:
@@ -295,6 +295,39 @@ class ManagedResource:
             except Exception:
                 pass
         return lock
+
+    @contextlib.contextmanager
+    def _native_call(self):
+        """Hold the handle valid across a native call that goes back
+        and forth to native layers.
+
+        Calls that pass a Stream to the native library run caller-supplied
+        callbacks, so the lock cannot be held across them. Instead the call
+        is counted as in flight, and a teardown arriving meanwhile records
+        its intent rather than freeing. The last caller out performs the free.
+
+        The resource is marked closed as soon as the teardown is recorded, so
+        a caller that closed it cannot keep using it while the free is
+        pending.
+        """
+        with self._lock():
+            self._ensure_valid_state()
+            self._inflight = getattr(self, '_inflight', 0) + 1
+        try:
+            yield
+        finally:
+            with self._lock():
+                self._inflight -= 1
+                pending = (self._pending_teardown
+                           if self._inflight == 0 else None)
+                if pending is not None:
+                    self._pending_teardown = None
+            # Released the lock before the free:
+            # _teardown takes it again, and keeping the two acquisitions
+            # separate means the counter update is never held across
+            # the release work.
+            if pending is not None:
+                self._teardown(pending)
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -352,10 +385,20 @@ class ManagedResource:
         """Close the object: run _release, optionally free the handle, null it.
         free_handle=False (consumed) frees nothing, the new owner needs to free.
 
-        Holds the operation lock so the free cannot land between another
+        Holds the operation lock so the free cannot happen between another
         thread's state check and its use of the handle in a native call.
         """
         with self._lock():
+            if getattr(self, '_inflight', 0) > 0:
+                # A native call is running that re-enters caller Python and
+                # is still using this handle. Record the intent and whichever
+                # caller leaves _native_call last performs the free.
+                # Mark the resource closed now so it cannot be used
+                # while the free is pending.
+                self._pending_teardown = free_handle
+                self._lifecycle_state = LifecycleState.CLOSED
+                return
+
             if is_foreign_process(self):
                 self._handle = None
                 self._lifecycle_state = LifecycleState.CLOSED
@@ -1735,13 +1778,22 @@ class Context(ManagedResource, ContextProvider):
                         check=lambda r: r != 0)
 
                 if signer is not None:
-                    signer._ensure_valid_state()
-                    # A rejected signer is retained, not closed and leaked.
-                    self._signer_callback_cb = signer._callback_cb
-                    signer._consume_no_replacement(
-                        lambda h: _lib.c2pa_context_builder_set_signer(
-                            nb._handle, h),
-                        "Failed to set signer on Context: {}")
+                    # The signer's in-flight guard:
+                    # this hands its handle to native,
+                    # so a signer.close() on another thread must not
+                    # free it between the state check and the call.
+                    #
+                    # _consume_no_replacement tears the signer down from
+                    # inside this region. A teardown recorded while the guard
+                    # is held is deferred and performed as the guard unwinds,
+                    # which is still before __init__ returns.
+                    with signer._native_call():
+                        # A rejected signer is retained, not closed and leaked.
+                        self._signer_callback_cb = signer._callback_cb
+                        signer._consume_no_replacement(
+                            lambda h: _lib.c2pa_context_builder_set_signer(
+                                nb._handle, h),
+                            "Failed to set signer on Context: {}")
                     self._has_signer = True
 
                 context_ptr = nb._consume_into(
@@ -2617,9 +2669,8 @@ class Reader(ManagedResource):
     def _init_from_stream(self, stream, format_bytes,
                           manifest_data=None):
         """Create a reader from a caller-supplied stream object.
-        The native reader reads through this stream for as long as it is
-        alive, so the wrapper is stored on the instance and released by
-        _release().
+        The native reader reads through this stream as long as it's alive,
+        so the wrapper is stored on the instance and released by _release().
 
         Args:
             stream: A stream-like object owned by the caller
@@ -2658,12 +2709,16 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Adopt before the consuming call: _consume_and_swap needs an
-            # active resource, and cleanup then owns the pointer either way.
-            self._create_and_activate(
-                lambda: _lib.c2pa_reader_from_context(
-                    context.execution_context),
-                Reader._ERROR_MESSAGES['reader_error'])
+            # The Context is caller-supplied and may be shared, so its handle
+            # needs its own in-flight guard across the native call.
+            with context._native_call():
+                # Adopt before the consuming call: _consume_and_swap needs an
+                # active resource, and cleanup then owns the pointer either
+                # way.
+                self._create_and_activate(
+                    lambda: _lib.c2pa_reader_from_context(
+                        context.execution_context),
+                    Reader._ERROR_MESSAGES['reader_error'])
 
             if manifest_data is not None:
                 manifest_array = (
@@ -2702,6 +2757,10 @@ class Reader(ManagedResource):
         # Tracks a file we opened ourselves and must close later.
         self._backing_file = None
 
+        # Fragment streams handed to the native reader by with_fragment,
+        # which it keeps reading from for the rest of its lifecycle.
+        self._fragment_streams = []
+
         # Caches for manifest JSON string and parsed data.
         # These are invalidated when with_fragment() is called.
         self._manifest_json_str_cache = None
@@ -2725,6 +2784,12 @@ class Reader(ManagedResource):
                 logger.warning("Failed to close Reader backing file")
             finally:
                 self._backing_file = None
+        for fragment in getattr(self, '_fragment_streams', []):
+            try:
+                fragment.close()
+            except Exception:
+                logger.warning("Failed to close Reader fragment stream")
+        self._fragment_streams = []
 
     def _release(self):
         """Release Reader-specific resources (caches, stream, backing file).
@@ -2787,19 +2852,38 @@ class Reader(ManagedResource):
                 cannot be retried: create a new one instead of reusing this
                 instance.
         """
-        self._ensure_valid_state()
-
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
-        with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
-            self._consume_and_swap(
-                lambda handle: _lib.c2pa_reader_with_fragment(
-                    handle,
-                    format_arg,
-                    main_obj._stream,
-                    frag_obj._stream,
-                ),
-                Reader._ERROR_MESSAGES['fragment_error'])
+        # The native reader keeps reading through both streams after this returns,
+        # so they are owned here and released by _release() rather
+        # than at the end of a with block.
+        main_obj = Stream(stream)
+        frag_obj = Stream(fragment_stream)
+        try:
+            with self._native_call():
+                self._consume_and_swap(
+                    lambda handle: _lib.c2pa_reader_with_fragment(
+                        handle,
+                        format_arg,
+                        main_obj._stream,
+                        frag_obj._stream,
+                    ),
+                    Reader._ERROR_MESSAGES['fragment_error'])
+        except Exception:
+            main_obj.close()
+            frag_obj.close()
+            raise
+
+        # Replace the streams this reader owned,
+        # closing the previous ones so repeated calls do not accumulate them.
+        previous = self._own_stream
+        self._own_stream = main_obj
+        self._fragment_streams.append(frag_obj)
+        if previous is not None and previous is not main_obj:
+            try:
+                previous.close()
+            except Exception:
+                logger.warning("Failed to close previous Reader stream")
 
         # Invalidate caches: processing a new BMFF fragment updates the native
         # reader's state, which can change the manifest data it returns.
@@ -2820,10 +2904,7 @@ class Reader(ManagedResource):
             C2paError: If there was an error getting the JSON
         """
 
-        # The state check and the handle read are one critical section: a
-        # finalizer on another thread frees the handle while it is still
-        # non-null, so a check made outside the lock says nothing about the
-        # handle this call goes on to pass to native code.
+        # Lock due to checks on native handles.
         with self._lock():
             self._ensure_valid_state()
 
@@ -3000,10 +3081,8 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error writing the resource to stream
         """
-        self._ensure_valid_state()
-
         uri_str = uri.encode('utf-8')
-        with Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
                 self._handle, uri_str, stream_obj._stream)
 
@@ -3451,11 +3530,15 @@ class Builder(ManagedResource):
         if not context.is_valid:
             raise C2paError("Context is not valid")
 
-        # Adopt before the consuming call: _consume_and_swap needs an
-        # active resource, and cleanup then owns the pointer either way.
-        self._create_and_activate(
-            lambda: _lib.c2pa_builder_from_context(context.execution_context),
-            Builder._ERROR_MESSAGES['builder_error'])
+        # The Context is caller-supplied and may be shared,
+        # so its handle needs its own in-flight guard across
+        # the native call, especially for state checks.
+        with context._native_call():
+            # Adopt before the consuming call.
+            self._create_and_activate(
+                lambda: _lib.c2pa_builder_from_context(
+                    context.execution_context),
+                Builder._ERROR_MESSAGES['builder_error'])
 
         self._consume_and_swap(
             lambda handle: _lib.c2pa_builder_with_definition(
@@ -3558,10 +3641,8 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error adding the resource
         """
-        self._ensure_valid_state()
-
         uri_bytes = _to_utf8_bytes(uri, "resource URI")
-        with Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_add_resource(
                 self._handle, uri_bytes, stream_obj._stream)
 
@@ -3622,7 +3703,7 @@ class Builder(ManagedResource):
         ingredient_str = _to_utf8_bytes(ingredient_json, "ingredient JSON")
         format_str = _to_utf8_bytes(format, "ingredient format")
 
-        with Stream(source) as source_stream:
+        with self._native_call(), Stream(source) as source_stream:
             result = (
                 _lib.c2pa_builder_add_ingredient_from_stream(
                     self._handle,
@@ -3671,9 +3752,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error writing the archive
         """
-        self._ensure_valid_state()
-
-        with Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_to_archive(
                 self._handle, stream_obj._stream)
 
@@ -3698,7 +3777,7 @@ class Builder(ManagedResource):
 
         ingredient_id_str = _to_utf8_bytes(ingredient_id, "ingredient_id")
 
-        with Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_write_ingredient_archive(
                 self._handle, ingredient_id_str, stream_obj._stream)
 
@@ -3718,9 +3797,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error reading the archive
         """
-        self._ensure_valid_state()
-
-        with Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_add_ingredient_from_archive(
                 self._handle, stream_obj._stream)
 
@@ -3749,7 +3826,7 @@ class Builder(ManagedResource):
         """
         self._ensure_valid_state()
 
-        with Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             self._consume_and_swap(
                 lambda handle: _lib.c2pa_builder_with_archive(
                     handle, stream_obj._stream),
@@ -3797,23 +3874,32 @@ class Builder(ManagedResource):
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         try:
-            if signer is not None:
-                result = _lib.c2pa_builder_sign(
-                    self._handle,
-                    format_arg,
-                    source_stream._stream,
-                    dest_stream._stream,
-                    signer._handle,
-                    ctypes.byref(manifest_bytes_ptr)
-                )
-            else:
-                result = _lib.c2pa_builder_sign_context(
-                    self._handle,
-                    format_arg,
-                    source_stream._stream,
-                    dest_stream._stream,
-                    ctypes.byref(manifest_bytes_ptr),
-                )
+            # _native_call covers the signing call only.
+            # The close() below is deliberately outside it,
+            # so the deferred teardown it records is performed
+            # on the way out rather than being deferred forever.
+            with self._native_call():
+                if signer is not None:
+                    # Signer needs its own in-flight guard.
+                    # Entered inside self's guard so concurrent signs
+                    # sharing objects (Signers) acquire in one order.
+                    with signer._native_call():
+                        result = _lib.c2pa_builder_sign(
+                            self._handle,
+                            format_arg,
+                            source_stream._stream,
+                            dest_stream._stream,
+                            signer._handle,
+                            ctypes.byref(manifest_bytes_ptr)
+                        )
+                else:
+                    result = _lib.c2pa_builder_sign_context(
+                        self._handle,
+                        format_arg,
+                        source_stream._stream,
+                        dest_stream._stream,
+                        ctypes.byref(manifest_bytes_ptr),
+                    )
             # Sign borrows the Builder without taking ownership.
             # Closing here ensures resources clean up,
             # and single use/single sign done by a Builder.
