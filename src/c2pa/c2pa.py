@@ -2876,14 +2876,25 @@ class Reader(ManagedResource):
 
         # Replace the streams this reader owned,
         # closing the previous ones so repeated calls do not accumulate them.
+        # Only the current fragment is retained: the native reader does not
+        # read a superseded one back, and each wrapper held open pins a native
+        # stream, its callbacks and the caller's buffer.
         previous = self._own_stream
+        previous_fragments = self._fragment_streams
         self._own_stream = main_obj
-        self._fragment_streams.append(frag_obj)
+        self._fragment_streams = [frag_obj]
         if previous is not None and previous is not main_obj:
             try:
                 previous.close()
             except Exception:
                 logger.warning("Failed to close previous Reader stream")
+        for fragment in previous_fragments:
+            if fragment is frag_obj:
+                continue
+            try:
+                fragment.close()
+            except Exception:
+                logger.warning("Failed to close Reader fragment stream")
 
         # Invalidate caches: processing a new BMFF fragment updates the native
         # reader's state, which can change the manifest data it returns.

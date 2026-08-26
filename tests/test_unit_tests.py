@@ -8786,6 +8786,40 @@ class TestManagedResourceObjects(TestContextAPIs):
             self.assertTrue(reader.json())
             reader.close()
 
+    def test_repeated_with_fragment_does_not_accumulate_streams(self):
+        """Repeated calls on one Reader must not pile up fragment streams.
+
+        Each retained wrapper pins a native C2paStream, four ctypes callback
+        trampolines and the caller's buffer, so an unbounded list grows the
+        process by tens of megabytes over a long-lived Reader. Every other
+        fragment test builds a fresh Reader per call, which never accumulates.
+        """
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        self.addCleanup(reader.close)
+
+        superseded = []
+        for _ in range(25):
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                reader.with_fragment("video/mp4", init, frag)
+            self.assertLessEqual(
+                len(reader._fragment_streams), 1,
+                "fragment streams accumulated across repeated calls")
+            superseded.append(reader._fragment_streams[-1])
+
+        # Dropping the reference is not enough: the native stream is only
+        # released by close(), so every superseded wrapper must be closed.
+        self.assertTrue(
+            all(s.closed for s in superseded[:-1]),
+            "a superseded fragment stream was dropped without being closed")
+
+        # The reader still works on the fragment it currently holds.
+        self.assertTrue(reader.json())
+
     def test_with_archive_post_consume_failure_consumes_handle(self):
         # Ownership taken, then the operation failed:
         # The handle is gone, so close() must not free it again.

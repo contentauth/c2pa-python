@@ -2,8 +2,8 @@
   "_meta": {
     "memray_version": "1.19.3",
     "python_version": "3.12.13",
-    "c2pa_native_version": "c2pa-v0.90.0",
-    "iterations": 200,
+    "c2pa_native_version": "c2pa-v0.90.15",
+    "iterations": 100,
     "perf_env": "python-3.12-slim",
     "arch": "aarch64"
   },
@@ -296,5 +296,10 @@
     "peak_bytes": 3681161,
     "leaked_bytes": 3350287,
     "total_allocations": 672537
+  },
+  "reader_with_fragment_repeated": {
+    "peak_bytes": 3803564,
+    "leaked_bytes": 3381191,
+    "total_allocations": 966288
   }
 }
