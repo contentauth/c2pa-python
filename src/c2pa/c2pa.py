@@ -284,8 +284,9 @@ class ManagedResource:
 
         Never hold this across a native call that drives stream callbacks
         (construction, resource_to_stream, the Builder stream methods,
-        signing). Those calls release the GIL and re-enter caller-supplied
-        Python, which may call back into this API on another thread.
+        signing). Those calls release the Global Interpreter Lock (GIL)
+        and re-enter caller-supplied Python code, which may call back into
+        this API on another thread.
         Only calls that touch no callbacks are serialized here.
 
         Raises in a forked child rather than returning the lock.
@@ -412,7 +413,7 @@ class ManagedResource:
         thread's state check and its use of the handle in a native call.
 
         The forked-child case is handled before the lock is taken, because
-        _lock() refuses in a child: this path has to finish rather than report
+        _lock() raises in a child: this path has to finish rather than report
         an error, so it cannot rely on acquiring.
         """
         if is_foreign_process(self):
@@ -4029,13 +4030,23 @@ class Builder(ManagedResource):
                             ctypes.byref(manifest_bytes_ptr)
                         )
                 else:
-                    result = _lib.c2pa_builder_sign_context(
-                        self._handle,
-                        format_arg,
-                        source_stream._stream,
-                        dest_stream._stream,
-                        ctypes.byref(manifest_bytes_ptr),
-                    )
+                    # The Context pins the consumed signer's callback, which
+                    # native invokes during this call.
+                    # Its in-flight guard defers a close() arriving on another
+                    # thread, the same way the signer branch above defers one
+                    # for a borrowed Signer.
+                    #
+                    # Entered inside self's guard, matching the Builder to
+                    # Signer order, so the two acquisitions are always
+                    # taken in one direction.
+                    with self._context._native_call():
+                        result = _lib.c2pa_builder_sign_context(
+                            self._handle,
+                            format_arg,
+                            source_stream._stream,
+                            dest_stream._stream,
+                            ctypes.byref(manifest_bytes_ptr),
+                        )
             # Sign borrows the Builder without taking ownership.
             # Closing here ensures resources clean up,
             # and single use/single sign done by a Builder.

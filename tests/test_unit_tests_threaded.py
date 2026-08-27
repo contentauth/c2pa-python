@@ -4639,6 +4639,155 @@ class TestLocking(unittest.TestCase):
                 result.returncode, result.stderr[-2000:]))
         self.assertIn("OK", result.stdout)
 
+    def _callback_signer_source(self):
+        """Shared subprocess preamble: an ES256 callback signer."""
+        return """
+            import io, os, sys, threading, time
+            from c2pa import (Builder, Context, Signer,
+                              C2paSigningAlg as SigningAlg)
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+
+            data_dir = sys.argv[1]
+            certs = open(os.path.join(data_dir,
+                                      "es256_certs.pem"), "rb").read().decode()
+            key_path = os.path.join(data_dir, "es256_private.key")
+            key = open(key_path, "rb").read()
+            img = open(os.path.join(data_dir, "C.jpg"), "rb").read()
+            manifest = {"claim_generator_info":
+                        [{"name": "test", "version": "0.1"}],
+                        "assertions": []}
+            private_key = serialization.load_pem_private_key(
+                key, password=None)
+
+            def sign_callback(data):
+                return private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+            def make_context():
+                return Context(signer=Signer.from_callback(
+                    sign_callback, SigningAlg.ES256, certs,
+                    "http://timestamp.digicert.com"))
+"""
+
+    def test_context_close_during_context_sign_does_not_crash(self):
+        """Closing a Context must not free the signer callback mid-sign.
+
+        Context.__init__ pins the consumed signer's ctypes callback so it
+        outlives the Signer object, and Context._release() drops that pin.
+        Without an in-flight guard on the Context, a close() on another thread
+        runs _release() while c2pa_builder_sign_context is calling through the
+        trampoline, and the process dies with SIGSEGV.
+
+        Runs in a subprocess: the failure mode is a segfault, which would take
+        the test runner down with it otherwise.
+        """
+        source = textwrap.dedent(self._callback_signer_source() + """
+            for trial in range(60):
+                ctx = make_context()
+                entered = threading.Event()
+
+                def worker():
+                    try:
+                        builder = Builder(dict(manifest), context=ctx)
+                        entered.set()
+                        builder.sign("image/jpeg", io.BytesIO(img),
+                                     io.BytesIO())
+                        builder.close()
+                    except Exception:
+                        # A closed context may legitimately be rejected;
+                        # only a crash is a failure here.
+                        entered.set()
+
+                t = threading.Thread(target=worker)
+                t.start()
+                entered.wait(5)
+                time.sleep(0.002)
+                ctx.close()
+                t.join(20)
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, self.data_dir],
+            capture_output=True, text=True, timeout=300)
+
+        self.assertNotEqual(
+            result.returncode, -11,
+            "SIGSEGV: the signer callback was freed while native was "
+            "calling it")
+        self.assertEqual(
+            result.returncode, 0,
+            "context-close-during-sign race failed (rc={}):\n{}".format(
+                result.returncode, result.stderr[-2000:]))
+        self.assertIn("OK", result.stdout)
+
+    def test_context_close_during_sign_defers_teardown(self):
+        """A close() arriving mid-sign defers instead of releasing.
+
+        The callback pin and the native handle both have to survive until the
+        call in flight finishes, so a sign already running is never cut short.
+        """
+        context = Context()
+        with context._native_call():
+            context.close()
+            self.assertEqual(context._lifecycle_state, LifecycleState.CLOSED,
+                             "close() must mark the context closed at once")
+            self.assertIsNotNone(
+                context._pending_teardown,
+                "the teardown should be recorded, not performed")
+            self.assertFalse(
+                context._released,
+                "_release() ran while a native call was still in flight")
+            self.assertTrue(context._handle,
+                            "the handle was freed mid-call")
+
+        self.assertTrue(context._released,
+                        "the deferred teardown never ran")
+        self.assertIsNone(context._pending_teardown)
+
+    def test_context_sign_after_close_raises_rather_than_skipping_signer(self):
+        """Signing through a closed Context must raise, not silently succeed.
+
+        Context._release() has already dropped the pinned callback, so the
+        native side signs without ever invoking it: the call returns a
+        manifest of the same size while the caller's signing callback runs
+        zero times. Refusing the call is what makes that visible.
+
+        Runs in a subprocess because the callback signer needs the
+        cryptography package, which this module does not otherwise import.
+        """
+        source = textwrap.dedent(self._callback_signer_source() + """
+            calls = []
+
+            def counting_callback(data):
+                calls.append(1)
+                return private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+            signer = Signer.from_callback(
+                counting_callback, SigningAlg.ES256, certs,
+                "http://timestamp.digicert.com")
+            ctx = Context(signer=signer)
+            builder = Builder(dict(manifest), context=ctx)
+            ctx.close()
+
+            try:
+                builder.sign("image/jpeg", io.BytesIO(img), io.BytesIO())
+                print("SIGNED_WITH_CALLS", len(calls))
+            except Exception as exc:
+                print("RAISED", type(exc).__name__, len(calls))
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, self.data_dir],
+            capture_output=True, text=True, timeout=300)
+
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        self.assertIn(
+            "RAISED", result.stdout,
+            "signing through a closed context returned a manifest its "
+            "signer callback never produced: {}".format(result.stdout.strip()))
+        self.assertIn("0", result.stdout.split()[-1])
+
     def test_close_during_concurrent_sign_does_not_crash(self):
         """A Signer shared across threads must not be freed mid-sign.
 
