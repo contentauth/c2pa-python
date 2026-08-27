@@ -272,8 +272,11 @@ class ManagedResource:
         record_owner_pid(self)
 
     def _state_lock(self):
-        """Return this resource's raw operation lock, with no side effects
-        beyond mutual exclusion.
+        """Return this resource's operation lock.
+
+        Acquiring it only provides mutual exclusion; unlike _lock(),
+        it does not mark the thread as being inside a native-error
+        section.
 
         Reentrant because it is possible to run a finalizer at any bytecode
         boundary, including inside a region this thread has already locked,
@@ -281,13 +284,12 @@ class ManagedResource:
         locked region.
 
         Falls back to a fresh lock when the attribute is missing.
-        Unlike _lock(), this does not open a native-error section.
 
         Never hold this across a native call that drives stream callbacks
         (construction, resource_to_stream, the Builder stream methods,
         signing). Those calls release the GIL and re-enter caller-supplied
         Python, which may call back into this API on another thread.
-        Only calls that touch no callbacks are serialized here.
+        Only calls that don't touch callbacks are serialized here.
 
         Raises in a forked child rather than returning the lock.
         A child inherits this lock in whatever state it had at fork(),
@@ -316,7 +318,7 @@ class ManagedResource:
         Never hold this across a native call that drives stream callbacks.
         Those calls release the GIL and re-enter caller-supplied
         code, which may call back into this API on another thread.
-        Only calls that touch no callbacks are serialized here.
+        Only calls that don't touch callbacks are serialized here.
         """
         with self._state_lock(), _native_section():
             yield
@@ -854,7 +856,7 @@ _MARKER_ADDR = 1
 # Learned at import by _learn_sentinel_no_native_error_text().
 # The format is a native implementation detail,
 # so it is read back rather than hardcoded.
-_NO_NATIVE_ERROR_TEXT = None
+_NATIVE_NO_ERROR_TEXT = None
 
 
 def _mark_sentinel_no_native_error():
@@ -873,7 +875,7 @@ def _mark_sentinel_no_native_error():
 
 def _is_no_native_error(message: str) -> bool:
     """True for the sentinel marker meaning "no current error of our own"."""
-    return message == _NO_NATIVE_ERROR_TEXT
+    return message == _NATIVE_NO_ERROR_TEXT
 
 
 def _read_native_error() -> Optional[str]:
@@ -1274,7 +1276,8 @@ def _learn_sentinel_no_native_error_text():
 
     Runs on the importing thread; the text is a format constant, so the
     learned value holds for every thread. Raises at import when the read
-    back text is empty, because the marker mechanism cannot work then.
+    back text is empty, or when it does not carry the planted address,
+    because the marker mechanism cannot work in either case.
     """
     _mark_sentinel_no_native_error()
     raw = _lib.c2pa_error()
@@ -1290,14 +1293,16 @@ def _learn_sentinel_no_native_error_text():
         raise ImportError(
             "c2pa native library reported an empty error for a free of "
             "an untracked pointer; the error-slot marker cannot work")
+    marker_hex = hex(_MARKER_ADDR)
+    if marker_hex not in text:
+        raise ImportError(
+            "c2pa native library's untracked-pointer error text no longer "
+            f"includes the planted address {marker_hex}; the error-slot "
+            "marker assumption no longer holds")
     return text
 
 
-_NO_NATIVE_ERROR_TEXT = _learn_sentinel_no_native_error_text()
-assert "0x1" in _NO_NATIVE_ERROR_TEXT, (
-    "c2pa native library's untracked-pointer error text no longer "
-    "includes the planted address; the error-slot marker assumption "
-    "no longer holds")
+_NATIVE_NO_ERROR_TEXT = _learn_sentinel_no_native_error_text()
 
 _setup_function(
     _lib.c2pa_context_builder_set_signer,

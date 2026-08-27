@@ -9898,7 +9898,7 @@ class TestErrorPlumbing(unittest.TestCase):
 
     def test_the_no_native_error_sentinel_never_reaches_a_caller(self):
         """The sentinel is an internal marker, not a message for users."""
-        sentinel = c2pa_module._NO_NATIVE_ERROR_TEXT
+        sentinel = c2pa_module._NATIVE_NO_ERROR_TEXT
 
         c2pa_module._mark_sentinel_no_native_error()
         self.assertIsNone(
@@ -9918,7 +9918,7 @@ class TestErrorPlumbing(unittest.TestCase):
             text = ctypes.string_at(raw).decode('utf-8')
         finally:
             c2pa_module._lib.c2pa_string_free(raw)
-        self.assertEqual(text, c2pa_module._NO_NATIVE_ERROR_TEXT)
+        self.assertEqual(text, c2pa_module._NATIVE_NO_ERROR_TEXT)
 
     def test_read_native_error_maps_sentinel_to_none(self):
         c2pa_module._mark_sentinel_no_native_error()
