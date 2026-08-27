@@ -151,6 +151,10 @@ Cleanup runs in the direction of dependency: whatever can still invoke or reach 
 | `ManagedResource` | `_release()` first (dropping streams and callbacks), then `c2pa_free` | The native pointer depends on the Python-side resources, so those are torn down while the pointer is still valid. |
 | `Stream` | `c2pa_release_stream` first, then drop the callbacks | The native stream invokes the callbacks. Releasing it first guarantees none can fire, and the callback objects are dropped after that. |
 
+`close()` performs both steps: it calls `c2pa_release_stream`, then sets `_read_cb`, `_seek_cb`, `_write_cb`, and `_flush_cb` to `None`.
+
+`__del__` performs only the first. It calls `c2pa_release_stream` and leaves the four attributes pointing at their callbacks. Nothing leaks, because `__del__` runs when the `Stream` is being collected: the attributes are freed with the object that holds them. Explicit cleanup drops them itself rather than waiting for collection.
+
 `Stream` does not own the Python object it wraps and never closes it. The caller that opened a file owns that file. A `Reader` that opened a file itself tracks it as `_backing_file` and closes it during its own `_release()`.
 
 Both `close()` and `__del__` take the foreign-process branch, marking the stream closed without calling into the native library. [Fork safety](#fork-safety) covers why.
@@ -253,7 +257,7 @@ Rules that follow from the order:
 - A lock held across a native call must be one no callback path acquires.
 - `Stream._close_lock` is a leaf: nothing is acquired while holding it, so it cannot join a cycle.
 
-No code path holds two resources' `_op_lock` at once. `_native_call()` counts a call as in flight instead of holding the lock across it, which is what keeps that true. `test_no_nested_op_locks` asserts it.
+No code path holds two resources' `_op_lock` at once. `_native_call()` counts a call as in flight instead of holding the lock across it, which is what keeps that true. `test_no_nested_op_locks` checks it over the Reader read path by intercepting `_lock()` and recording any acquisition made while another is held.
 
 ### Borrowing versus consuming
 
@@ -291,7 +295,7 @@ A sign cannot start once the Context is closed, and raises `C2paError` instead. 
 | **State transitions are one-way** | Lifecycle moves only from UNINITIALIZED to ACTIVE to CLOSED. A closed resource cannot be reactivated. |
 | **Transitions go through helper methods** | Subclasses call `_activate()`, `_swap_handle()` or `_teardown()` and never assign `_handle` or `_lifecycle_state` directly. `_activate()` and `_swap_handle()` validate before mutating, so an object cannot end up active with a null handle. |
 | **Ownership transfer is safe** | When a pointer is transferred elsewhere (e.g. via `_teardown(free_handle=False)`), the object stops managing it and does not call `c2pa_free` on it. |
-| **Public methods validate lifecycle state** | Every public API calls `_ensure_valid_state()` before use; closed or invalid state yields `C2paError` instead of undefined behavior or crashes. |
+| **Public methods validate lifecycle state** | Every public method that uses the handle calls `_ensure_valid_state()` before doing so; closed or invalid state yields `C2paError` instead of undefined behavior or crashes. The exceptions touch no handle: `is_valid` reports the state rather than requiring it, and the `get_supported_mime_types` classmethods query the library itself. |
 
 ## Preventing garbage collection of live references
 
@@ -345,7 +349,7 @@ Each transition has one method that performs it, and subclasses must go through 
 | --- | --- | --- |
 | `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
 | `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
-| `_teardown(free_handle=False)` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two, it validates nothing. |
+| `_teardown(free_handle=False)` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two it enforces no precondition on the current state: it closes whatever it is given. |
 | `_release_handle()` | ACTIVE to CLOSED | Frees the handle (guarded, via `_teardown(free_handle=True)`) and closes the object. Same post-state as the consumed teardown. |
 
 Because activation is the only way in, no code path can leave an object ACTIVE while holding a null handle.
@@ -359,7 +363,7 @@ Two terms recur throughout this document. An **owned free** calls `c2pa_free` on
 | `True` | Either the pointer is still provably ours (normal `close()`, `__del__`) — an owned free — or ownership is unknown after a failure (`_release_handle()`) — a guarded free. | Calls `c2pa_free`. On the owned paths the pointer is really freed; on the unknown-ownership path the registry returns `-1` without touching memory if the native side already took it. |
 | `False` | The native side already took ownership: a consuming FFI call swallowed the pointer, or it passed to another object. | Frees nothing; the new owner does. A `c2pa_free` here would double-free (or hit the guarded `-1` no-op that dirties the error slot and risks racing a recycled address). |
 
-Every public method calls `_ensure_valid_state()` before doing any work, which raises `C2paError` unless the resource is ACTIVE with a non-null handle.
+Every public method that uses the handle calls `_ensure_valid_state()` before doing any work, which raises `C2paError` unless the resource is ACTIVE with a non-null handle.
 
 ## Ways to clean up
 
@@ -590,7 +594,16 @@ The fork check runs before `_fragment_lock` is taken, for the same reason `_tear
 
 #### Cache invalidation
 
-A `Reader` caches the manifest data. The caches describe the handle they were read from, so a successful swap invalidates them. The invalidation happens inside the locked region, and the cache reads sit under `_op_lock` too. A concurrent `json()` therefore sees either the caches from before the swap or the empty ones after it, never a manifest belonging to a replaced handle.
+A `Reader` caches the manifest data. The caches describe the handle they were read from, so a successful swap invalidates them. Both the invalidation and the cache reads in `json()` run under `_op_lock`, so a reader never observes a half-updated cache.
+
+Replacing the handle and clearing the caches are two separate steps, and `_op_lock` is not held between them:
+
+1. `_consume_and_swap()` replaces the handle. This runs inside `_native_call()`, which counts the call as in flight rather than holding `_op_lock`.
+2. `with_fragment()` acquires `_op_lock` and clears the caches.
+
+Between the two, the Reader has the new handle and the old manifest. A `json()` on another thread acquires `_op_lock` in that gap, finds the cache populated, and returns it without consulting the handle at all. The manifest it serves belongs to the fragment that was just replaced.
+
+`_fragment_lock` does not prevent this. It serializes `with_fragment()` against other calls to `with_fragment()`, and readers never take it. Callers sharing a `Reader` across threads have to serialize `with_fragment()` against their own reads.
 
 ### `_consume_and_swap()`
 
