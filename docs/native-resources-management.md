@@ -101,7 +101,7 @@ Therefore, the managed resources have the following principles:
 
 - Each `ManagedResource` holds exactly one `_handle`. `_swap_handle()` replaces it with the pointer a consuming call returned and does not free the old value, since the native side took it (see [Consume-and-swap](#consume-and-swap)).
 - `_teardown(free_handle=False)`, `_consume_no_replacement()`, and `_consume_into()` all close or advance the object without calling `c2pa_free`, because ownership moved to the native side.
-- Only a few sites free a live handle. Two of them free a pointer this layer still provably owns: normal teardown (`_teardown(free_handle=True)`), and the create-then-validate path, which frees a freshly created pointer if activation fails. The third, `_release_handle()`, is a *guarded* free used only when ownership is genuinely unknown (a consuming call failed without setting an error, or a Python exception was raised before the native side reported anything): if the native side already took the pointer, its address is no longer in the registry and `c2pa_free` is a `-1` no-op, so the free touches no memory. No path frees a pointer known to have been consumed and reallocated (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)).
+- Only a few sites free a live handle, and most free a pointer this layer still provably owns: normal teardown (`_teardown(free_handle=True)`); the create-then-validate path, which frees a freshly created pointer if activation fails; and the constructors that free a raw pointer when wrapping it raises, since no instance took ownership (`Signer.from_info`, `Signer.from_callback`, `Builder.from_archive`). The exception is `_release_handle()`, a *guarded* free used only when ownership is unknown (a consuming call failed without setting an error, or a Python exception was raised before the native side reported anything): if the native side already took the pointer, its address is no longer in the registry and `c2pa_free` is a `-1` no-op, so the free touches no memory. No path frees a pointer known to have been consumed and reallocated (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)).
 - `_release()` drops stream wrappers, callbacks, and caches before the native pointer is freed (see [Subclass-specific cleanup with `_release()`](#subclass-specific-cleanup)).
 
 ### Double-free risk mitigations
@@ -401,10 +401,10 @@ If neither the context manager nor an explicit `.close()` is used, `__del__` att
 
 Cleanup must not raise an *ordinary* exception. A failure during cleanup (for example, the native library crashing on free) should not mask the original exception that caused the `with` block to exit. `ManagedResource` enforces this:
 
-- `close()` delegates to `_cleanup_resources()`, which wraps the entire cleanup sequence in a try/except that catches and silences `Exception`.
+- `close()` delegates to `_cleanup_resources()`, which wraps the entire cleanup sequence in a try/except that catches and silences `Exception`. It performs no teardown itself: after the foreign-process and already-closed checks it calls `_teardown(free_handle=True)`, which does the remaining work.
 - `_release()` is never called directly during cleanup. It runs inside `_safe_release()`, which logs any `Exception` with a traceback and returns normally, so a subclass whose `_release()` raises an ordinary error cannot stop the native pointer from being freed afterwards.
 - If freeing the native pointer fails, the error is logged via Python's `logging` module but not re-raised.
-- The state is set to `CLOSED` as the very first step, before attempting to free anything. If cleanup fails halfway, the object is still marked closed, preventing a second attempt from doing further damage.
+- `_teardown()` sets `CLOSED` before running `_release()` or freeing anything. If cleanup fails halfway, the object is still marked closed, preventing a second attempt from doing further damage. It then moves the pointer into a local and nulls `_handle` before calling `c2pa_free`, so no other caller can read a handle that is about to be freed.
 - Cleanup is idempotent. Calling `close()` on an already-closed object returns immediately.
 
 These handlers catch `Exception`, not `BaseException`. The signals the interpreter raises to unwind a process (a cancellation request, or an exit already in progress) are `BaseException`, so they pass through cleanup untouched and the remaining free may not run. That is intentional: the signal means the whole process is going away, and its address space, native allocations included, is reclaimed on exit. Holding the interpreter in cleanup to finish a free that is about to become irrelevant would only delay the shutdown the caller asked for.
@@ -418,11 +418,13 @@ flowchart TD
     FP -->|yes| N["null the handle, set CLOSED,<br/>do not free"] --> DONE([return])
     FP -->|no| ST{"already CLOSED?"}
     ST -->|yes| DONE
-    ST -->|no| SET["set CLOSED first"]
+    ST -->|no| TD["_teardown(free_handle=True)"]
+    TD --> SET["mark _released, set CLOSED"]
     SET --> REL["_safe_release()<br/>logs and swallows"]
-    REL --> H{"handle set?"}
+    REL --> NULL["take the pointer into a local,<br/>set _handle = None"]
+    NULL --> H{"pointer was set?"}
     H -->|no| DONE
-    H -->|yes| FREE["_free_native_ptr()<br/>logs on failure"] --> NULL["_handle = None"] --> DONE
+    H -->|yes| FREE["_free_native_ptr()<br/>logs on failure"] --> DONE
 ```
 
 The `foreign process` branch is explained under [Fork safety](#fork-safety).
@@ -482,7 +484,7 @@ stateDiagram-v2
     end note
 ```
 
-While `ACTIVE`, callers can use `.add_ingredient()`, `.add_action()`, etc. repeatedly. `.sign()` closes the Builder when it returns, on both the success and the failure path. Closing without signing frees the pointer the same way.
+While `ACTIVE`, callers can use `.add_ingredient()`, `.add_action()`, etc. repeatedly. `.sign()` closes the Builder when it returns, whether the signing succeeded or failed. A call rejected on its arguments before signing starts, such as a first argument that is neither a `Signer` nor a format string, raises without closing: nothing was signed, so the Builder is still usable. Closing without signing frees the pointer the same way.
 
 The native sign call borrows the builder's pointer rather than taking ownership of it, so `Builder` never marks it consumed and the pointer is freed normally through `c2pa_free`. The close enforces single use; it is not a memory-management requirement.
 
@@ -519,12 +521,19 @@ sequenceDiagram
     alt status 0 (success)
         S->>S: _teardown(free_handle=False)
         Note right of S: Consumed: native took the signer
-    else pre-consume rejection (one of _PRE_CONSUME_ERROR_TAGS)
+    else non-zero status
         S->>S: _abort_consume(): restore the previous state
-        Note right of S: Rejected before ownership moved:<br/>Signer retained and usable, typed error raised
-    else other error
-        S->>S: _teardown(free_handle=False)
-        Note right of S: Native took it then failed and dropped it
+        S->>S: _raise_consume_failure() reads the native error
+        Note right of S: The error is read before any free,<br/>so a free's own error cannot overwrite it
+        alt error carries a pre-consume tag
+            Note right of S: Rejected before ownership moved:<br/>Signer stays ACTIVE, typed error raised
+        else any other error
+            S->>S: _teardown(free_handle=False)
+            Note right of S: Native took it, then failed and<br/>dropped the value itself: free nothing
+        else error slot empty
+            S->>S: _release_handle() guarded free
+            Note right of S: Ownership unknown: a real free if still<br/>ours, a -1 no-op if native took it
+        end
     end
 
     X->>B: _consume_into(build)
@@ -612,8 +621,10 @@ Every call of this shape goes through one helper, which takes the FFI call as a 
 ```python
 # Reader.with_fragment() internally does:
 self._consume_and_swap(
-    lambda handle: _lib.c2pa_reader_with_fragment(handle, format_bytes, stream),
-    Reader._ERROR_MESSAGES['reader_error'])
+    lambda handle: _lib.c2pa_reader_with_fragment(
+        handle, format_arg, main_obj._stream, frag_obj._stream,
+    ),
+    Reader._ERROR_MESSAGES['fragment_error'])
 ```
 
 The call is passed as a lambda because the helper supplies the handle and, on success, replaces it via `_swap_handle()`.
@@ -622,8 +633,8 @@ The helper exists because a failed return can be ambiguous. The native functions
 
 ```mermaid
 flowchart TD
-    CALL["FFI call(handle)"] --> V{"validate borrowed handle"}
-    V -->|invalid| R["reject: handle NOT taken<br/>sets UntrackedPointer / WrongPointerType"] --> F1["returns a failure value<br/>(null, or non-zero status)"]
+    CALL["FFI call(handle)"] --> V{"validate arguments,<br/>then the borrowed handle"}
+    V -->|invalid| R["reject: handle NOT taken<br/>sets one of _PRE_CONSUME_ERROR_TAGS"] --> F1["returns a failure value<br/>(null, or non-zero status)"]
     V -->|valid| TAKE["take ownership of handle"]
     TAKE --> WORK{"execute function logic"}
     WORK -->|fails| DROP["native drops the value itself<br/>sets some other error"] --> F2["returns a failure value<br/>(null, or non-zero status)"]
@@ -674,13 +685,14 @@ A consuming C FFI function first removes the pointer from its registry, then rec
 `Reader._init_from_context` and `Builder._init_from_context` both create a native object, immediately activate it, and only then make the consuming call. `_create_and_activate()` handles the create-then-activate half: it calls the FFI constructor, validates the result with `_check_ffi_operation_result`, and `_activate()`s it, freeing the pointer if either step fails so a rejected creation leaks nothing. Reduced to its shape:
 
 ```python
-self._create_and_activate(
-    lambda: _lib.c2pa_reader_from_context(context.execution_context),
-    Reader._ERROR_MESSAGES['reader_error'])
+with context._native_call():
+    self._create_and_activate(
+        lambda: _lib.c2pa_reader_from_context(context.execution_context),
+        Reader._ERROR_MESSAGES['reader_error'])
 
 self._consume_and_swap(
     lambda handle: _lib.c2pa_reader_with_stream(
-        handle, format_bytes, self._own_stream._stream,
+        handle, format_arg, self._own_stream._stream,
     ),
     Reader._ERROR_MESSAGES['reader_error'])
 ```
@@ -800,7 +812,7 @@ class NativeResource(ManagedResource):
             "Failed to create MyResource: {}")
 
     def _release(self):
-        # 4. Clean up class-specific resources.
+        # 3. Clean up class-specific resources.
         #    Never let this method raise. Must be idempotent.
         #
         #    Consider defining a simple lifecycle for native resources
@@ -818,7 +830,7 @@ class NativeResource(ManagedResource):
                 self._my_stream = None
 
     def do_something(self):
-        # 5. Check state at the start of every public method.
+        # 4. Check state at the start of every public method.
         #    This raises C2paError if the resource is closed.
         self._ensure_valid_state()
         return _lib.c2pa_my_resource_do_something(self._handle)
@@ -826,7 +838,7 @@ class NativeResource(ManagedResource):
 
 ### Troubleshooting
 
-- An attribute set only in `__init__` is missing on an instance built by `_wrap_native_handle()`, because that path never runs `__init__`. The failure shows up later as an `AttributeError` from whichever method reads the attribute, often `_release()` during cleanup. Attributes belong in `_init_attrs()`, which `__init__` calls.
+- An attribute set only in `__init__` is missing on an instance built by `_wrap_native_handle()`, because that path never runs `__init__`. The failure shows up later as an `AttributeError` from whichever method reads the attribute, often `_release()` during cleanup. Attributes belong in `_init_attrs()`, which each subclass `__init__` calls and which `_wrap_native_handle()` calls in its place. `ManagedResource.__init__` does not call it, so a subclass that omits the call gets neither path.
 
 - `_init_attrs()` called after an FFI call that can raise leaves `_release()` accessing attributes that do not exist yet when that call fails, crashing with `AttributeError`. It belongs immediately after `super().__init__()`, before anything that can fail.
 
