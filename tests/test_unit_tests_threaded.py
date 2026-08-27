@@ -4158,6 +4158,153 @@ class TestLocking(unittest.TestCase):
                          "racing closers freed {} times".format(len(freed)))
         self.assertEqual(reader._inflight, 0)
 
+    def _borrow_resource(self):
+        """An ACTIVE resource with no native handle behind it."""
+        res = _ConcreteResource()
+        res._lifecycle_state = LifecycleState.ACTIVE
+        res._handle = ctypes.c_void_p(1)
+        return res
+
+    def test_consume_during_foreign_borrow_raises(self):
+        """A consume must refuse to start while another thread borrows.
+        """
+        res = self._borrow_resource()
+        borrowing = threading.Event()
+        release = threading.Event()
+
+        def borrower():
+            with res._native_call():
+                borrowing.set()
+                release.wait(self.JOIN_TIMEOUT)
+
+        thread = threading.Thread(target=borrower)
+        thread.start()
+        try:
+            self.assertTrue(borrowing.wait(self.JOIN_TIMEOUT),
+                            "borrower never entered the native call")
+            with self.assertRaises(Error) as caught:
+                res._consume_no_replacement(lambda h: 0, "unused: {}")
+            self.assertIn("in use", str(caught.exception))
+            self.assertEqual(
+                res._lifecycle_state, LifecycleState.ACTIVE,
+                "a refused consume must leave the resource usable")
+            self.assertIsNotNone(res._handle)
+        finally:
+            release.set()
+            self._join_all([thread], "borrower")
+
+    def test_unborrowed_consume_proceeds(self):
+        """A consume with nothing in flight runs and closes the resource.
+
+        The guard rejects on any in-flight count, so a consuming call must not
+        wrap itself in _native_call(): the callers pin the handle by marking
+        the resource CLOSED under the lock instead.
+        """
+        res = self._borrow_resource()
+        res._consume_no_replacement(lambda h: 0, "unused: {}")
+        self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_consume_inside_own_borrow_is_refused(self):
+        """A consume is refused even when this thread owns the borrow.
+
+        The guard counts frames, not threads. A consuming call nested in a
+        _native_call() would hand a pointer to native while that same frame
+        still expects it back, so no such nesting is allowed.
+        """
+        res = self._borrow_resource()
+        with res._native_call():
+            with self.assertRaises(Error):
+                res._consume_no_replacement(lambda h: 0, "unused: {}")
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_refused_consume_leaves_borrow_counts_intact(self):
+        """A refused consume must not disturb the in-flight bookkeeping."""
+        res = self._borrow_resource()
+        borrowing = threading.Event()
+        release = threading.Event()
+
+        def borrower():
+            with res._native_call():
+                borrowing.set()
+                release.wait(self.JOIN_TIMEOUT)
+
+        thread = threading.Thread(target=borrower)
+        thread.start()
+        try:
+            self.assertTrue(borrowing.wait(self.JOIN_TIMEOUT))
+            with self.assertRaises(Error):
+                res._consume_no_replacement(lambda h: 0, "unused: {}")
+            self.assertEqual(res._inflight, 1, "the real borrow was lost")
+        finally:
+            release.set()
+            self._join_all([thread], "borrower")
+        self.assertEqual(res._inflight, 0)
+
+    def test_failed_consume_restores_active_state(self):
+        """A call that did not take the handle must leave it usable.
+        """
+        res = self._borrow_resource()
+        with patch('c2pa.c2pa._read_native_error',
+                   return_value="Other: UntrackedPointer: 0x1"):
+            with self.assertRaises(Exception):
+                res._consume_no_replacement(lambda h: -1, "rejected: {}")
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE,
+                         "a retained handle was left marked closed")
+        self.assertIsNotNone(res._handle)
+
+    def test_consume_raising_restores_active_state(self):
+        """An exception from the native call must not leave a stale mark."""
+        res = self._borrow_resource()
+
+        def boom(handle):
+            raise ctypes.ArgumentError("marshalling failed")
+
+        with self.assertRaises(ctypes.ArgumentError):
+            res._consume_no_replacement(boom, "unused: {}")
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_deferred_consume_is_not_upgraded_to_free(self):
+        """A deferred consuming teardown must not be overwritten by a later
+        free intent arriving while the same call is still in flight.
+
+        Scenario: a Signer shared across concurrent signs: sign borrows
+        the handle (holding the in-flight guard) while Context.__init__
+        consumes it.
+        """
+        freed = self._counted_free()
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        releases = []
+        orig_release = reader._release
+
+        def counting_release():
+            releases.append(1)
+            orig_release()
+
+        reader._release = counting_release
+
+        with reader._native_call():
+            # The consuming call: native took ownership, so nothing here frees.
+            reader._teardown(free_handle=False)
+            self.assertFalse(
+                reader._pending_teardown,
+                "consuming teardown did not record free_handle=False")
+
+            # A free intent arriving behind it, past a stale state check.
+            reader._teardown(free_handle=True)
+            self.assertFalse(
+                reader._pending_teardown,
+                "recorded consume was upgraded back to a free")
+
+        self.assertEqual(
+            freed, [],
+            "freed a handle the native library already owns")
+        self.assertEqual(
+            len(releases), 1,
+            "_release() ran {} times, expected once".format(len(releases)))
+        self.assertEqual(reader._inflight, 0)
+        self.assertIsNone(reader._pending_teardown)
+        self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
+
     def test_concurrent_close_runs_release_once(self):
         """Two racing close() calls on one instance must run _release()
         exactly once.
@@ -4426,6 +4573,220 @@ class TestLocking(unittest.TestCase):
             "borrowed handles used without their own guard:\n  "
             + "\n  ".join(unguarded))
 
+
+    def test_consume_during_concurrent_sign_does_not_crash(self):
+        """Consuming a shared Signer must not free it under a live sign.
+
+        Runs in a subprocess: the failure mode is a segfault, which would take
+        the test runner down with it otherwise.
+        """
+        source = textwrap.dedent("""
+            import io, os, sys, threading, time
+            from c2pa import (Builder, Context, Signer, C2paSignerInfo,
+                              C2paSigningAlg as SigningAlg)
+
+            data_dir = sys.argv[1]
+            certs_path = os.path.join(data_dir, "es256_certs.pem")
+            key_path = os.path.join(data_dir, "es256_private.key")
+            certs = open(certs_path, "rb").read()
+            key = open(key_path, "rb").read()
+            img = open(os.path.join(data_dir, "C.jpg"), "rb").read()
+            manifest = {"claim_generator_info":
+                        [{"name": "test", "version": "0.1"}],
+                        "assertions": []}
+
+            signer = Signer.from_info(C2paSignerInfo(
+                SigningAlg.ES256, certs, key, None))
+            stop = threading.Event()
+
+            def sign():
+                while not stop.is_set():
+                    try:
+                        builder = Builder(manifest)
+                        builder.sign(signer, "image/jpeg",
+                                     io.BytesIO(img), io.BytesIO())
+                        builder.close()
+                    except Exception:
+                        # A consumed signer may legitimately be rejected;
+                        # only a crash is a failure here.
+                        pass
+
+            threads = [threading.Thread(target=sign) for _ in range(6)]
+            for t in threads:
+                t.start()
+            time.sleep(0.4)
+            try:
+                Context(signer=signer)
+            except Exception:
+                # Refusing the consume while borrows are live is the fix.
+                pass
+            stop.set()
+            for t in threads:
+                t.join()
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, self.data_dir],
+            capture_output=True, text=True, timeout=300)
+
+        self.assertNotEqual(
+            result.returncode, -11,
+            "SIGSEGV: a signer was consumed while a sign was using its handle")
+        self.assertEqual(
+            result.returncode, 0,
+            "shared-signer consume race failed (rc={}):\n{}".format(
+                result.returncode, result.stderr[-2000:]))
+        self.assertIn("OK", result.stdout)
+
+    def _callback_signer_source(self):
+        """Shared subprocess preamble: an ES256 callback signer."""
+        return """
+            import io, os, sys, threading, time
+            from c2pa import (Builder, Context, Signer,
+                              C2paSigningAlg as SigningAlg)
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+
+            data_dir = sys.argv[1]
+            certs = open(os.path.join(data_dir,
+                                      "es256_certs.pem"), "rb").read().decode()
+            key_path = os.path.join(data_dir, "es256_private.key")
+            key = open(key_path, "rb").read()
+            img = open(os.path.join(data_dir, "C.jpg"), "rb").read()
+            manifest = {"claim_generator_info":
+                        [{"name": "test", "version": "0.1"}],
+                        "assertions": []}
+            private_key = serialization.load_pem_private_key(
+                key, password=None)
+
+            def sign_callback(data):
+                return private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+            def make_context():
+                return Context(signer=Signer.from_callback(
+                    sign_callback, SigningAlg.ES256, certs,
+                    "http://timestamp.digicert.com"))
+"""
+
+    def test_context_close_during_context_sign_does_not_crash(self):
+        """Closing a Context must not free the signer callback mid-sign.
+
+        Context.__init__ pins the consumed signer's ctypes callback so it
+        outlives the Signer object, and Context._release() drops that pin.
+        Without an in-flight guard on the Context, a close() on another thread
+        runs _release() while c2pa_builder_sign_context is calling through the
+        trampoline, and the process dies with SIGSEGV.
+
+        Runs in a subprocess: the failure mode is a segfault, which would take
+        the test runner down with it otherwise.
+        """
+        source = textwrap.dedent(self._callback_signer_source() + """
+            for trial in range(60):
+                ctx = make_context()
+                entered = threading.Event()
+
+                def worker():
+                    try:
+                        builder = Builder(dict(manifest), context=ctx)
+                        entered.set()
+                        builder.sign("image/jpeg", io.BytesIO(img),
+                                     io.BytesIO())
+                        builder.close()
+                    except Exception:
+                        # A closed context may legitimately be rejected;
+                        # only a crash is a failure here.
+                        entered.set()
+
+                t = threading.Thread(target=worker)
+                t.start()
+                entered.wait(5)
+                time.sleep(0.002)
+                ctx.close()
+                t.join(20)
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, self.data_dir],
+            capture_output=True, text=True, timeout=300)
+
+        self.assertNotEqual(
+            result.returncode, -11,
+            "SIGSEGV: the signer callback was freed while native was "
+            "calling it")
+        self.assertEqual(
+            result.returncode, 0,
+            "context-close-during-sign race failed (rc={}):\n{}".format(
+                result.returncode, result.stderr[-2000:]))
+        self.assertIn("OK", result.stdout)
+
+    def test_context_close_during_sign_defers_teardown(self):
+        """A close() arriving mid-sign defers instead of releasing.
+
+        The callback pin and the native handle both have to survive until the
+        call in flight finishes, so a sign already running is never cut short.
+        """
+        context = Context()
+        with context._native_call():
+            context.close()
+            self.assertEqual(context._lifecycle_state, LifecycleState.CLOSED,
+                             "close() must mark the context closed at once")
+            self.assertIsNotNone(
+                context._pending_teardown,
+                "the teardown should be recorded, not performed")
+            self.assertFalse(
+                context._released,
+                "_release() ran while a native call was still in flight")
+            self.assertTrue(context._handle,
+                            "the handle was freed mid-call")
+
+        self.assertTrue(context._released,
+                        "the deferred teardown never ran")
+        self.assertIsNone(context._pending_teardown)
+
+    def test_context_sign_after_close_raises_rather_than_skipping_signer(self):
+        """Signing through a closed Context must raise, not silently succeed.
+
+        Context._release() has already dropped the pinned callback, so the
+        native side signs without ever invoking it: the call returns a
+        manifest of the same size while the caller's signing callback runs
+        zero times. Refusing the call is what makes that visible.
+
+        Runs in a subprocess because the callback signer needs the
+        cryptography package, which this module does not otherwise import.
+        """
+        source = textwrap.dedent(self._callback_signer_source() + """
+            calls = []
+
+            def counting_callback(data):
+                calls.append(1)
+                return private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+            signer = Signer.from_callback(
+                counting_callback, SigningAlg.ES256, certs,
+                "http://timestamp.digicert.com")
+            ctx = Context(signer=signer)
+            builder = Builder(dict(manifest), context=ctx)
+            ctx.close()
+
+            try:
+                builder.sign("image/jpeg", io.BytesIO(img), io.BytesIO())
+                print("SIGNED_WITH_CALLS", len(calls))
+            except Exception as exc:
+                print("RAISED", type(exc).__name__, len(calls))
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, self.data_dir],
+            capture_output=True, text=True, timeout=300)
+
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        self.assertIn(
+            "RAISED", result.stdout,
+            "signing through a closed context returned a manifest its "
+            "signer callback never produced: {}".format(result.stdout.strip()))
+        self.assertIn("0", result.stdout.split()[-1])
 
     def test_close_during_concurrent_sign_does_not_crash(self):
         """A Signer shared across threads must not be freed mid-sign.

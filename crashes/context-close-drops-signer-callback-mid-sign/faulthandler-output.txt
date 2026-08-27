@@ -1,0 +1,16 @@
+Fatal Python error: Segmentation fault
+
+Current thread 0x000000016e3ab000 (most recent call first):
+  File "/Users/taniamathern/Desktop/code/c2pa-python/src/c2pa/c2pa.py", line 4032 in _sign_internal
+  File "/Users/taniamathern/Desktop/code/c2pa-python/src/c2pa/c2pa.py", line 4110 in _sign_common
+  File "/Users/taniamathern/Desktop/code/c2pa-python/src/c2pa/c2pa.py", line 4186 in sign
+  File "/private/tmp/claude-501/-Users-taniamathern-Desktop-code-c2pa-python/a1e731b8-8f71-4e3d-a858-5b5d2dfe2dfb/scratchpad/crash/min.py", line 24 in w
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/threading.py", line 994 in run
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/threading.py", line 1043 in _bootstrap_inner
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/threading.py", line 1014 in _bootstrap
+
+Thread 0x00000001efdc1d80 (most recent call first):
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/threading.py", line 1094 in join
+  File "/private/tmp/claude-501/-Users-taniamathern-Desktop-code-c2pa-python/a1e731b8-8f71-4e3d-a858-5b5d2dfe2dfb/scratchpad/crash/min.py", line 31 in <module>
+
+Extension modules: _cffi_backend (total: 1)
