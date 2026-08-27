@@ -269,6 +269,7 @@ class ManagedResource:
         self._op_lock = threading.RLock()
         self._inflight = 0
         self._pending_teardown = None
+        self._released = False
         record_owner_pid(self)
 
     def _state_lock(self):
@@ -287,9 +288,10 @@ class ManagedResource:
 
         Never hold this across a native call that drives stream callbacks
         (construction, resource_to_stream, the Builder stream methods,
-        signing). Those calls release the GIL and re-enter caller-supplied
-        Python, which may call back into this API on another thread.
-        Only calls that don't touch callbacks are serialized here.
+        signing). Those calls release the Global Interpreter Lock (GIL)
+        and re-enter caller-supplied Python code, which may call back into
+        this API on another thread.
+        Only calls that touch no callbacks are serialized here.
 
         Raises in a forked child rather than returning the lock.
         A child inherits this lock in whatever state it had at fork(),
@@ -309,6 +311,18 @@ class ManagedResource:
             except Exception:
                 pass
         return lock
+
+    def _ensure_not_borrowed(self):
+        """Raise if a native call is in flight on this handle.
+
+        Raises:
+            C2paError: If a native call is in flight on this resource.
+        """
+        if getattr(self, '_inflight', 0) > 0:
+            name = type(self).__name__
+            raise C2paError(
+                f"{name} is in use by another operation and "
+                f"cannot be consumed")
 
     @contextlib.contextmanager
     def _lock(self):
@@ -418,7 +432,7 @@ class ManagedResource:
         that may access the native error slot.
 
         The forked-child case is handled before the lock is taken, because
-        _lock() refuses in a child: this path has to finish rather than report
+        _lock() raises in a child: this path has to finish rather than report
         an error, so it cannot rely on acquiring.
         """
         if is_foreign_process(self):
@@ -429,12 +443,32 @@ class ManagedResource:
             return
 
         with self._state_lock():
+            if getattr(self, '_released', False):
+                # A racing close()/__del__ already ran the release branch
+                # under this lock.
+                # Idempotent: nothing left to release or free.
+                # Keyed on the release having happened, not on CLOSED: the
+                # deferred path below sets CLOSED without releasing, and still
+                # owes a release performed by _finish_teardown().
+                return
             if getattr(self, '_inflight', 0) > 0 or _in_native_section():
                 # Mark the resource closed now so it cannot be used while
                 # the free is pending, but record the intent:
                 # whichever check is blocking will call
                 # _maybe_flush_pending() once it clears.
-                self._pending_teardown = free_handle
+                #
+                # free_handle=False records that a consuming call handed
+                # ownership to the native library. Ownership does not come
+                # back, so a later teardown cannot restore the right to free:
+                # the recorded value only ever moves True -> False, never the
+                # reverse. Without this, a _teardown(True) arriving second
+                # (from _release_handle, whose state check is read outside
+                # this lock and can go stale) frees a pointer native owns.
+                if self._pending_teardown is None:
+                    self._pending_teardown = free_handle
+                else:
+                    self._pending_teardown = (
+                        self._pending_teardown and free_handle)
                 self._lifecycle_state = LifecycleState.CLOSED
                 if _in_native_section():
                     _register_for_section_flush(self)
@@ -455,6 +489,7 @@ class ManagedResource:
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
+        self._released = True
         self._lifecycle_state = LifecycleState.CLOSED
         self._safe_release()
 
@@ -651,10 +686,44 @@ class ManagedResource:
         self._teardown(free_handle=False)
         raise C2paError(error_message.format("Unknown error"))
 
+    def _begin_consume(self):
+        """Reserve this handle for a consuming call, or raise.
+
+        Returns:
+            The lifecycle state to restore if the call turns out not to have
+            consumed the handle.
+
+        Raises:
+            C2paError: If a native call is in flight on this resource.
+        """
+        with self._state_lock():
+            # A consumed or closed resource has no handle left to hand over;
+            # without this the call would pass a null pointer to native.
+            self._ensure_valid_state()
+            self._ensure_not_borrowed()
+            previous = self._lifecycle_state
+            self._lifecycle_state = LifecycleState.CLOSED
+            return previous
+
+    def _abort_consume(self, previous_state):
+        """Undo _begin_consume() after a call that did not take the handle.
+
+        A pre-consume rejection leaves the handle ours,
+        so the resource has to become usable again.
+        """
+        with self._state_lock():
+            if self._lifecycle_state == LifecycleState.CLOSED and self._handle:
+                self._lifecycle_state = previous_state
+
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a replacement.
         On success the native lib consumed the handle and returned a new one,
         which we swap in. A null return is a failure.
+
+        Unlike the consuming teardown paths this neither refuses a borrowed
+        handle nor pre-marks the resource CLOSED: _swap_handle() requires it to
+        stay ACTIVE, and the object remains usable afterwards with its new
+        pointer.
         """
         new_ptr = self._invoke_consume(ffi_call, error_message)
         if new_ptr:
@@ -668,10 +737,16 @@ class ManagedResource:
         handle. A non-zero status is a failure routed to
         _raise_consume_failure.
         """
-        result = self._invoke_consume(ffi_call, error_message)
+        previous_state = self._begin_consume()
+        try:
+            result = self._invoke_consume(ffi_call, error_message)
+        except Exception:
+            self._abort_consume(previous_state)
+            raise
         if result == 0:
             self._teardown(free_handle=False)
             return
+        self._abort_consume(previous_state)
         self._raise_consume_failure(error_message)
 
     def _consume_into(self, ffi_call, error_message):
@@ -680,10 +755,16 @@ class ManagedResource:
         and the new pointer is returned for the caller to own. A null return is
         a failure routed to _raise_consume_failure.
         """
-        result = self._invoke_consume(ffi_call, error_message)
+        previous_state = self._begin_consume()
+        try:
+            result = self._invoke_consume(ffi_call, error_message)
+        except Exception:
+            self._abort_consume(previous_state)
+            raise
         if result:
             self._teardown(free_handle=False)
             return result
+        self._abort_consume(previous_state)
         self._raise_consume_failure(error_message)
 
     @classmethod
@@ -1971,28 +2052,30 @@ class Context(ManagedResource, ContextProvider):
                             check=lambda r: r != 0)
 
                 if signer is not None:
-                    # The signer's in-flight guard:
-                    # this hands its handle to native,
-                    # so a signer.close() on another thread must not
-                    # free it between the state check and the call.
+                    # No in-flight guard around the hand-off: the consume
+                    # marks the signer CLOSED under its lock before calling
+                    # native, which is what stops a signer.close() on another
+                    # thread from freeing the handle mid-transfer. That mark
+                    # also makes the consume refuse to start while another
+                    # thread is borrowing the handle to sign with.
                     #
-                    # _consume_no_replacement tears the signer down from
-                    # inside this region. A teardown recorded while the guard
-                    # is held is deferred and performed as the guard unwinds,
-                    # which is still before __init__ returns.
-                    with signer._native_call():
-                        # A rejected signer is retained, not closed and leaked.
-                        self._signer_callback_cb = signer._callback_cb
-                        signer._consume_no_replacement(
-                            lambda h: _lib.c2pa_context_builder_set_signer(
-                                nb._handle, h),
-                            "Failed to set signer on Context: {}")
+                    # Pin the callback first: a rejected signer is retained,
+                    # not closed and leaked, and _release() nulls _callback_cb
+                    # once the signer is torn down.
+                    self._signer_callback_cb = signer._callback_cb
+                    signer._consume_no_replacement(
+                        lambda h: _lib.c2pa_context_builder_set_signer(
+                            nb._handle, h),
+                        "Failed to set signer on Context: {}")
                     self._has_signer = True
 
-                with nb._native_call():
-                    context_ptr = nb._consume_into(
-                        lambda h: _lib.c2pa_context_builder_build(h),
-                        "Failed to build Context: {}")
+                # No borrow around the build: _ensure_not_borrowed refuses a
+                # consume nested in a _native_call() on the same resource,
+                # because the enclosing frame would still expect the handle
+                # back after it had been handed to native.
+                context_ptr = nb._consume_into(
+                    lambda h: _lib.c2pa_context_builder_build(h),
+                    "Failed to build Context: {}")
 
             self._activate(context_ptr)
 
@@ -2962,6 +3045,10 @@ class Reader(ManagedResource):
         # which it keeps reading from for the rest of its lifecycle.
         self._fragment_streams = []
 
+        # Serializes with_fragment against itself.
+        # Held across the native call, unlike _op_lock. Only with_fragment takes it.
+        self._fragment_lock = threading.RLock()
+
         # Caches for manifest JSON string and parsed data.
         # These are invalidated when with_fragment() is called.
         self._manifest_json_str_cache = None
@@ -3012,22 +3099,25 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the JSON
         """
-        if self._manifest_data_cache is None:
-            if self._manifest_json_str_cache is None:
-                self._manifest_json_str_cache = self.json()
+        # Locked so the cache fields can't be read and written
+        # across concurrent handle swaps.
+        with self._lock():
+            if self._manifest_data_cache is None:
+                if self._manifest_json_str_cache is None:
+                    self._manifest_json_str_cache = self.json()
 
-            try:
-                self._manifest_data_cache = json.loads(
-                    self._manifest_json_str_cache
-                )
-            except json.JSONDecodeError:
-                # Reset cache to reattempt read, possibly
-                self._manifest_data_cache = None
-                self._manifest_json_str_cache = None
-                # Failed to parse manifest JSON
-                return None
+                try:
+                    self._manifest_data_cache = json.loads(
+                        self._manifest_json_str_cache
+                    )
+                except json.JSONDecodeError:
+                    # Reset cache to reattempt read, possibly
+                    self._manifest_data_cache = None
+                    self._manifest_json_str_cache = None
+                    # Failed to parse manifest JSON
+                    return None
 
-        return self._manifest_data_cache
+            return self._manifest_data_cache
 
     def with_fragment(self, format: Optional[str], stream,
                       fragment_stream) -> "Reader":
@@ -3055,61 +3145,66 @@ class Reader(ManagedResource):
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
-        # The native reader keeps reading through both streams after this returns,
-        # so they are owned here and released by _release() rather
-        # than at the end of a with block.
-        main_obj = Stream(stream)
-        frag_obj = Stream(fragment_stream)
-        try:
-            with self._native_call():
-                self._consume_and_swap(
-                    lambda handle: _lib.c2pa_reader_with_fragment(
-                        handle,
-                        format_arg,
-                        main_obj._stream,
-                        frag_obj._stream,
-                    ),
-                    Reader._ERROR_MESSAGES['fragment_error'])
-        except Exception:
-            main_obj.close()
-            frag_obj.close()
-            raise
+        # A forked child cannot wait on a lock no surviving thread will
+        # release, so it reports the same error _lock() does.
+        if is_foreign_process(self):
+            raise C2paError(f"{type(self).__name__} is closed")
 
-        # Locked so a concurrent close() cannot run _release()
-        # between the check and the field swap.
-        with self._lock():
+        # The native call and the ownership transfer are one unit.
+        with self._fragment_lock:
+            # The native reader keeps reading through both streams.
+            main_obj = Stream(stream)
+            frag_obj = Stream(fragment_stream)
             try:
-                self._ensure_valid_state()
+                with self._native_call():
+                    self._consume_and_swap(
+                        lambda handle: _lib.c2pa_reader_with_fragment(
+                            handle,
+                            format_arg,
+                            main_obj._stream,
+                            frag_obj._stream,
+                        ),
+                        Reader._ERROR_MESSAGES['fragment_error'])
             except Exception:
                 main_obj.close()
                 frag_obj.close()
                 raise
 
-            # Replace the streams this reader owned, closing the previous
-            # ones (only the current fragment is retained).
-            previous = self._own_stream
-            previous_fragments = self._fragment_streams
-            self._own_stream = main_obj
-            self._fragment_streams = [frag_obj]
-            if previous is not None and previous is not main_obj:
+            # Locked so a concurrent close() cannot run _release()
+            # between the check and the field swap.
+            with self._lock():
                 try:
-                    previous.close()
+                    self._ensure_valid_state()
                 except Exception:
-                    logger.warning("Failed to close previous Reader stream")
-            for fragment in previous_fragments:
-                if fragment is frag_obj:
-                    continue
-                try:
-                    fragment.close()
-                except Exception:
-                    logger.warning("Failed to close Reader fragment stream")
+                    main_obj.close()
+                    frag_obj.close()
+                    raise
 
-        # Invalidate caches: processing a new BMFF fragment updates the native
-        # reader's state, which can change the manifest data it returns.
-        # The cached JSON string and parsed dict may now be stale, so clear
-        # them to force a fresh read from the native layer on next access.
-        self._manifest_json_str_cache = None
-        self._manifest_data_cache = None
+                # Replace the streams this reader owned, closing the previous
+                # ones (only the current fragment is retained).
+                previous = self._own_stream
+                previous_fragments = self._fragment_streams
+                self._own_stream = main_obj
+                self._fragment_streams = [frag_obj]
+                if previous is not None and previous is not main_obj:
+                    try:
+                        previous.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to close previous Reader stream")
+                for fragment in previous_fragments:
+                    if fragment is frag_obj:
+                        continue
+                    try:
+                        fragment.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to close Reader fragment stream")
+
+                # Cleared here because these describe the replaced handle,
+                # and a reader must never be served them.
+                self._manifest_json_str_cache = None
+                self._manifest_data_cache = None
 
         return self
 
@@ -4117,13 +4212,23 @@ class Builder(ManagedResource):
                             ctypes.byref(manifest_bytes_ptr)
                         )
                 else:
-                    result = _lib.c2pa_builder_sign_context(
-                        self._handle,
-                        format_arg,
-                        source_stream._stream,
-                        dest_stream._stream,
-                        ctypes.byref(manifest_bytes_ptr),
-                    )
+                    # The Context pins the consumed signer's callback, which
+                    # native invokes during this call.
+                    # Its in-flight guard defers a close() arriving on another
+                    # thread, the same way the signer branch above defers one
+                    # for a borrowed Signer.
+                    #
+                    # Entered inside self's guard, matching the Builder to
+                    # Signer order, so the two acquisitions are always
+                    # taken in one direction.
+                    with self._context._native_call():
+                        result = _lib.c2pa_builder_sign_context(
+                            self._handle,
+                            format_arg,
+                            source_stream._stream,
+                            dest_stream._stream,
+                            ctypes.byref(manifest_bytes_ptr),
+                        )
         except Exception as e:
             self.close()
             raise C2paError(f"Error during signing: {e}") from e
