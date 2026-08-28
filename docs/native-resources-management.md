@@ -142,7 +142,9 @@ Each callback checks `_initialized` and `_closed` before touching the underlying
 
 ### `Stream` cleanup
 
-`Stream` holds `_close_lock`, a plain `Lock` rather than an `RLock`. It serializes the three cleanup paths: `close()`, `__del__`, and a `close()` on another thread. Without it, two of them reach the same stream and call `c2pa_release_stream` twice on one native handle. `Stream` needs its own lock since it does not inherit the `_op_lock` machinery.
+`Stream` holds `_close_lock`, an `RLock`. It serializes the three cleanup paths: `close()`, `__del__`, and a `close()` on another thread. Without it, two of them reach the same stream and call `c2pa_release_stream` twice on one native handle. `Stream` needs its own lock since it does not inherit the `_op_lock` machinery.
+
+The lock is reentrant for the same reason `_op_lock` is. `close()` sets the four callback attributes to `None` inside the locked region, which can drop the last reference to an object whose finalizer runs at that bytecode boundary. `__del__` takes the same lock. A plain `Lock` deadlocks against itself when that finalizer belongs to the stream being closed.
 
 Cleanup runs in the direction of dependency: whatever can still invoke or reach the other is torn down first. Because callbacks run the opposite way for a `Stream`, its close order is the reverse of `ManagedResource`'s:
 
@@ -158,6 +160,8 @@ Cleanup runs in the direction of dependency: whatever can still invoke or reach 
 `Stream` does not own the Python object it wraps and never closes it. The caller that opened a file owns that file. A `Reader` that opened a file itself tracks it as `_backing_file` and closes it during its own `_release()`.
 
 Both `close()` and `__del__` take the foreign-process branch, marking the stream closed without calling into the native library. [Fork safety](#fork-safety) covers why.
+
+Both check `is_foreign_process()` before acquiring `_close_lock`, as `_teardown()` and `_lock()` do. A child inherits the lock in whatever state it had at `fork()`, and the thread holding it does not exist there to release it, so a child that acquired first would wait on it forever.
 
 ### Reference cycles in the callbacks
 
@@ -271,6 +275,8 @@ The check catches a borrow already in flight. The `CLOSED` mark catches one arri
 
 The mark is provisional. `_abort_consume()` restores the previous state when the native call turns out not to have taken the handle, which keeps the retained branch of the [ownership-taken triage](#why-an-ownership-taken-failure-does-not-free) handing back a usable object.
 
+`_raise_consume_failure()` performs that restore, on the pre-consume branch only. The reservation is held until the branch is known. `_read_native_error()` is itself a native call and releases the GIL, so a resource restored to `ACTIVE` before the error is classified is visible as usable to another thread while the native side may already own its handle.
+
 `_consume_and_swap()` is excluded. `_swap_handle()` requires the resource to stay `ACTIVE` and the object remains usable with its replacement pointer, so there is no `CLOSED` mark to make and no check. Its callers (`Reader.with_fragment`, `Builder.with_archive`) pass streams whose callbacks re-enter this API, so they hold their own `_native_call()`. `Reader.with_fragment()` additionally serializes itself with a lock of its own, described in [`Reader.with_fragment()`](#readerwith_fragment).
 
 ### Context lifetime during a context-sign
@@ -350,7 +356,7 @@ Each transition has one method that performs it, and subclasses must go through 
 | `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
 | `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
 | `_teardown(free_handle=False)` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two it enforces no precondition on the current state: it closes whatever it is given. |
-| `_release_handle()` | ACTIVE to CLOSED | Frees the handle (guarded, via `_teardown(free_handle=True)`) and closes the object. Same post-state as the consumed teardown. |
+| `_release_handle()` | ACTIVE to CLOSED | Frees the handle (guarded, via `_teardown(free_handle=True)`) and closes the object. Same post-state as the consumed teardown. A resource that is already non-ACTIVE takes the other branch, which clears the handle without freeing it; the reserved consume paths call `_teardown()` directly for that reason. |
 
 Because activation is the only way in, no code path can leave an object ACTIVE while holding a null handle.
 
@@ -522,16 +528,16 @@ sequenceDiagram
         S->>S: _teardown(free_handle=False)
         Note right of S: Consumed: native took the signer
     else non-zero status
-        S->>S: _abort_consume(): restore the previous state
         S->>S: _raise_consume_failure() reads the native error
-        Note right of S: The error is read before any free,<br/>so a free's own error cannot overwrite it
+        Note right of S: The error is read before any free,<br/>so a free's own error cannot overwrite it.<br/>The reservation is held until the branch is known
         alt error carries a pre-consume tag
+            S->>S: _abort_consume(): restore the previous state
             Note right of S: Rejected before ownership moved:<br/>Signer stays ACTIVE, typed error raised
         else any other error
             S->>S: _teardown(free_handle=False)
             Note right of S: Native took it, then failed and<br/>dropped the value itself: free nothing
         else error slot empty
-            S->>S: _release_handle() guarded free
+            S->>S: _teardown(free_handle=True) guarded free
             Note right of S: Ownership unknown: a real free if still<br/>ours, a -1 no-op if native took it
         end
     end
@@ -595,7 +601,11 @@ Those two steps have to run as one unit. Two threads interleaving them can close
 
 `Reader._fragment_lock` covers both steps. It is an `RLock`, and `with_fragment()` is the only method that takes it.
 
-Unlike `_op_lock`, this lock *is* held across the native call. The rule against that exists to stop a re-entering callback from blocking on a lock its own thread holds. Nothing on the callback path takes `_fragment_lock`, so a re-entering callback cannot block on it.
+The guard spans the native call, which drives caller-supplied stream callbacks. `with_fragment()` therefore takes it with `acquire(blocking=False)` and releases it in a `finally`. A second thread finding it held is refused with `C2paError` rather than parked behind a native call that is waiting on a callback to return. A callback that starts a thread of its own and waits for it would otherwise deadlock: the new thread waits for the guard, and the call holding the guard waits for the callback.
+
+A refusal leaves the Reader untouched. No stream is built and no handle is consumed, so the call succeeds once the other thread returns.
+
+Reentrancy applies to the owning thread only. A callback that calls `with_fragment()` synchronously passes the guard and reaches the native call, which rejects the handle it has already consumed.
 
 The two locks nest in a [fixed order](#lock-ordering): `_fragment_lock` outside, then `_native_call()` and `_op_lock` inside it.
 
@@ -650,7 +660,7 @@ The two failure paths are indistinguishable from the return value alone. Only th
 | --- | --- | --- |
 | One of `_PRE_CONSUME_ERROR_TAGS` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
 | Any other error | Taken, then the operation failed | `_teardown(free_handle=False)`: the native side already dropped the value, so nothing is freed here. Resource goes `CLOSED`, error typed from the native message. |
-| No error at all | Unknown | `_release_handle()` guarded free, the caller's message is raised with `"Unknown error"` filled in. |
+| No error at all | Unknown | Guarded free, the caller's message is raised with `"Unknown error"` filled in. A reserved consume frees through `_teardown(free_handle=True)`, because `_release_handle()` treats a reserved resource as one it does not own. |
 
 This error and ownership triage relies on the native error still being readable (and correctly being the last error encountered) after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it.
 

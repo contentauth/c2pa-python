@@ -27,6 +27,7 @@ import unittest
 import threading
 import concurrent.futures
 import time
+import signal
 import asyncio
 import random
 from unittest.mock import MagicMock, patch
@@ -34,6 +35,7 @@ from unittest.mock import MagicMock, patch
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
 from c2pa.c2pa import ManagedResource, Stream, LifecycleState, _native_section
+import c2pa.c2pa as c2pa_module
 from c2pa.lib import is_foreign_process, record_owner_pid
 
 PROJECT_PATH = os.getcwd()
@@ -573,19 +575,37 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         reader._native_call = gated_native_call
 
         class ContentionReportingLock:
-            """Flags when a caller has to wait for the lock it wraps."""
+            """Flags when a caller finds the lock it wraps already held.
+
+            with_fragment takes this lock with acquire(blocking=False) and
+            releases it in a finally, so those are the methods wrapped here.
+            """
 
             def __init__(self, inner):
                 self._inner = inner
 
-            def __enter__(self):
+            def acquire(self, blocking=True, timeout=-1):
+                if not blocking:
+                    acquired = self._inner.acquire(blocking=False)
+                    if not acquired:
+                        # The second caller is refused rather than parked,
+                        # which is the mutual exclusion this test checks for.
+                        contended.set()
+                    return acquired
                 if not self._inner.acquire(blocking=False):
                     contended.set()
-                    self._inner.acquire()
+                    return self._inner.acquire(blocking, timeout)
+                return True
+
+            def release(self):
+                self._inner.release()
+
+            def __enter__(self):
+                self.acquire()
                 return self
 
             def __exit__(self, exc_type, exc_val, exc_tb):
-                self._inner.release()
+                self.release()
                 return False
 
         real_fragment_lock = reader._fragment_lock
@@ -3393,6 +3413,296 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
                     self.assertNotEqual(current_manifest["active_manifest"], thread_manifest_data[other_thread_id]["active_manifest"])
 
 
+class TestWithFragmentReentrancy(unittest.TestCase):
+    """with_fragment drives caller-supplied stream callbacks, so it must not
+    hold a lock a callback-spawned thread would wait on.
+    """
+
+    def test_reentrant_call_is_refused_rather_than_blocked(self):
+        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+        with open(init_path, "rb") as handle:
+            init_bytes = handle.read()
+        with open(fragment_path, "rb") as handle:
+            fragment_bytes = handle.read()
+
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        state = {"fired": False, "result": None, "hung": None}
+
+        class ReentrantStream(io.BytesIO):
+            """Re-enters the API from another thread, from inside a callback,
+            and waits for it: the shape that deadlocks a lock held across the
+            native call.
+            """
+
+            def _reenter_once(self):
+                if state["fired"]:
+                    return
+                state["fired"] = True
+
+                def second_call():
+                    try:
+                        reader.with_fragment(
+                            "video/mp4",
+                            io.BytesIO(init_bytes),
+                            io.BytesIO(fragment_bytes))
+                        state["result"] = "completed"
+                    except Error as e:
+                        state["result"] = e
+
+                thread = threading.Thread(target=second_call, daemon=True)
+                thread.start()
+                thread.join(10)
+                state["hung"] = thread.is_alive()
+
+            def read(self, size=-1):
+                self._reenter_once()
+                return super().read(size)
+
+            def seek(self, offset, whence=0):
+                self._reenter_once()
+                return super().seek(offset, whence)
+
+        reader.with_fragment("video/mp4",
+                             ReentrantStream(init_bytes),
+                             io.BytesIO(fragment_bytes))
+
+        self.assertTrue(state["fired"], "the callback never re-entered")
+        self.assertFalse(
+            state["hung"],
+            "a with_fragment call started from a stream callback blocked on "
+            "the lock the running call holds")
+        self.assertIsInstance(
+            state["result"], Error,
+            "the re-entrant call must be refused, not silently interleaved")
+
+    def test_same_thread_reentry_does_not_corrupt_the_reader(self):
+        """_fragment_lock is reentrant, so a callback calling with_fragment
+        synchronously passes the guard. The native layer rejects the handle it
+        already consumed, and the Reader survives.
+        """
+        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+        with open(init_path, "rb") as handle:
+            init_bytes = handle.read()
+        with open(fragment_path, "rb") as handle:
+            fragment_bytes = handle.read()
+
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        state = {"fired": False, "inner": None}
+
+        class SelfReentrantStream(io.BytesIO):
+            def _reenter_once(self):
+                if state["fired"]:
+                    return
+                state["fired"] = True
+                try:
+                    reader.with_fragment("video/mp4",
+                                         io.BytesIO(init_bytes),
+                                         io.BytesIO(fragment_bytes))
+                    state["inner"] = "completed"
+                except Error as e:
+                    state["inner"] = e
+
+            def read(self, size=-1):
+                self._reenter_once()
+                return super().read(size)
+
+            def seek(self, offset, whence=0):
+                self._reenter_once()
+                return super().seek(offset, whence)
+
+        reader.with_fragment("video/mp4",
+                             SelfReentrantStream(init_bytes),
+                             io.BytesIO(fragment_bytes))
+
+        self.assertTrue(state["fired"], "the callback never re-entered")
+        self.assertIsInstance(
+            state["inner"], Error,
+            "a nested consume on the same handle must be rejected")
+        # The outer call still owns a live handle.
+        self.assertTrue(reader.is_valid)
+        self.assertIsInstance(reader.json(), str)
+
+    def test_refused_call_leaves_the_reader_usable(self):
+        """The refusal reports contention without touching the Reader, so the
+        caller can retry once the other thread returns.
+        """
+        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+        with open(init_path, "rb") as handle:
+            init_bytes = handle.read()
+        with open(fragment_path, "rb") as handle:
+            fragment_bytes = handle.read()
+
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_guard():
+            reader._fragment_lock.acquire()
+            holding.set()
+            release.wait(10)
+            reader._fragment_lock.release()
+
+        holder = threading.Thread(target=hold_the_guard, daemon=True)
+        holder.start()
+        self.assertTrue(holding.wait(5), "the guard was never taken")
+
+        with self.assertRaises(Error):
+            reader.with_fragment("video/mp4",
+                                 io.BytesIO(init_bytes),
+                                 io.BytesIO(fragment_bytes))
+
+        # Refused before any stream was built or handle consumed.
+        self.assertTrue(reader.is_valid)
+
+        release.set()
+        holder.join(5)
+
+        # The same call succeeds once the other thread is out.
+        reader.with_fragment("video/mp4",
+                             io.BytesIO(init_bytes),
+                             io.BytesIO(fragment_bytes))
+        self.assertTrue(reader.is_valid)
+
+
+class TestStreamCloseReentrancy(unittest.TestCase):
+    """close() clears the callback references inside _close_lock, which can run
+    a finalizer at that bytecode boundary, and __del__ takes the same lock.
+    """
+
+    def test_close_can_be_reentered_on_the_same_thread(self):
+        stream = Stream(io.BytesIO(b"payload"))
+        finished = threading.Event()
+
+        def hold_then_reenter():
+            with stream._close_lock:
+                # A finalizer running here re-takes the lock this thread holds.
+                stream.close()
+            finished.set()
+
+        worker = threading.Thread(target=hold_then_reenter, daemon=True)
+        worker.start()
+
+        self.assertTrue(
+            finished.wait(10),
+            "close() blocked re-entering _close_lock from the thread that "
+            "already holds it")
+        self.assertTrue(stream._closed)
+
+
+@unittest.skipUnless(hasattr(os, "fork"), "requires fork()")
+class TestStreamCloseAfterFork(unittest.TestCase):
+    """A forked child must not wait on a lock no surviving thread will
+    release.
+    """
+
+    def test_close_in_child_does_not_block_on_an_inherited_lock(self):
+        stream = Stream(io.BytesIO(b"payload"))
+
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_lock():
+            with stream._close_lock:
+                holding.set()
+                release.wait(30)
+
+        holder = threading.Thread(target=hold_the_lock, daemon=True)
+        holder.start()
+        self.assertTrue(holding.wait(5), "lock was never taken")
+
+        # The child inherits _close_lock held by a thread that does not exist
+        # there, so close() has to take the foreign-process path without
+        # acquiring it.
+        pid = os.fork()
+        if pid == 0:
+            try:
+                stream.close()
+                # Exit 3 rather than 0 if close() returned without marking the
+                # stream closed, so a silent no-op cannot pass as success.
+                marked = stream._closed and not stream._initialized
+                os._exit(0 if marked else 3)
+            except BaseException:
+                os._exit(2)
+
+        deadline = time.time() + 15
+        status = None
+        while time.time() < deadline:
+            done, wait_status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = wait_status
+                break
+            time.sleep(0.05)
+
+        if status is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            release.set()
+            holder.join(5)
+            self.fail("close() in the forked child blocked on the inherited "
+                      "lock instead of taking the foreign-process path")
+
+        release.set()
+        holder.join(5)
+        self.assertEqual(
+            os.WEXITSTATUS(status), 0,
+            "close() in the forked child raised (2) or returned without "
+            "closing the stream (3)")
+
+
+class TestConsumeReservationWindow(unittest.TestCase):
+    """The consume reservation must outlast ownership classification.
+
+    _read_native_error() is a native call that releases the GIL, so a resource
+    restored to ACTIVE before the error is classified is visible as usable to
+    another thread while native may already own its handle.
+    """
+
+    def test_no_thread_sees_a_consumed_handle_as_valid(self):
+        resource = Settings()
+
+        reading = threading.Event()
+        may_finish = threading.Event()
+        seen_valid = []
+
+        real_read = c2pa_module._read_native_error
+
+        def gated_read():
+            # Stand in for the GIL release inside the real native call.
+            reading.set()
+            may_finish.wait(10)
+            # No pre-consume tag: native took ownership and then failed.
+            return "Other: operation failed after taking ownership"
+
+        def observer():
+            if not reading.wait(10):
+                return
+            # The consuming call is mid-classification right now.
+            seen_valid.append(resource.is_valid)
+            may_finish.set()
+
+        watcher = threading.Thread(target=observer, daemon=True)
+        watcher.start()
+
+        c2pa_module._read_native_error = gated_read
+        try:
+            with self.assertRaises(Error):
+                resource._consume_no_replacement(lambda h: 1, "consume: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+            may_finish.set()
+            watcher.join(10)
+
+        self.assertTrue(seen_valid, "observer never sampled the resource")
+        self.assertFalse(
+            seen_valid[0],
+            "another thread saw a resource whose handle native may already "
+            "own as valid")
+
+
 class TestLocking(unittest.TestCase):
     """Tests for the locks that guard native resources:
     - the per-object operation lock that serializes native calls against teardown,
@@ -4537,15 +4847,25 @@ class TestLocking(unittest.TestCase):
         handle_attrs = {"_handle", "execution_context"}
 
         def guarded_names(node):
-            """Names X with an active `with X._native_call():` at this node."""
+            """Names X guarded at this node, by either form:
+            `with X._native_call():`, or `with _context_guard(X):` for a
+            caller-supplied ContextProvider, which enters X._native_call()
+            when X offers it.
+            """
             found = set()
             for item in getattr(node, "items", []):
                 call = item.context_expr
-                if (isinstance(call, ast.Call)
-                        and isinstance(call.func, ast.Attribute)
+                if not isinstance(call, ast.Call):
+                    continue
+                if (isinstance(call.func, ast.Attribute)
                         and call.func.attr == "_native_call"
                         and isinstance(call.func.value, ast.Name)):
                     found.add(call.func.value.id)
+                elif (isinstance(call.func, ast.Name)
+                        and call.func.id == "_context_guard"
+                        and call.args
+                        and isinstance(call.args[0], ast.Name)):
+                    found.add(call.args[0].id)
             return found
 
         def borrowed_in_call(call):
