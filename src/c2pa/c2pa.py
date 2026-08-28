@@ -11,7 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-# Version: 0.37.8
+# Version: 0.37.9
 
 import contextlib
 import ctypes
