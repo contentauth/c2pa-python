@@ -9677,6 +9677,200 @@ class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
             c2pa_module.ed25519_sign(b"", "not a key")
 
 
+class TestConsumeOwnership(unittest.TestCase):
+    """Ownership of the native handle across the consuming call paths."""
+
+    def setUp(self):
+        self.freed = []
+        self._real_free = ManagedResource._free_native_ptr
+
+        def counting_free(ptr):
+            self.freed.append(ptr)
+            return self._real_free(ptr)
+
+        ManagedResource._free_native_ptr = staticmethod(counting_free)
+
+    def tearDown(self):
+        ManagedResource._free_native_ptr = staticmethod(self._real_free)
+
+    def test_generic_exception_frees_the_reserved_handle(self):
+        """A reserved consume that raises must free, not drop, the handle.
+
+        _begin_consume() leaves the resource CLOSED with the handle still set,
+        which _release_handle() reads as "not ours" and nulls without freeing,
+        while _abort_consume() can no longer restore it.
+        """
+        def boom(handle):
+            raise RuntimeError("callback failed after the reservation")
+
+        for name in ("_consume_no_replacement", "_consume_into"):
+            with self.subTest(helper=name):
+                resource = Settings()
+                self.freed.clear()
+
+                with self.assertRaises(Error):
+                    getattr(resource, name)(boom, "consume failed: {}")
+
+                self.assertEqual(
+                    len(self.freed), 1,
+                    "{} dropped the handle without freeing it".format(name))
+                self.assertIsNone(resource._handle)
+
+    def test_marshalling_error_retains_the_handle(self):
+        """Positive control for the free counter.
+
+        An ArgumentError means the call never reached native, so the handle is
+        untouched and must NOT be freed. Without this, a zero-free assertion
+        could pass simply because the counter never fires.
+        """
+        def bad_marshal(handle):
+            raise ctypes.ArgumentError("marshalling failed")
+
+        resource = Settings()
+        self.freed.clear()
+
+        with self.assertRaises(ctypes.ArgumentError):
+            resource._consume_no_replacement(bad_marshal, "consume: {}")
+
+        self.assertEqual(self.freed, [])
+        self.assertIsNotNone(resource._handle)
+        self.assertEqual(resource._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_pre_consume_rejection_restores_the_resource(self):
+        """A handle native rejected before taking ownership stays usable.
+
+        The reservation is held until _raise_consume_failure classifies the
+        error, so no other thread sees the resource as ACTIVE while its
+        ownership is still undetermined.
+        """
+        resource = Settings()
+        self.freed.clear()
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = (
+            lambda: "Other: UntrackedPointer: 0x1234")
+        try:
+            with self.assertRaises(Error):
+                resource._consume_no_replacement(lambda h: 1, "consume: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        self.assertEqual(resource._lifecycle_state, LifecycleState.ACTIVE)
+        self.assertIsNotNone(resource._handle)
+        self.assertEqual(self.freed, [])
+
+    def test_post_consume_failure_keeps_the_resource_closed(self):
+        """An error without a pre-consume tag means native took ownership.
+
+        The value is native's to drop, so the resource stays closed and frees
+        nothing.
+        """
+        resource = Settings()
+        self.freed.clear()
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = lambda: "Other: operation failed"
+        try:
+            with self.assertRaises(Error):
+                resource._consume_no_replacement(lambda h: 1, "consume: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        self.assertEqual(resource._lifecycle_state, LifecycleState.CLOSED)
+        self.assertEqual(self.freed, [])
+
+    def test_failure_without_a_native_error_frees_the_handle(self):
+        """An empty error slot leaves ownership unknown, so the handle is
+        freed defensively rather than dropped.
+        """
+        resource = Settings()
+        self.freed.clear()
+        real_read = c2pa_module._read_native_error
+        c2pa_module._read_native_error = lambda: None
+        try:
+            with self.assertRaises(Error):
+                resource._consume_no_replacement(lambda h: 1, "consume: {}")
+        finally:
+            c2pa_module._read_native_error = real_read
+
+        self.assertEqual(
+            len(self.freed), 1,
+            "an unknown-ownership failure dropped the handle without freeing")
+        self.assertIsNone(resource._handle)
+
+    def test_rejected_replacement_is_freed(self):
+        """A replacement _swap_handle refuses must not be left unowned.
+
+        Native consumed the old pointer and returned this one, so nothing else
+        holds it.
+        """
+        resource = Settings()
+        spare = Settings()
+        replacement = spare._handle
+        # Detach so only the code under test can free it.
+        spare._handle = None
+        spare._lifecycle_state = LifecycleState.CLOSED
+        self.freed.clear()
+
+        # A close() arriving mid-call leaves the resource CLOSED.
+        resource._lifecycle_state = LifecycleState.CLOSED
+
+        with self.assertRaises(Error):
+            resource._consume_and_swap(lambda h: replacement, "swap: {}")
+
+        self.assertIn(replacement, self.freed)
+
+
+class TestContextProviderContract(unittest.TestCase):
+    """The published ContextProvider contract is is_valid plus
+    execution_context, and nothing more.
+    """
+
+    class _MinimalProvider(ContextProvider):
+        """Implements exactly what the abstract base class declares."""
+
+        def __init__(self):
+            self._inner = Context(Settings())
+
+        @property
+        def is_valid(self):
+            return self._inner.is_valid
+
+        @property
+        def execution_context(self):
+            return self._inner.execution_context
+
+    def test_reader_accepts_a_minimal_provider(self):
+        provider = self._MinimalProvider()
+        try:
+            Reader("image/jpeg", io.BytesIO(b"not a real jpeg"),
+                   context=provider)
+        except AttributeError as e:
+            self.fail("Reader requires more than the documented "
+                      "ContextProvider contract: {}".format(e))
+        except Error:
+            # Rejecting the bytes is the native library doing its job.
+            pass
+
+    def test_builder_accepts_a_minimal_provider(self):
+        provider = self._MinimalProvider()
+        try:
+            Builder({"claim_generator": "test"}, context=provider)
+        except AttributeError as e:
+            self.fail("Builder requires more than the documented "
+                      "ContextProvider contract: {}".format(e))
+
+    def test_built_in_context_still_gets_in_flight_protection(self):
+        """The compatibility shim must not silently drop the guard for the
+        provider that does implement it.
+        """
+        context = Context(Settings())
+        self.assertEqual(context._inflight, 0)
+        with c2pa_module._context_guard(context):
+            self.assertGreater(
+                context._inflight, 0,
+                "built-in Context lost its in-flight guard")
+        self.assertEqual(context._inflight, 0)
+
+
 class TestLockOrderStaticAnalysis(unittest.TestCase):
     """Static analysis over the source, not runtime behavior:
     no threads are spawned here.
@@ -9735,6 +9929,33 @@ class TestLockOrderStaticAnalysis(unittest.TestCase):
                 return "_op_lock"
             return None
 
+        def lock_name_for_acquire(node):
+            """A lock taken with acquire() and released in a finally nests just
+            as a `with` does, so the scan has to follow it or it silently stops
+            seeing whole regions.
+            """
+            call = node.value if isinstance(node, ast.Expr) else node
+            if isinstance(call, ast.UnaryOp) and isinstance(call.op, ast.Not):
+                call = call.operand
+            if not (isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "acquire"):
+                return None
+            owner = call.func.value
+            if (isinstance(owner, ast.Attribute)
+                    and isinstance(owner.value, ast.Name)
+                    and owner.value.id == "self"
+                    and any(owner.attr in attrs
+                            for attrs in lock_attrs_by_class.values())):
+                return owner.attr
+            return None
+
+        def acquires_in_test(node):
+            """Lock taken by `if not self._X.acquire(...)`-style guards."""
+            if isinstance(node, ast.If):
+                return lock_name_for_acquire(node.test)
+            return None
+
         def orders_in(node, stack, pairs):
             """Record (outer, inner) for every nesting this node contains."""
             if isinstance(node, (ast.With, ast.AsyncWith)):
@@ -9749,8 +9970,29 @@ class TestLockOrderStaticAnalysis(unittest.TestCase):
                 for _ in names:
                     stack.pop()
                 return
+            # A statement list can open a lock partway through via acquire();
+            # everything after it in that list is nested inside.
+            for field, value in ast.iter_fields(node):
+                if not isinstance(value, list):
+                    continue
+                held = []
+                for child in value:
+                    if not isinstance(child, ast.stmt):
+                        continue
+                    name = (lock_name_for_acquire(child)
+                            or acquires_in_test(child))
+                    if name:
+                        if stack:
+                            pairs.add((stack[-1], name))
+                        stack.append(name)
+                        held.append(name)
+                        continue
+                    orders_in(child, stack, pairs)
+                for _ in held:
+                    stack.pop()
             for child in ast.iter_child_nodes(node):
-                orders_in(child, stack, pairs)
+                if not isinstance(child, ast.stmt):
+                    orders_in(child, stack, pairs)
 
         pairs_by_method = {}
         for cls in ast.walk(tree):
