@@ -559,7 +559,7 @@ class ManagedResource:
         "InvalidBufferSize:",
     )
 
-    def _invoke_consume(self, ffi_call, error_message):
+    def _invoke_consume(self, ffi_call, error_message, *, reserved=False):
         """Run an FFI call that consumes this handle, returning its raw result.
 
         A marshalling ArgumentError is re-raised untouched (call never reached
@@ -573,6 +573,9 @@ class ManagedResource:
                 result (a replacement pointer, a status code, ...).
             error_message: Format string with one placeholder, used to wrap a
                 callback exception.
+            reserved: True when the caller reserved the handle with
+                _begin_consume(), which frees here rather than through
+                _release_handle().
 
         Raises:
             ctypes.ArgumentError: If marshalling failed; handle untouched.
@@ -585,10 +588,15 @@ class ManagedResource:
             # is untouched and still ours. Re-raise as-is.
             raise
         except Exception as e:
-            self._release_handle()
+            if reserved:
+                # A reservation leaves the resource CLOSED with the handle set,
+                # which _release_handle() nulls without freeing.
+                self._teardown(free_handle=True)
+            else:
+                self._release_handle()
             raise C2paError(error_message.format(e)) from e
 
-    def _raise_consume_failure(self, error_message):
+    def _raise_consume_failure(self, error_message, previous_state=None):
         """Raise the error from an FFI handler consuming call.
 
         The native error is read before any free so a free's own
@@ -603,9 +611,19 @@ class ManagedResource:
         with another one and, because that substitute carries a pre-consume
         tag, invert the retain/consume decision made below.
 
+        A caller that reserved the handle with _begin_consume() passes
+        previous_state and stays reserved until this classification finishes.
+        _read_native_error() is a native call and releases the GIL, so a
+        resource restored to ACTIVE before the tags are examined is visible as
+        usable to another thread while native may already own its handle. Only
+        the pre-consume branch hands the resource back.
+
         Args:
             error_message: Format string with one placeholder, used when the
                 native layer offers no error of its own.
+            previous_state: Lifecycle state to restore if the handle turns out
+                to have been rejected before native took ownership. None when
+                the caller holds no reservation.
 
         Raises:
             C2paError: Always; typed by the native error when there is one.
@@ -619,6 +637,8 @@ class ManagedResource:
                     "ownership (%s); handle retained",
                     type(self).__name__,
                     error)
+                if previous_state is not None:
+                    self._abort_consume(previous_state)
                 _raise_typed_c2pa_error(error)
 
             # A non-tag error means the native side took ownership then failed,
@@ -629,7 +649,12 @@ class ManagedResource:
             _raise_typed_c2pa_error(error)
 
         # No error in the slot: ownership is unknown, so free defensively.
-        self._release_handle()
+        # A reservation leaves the resource CLOSED with the handle set,
+        # which _release_handle() nulls without freeing.
+        if previous_state is not None:
+            self._teardown(free_handle=True)
+        else:
+            self._release_handle()
         raise C2paError(error_message.format("Unknown error"))
 
     def _begin_consume(self):
@@ -673,7 +698,19 @@ class ManagedResource:
         """
         new_ptr = self._invoke_consume(ffi_call, error_message)
         if new_ptr:
-            self._swap_handle(new_ptr)
+            try:
+                self._swap_handle(new_ptr)
+            except Exception:
+                # _swap_handle refuses a resource a concurrent close() left
+                # CLOSED. Native consumed the old pointer and returned this
+                # one, so nothing else holds it.
+                try:
+                    ManagedResource._free_native_ptr(new_ptr)
+                except Exception:
+                    logger.error(
+                        "Failed to free the replacement %s handle",
+                        type(self).__name__, exc_info=True)
+                raise
             return
         self._raise_consume_failure(error_message)
 
@@ -685,15 +722,15 @@ class ManagedResource:
         """
         previous_state = self._begin_consume()
         try:
-            result = self._invoke_consume(ffi_call, error_message)
+            result = self._invoke_consume(
+                ffi_call, error_message, reserved=True)
         except Exception:
             self._abort_consume(previous_state)
             raise
         if result == 0:
             self._teardown(free_handle=False)
             return
-        self._abort_consume(previous_state)
-        self._raise_consume_failure(error_message)
+        self._raise_consume_failure(error_message, previous_state)
 
     def _consume_into(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a *different*
@@ -703,15 +740,15 @@ class ManagedResource:
         """
         previous_state = self._begin_consume()
         try:
-            result = self._invoke_consume(ffi_call, error_message)
+            result = self._invoke_consume(
+                ffi_call, error_message, reserved=True)
         except Exception:
             self._abort_consume(previous_state)
             raise
         if result:
             self._teardown(free_handle=False)
             return result
-        self._abort_consume(previous_state)
-        self._raise_consume_failure(error_message)
+        self._raise_consume_failure(error_message, previous_state)
 
     @classmethod
     def _wrap_native_handle(cls, handle):
@@ -1644,11 +1681,35 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         check=lambda r: r != 0)
 
 
+@contextlib.contextmanager
+def _context_guard(context):
+    """Hold a caller-supplied context valid across a native call.
+
+    ContextProvider requires only is_valid and execution_context.
+    A provider that also manages a native handle,
+    such as the built-in Context, offers  _native_call,
+    which counts the call in flight so a concurrent close() records
+    its intent and defers the free until the call returns. A provider
+    implementing just the two required properties runs without that guard.
+    """
+    native_call = getattr(context, "_native_call", None)
+    if native_call is None:
+        yield
+        return
+    with native_call():
+        yield
+
+
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
 
     Subclass to implement a custom context provider.
     The built-in Context class is the standard implementation.
+
+    A provider that does not derive from ManagedResource is used without
+    in-flight teardown protection: closing it on another thread while a Reader
+    or Builder is being constructed from it can free the native context while
+    that construction is still using it.
     """
 
     @property
@@ -2004,7 +2065,7 @@ class Stream:
         self._initialized = False
         self._stream = None
         # Serializes close() and __del__ against a concurrent double-free.
-        self._close_lock = threading.Lock()
+        self._close_lock = threading.RLock()
 
         # Generate unique stream ID using object ID and counter
         stream_counter = next(Stream._stream_id_counter)
@@ -2254,13 +2315,17 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
+        # Checked before the lock, as _lock() and __del__ do:
+        # a child inherits _close_lock in whatever state it had at fork(),
+        # and the thread holding it does not exist there to release it.
+        if is_foreign_process(self):
+            self._closed = True
+            self._initialized = False
+            return
+
         # Serializes against __del__ / a concurrent close().
         with self._close_lock:
             if self._closed:
-                return
-            if is_foreign_process(self):
-                self._closed = True
-                self._initialized = False
                 return
 
             try:
@@ -2818,7 +2883,7 @@ class Reader(ManagedResource):
         try:
             # The Context is caller-supplied and may be shared, so its handle
             # needs its own in-flight guard across the native call.
-            with context._native_call():
+            with _context_guard(context):
                 # Adopt before the consuming call: _consume_and_swap needs an
                 # active resource, and cleanup then owns the pointer either
                 # way.
@@ -2965,6 +3030,9 @@ class Reader(ManagedResource):
                 underlying object, in which case this Reader is closed and
                 cannot be retried: create a new one instead of reusing this
                 instance.
+            C2paError: If another thread is inside this method on the same
+                Reader. This one leaves the Reader untouched, so the call can
+                be retried once that thread returns.
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
@@ -2974,7 +3042,18 @@ class Reader(ManagedResource):
             raise C2paError(f"{type(self).__name__} is closed")
 
         # The native call and the ownership transfer are one unit.
-        with self._fragment_lock:
+        # Taken without blocking because the call drives caller-supplied stream
+        # callbacks: a second thread, including one a callback starts, would
+        # otherwise wait here for a native call that is itself waiting on that
+        # callback to return.
+        #
+        # Reentrant, so the thread already inside this region passes through
+        # and re-enters the native call, which rejects the handle it consumed.
+        if not self._fragment_lock.acquire(blocking=False):
+            raise C2paError(
+                f"{type(self).__name__} is already processing a fragment "
+                f"on another thread")
+        try:
             # The native reader keeps reading through both streams.
             main_obj = Stream(stream)
             frag_obj = Stream(fragment_stream)
@@ -3028,6 +3107,8 @@ class Reader(ManagedResource):
                 # and a reader must never be served them.
                 self._manifest_json_str_cache = None
                 self._manifest_data_cache = None
+        finally:
+            self._fragment_lock.release()
 
         return self
 
@@ -3670,7 +3751,7 @@ class Builder(ManagedResource):
         # The Context is caller-supplied and may be shared,
         # so its handle needs its own in-flight guard across
         # the native call, especially for state checks.
-        with context._native_call():
+        with _context_guard(context):
             # Adopt before the consuming call.
             self._create_and_activate(
                 lambda: _lib.c2pa_builder_from_context(
@@ -4039,7 +4120,7 @@ class Builder(ManagedResource):
                     # Entered inside self's guard, matching the Builder to
                     # Signer order, so the two acquisitions are always
                     # taken in one direction.
-                    with self._context._native_call():
+                    with _context_guard(self._context):
                         result = _lib.c2pa_builder_sign_context(
                             self._handle,
                             format_arg,
