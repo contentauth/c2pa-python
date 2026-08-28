@@ -462,7 +462,8 @@ class ManagedResource:
             handle, self._handle = self._handle, None
             if free_handle and handle:
                 try:
-                    ManagedResource._free_native_ptr(handle)
+                    # Subclasses may override the deallocator.
+                    type(self)._free_native_ptr(handle)
                 except Exception:
                     logger.error("Failed to free native %s resources",
                                  type(self).__name__, exc_info=True)
