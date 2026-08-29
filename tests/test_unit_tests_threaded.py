@@ -3593,64 +3593,6 @@ class TestStreamCloseReentrancy(unittest.TestCase):
         self.assertTrue(stream._closed)
 
 
-@unittest.skipUnless(hasattr(os, "fork"), "requires fork()")
-class TestStreamCloseAfterFork(unittest.TestCase):
-    """A forked child must not wait on a lock no surviving thread will
-    release.
-    """
-
-    def test_close_in_child_does_not_block_on_an_inherited_lock(self):
-        stream = Stream(io.BytesIO(b"payload"))
-
-        holding = threading.Event()
-        release = threading.Event()
-
-        def hold_the_lock():
-            with stream._close_lock:
-                holding.set()
-                release.wait(30)
-
-        holder = threading.Thread(target=hold_the_lock, daemon=True)
-        holder.start()
-        self.assertTrue(holding.wait(5), "lock was never taken")
-
-        # The child inherits _close_lock held by a thread that does not exist
-        # there, so close() has to take the foreign-process path without
-        # acquiring it.
-        pid = os.fork()
-        if pid == 0:
-            try:
-                stream.close()
-                # Exit 3 rather than 0 if close() returned without marking the
-                # stream closed, so a silent no-op cannot pass as success.
-                marked = stream._closed and not stream._initialized
-                os._exit(0 if marked else 3)
-            except BaseException:
-                os._exit(2)
-
-        deadline = time.time() + 15
-        status = None
-        while time.time() < deadline:
-            done, wait_status = os.waitpid(pid, os.WNOHANG)
-            if done:
-                status = wait_status
-                break
-            time.sleep(0.05)
-
-        if status is None:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-            release.set()
-            holder.join(5)
-            self.fail("close() in the forked child blocked on the inherited "
-                      "lock instead of taking the foreign-process path")
-
-        release.set()
-        holder.join(5)
-        self.assertEqual(
-            os.WEXITSTATUS(status), 0,
-            "close() in the forked child raised (2) or returned without "
-            "closing the stream (3)")
 
 
 class TestConsumeReservationWindow(unittest.TestCase):

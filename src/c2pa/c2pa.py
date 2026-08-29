@@ -275,9 +275,9 @@ class ManagedResource:
     def _state_lock(self):
         """Return this resource's operation lock.
 
-        Acquiring it only provides mutual exclusion; unlike _lock(),
-        it does not mark the thread as being inside a native-error
-        section.
+        Acquiring it provides mutual exclusion.
+        Unlike _lock(), it does not mark the thread as being inside
+        a native-error section.
 
         Reentrant because it is possible to run a finalizer at any bytecode
         boundary, including inside a region this thread has already locked,
@@ -328,10 +328,10 @@ class ManagedResource:
     def _lock(self):
         """Hold this resource's operation lock its duration,
         and mark this thread as inside a native-error section.
-
         Never hold this across a native call that drives stream callbacks.
-        Those calls release the GIL and re-enter caller-supplied
-        code, which may call back into this API on another thread.
+        Those calls release the Global Interpreter Lock
+        and re-enter caller-supplied code, which may call back into this API
+        on another thread.
         Only calls that don't touch callbacks are serialized here.
         """
         with self._state_lock(), _native_section():
