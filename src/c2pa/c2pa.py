@@ -1699,6 +1699,52 @@ def _convert_to_py_string(value) -> str:
     return py_string
 
 
+def _check_cstr_arg(name: str, value) -> None:
+    """Reject a string argument the native layer would refuse.
+    Checking here keeps the rejection on this side of the boundary,
+    where the handle is known to be untouched.
+
+    Raises:
+        C2paError: With same message the native layer would have produced.
+    """
+    if value is None:
+        raise C2paError(f"NullParameter: {name}")
+
+    encoded = value.encode('utf-8') if isinstance(value, str) else bytes(value)
+    if b'\x00' in encoded:
+        # ctypes truncates at the first NUL
+        raise C2paError(f"NullParameter: {name} contains a null byte")
+
+
+def _check_handle_arg(name: str, handle) -> None:
+    """Reject a null handle argument.
+    Checking here keeps the rejection on this side of the boundary,
+    where the handle is known to be untouched.
+
+    Raises:
+        C2paError: With same message the native layer would have produced.
+    """
+    if not handle:
+        raise C2paError(f"NullParameter: {name}")
+
+
+def _check_bytes_arg(name: str, buffer) -> None:
+    """Reject a byte buffer the native layer would refuse.
+
+    Native rejects a null pointer and any size outside 1..=isize::MAX.
+    An empty buffer reaches it as size 0.
+    Checking here keeps the rejection on this side of the boundary,
+    where the handle is known to be untouched.
+
+    Raises:
+        C2paError: With same message the native layer would have produced.
+    """
+    if buffer is None:
+        raise C2paError(f"NullParameter: {name}")
+    if len(buffer) == 0:
+        raise C2paError(f"InvalidBufferSize: 0 for '{name}'")
+
+
 def _raise_typed_c2pa_error(error_str: str) -> None:
     """Parse an error string and raise the appropriate typed C2paError.
 
@@ -2182,6 +2228,8 @@ class Context(ManagedResource, ContextProvider):
                     # not closed and leaked, and _release() nulls _callback_cb
                     # once the signer is torn down.
                     self._signer_callback_cb = signer._callback_cb
+                    # The signer is consumed only once the builder validates.
+                    _check_handle_arg('builder', nb._handle)
                     signer._consume_no_replacement(
                         lambda h: _lib.c2pa_context_builder_set_signer(
                             nb._handle, h),
@@ -3125,7 +3173,10 @@ class Reader(ManagedResource):
                         context.execution_context),
                     Reader._ERROR_MESSAGES['reader_error'])
 
+            _check_cstr_arg('format', format_arg)
+            _check_handle_arg('stream', self._own_stream._stream)
             if manifest_data is not None:
+                _check_bytes_arg('manifest_data', manifest_data)
                 manifest_array = (
                     ctypes.c_ubyte *
                     len(manifest_data)).from_buffer_copy(manifest_data)
@@ -3293,6 +3344,9 @@ class Reader(ManagedResource):
             main_obj = Stream(stream)
             frag_obj = Stream(fragment_stream)
             try:
+                _check_cstr_arg('format', format_arg)
+                _check_handle_arg('stream', main_obj._stream)
+                _check_handle_arg('fragment', frag_obj._stream)
                 with self._native_call():
                     self._consume_and_swap(
                         lambda handle: _lib.c2pa_reader_with_fragment(
@@ -3996,6 +4050,7 @@ class Builder(ManagedResource):
                     context.execution_context),
                 Builder._ERROR_MESSAGES['builder_error'])
 
+        _check_cstr_arg('manifest_json', json_str)
         with self._native_call():
             self._consume_and_swap(
                 lambda handle: _lib.c2pa_builder_with_definition(
@@ -4284,6 +4339,10 @@ class Builder(ManagedResource):
         self._ensure_valid_state()
 
         with self._native_call(), Stream(stream) as stream_obj:
+            # Check the argument before the consuming call, so a rejection
+            # cannot leave ownership of the handle in doubt.
+            _check_handle_arg('stream', stream_obj._stream)
+
             self._consume_and_swap(
                 lambda handle: _lib.c2pa_builder_with_archive(
                     handle, stream_obj._stream),

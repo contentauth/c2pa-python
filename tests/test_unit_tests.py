@@ -8960,6 +8960,101 @@ class TestManagedResourceObjects(TestContextAPIs):
                 "Failed to create reader: {}")
         return reader
 
+    def test_preflight_rejects_before_the_consuming_call(self):
+        """A bad argument must be refused before the handle reaches native.
+
+        Native validates arguments and takes ownership in an order that
+        differs between versions, so a rejection that reaches native leaves
+        ownership ambiguous. Refusing here keeps the handle unambiguously
+        ours.
+        """
+        reader = self._reader_from_context()
+        called = []
+
+        with self.assertRaises(Error) as caught:
+            with reader._native_call():
+                reader._consume_and_swap(
+                    lambda h: (called.append(h),
+                               c2pa_module._check_bytes_arg(
+                                   'manifest_data', b''))[1],
+                    "Failed: {}")
+
+        self.assertIn("InvalidBufferSize", str(caught.exception))
+        self.assertEqual(
+            len(called), 1,
+            "the guard should raise inside the call, before native runs")
+
+    def test_preflight_rejection_frees_the_handle_exactly_once(self):
+        """The handle is still ours after a preflight rejection, so it is
+        freed rather than abandoned."""
+        freed = self._instrument_frees()
+        reader = self._reader_from_context()
+        handle = reader._handle
+
+        with self.assertRaises(Error):
+            with reader._native_call():
+                reader._consume_and_swap(
+                    lambda h: c2pa_module._check_bytes_arg(
+                        'manifest_data', b''),
+                    "Failed: {}")
+
+        reader.close()
+        self.assertEqual(
+            self._free_count(freed, handle), 1,
+            "a preflight-rejected handle must be freed exactly once")
+
+    def test_reader_with_empty_manifest_data_never_calls_native(self):
+        """End-to-end: the guard is wired into the public path, not just
+        available as a helper."""
+        context = Context()
+        self.addCleanup(context.close)
+        with open(os.path.join(FIXTURES_DIR,
+                               DEFAULT_TEST_FILE_NAME), "rb") as image:
+            image_bytes = image.read()
+
+        freed = self._instrument_frees()
+
+        with self.assertRaises(Error) as caught:
+            Reader("image/jpeg", io.BytesIO(image_bytes),
+                   manifest_data=b"", context=context)
+
+        # The guard raises before the FFI call, so the reader handle is still
+        # the binding's to free: exactly one free, and no abandoned handle.
+        self.assertIn("InvalidBufferSize", str(caught.exception))
+        self.assertEqual(
+            len(freed), 1,
+            "a preflight-rejected reader handle must be reclaimed, not leaked")
+
+    def test_check_cstr_arg_rejects_none_and_embedded_nul(self):
+        """Both cases would reach native as something other than the caller
+        passed: None as a null pointer, an embedded NUL as a short string."""
+        with self.assertRaises(Error) as none_case:
+            c2pa_module._check_cstr_arg('format', None)
+        self.assertIn("NullParameter", str(none_case.exception))
+
+        with self.assertRaises(Error) as nul_case:
+            c2pa_module._check_cstr_arg('format', "image/\x00jpeg")
+        self.assertIn("null byte", str(nul_case.exception))
+
+        c2pa_module._check_cstr_arg('format', "image/jpeg")
+        c2pa_module._check_cstr_arg('format', b"")
+
+    def test_check_bytes_arg_rejects_none_and_empty(self):
+        """Native rejects a null pointer and a zero size."""
+        for bad in (None, b""):
+            with self.assertRaises(Error):
+                c2pa_module._check_bytes_arg('manifest_data', bad)
+
+        c2pa_module._check_bytes_arg('manifest_data', b"x")
+
+    def test_check_handle_arg_rejects_null(self):
+        """A null handle is a NullParameter on both native versions."""
+        with self.assertRaises(Error):
+            c2pa_module._check_handle_arg('stream', None)
+
+        c2pa_module._check_handle_arg(
+            'stream', ctypes.cast(1, ctypes.c_void_p))
+
     def test_repeated_with_fragment_does_not_accumulate_streams(self):
         """Repeated calls on one Reader must not pile up fragment streams.
 
