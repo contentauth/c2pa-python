@@ -531,10 +531,11 @@ class ManagedResource:
             self._finish_teardown(free_handle)
 
     def _release_handle(self):
-        """Free this handle, then close the object. Used only where ownership is
-        unknown (a guarded free is a real free if ours, a no-op if not).
-        A teardown already queued by a concurrent close() still owns the free,
-        so nulling the handle here would leave it with nothing to free.
+        """Free this handle and close the object, unless a queued teardown
+        already owns the free. Used only where ownership is unknown
+        (a guarded free is a real free if ours, a no-op if not).
+        Nulling the handle under a queued teardown would leave it nothing
+        to free.
         """
         with self._state_lock():
             if self._pending_teardown is not None:
@@ -677,6 +678,10 @@ class ManagedResource:
             if reserved:
                 # A reservation leaves the resource CLOSED with the handle set,
                 # which _release_handle() nulls without freeing.
+                # Freeing is safe here: arguments are built before the call,
+                # marshalling errors re-raise above, and ctypes swallows
+                # exceptions raised inside callbacks, so reaching this means
+                # native never took the handle.
                 self._teardown(free_handle=True)
             else:
                 self._release_handle()
@@ -764,8 +769,9 @@ class ManagedResource:
     def _abort_consume(self, previous_state):
         """Undo _begin_consume() after a call that did not take the handle.
 
-        A pre-consume rejection leaves the handle ours,
-        so the resource has to become usable again.
+        A pre-consume tag usually means the handle is still ours, so the
+        resource becomes usable again. The tag can also name another tracked
+        argument, which this does not distinguish.
 
         A deferred free still happens when the section drains, so a resource
         with a queued teardown stays closed.
@@ -1725,8 +1731,8 @@ def _check_cstr_arg(name: str, value) -> None:
 
 def _check_handle_arg(name: str, handle) -> None:
     """Reject a null handle argument.
-    Checking here keeps the rejection on this side of the boundary,
-    where the handle is known to be untouched.
+    Note: registry membership is not observable from Python,
+    so a tracked-but-invalid pointer still reaches native.
 
     Raises:
         C2paError: With same message the native layer would have produced.
@@ -2235,7 +2241,6 @@ class Context(ManagedResource, ContextProvider):
                     # not closed and leaked, and _release() nulls _callback_cb
                     # once the signer is torn down.
                     self._signer_callback_cb = signer._callback_cb
-                    # The signer is consumed only once the builder validates.
                     _check_handle_arg('builder', nb._handle)
                     signer._consume_no_replacement(
                         lambda h: _lib.c2pa_context_builder_set_signer(
@@ -2583,6 +2588,9 @@ class Stream:
                     if hasattr(self, '_stream') and stream:
                         try:
                             _lib.c2pa_release_stream(stream)
+                            # A rejected release leaves its error in the slot.
+                            # Re-mark so a later failure does not report it.
+                            _mark_sentinel_no_native_error()
                         except Exception:
                             # Destructors shouldn't raise exceptions
                             logger.error("Failed to release Stream")
@@ -2624,6 +2632,9 @@ class Stream:
                 if stream:
                     try:
                         _lib.c2pa_release_stream(stream)
+                        # A rejected release leaves its error in the slot.
+                        # Re-mark so a later failure does not report it.
+                        _mark_sentinel_no_native_error()
                     except Exception as e:
                         logger.error(
                             Stream._ERROR_MESSAGES['stream_error'].format(

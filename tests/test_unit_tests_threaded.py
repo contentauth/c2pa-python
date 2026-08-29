@@ -245,11 +245,20 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         holder.start()
         self.assertTrue(holding.wait(self._TIMEOUT),
                         "helper thread never acquired _close_lock")
+        # Cleanups run last-registered-first, so this one runs after the two
+        # below have released the lock and joined the holder.
+        self.addCleanup(self._reclaim_foreign_stream, stream)
         self.addCleanup(holder.join, self._TIMEOUT)
         self.addCleanup(release.set)
 
         stream._owner_pid = os.getpid() + 1
         return stream
+
+    def _reclaim_foreign_stream(self, stream):
+        """Release a stream the foreign-process path left tracked."""
+        stream._owner_pid = os.getpid()
+        stream._closed = False
+        stream.close()
 
     def test_stream_close_completes_with_close_lock_held(self):
         """close() must take the foreign-process path without acquiring

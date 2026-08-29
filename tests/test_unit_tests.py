@@ -9754,18 +9754,15 @@ class TestErrorPlumbing(unittest.TestCase):
         # Base class only: no subclass should claim an unknown tag.
         self.assertIs(type(ctx.exception), Error)
 
-    def test_pre_consume_tag_match_is_substring_not_prefix(self):
-        """The tags arrive mid-string, so the match must stay a substring one.
-
-        Guards the triage in _raise_consume_failure against being "cleaned up"
-        into error.startswith(tag), which would match nothing and silently
-        turn every retained handle into a consumed one.
+    def test_pre_consume_tag_match_skips_the_one_wrapper(self):
+        """A tag reaches the classifier behind at most one "Other: " wrapper.
+        The match is anchored after that wrapper, not a substring search..
         """
-        wire_error = "Other: UntrackedPointer: 0xdeadb000"
-        tags = ManagedResource._PRE_CONSUME_ERROR_TAGS
+        classify = ManagedResource._is_pre_consume_rejection
 
-        self.assertTrue(any(tag in wire_error for tag in tags))
-        self.assertFalse(any(wire_error.startswith(tag) for tag in tags))
+        self.assertTrue(classify("Other: UntrackedPointer: 0xdeadb000"))
+        self.assertTrue(classify("UntrackedPointer: 0xdeadb000"))
+        self.assertTrue(classify("Other: WrongPointerType: 0xdeadb000"))
 
     def test_check_ffi_operation_result_raises_with_native_message(self):
         self._set_native_error("Io: disk exploded")
@@ -9975,7 +9972,7 @@ class TestErrorPlumbing(unittest.TestCase):
         self.assertIn("Unknown error", str(ctx.exception))
 
     def test_every_real_rejection_wording_is_classified_as_pre_consume(self):
-        """The four tags arrive bare or behind the "Other: " wrapper."""
+        """Every tag arrives bare or behind the "Other: " wrapper."""
         wrapper = c2pa_module.ManagedResource._NATIVE_ERROR_WRAPPER
         classify = c2pa_module.ManagedResource._is_pre_consume_rejection
 
