@@ -604,8 +604,6 @@ class ManagedResource:
     _PRE_CONSUME_ERROR_TAGS = (
         "UntrackedPointer:",
         "WrongPointerType:",
-        "NullParameter:",
-        "InvalidBufferSize:",
     )
 
     # An error tag starts the message or follows this one wrapper.
