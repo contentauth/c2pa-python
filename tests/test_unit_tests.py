@@ -9935,6 +9935,51 @@ class TestErrorPlumbing(unittest.TestCase):
         c2pa_module._mark_sentinel_no_native_error()
         self.assertIsNone(c2pa_module._read_native_error())
 
+    def test_read_native_error_marks_the_slot_when_the_pointer_is_null(self):
+        """A NULL from c2pa_error must still leave the slot marked.
+
+        c2pa_error returns NULL when the stored message cannot be rendered as
+        a C string. The message stays in the thread-local slot, which is
+        sticky, so returning without planting the marker leaves that message
+        readable by the next call that fails without setting an error of its
+        own, which then reports it as its own failure.
+        """
+        c2pa_module._lib.c2pa_error_set_last(b"Io: unreadable original")
+
+        original = c2pa_module._lib.c2pa_error
+        try:
+            c2pa_module._lib.c2pa_error = lambda: None
+            self.assertIsNone(
+                c2pa_module._read_native_error(),
+                "a NULL pointer must read as no error")
+        finally:
+            c2pa_module._lib.c2pa_error = original
+
+        self.assertIsNone(
+            c2pa_module._read_native_error(),
+            "the message left behind by the NULL branch stayed readable "
+            "and is now reportable by an unrelated later failure")
+
+    def test_a_failure_after_a_null_read_does_not_inherit_the_old_message(self):
+        """The message surviving a NULL read must not become someone's error."""
+        c2pa_module._lib.c2pa_error_set_last(b"Io: belongs to an earlier call")
+
+        original = c2pa_module._lib.c2pa_error
+        try:
+            c2pa_module._lib.c2pa_error = lambda: None
+            c2pa_module._read_native_error()
+        finally:
+            c2pa_module._lib.c2pa_error = original
+
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(
+                None, "Later unrelated failure: {}")
+
+        self.assertNotIn(
+            "belongs to an earlier call", str(ctx.exception),
+            "a later failure reported a message left by an earlier call")
+        self.assertIn("Unknown error", str(ctx.exception))
+
     def test_runtime_does_not_call_error_set_last(self):
         """The marker mechanism must not depend on c2pa_error_set_last,
         so this module loads against native builds that lack it."""

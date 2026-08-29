@@ -1005,12 +1005,17 @@ def _read_native_error() -> Optional[str]:
     """
     error = _lib.c2pa_error()
     if not error:
+        # c2pa_error renders the stored message into a new C string and
+        # returns NULL when that fails, leaving the message in the slot.
+        # The slot is sticky, so it is marked here too.
+        _mark_sentinel_no_native_error()
         return None
     try:
         message = ctypes.string_at(error).decode('utf-8')
     finally:
         _lib.c2pa_string_free(error)
     if not message:
+        _mark_sentinel_no_native_error()
         return None
 
     _mark_sentinel_no_native_error()
