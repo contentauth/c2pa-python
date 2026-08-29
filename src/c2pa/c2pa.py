@@ -738,9 +738,6 @@ class ManagedResource:
         # c2pa_free returns -1 for an address native already reclaimed.
         # A reservation leaves the resource CLOSED with the handle set,
         # which _release_handle() nulls without freeing.
-        logger.debug(
-            "%s: consuming call failed without setting error",
-            type(self).__name__)
         if previous_state is not None:
             self._teardown(free_handle=True)
         else:
@@ -1037,7 +1034,11 @@ def _mark_sentinel_no_native_error():
     This marker mechanism exists to distinguish a consuming call that
     failed without setting its own error from a stale message left
     by an earlier call on the same thread.
+
+    Does nothing when the marker text could not be learned at import.
     """
+    if _NATIVE_NO_ERROR_TEXT is None:
+        return
     _lib.c2pa_free(_MARKER_ADDR)
 
 
@@ -1471,30 +1472,51 @@ def _learn_sentinel_no_native_error_text():
     produces for it, so equality checks match this build of the lib.
 
     Runs on the importing thread; the text is a format constant, so the
-    learned value holds for every thread. Raises at import when the read
-    back text is empty, or when it does not carry the planted address,
-    because the marker mechanism cannot work in either case.
+    learned value holds for every thread.
+
+    Returns None when the text cannot be learned: the native lib reported
+    no error for the free of an untracked pointer, reported an empty one,
+    or reported text that does not carry the planted address. Each case
+    means the marker mechanism cannot work, so the module runs without it
+    rather than failing to import. _mark_sentinel_no_native_error() then
+    plants nothing, and a native failure that sets no error of its own is
+    reported with whatever message an earlier call on the same thread left
+    in the slot.
+
+    Plants its own marker rather than calling
+    _mark_sentinel_no_native_error(), which skips the write until this
+    function has returned a text to match it against.
     """
-    _mark_sentinel_no_native_error()
+    _lib.c2pa_free(_MARKER_ADDR)
     raw = _lib.c2pa_error()
     if not raw:
-        raise ImportError(
+        logger.warning(
             "c2pa native library did not report an error for a free of "
-            "an untracked pointer; the error-slot marker cannot work")
+            "an untracked pointer; the error-slot marker is unavailable, so "
+            "a native failure that sets no error of its own may be reported "
+            "with a stale message from an earlier call on the same thread")
+        return None
     try:
         text = ctypes.string_at(raw).decode('utf-8')
     finally:
         _lib.c2pa_string_free(raw)
     if not text:
-        raise ImportError(
+        logger.warning(
             "c2pa native library reported an empty error for a free of "
-            "an untracked pointer; the error-slot marker cannot work")
+            "an untracked pointer; the error-slot marker is unavailable, so "
+            "a native failure that sets no error of its own may be reported "
+            "with a stale message from an earlier call on the same thread")
+        return None
     marker_hex = hex(_MARKER_ADDR)
     if marker_hex not in text:
-        raise ImportError(
+        logger.warning(
             "c2pa native library's untracked-pointer error text no longer "
-            f"includes the planted address {marker_hex}; the error-slot "
-            "marker assumption no longer holds")
+            "includes the planted address %s; the error-slot marker is "
+            "unavailable, so a native failure that sets no error of its own "
+            "may be reported with a stale message from an earlier call on "
+            "the same thread",
+            marker_hex)
+        return None
     return text
 
 

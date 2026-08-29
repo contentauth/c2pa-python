@@ -10209,6 +10209,127 @@ class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
                       inspect.getsource(c2pa_module._read_native_error))
 
 
+class TestSentinelLearningIsNonFatal(unittest.TestCase):
+    """The error-slot marker is a diagnostic aid, so a native library that
+    does not support it degrades the error text instead of stopping import.
+    """
+
+    def setUp(self):
+        self._learned = c2pa_module._NATIVE_NO_ERROR_TEXT
+        self._real_error = c2pa_module._lib.c2pa_error
+        self._real_free = c2pa_module._lib.c2pa_free
+        self._real_string_free = c2pa_module._lib.c2pa_string_free
+
+    def tearDown(self):
+        # The module global is shared: leaving it None would silently
+        # disable the marker for every test that runs after this one.
+        c2pa_module._NATIVE_NO_ERROR_TEXT = self._learned
+        c2pa_module._lib.c2pa_error = self._real_error
+        c2pa_module._lib.c2pa_free = self._real_free
+        c2pa_module._lib.c2pa_string_free = self._real_string_free
+
+    @staticmethod
+    def _returning(text):
+        """Stand in for c2pa_error, handing back a native buffer holding
+        text, or a NULL pointer when text is None."""
+        if text is None:
+            return lambda: None
+        buffer = ctypes.create_string_buffer(text.encode('utf-8'))
+        return lambda: ctypes.cast(buffer, ctypes.c_char_p)
+
+    def _learn_with(self, text):
+        """Run the learner against a native library that answers the marker
+        free with text, and capture what it logged."""
+        c2pa_module._lib.c2pa_error = self._returning(text)
+        c2pa_module._lib.c2pa_free = lambda ptr: -1
+        c2pa_module._lib.c2pa_string_free = lambda ptr: None
+        with self.assertLogs("c2pa", level="WARNING") as logged:
+            result = c2pa_module._learn_sentinel_no_native_error_text()
+        return result, "\n".join(logged.output)
+
+    def test_learning_returns_none_when_native_reports_no_error(self):
+        result, logs = self._learn_with(None)
+        self.assertIsNone(result)
+        self.assertIn("error-slot marker is unavailable", logs)
+
+    def test_learning_returns_none_when_native_reports_empty_error(self):
+        result, logs = self._learn_with("")
+        self.assertIsNone(result)
+        self.assertIn("error-slot marker is unavailable", logs)
+
+    def test_learning_returns_none_when_the_planted_address_is_absent(self):
+        result, logs = self._learn_with("Other: UntrackedPointer: something")
+        self.assertIsNone(result)
+        self.assertIn("error-slot marker is unavailable", logs)
+        self.assertIn(hex(c2pa_module._MARKER_ADDR), logs)
+
+    def test_learning_succeeds_against_a_library_that_carries_the_address(self):
+        """The degraded branches must not swallow a working library."""
+        expected = f"Other: UntrackedPointer: {hex(c2pa_module._MARKER_ADDR)}"
+        c2pa_module._lib.c2pa_error = self._returning(expected)
+        c2pa_module._lib.c2pa_free = lambda ptr: -1
+        c2pa_module._lib.c2pa_string_free = lambda ptr: None
+        self.assertEqual(
+            c2pa_module._learn_sentinel_no_native_error_text(), expected)
+
+    def test_marking_is_skipped_while_the_text_is_unlearned(self):
+        """Writing a marker nothing matches would replace a readable stale
+        message with an unreadable one."""
+        freed = []
+        c2pa_module._NATIVE_NO_ERROR_TEXT = None
+        c2pa_module._lib.c2pa_free = lambda ptr: freed.append(ptr) or -1
+
+        c2pa_module._mark_sentinel_no_native_error()
+
+        self.assertEqual(
+            freed, [], "the marker was planted with no text to match it")
+
+    def test_marking_still_happens_once_the_text_is_learned(self):
+        freed = []
+        c2pa_module._NATIVE_NO_ERROR_TEXT = "Other: UntrackedPointer: 0x2"
+        c2pa_module._lib.c2pa_free = lambda ptr: freed.append(ptr) or -1
+
+        c2pa_module._mark_sentinel_no_native_error()
+
+        self.assertEqual(freed, [c2pa_module._MARKER_ADDR])
+
+    def test_the_learner_plants_its_own_marker_while_unlearned(self):
+        """The learner runs before any text exists, so going through the
+        guarded helper would plant nothing, read an empty slot, and report
+        every build, including a working one, as degraded."""
+        expected = f"Other: UntrackedPointer: {hex(c2pa_module._MARKER_ADDR)}"
+        planted = []
+        # The state the learner really runs in: no text learned yet, so the
+        # guarded helper would return without writing anything.
+        c2pa_module._NATIVE_NO_ERROR_TEXT = None
+        c2pa_module._lib.c2pa_free = lambda ptr: planted.append(ptr) or -1
+        c2pa_module._lib.c2pa_error = self._returning(expected)
+        c2pa_module._lib.c2pa_string_free = lambda ptr: None
+
+        result = c2pa_module._learn_sentinel_no_native_error_text()
+
+        self.assertEqual(planted, [c2pa_module._MARKER_ADDR],
+                         "the learner planted no marker of its own")
+        self.assertEqual(result, expected)
+
+    def test_a_native_failure_still_raises_while_degraded(self):
+        """The library keeps working without the marker; only the accuracy
+        of the reported message is lost."""
+        c2pa_module._NATIVE_NO_ERROR_TEXT = None
+
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(
+                None, "degraded failure: {}")
+
+        self.assertTrue(str(ctx.exception))
+
+    def test_reading_an_error_is_safe_while_degraded(self):
+        """_read_native_error must not raise when it cannot mark the slot."""
+        c2pa_module._NATIVE_NO_ERROR_TEXT = None
+        result = c2pa_module._read_native_error()
+        self.assertTrue(result is None or isinstance(result, str))
+
+
 class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
     """Each surface that lost a _clear_error_state() call still reports."""
 
