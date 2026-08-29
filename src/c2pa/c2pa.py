@@ -608,6 +608,22 @@ class ManagedResource:
         "InvalidBufferSize:",
     )
 
+    # An error tag starts the message or follows this one wrapper.
+    _NATIVE_ERROR_WRAPPER = "Other: "
+
+    @staticmethod
+    def _is_pre_consume_rejection(error: str) -> bool:
+        """True when native rejected the handle before taking ownership.
+
+        Anchored, not a substring search: native quotes caller text verbatim,
+        so a tag mid-message describes the caller's input, not ownership.
+        """
+        body = error
+        if body.startswith(ManagedResource._NATIVE_ERROR_WRAPPER):
+            body = body[len(ManagedResource._NATIVE_ERROR_WRAPPER):]
+        return any(body.startswith(tag)
+                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS)
+
     def _invoke_consume(self, ffi_call, error_message, *, reserved=False):
         """Run an FFI call that consumes this handle, returning its raw result.
 
@@ -677,8 +693,7 @@ class ManagedResource:
         """
         error = _read_native_error()
         if error:
-            if any(tag in error
-                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
+            if ManagedResource._is_pre_consume_rejection(error):
                 logger.warning(
                     "%s: native call rejected the handle before taking "
                     "ownership (%s); handle retained",
@@ -1005,9 +1020,8 @@ def _read_native_error() -> Optional[str]:
     """
     error = _lib.c2pa_error()
     if not error:
-        # c2pa_error renders the stored message into a new C string and
-        # returns NULL when that fails, leaving the message in the slot.
-        # The slot is sticky, so it is marked here too.
+        # NULL means the message could not be rendered, not that the slot
+        # is empty, so it still has to be marked.
         _mark_sentinel_no_native_error()
         return None
     try:
@@ -1051,6 +1065,10 @@ def _native_section():
     recursively (same thread) nests correctly here. Only the outermost
     span flushes, so nothing is freed before an inner, still-open span is
     done reading its own error.
+
+    Each flush is guarded: the deferral is the only remaining path to that
+    resource's free, so one raising would strand the rest. The first
+    exception is re-raised once the queue is drained.
     """
     state = _native_section_state
     depth = getattr(state, 'depth', 0)
@@ -1063,8 +1081,15 @@ def _native_section():
         state.depth -= 1
         if state.depth == 0:
             pending, state.pending_resources = state.pending_resources, []
+            first_error = None
             for resource in pending:
-                resource._maybe_flush_pending()
+                try:
+                    resource._maybe_flush_pending()
+                except BaseException as e:  # noqa: BLE001
+                    if first_error is None:
+                        first_error = e
+            if first_error is not None:
+                raise first_error
 
 
 class C2paSignerInfo(ctypes.Structure):

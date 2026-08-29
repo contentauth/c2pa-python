@@ -8891,11 +8891,11 @@ class TestManagedResourceObjects(TestContextAPIs):
 
     @staticmethod
     def _is_pre_consume_rejection(error_message):
-        """True if this native error means ownership never transferred."""
+        """True if this native error means ownership never transferred.
+        """
         if not error_message:
             return False
-        return any(tag in error_message
-                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS)
+        return ManagedResource._is_pre_consume_rejection(error_message)
 
     def _stale_reader_handle(self):
         """A freed, untracked pointer, captured before close() nulls it.
@@ -9979,6 +9979,135 @@ class TestErrorPlumbing(unittest.TestCase):
             "belongs to an earlier call", str(ctx.exception),
             "a later failure reported a message left by an earlier call")
         self.assertIn("Unknown error", str(ctx.exception))
+
+    def test_every_real_rejection_wording_is_classified_as_pre_consume(self):
+        """The four tags arrive bare or behind the "Other: " wrapper."""
+        wrapper = c2pa_module.ManagedResource._NATIVE_ERROR_WRAPPER
+        classify = c2pa_module.ManagedResource._is_pre_consume_rejection
+
+        for tag in c2pa_module.ManagedResource._PRE_CONSUME_ERROR_TAGS:
+            bare = f"{tag} some detail"
+            wrapped = f"{wrapper}{tag} some detail"
+            self.assertTrue(
+                classify(bare),
+                f"a bare {tag} rejection was read as a consumed handle")
+            self.assertTrue(
+                classify(wrapped),
+                f"a wrapped {tag} rejection was read as a consumed handle")
+
+    def test_native_rejections_observed_from_the_library_still_classify(self):
+        """Pins the two shapes the loaded library actually produces."""
+        classify = c2pa_module.ManagedResource._is_pre_consume_rejection
+
+        # A null argument the native layer refuses before doing any work.
+        c2pa_module._lib.c2pa_reader_from_stream(None, None)
+        bare = c2pa_module._read_native_error()
+
+        # A free of an address the pointer registry does not track.
+        c2pa_module._lib.c2pa_free(0x9999)
+        wrapped = c2pa_module._read_native_error()
+
+        for message in (bare, wrapped):
+            self.assertTrue(
+                message,
+                "the native library stopped reporting these rejections")
+            self.assertTrue(
+                classify(message),
+                f"the native rejection wording changed: {message!r}")
+
+    def test_caller_text_quoting_a_tag_is_not_a_rejection(self):
+        """A tag inside the message body describes the caller's input.
+
+        Native errors quote caller-supplied strings verbatim: a JSON parse
+        failure repeats the offending value, an Io failure names the path.
+        Reading one of those as a pre-consume rejection hands the resource back
+        as usable after native may already own and have dropped its handle.
+        """
+        classify = c2pa_module.ManagedResource._is_pre_consume_rejection
+
+        forged = (
+            'Json: invalid type: string "NullParameter: x", expected a '
+            'sequence at line 1 column 43',
+            'Json: invalid type: string "WrongPointerType: y", expected a '
+            'sequence at line 1 column 46',
+            "Io: cannot open /tmp/UntrackedPointer: 0xdead.jpg",
+            "Other: manifest text mentions InvalidBufferSize: in passing",
+        )
+        for message in forged:
+            self.assertFalse(
+                classify(message),
+                f"caller text was read as a pointer rejection: {message!r}")
+
+    def test_caller_text_quoting_a_tag_reaches_the_error_slot(self):
+        """The forged wording above is what the library really produces."""
+        c2pa_module._lib.c2pa_builder_from_json(
+            b'{"claim_generator_info": "NullParameter: injected"}')
+        message = c2pa_module._read_native_error()
+
+        self.assertIn(
+            "NullParameter:", message,
+            "caller text no longer reaches the error slot verbatim, so this "
+            "test no longer exercises the case it was written for")
+        self.assertFalse(
+            c2pa_module.ManagedResource._is_pre_consume_rejection(message),
+            f"a caller-supplied string forged a pointer rejection: {message!r}")
+
+    def test_a_failing_flush_does_not_strand_the_rest_of_the_queue(self):
+        """One resource raising must not skip the resources queued behind it.
+        """
+        flushed = []
+
+        class Recorder:
+            def __init__(self, name, raises=None):
+                self.name = name
+                self.raises = raises
+
+            def _maybe_flush_pending(self):
+                if self.raises is not None:
+                    raise self.raises
+                flushed.append(self.name)
+
+        first = Recorder("first")
+        middle = Recorder("middle", raises=KeyboardInterrupt())
+        last = Recorder("last")
+
+        with self.assertRaises(KeyboardInterrupt):
+            with c2pa_module._native_section():
+                for resource in (first, middle, last):
+                    c2pa_module._register_for_section_flush(resource)
+
+        self.assertEqual(
+            flushed, ["first", "last"],
+            "a resource queued behind a failing one was never flushed, "
+            "so its handle leaks")
+
+    def test_a_failing_flush_still_reports_the_first_exception(self):
+        """Draining the queue must not swallow the failure.
+        """
+        flushed = []
+
+        class Recorder:
+            def __init__(self, name, raises=None):
+                self.name = name
+                self.raises = raises
+
+            def _maybe_flush_pending(self):
+                if self.raises is not None:
+                    raise self.raises
+                flushed.append(self.name)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            with c2pa_module._native_section():
+                for resource in (
+                        Recorder("boom", raises=RuntimeError("first failure")),
+                        Recorder("survivor"),
+                        Recorder("later", raises=RuntimeError("second failure"))):
+                    c2pa_module._register_for_section_flush(resource)
+
+        self.assertIn("first failure", str(ctx.exception))
+        self.assertEqual(
+            flushed, ["survivor"],
+            "a resource between two failing ones was never flushed")
 
     def test_runtime_does_not_call_error_set_last(self):
         """The marker mechanism must not depend on c2pa_error_set_last,
