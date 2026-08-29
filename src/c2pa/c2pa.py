@@ -991,11 +991,9 @@ class C2paStream(ctypes.Structure):
     ]
 
 
-# Unaligned address passed to c2pa_free to plant a marker
-# in the native error slot.
-# Never a real handle: allocations are aligned, and the Python
-# layer only passes real handles or this constant to c2pa_free.
-_MARKER_ADDR = 1
+# Address passed to c2pa_free to plant a marker in the native error slot.
+# 2 is not an allocatable address.
+_MARKER_ADDR = 2
 
 # Exact text the native lib writes for a failed free of _MARKER_ADDR.
 # Learned at import by _learn_sentinel_no_native_error_text().
