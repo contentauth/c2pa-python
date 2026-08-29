@@ -387,6 +387,10 @@ class ManagedResource:
             logger.debug(
                 "c2pa_free returned %s for an untracked pointer ",
                 result)
+            # The rejected free wrote its own error into the error slot.
+            # Re-mark it so the next failure that sets no error of its
+            # own does not report this one.
+            _mark_sentinel_no_native_error()
         return result
 
     def _ensure_valid_state(self):
@@ -529,11 +533,16 @@ class ManagedResource:
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
         unknown (a guarded free is a real free if ours, a no-op if not).
+        A teardown already queued by a concurrent close() still owns the free,
+        so nulling the handle here would leave it with nothing to free.
         """
-        if self._lifecycle_state != LifecycleState.ACTIVE:
-            self._handle = None
-            self._lifecycle_state = LifecycleState.CLOSED
-            return
+        with self._state_lock():
+            if self._pending_teardown is not None:
+                return
+            if self._lifecycle_state != LifecycleState.ACTIVE:
+                self._handle = None
+                self._lifecycle_state = LifecycleState.CLOSED
+                return
         self._teardown(free_handle=True)
 
     def _activate(self, handle):
@@ -1708,8 +1717,8 @@ def _check_cstr_arg(name: str, value) -> None:
     if value is None:
         raise C2paError(f"NullParameter: {name}")
 
-    encoded = value.encode('utf-8') if isinstance(value, str) else bytes(value)
-    if b'\x00' in encoded:
+    embedded_nul = '\x00' in value if isinstance(value, str) else b'\x00' in value
+    if embedded_nul:
         # ctypes truncates at the first NUL
         raise C2paError(f"NullParameter: {name} contains a null byte")
 

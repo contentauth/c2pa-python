@@ -228,6 +228,42 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         reader._owner_pid = os.getpid() + 1
         return reader
 
+    def _foreign_stream_with_close_lock_held(self):
+        """A Stream in the state a forked child inherits: _close_lock held by
+        a thread that does not exist in the child, and a foreign owner PID.
+        """
+        stream = Stream(io.BytesIO(b"payload"))
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_lock():
+            with stream._close_lock:
+                holding.set()
+                release.wait(30)
+
+        holder = threading.Thread(target=hold_the_lock, daemon=True)
+        holder.start()
+        self.assertTrue(holding.wait(self._TIMEOUT),
+                        "helper thread never acquired _close_lock")
+        self.addCleanup(holder.join, self._TIMEOUT)
+        self.addCleanup(release.set)
+
+        stream._owner_pid = os.getpid() + 1
+        return stream
+
+    def test_stream_close_completes_with_close_lock_held(self):
+        """close() must take the foreign-process path without acquiring
+        _close_lock, which no surviving thread would release."""
+        stream = self._foreign_stream_with_close_lock_held()
+
+        outcome = self._run_with_timeout(stream.close)
+
+        self.assertEqual(outcome, "ok",
+                         "close() blocked on the inherited _close_lock")
+        self.assertTrue(stream._closed,
+                        "close() returned without marking the stream closed")
+        self.assertFalse(stream._initialized)
+
     def _run_with_timeout(self, operation):
         """Run operation on a worker; return 'ok', the exception, or None if it
         was still running when the timeout expired."""
@@ -3591,8 +3627,6 @@ class TestStreamCloseReentrancy(unittest.TestCase):
             "close() blocked re-entering _close_lock from the thread that "
             "already holds it")
         self.assertTrue(stream._closed)
-
-
 
 
 class TestConsumeReservationWindow(unittest.TestCase):
