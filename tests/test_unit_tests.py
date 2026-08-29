@@ -10250,17 +10250,17 @@ class TestSentinelLearningIsNonFatal(unittest.TestCase):
     def test_learning_returns_none_when_native_reports_no_error(self):
         result, logs = self._learn_with(None)
         self.assertIsNone(result)
-        self.assertIn("error-slot marker is unavailable", logs)
+        self.assertIn("error-slot marker unavailable", logs)
 
     def test_learning_returns_none_when_native_reports_empty_error(self):
         result, logs = self._learn_with("")
         self.assertIsNone(result)
-        self.assertIn("error-slot marker is unavailable", logs)
+        self.assertIn("error-slot marker unavailable", logs)
 
     def test_learning_returns_none_when_the_planted_address_is_absent(self):
         result, logs = self._learn_with("Other: UntrackedPointer: something")
         self.assertIsNone(result)
-        self.assertIn("error-slot marker is unavailable", logs)
+        self.assertIn("error-slot marker unavailable", logs)
         self.assertIn(hex(c2pa_module._MARKER_ADDR), logs)
 
     def test_learning_succeeds_against_a_library_that_carries_the_address(self):
