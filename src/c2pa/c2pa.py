@@ -489,6 +489,10 @@ class ManagedResource:
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
+        if getattr(self, '_released', False):
+            # A concurrent caller already ran this.
+            return
+
         self._released = True
         self._lifecycle_state = LifecycleState.CLOSED
         self._safe_release()
@@ -506,13 +510,21 @@ class ManagedResource:
         teardown clears (this resource's own _inflight dropping to 0, or
         this thread's native-error section closing).
         """
+        if is_foreign_process(self):
+            return
+
         with self._state_lock():
             if self._pending_teardown is None:
                 return
-            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
+            if getattr(self, '_inflight', 0) > 0:
+                return
+            if _in_native_section():
+                # An enclosing section is still open.
+                # Re-register, since the deferral is the only path to this free.
+                _register_for_section_flush(self)
                 return
             free_handle, self._pending_teardown = self._pending_teardown, None
-        self._finish_teardown(free_handle)
+            self._finish_teardown(free_handle)
 
     def _release_handle(self):
         """Free this handle, then close the object. Used only where ownership is
@@ -745,8 +757,13 @@ class ManagedResource:
 
         A pre-consume rejection leaves the handle ours,
         so the resource has to become usable again.
+
+        A deferred free still happens when the section drains, so a resource
+        with a queued teardown stays closed.
         """
         with self._state_lock():
+            if self._pending_teardown is not None:
+                return
             if self._lifecycle_state == LifecycleState.CLOSED and self._handle:
                 self._lifecycle_state = previous_state
 
@@ -1066,28 +1083,44 @@ def _native_section():
 
     Each flush is guarded: the deferral is the only remaining path to that
     resource's free, so one raising would strand the rest. The first
-    exception is re-raised once the queue is drained.
+    exception is re-raised once the queue is drained. A body that raised
+    keeps its own exception, and the flush failure is logged.
     """
     state = _native_section_state
     depth = getattr(state, 'depth', 0)
     state.depth = depth + 1
     if depth == 0:
         state.pending_resources = []
+
+    def _drain():
+        """Flush every deferred resource. Returns the first error raised."""
+        pending, state.pending_resources = state.pending_resources, []
+        first_error = None
+        for resource in pending:
+            try:
+                resource._maybe_flush_pending()
+            except BaseException as e:  # noqa: BLE001
+                if first_error is None:
+                    first_error = e
+        return first_error
+
     try:
         yield
-    finally:
+    except BaseException:
         state.depth -= 1
         if state.depth == 0:
-            pending, state.pending_resources = state.pending_resources, []
-            first_error = None
-            for resource in pending:
-                try:
-                    resource._maybe_flush_pending()
-                except BaseException as e:  # noqa: BLE001
-                    if first_error is None:
-                        first_error = e
-            if first_error is not None:
-                raise first_error
+            drain_error = _drain()
+            if drain_error is not None:
+                logger.error(
+                    "Deferred teardown failed while unwinding: %s",
+                    drain_error)
+        raise
+    else:
+        state.depth -= 1
+        if state.depth == 0:
+            drain_error = _drain()
+            if drain_error is not None:
+                raise drain_error
 
 
 class C2paSignerInfo(ctypes.Structure):

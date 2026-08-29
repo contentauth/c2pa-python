@@ -4941,7 +4941,6 @@ class TestLocking(unittest.TestCase):
             "borrowed handles used without their own guard:\n  "
             + "\n  ".join(unguarded))
 
-
     def test_consume_during_concurrent_sign_does_not_crash(self):
         """Consuming a shared Signer must not free it under a live sign.
 
@@ -5112,6 +5111,99 @@ class TestLocking(unittest.TestCase):
         self.assertTrue(context._released,
                         "the deferred teardown never ran")
         self.assertIsNone(context._pending_teardown)
+
+    def test_deferred_teardown_survives_a_flush_inside_a_section(self):
+        """A flush blocked by a section must re-register, not drop the free.
+
+        The teardown defers on _inflight, so it is queued for the in-flight
+        call rather than for a section. When that call finishes inside a
+        section opened later on this thread, the flush cannot free yet, and
+        without re-registering nothing would ever free this handle.
+        """
+        context = Context()
+        freed = []
+        real_free = ManagedResource._free_native_ptr
+        ManagedResource._free_native_ptr = staticmethod(
+            lambda ptr: (freed.append(ptr), real_free(ptr))[1])
+        try:
+            with context._native_call():
+                closer = threading.Thread(target=context.close)
+                closer.start()
+                closer.join()
+                self.assertIsNotNone(
+                    context._pending_teardown,
+                    "close() during a native call should defer")
+                section = _native_section()
+                section.__enter__()
+
+            self.assertEqual(
+                freed, [],
+                "the flush freed while a native section was still open")
+            self.assertIsNotNone(
+                context._pending_teardown,
+                "the deferral was dropped instead of re-registered")
+
+            section.__exit__(None, None, None)
+            self.assertEqual(
+                len(freed), 1,
+                "the deferred teardown was stranded and never freed")
+            self.assertIsNone(context._pending_teardown)
+        finally:
+            ManagedResource._free_native_ptr = real_free
+
+    def test_abort_consume_leaves_a_queued_teardown_closed(self):
+        """A resource whose free is already queued must not become usable.
+
+        The deferred free still runs when the section drains, so restoring
+        ACTIVE would hand the caller a resource that closes underneath it.
+        """
+        context = Context()
+        with _native_section():
+            context.close()
+            self.assertIsNotNone(context._pending_teardown)
+
+            context._abort_consume(LifecycleState.ACTIVE)
+            self.assertEqual(
+                context._lifecycle_state, LifecycleState.CLOSED,
+                "a resource with a queued teardown was revived")
+            self.assertFalse(
+                context.is_valid,
+                "a resource with a queued teardown reported itself usable")
+
+    def test_section_drain_error_does_not_mask_the_body_error(self):
+        """The body's exception is what the caller asked for, so it wins."""
+
+        class FlushRaises:
+            _pending_teardown = True
+
+            def _maybe_flush_pending(self):
+                raise RuntimeError("flush failed")
+
+        class BodyError(Exception):
+            pass
+
+        with self.assertLogs('c2pa', level='ERROR') as logs:
+            with self.assertRaises(BodyError):
+                with _native_section():
+                    c2pa_module._register_for_section_flush(FlushRaises())
+                    raise BodyError("the error the caller cares about")
+
+        self.assertTrue(
+            any("flush failed" in line for line in logs.output),
+            "the flush failure was swallowed instead of logged")
+
+    def test_section_drain_error_still_raises_when_the_body_succeeds(self):
+        """With no body error, a failed flush is still reported."""
+
+        class FlushRaises:
+            _pending_teardown = True
+
+            def _maybe_flush_pending(self):
+                raise RuntimeError("flush failed")
+
+        with self.assertRaises(RuntimeError):
+            with _native_section():
+                c2pa_module._register_for_section_flush(FlushRaises())
 
     def test_context_sign_after_close_raises_rather_than_skipping_signer(self):
         """Signing through a closed Context must raise, not silently succeed.

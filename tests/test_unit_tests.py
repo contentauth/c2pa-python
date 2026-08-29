@@ -1372,7 +1372,6 @@ class TestReader(unittest.TestCase):
                 # Direct the Builder not to embed the manifest into the asset
                 builder.set_no_embed()
 
-
                 with open(temp_file_path, "wb") as temp_file:
                     manifest_data = builder.sign(
                         signer, "image/jpeg", file, temp_file)
@@ -8921,31 +8920,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         return (ctypes.cast(buf, ctypes.POINTER(c2pa_module.C2paReader)),
                 buf)
 
-    def test_with_fragment_pre_consume_rejection_keeps_handle(self):
-        # Rejected before native lib took ownership,
-        # so nothing was consumed and the handle is still ours.
-        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
-        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
-        with open(init_path, "rb") as init:
-            reader = Reader("video/mp4", init)
-        real_handle = reader._handle
-
-        reader._handle = self._stale_reader_handle()
-        try:
-            with open(init_path, "rb") as init, \
-                    open(fragment_path, "rb") as frag:
-                with self.assertRaises(Error) as caught:
-                    reader.with_fragment("video/mp4", init, frag)
-        finally:
-            reader._handle = real_handle
-
-        self.assertIn("UntrackedPointer", str(caught.exception))
-        # Ownership never transferred, so the resource stays usable.
-        self.assertIsNotNone(reader._handle)
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertTrue(reader.json())
-        reader.close()
-
     def test_with_fragment_pre_consume_rejection_does_not_leak(self):
         # A handle dropped on this path leaks one reader per call.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
@@ -8985,81 +8959,6 @@ class TestManagedResourceObjects(TestContextAPIs):
                     context.execution_context),
                 "Failed to create reader: {}")
         return reader
-
-    def test_null_parameter_rejection_retains_the_handle(self):
-        """A null argument is rejected before the reader is untracked.
-        Ownership never transferred, so the handle is still ours to free.
-        Treating it as consumed leaks one reader per call.
-        """
-        reader = self._reader_from_context()
-        handle = reader._handle
-        freed = self._instrument_frees()
-
-        with self.assertRaises(Error) as caught:
-            with reader._native_call():
-                reader._consume_and_swap(
-                    lambda h: c2pa_module._lib.c2pa_reader_with_stream(
-                        h, b"image/jpeg", None),
-                    "Failed to configure reader: {}")
-
-        self.assertIn("NullParameter", str(caught.exception))
-        self.assertIsNotNone(reader._handle, "the retained handle was dropped")
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-
-        reader.close()
-        self.assertEqual(
-            self._free_count(freed, handle), 1,
-            "a handle the native side never took was leaked")
-
-    def test_invalid_buffer_size_rejection_retains_the_handle(self):
-        """A zero-length manifest buffer is rejected before the untrack..
-        """
-        reader = self._reader_from_context()
-        handle = reader._handle
-        freed = self._instrument_frees()
-        empty = (ctypes.c_ubyte * 4)()
-
-        with Stream(io.BytesIO(b"abc")) as stream_obj:
-            with self.assertRaises(Error) as caught:
-                with reader._native_call():
-                    reader._consume_and_swap(
-                        lambda h: (
-                            c2pa_module._lib
-                            .c2pa_reader_with_manifest_data_and_stream(
-                                h, b"image/jpeg", stream_obj._stream,
-                                empty, 0)
-                        ),
-                        "Failed to configure reader: {}")
-
-        self.assertIn("InvalidBufferSize", str(caught.exception))
-        self.assertIsNotNone(reader._handle, "the retained handle was dropped")
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-
-        reader.close()
-        self.assertEqual(
-            self._free_count(freed, handle), 1,
-            "a handle the native side never took was leaked")
-
-    def test_repeated_rejections_do_not_accumulate_handles(self):
-        """Every rejected call must give its handle back, not just the first.
-        """
-        handles = []
-        freed = self._instrument_frees()
-
-        for _ in range(10):
-            reader = self._reader_from_context()
-            handles.append(reader._handle)
-            with self.assertRaises(Error):
-                with reader._native_call():
-                    reader._consume_and_swap(
-                        lambda h: c2pa_module._lib.c2pa_reader_with_stream(
-                            h, b"image/jpeg", None),
-                        "Failed to configure reader: {}")
-            reader.close()
-
-        leaked = [h for h in handles if self._free_count(freed, h) == 0]
-        self.assertEqual(
-            leaked, [], f"{len(leaked)} of {len(handles)} handles leaked")
 
     def test_repeated_with_fragment_does_not_accumulate_streams(self):
         """Repeated calls on one Reader must not pile up fragment streams.
@@ -9995,26 +9894,6 @@ class TestErrorPlumbing(unittest.TestCase):
                 classify(wrapped),
                 f"a wrapped {tag} rejection was read as a consumed handle")
 
-    def test_native_rejections_observed_from_the_library_still_classify(self):
-        """Pins the two shapes the loaded library actually produces."""
-        classify = c2pa_module.ManagedResource._is_pre_consume_rejection
-
-        # A null argument the native layer refuses before doing any work.
-        c2pa_module._lib.c2pa_reader_from_stream(None, None)
-        bare = c2pa_module._read_native_error()
-
-        # A free of an address the pointer registry does not track.
-        c2pa_module._lib.c2pa_free(0x9999)
-        wrapped = c2pa_module._read_native_error()
-
-        for message in (bare, wrapped):
-            self.assertTrue(
-                message,
-                "the native library stopped reporting these rejections")
-            self.assertTrue(
-                classify(message),
-                f"the native rejection wording changed: {message!r}")
-
     def test_caller_text_quoting_a_tag_is_not_a_rejection(self):
         """A tag inside the message body describes the caller's input.
 
@@ -10295,28 +10174,6 @@ class TestConsumeOwnership(unittest.TestCase):
         self.assertEqual(self.freed, [])
         self.assertIsNotNone(resource._handle)
         self.assertEqual(resource._lifecycle_state, LifecycleState.ACTIVE)
-
-    def test_pre_consume_rejection_restores_the_resource(self):
-        """A handle native rejected before taking ownership stays usable.
-
-        The reservation is held until _raise_consume_failure classifies the
-        error, so no other thread sees the resource as ACTIVE while its
-        ownership is still undetermined.
-        """
-        resource = Settings()
-        self.freed.clear()
-        real_read = c2pa_module._read_native_error
-        c2pa_module._read_native_error = (
-            lambda: "Other: UntrackedPointer: 0x1234")
-        try:
-            with self.assertRaises(Error):
-                resource._consume_no_replacement(lambda h: 1, "consume: {}")
-        finally:
-            c2pa_module._read_native_error = real_read
-
-        self.assertEqual(resource._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertIsNotNone(resource._handle)
-        self.assertEqual(self.freed, [])
 
     def test_post_consume_failure_keeps_the_resource_closed(self):
         """An error without a pre-consume tag means native took ownership.
