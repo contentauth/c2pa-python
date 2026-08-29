@@ -810,11 +810,17 @@ class ManagedResource:
             return
         self._raise_consume_failure(error_message)
 
-    def _consume_no_replacement(self, ffi_call, error_message):
-        """Run an FFI call that consumes this handle on success, when the native
-        call returns a status code (0 = success) rather than a replacement
-        handle. A non-zero status is a failure routed to
-        _raise_consume_failure.
+    def _consume_reserved(self, ffi_call, error_message, *, succeeded):
+        """Run a reserved consuming call and mark the handle consumed on
+        success.
+
+        Args:
+            succeeded: Reads the call's raw result and returns whether it
+                succeeded. Each entry point has its own convention: a status
+                code, or a replacement pointer.
+
+        Returns:
+            The call's raw result, for callers that hand it on.
         """
         previous_state = self._begin_consume()
         try:
@@ -823,10 +829,20 @@ class ManagedResource:
         except Exception:
             self._abort_consume(previous_state)
             raise
-        if result == 0:
+        if succeeded(result):
             self._teardown(free_handle=False)
-            return
+            return result
         self._raise_consume_failure(error_message, previous_state)
+
+    def _consume_no_replacement(self, ffi_call, error_message):
+        """Run an FFI call that consumes this handle on success, when the native
+        call returns a status code (0 = success) rather than a replacement
+        handle. A non-zero status is a failure routed to
+        _raise_consume_failure.
+        """
+        self._consume_reserved(
+            ffi_call, error_message,
+            succeeded=lambda status: status == 0)
 
     def _consume_into(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a *different*
@@ -834,17 +850,11 @@ class ManagedResource:
         and the new pointer is returned for the caller to own. A null return is
         a failure routed to _raise_consume_failure.
         """
-        previous_state = self._begin_consume()
-        try:
-            result = self._invoke_consume(
-                ffi_call, error_message, reserved=True)
-        except Exception:
-            self._abort_consume(previous_state)
-            raise
-        if result:
-            self._teardown(free_handle=False)
-            return result
-        self._raise_consume_failure(error_message, previous_state)
+        # This call returns a pointer, falsy only when null,
+        # truthiness is the test.
+        return self._consume_reserved(
+            ffi_call, error_message,
+            succeeded=lambda pointer: bool(pointer))
 
     @classmethod
     def _wrap_native_handle(cls, handle):
