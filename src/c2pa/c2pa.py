@@ -1056,12 +1056,9 @@ def _read_native_error() -> Optional[str]:
         message = ctypes.string_at(error).decode('utf-8')
     finally:
         _lib.c2pa_string_free(error)
-    if not message:
-        _mark_sentinel_no_native_error()
-        return None
 
     _mark_sentinel_no_native_error()
-    if _is_no_native_error(message):
+    if not message or _is_no_native_error(message):
         return None
     return message
 
@@ -2588,9 +2585,6 @@ class Stream:
                     if hasattr(self, '_stream') and stream:
                         try:
                             _lib.c2pa_release_stream(stream)
-                            # A rejected release leaves its error in the slot.
-                            # Re-mark so a later failure does not report it.
-                            _mark_sentinel_no_native_error()
                         except Exception:
                             # Destructors shouldn't raise exceptions
                             logger.error("Failed to release Stream")
@@ -2632,9 +2626,6 @@ class Stream:
                 if stream:
                     try:
                         _lib.c2pa_release_stream(stream)
-                        # A rejected release leaves its error in the slot.
-                        # Re-mark so a later failure does not report it.
-                        _mark_sentinel_no_native_error()
                     except Exception as e:
                         logger.error(
                             Stream._ERROR_MESSAGES['stream_error'].format(

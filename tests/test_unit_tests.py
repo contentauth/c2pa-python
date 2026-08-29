@@ -9764,6 +9764,28 @@ class TestErrorPlumbing(unittest.TestCase):
         self.assertTrue(classify("UntrackedPointer: 0xdeadb000"))
         self.assertTrue(classify("Other: WrongPointerType: 0xdeadb000"))
 
+    def test_stream_release_preserves_a_pending_error(self):
+        """Releasing a Stream must not clear an error set by another call.
+
+        __del__ runs at any bytecode boundary, including between an FFI call
+        and its error read, so anything that clears the slot here reports the
+        caller's failure as "Unknown error".
+        """
+        for label, dispose in (
+                ("close", lambda st: st.close()),
+                ("__del__", lambda st: st.__del__()),
+        ):
+            with self.subTest(dispose=label):
+                stream = c2pa_module.Stream(io.BytesIO(b"payload"))
+                self._set_native_error("Io: the failure the caller wants")
+
+                dispose(stream)
+
+                self.assertEqual(
+                    c2pa_module._read_native_error(),
+                    "Io: the failure the caller wants",
+                    "releasing a Stream swallowed a pending native error")
+
     def test_check_ffi_operation_result_raises_with_native_message(self):
         self._set_native_error("Io: disk exploded")
         with self.assertRaises(Error) as ctx:
