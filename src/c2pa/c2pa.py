@@ -273,32 +273,26 @@ class ManagedResource:
         record_owner_pid(self)
 
     def _state_lock(self):
-        """Return this resource's operation lock.
+        """Return this resource's operation lock, for mutual exclusion.
+        Unlike _lock(), doesn't mark the thread inside a native-error section.
 
-        Acquiring it provides mutual exclusion.
-        Unlike _lock(), it does not mark the thread as being inside
-        a native-error section.
-
-        Reentrant because it is possible to run a finalizer at any bytecode
-        boundary, including inside a region this thread has already locked,
-        and because a consuming call tears the handle down from inside the
-        locked region.
+        Reentrant: a finalizer can run at any bytecode boundary, including
+        inside a region this thread already locked, and a consuming call
+        tears the handle down from inside the locked region.
 
         Falls back to a fresh lock when the attribute is missing.
 
         Never hold this across a native call that drives stream callbacks
         (construction, resource_to_stream, the Builder stream methods,
-        signing). Those calls release the Global Interpreter Lock (GIL)
-        and re-enter caller-supplied Python code, which may call back into
-        this API on another thread.
+        signing): those release the GIL and re-enter caller-supplied
+        Python code, which may call back into this API on another thread.
         Only calls that touch no callbacks are serialized here.
 
-        Raises in a forked child rather than returning the lock.
-        A child inherits this lock in whatever state it had at fork(),
-        and a thread holding it does not exist in the child to release it,
-        so acquiring it there waits and waits and waits.
-        The child's copy is unusable for the same reason a closed resource is,
-        and reports the same error.
+        Raises in a forked child instead of returning the lock: a child
+        inherits it in whatever state it had at fork(), and no thread in
+        the child exists to release it, so acquiring there hangs forever.
+        The child's copy is as unusable as a closed resource, so it
+        reports the same error.
         """
         if is_foreign_process(self):
             raise C2paError(f"{type(self).__name__} is closed")
@@ -326,35 +320,30 @@ class ManagedResource:
 
     @contextlib.contextmanager
     def _lock(self):
-        """Hold this resource's operation lock its duration,
-        and mark this thread as inside a native-error section.
-        Never hold this across a native call that drives stream callbacks.
-        Those calls release the Global Interpreter Lock
-        and re-enter caller-supplied code, which may call back into this API
-        on another thread.
-        Only calls that don't touch callbacks are serialized here.
+        """Hold this resource's operation lock, and mark this thread
+        inside a native-error section. Never hold across a native call
+        that drives stream callbacks (see _state_lock()); only calls
+        that touch no callbacks are serialized here.
         """
         with self._state_lock(), _native_section():
             yield
 
     @contextlib.contextmanager
     def _native_call(self):
-        """Hold the handle valid across a native call that goes back
-        and forth to native layers.
+        """Hold the handle valid across a native call that runs
+        caller-supplied stream callbacks, so _state_lock() can't be held.
+        Instead the call is counted as in flight, and a teardown arriving
+        meanwhile records its intent rather than freeing; the last caller
+        out performs the free.
 
-        Calls that pass a Stream to the native library run caller-supplied
-        callbacks, so the lock cannot be held across them. Instead the call
-        is counted as in flight, and a teardown arriving meanwhile records
-        its intent rather than freeing. The last caller out performs the free.
+        The resource is marked closed as soon as the teardown is recorded,
+        so a caller that closed it can't keep using it while the free
+        is pending.
 
-        The resource is marked closed as soon as the teardown is recorded, so
-        a caller that closed it cannot keep using it while the free is
-        pending.
-
-        Also opens a native-error section around the yielded body (see
-        _lock()): the in-flight guard alone only protects this resource's
-        own handle, not the shared thread-local error slot a caller inside
-        the block is about to read.
+        Also opens a native-error section around the yielded body: the
+        in-flight guard alone only protects this resource's own handle,
+        not the shared thread-local error slot a caller inside the block
+        is about to read.
         """
         with self._state_lock():
             self._ensure_valid_state()
@@ -774,14 +763,13 @@ class ManagedResource:
                 self._lifecycle_state = previous_state
 
     def _consume_and_swap(self, ffi_call, error_message):
-        """Run an FFI call that consumes this handle and returns a replacement.
-        On success the native lib consumed the handle and returned a new one,
-        which we swap in. A null return is a failure.
+        """Run an FFI call that consumes this handle and swaps in the
+        replacement pointer native returns on success. A null return is a
+        failure.
 
         Unlike the consuming teardown paths this neither refuses a borrowed
-        handle nor pre-marks the resource CLOSED: _swap_handle() requires it to
-        stay ACTIVE, and the object remains usable afterwards with its new
-        pointer.
+        handle nor pre-marks the resource CLOSED: _swap_handle() requires
+        it to stay ACTIVE, and the object stays usable with its new pointer.
         """
         new_ptr = self._invoke_consume(ffi_call, error_message)
         if new_ptr:
@@ -1089,15 +1077,14 @@ def _native_section():
     about to be read back: an error-slot check, or a consuming call's
     success/failure classification.
 
-    Reentrant: a call whose own native call triggers another one
-    recursively (same thread) nests correctly here. Only the outermost
-    span flushes, so nothing is freed before an inner, still-open span is
-    done reading its own error.
+    Reentrant: a nested native call on the same thread nests correctly.
+    Only the outermost span flushes, so nothing frees before an inner,
+    still-open span finishes reading its own error.
 
-    Each flush is guarded: the deferral is the only remaining path to that
-    resource's free, so one raising would strand the rest. The first
-    exception is re-raised once the queue is drained. A body that raised
-    keeps its own exception, and the flush failure is logged.
+    Each flush is guarded, since the deferral is the only path left to
+    that resource's free, so one raising would strand the rest. The
+    first exception re-raises once the queue drains; a body that raised
+    keeps its own exception, and the flush failure is only logged.
     """
     state = _native_section_state
     depth = getattr(state, 'depth', 0)
@@ -1987,11 +1974,10 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
 def _context_guard(context):
     """Hold a caller-supplied context valid across a native call.
 
-    ContextProvider requires only is_valid and execution_context.
-    A provider that also manages a native handle,
-    such as the built-in Context, offers  _native_call,
-    which counts the call in flight so a concurrent close() records
-    its intent and defers the free until the call returns. A provider
+    ContextProvider requires only is_valid and execution_context. A
+    provider that also manages a native handle, such as the built-in
+    Context, offers _native_call, which counts the call in flight so a
+    concurrent close() defers its free until the call returns. A provider
     implementing just the two required properties runs without that guard.
     """
     native_call = getattr(context, "_native_call", None)
