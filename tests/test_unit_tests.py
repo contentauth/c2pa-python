@@ -9039,6 +9039,60 @@ class TestManagedResourceObjects(TestContextAPIs):
         c2pa_module._check_cstr_arg('format', "image/jpeg")
         c2pa_module._check_cstr_arg('format', b"")
 
+    def test_signer_info_rejects_embedded_nul_in_alg(self):
+        certs_path = os.path.join(FIXTURES_DIR, "es256_certs.pem")
+        key_path = os.path.join(FIXTURES_DIR, "es256_private.key")
+        with open(certs_path, "rb") as f:
+            certs = f.read()
+        with open(key_path, "rb") as f:
+            key = f.read()
+
+        with self.assertRaises(Error) as caught:
+            C2paSignerInfo(
+                alg="es256\x00",
+                sign_cert=certs,
+                private_key=key,
+                ta_url=b"http://timestamp.digicert.com")
+        self.assertIn("null byte", str(caught.exception))
+
+    def test_signer_info_rejects_embedded_nul_in_ta_url(self):
+        certs_path = os.path.join(FIXTURES_DIR, "es256_certs.pem")
+        key_path = os.path.join(FIXTURES_DIR, "es256_private.key")
+        with open(certs_path, "rb") as f:
+            certs = f.read()
+        with open(key_path, "rb") as f:
+            key = f.read()
+
+        with self.assertRaises(Error) as caught:
+            C2paSignerInfo(
+                alg="es256",
+                sign_cert=certs,
+                private_key=key,
+                ta_url="http://timestamp.digicert.com\x00")
+        self.assertIn("null byte", str(caught.exception))
+
+    def test_load_settings_rejects_embedded_nul(self):
+        with self.assertRaises(Error) as caught:
+            load_settings('{"a": 1}', format="json\x00")
+        self.assertIn("null byte", str(caught.exception))
+
+    def test_resource_to_stream_rejects_embedded_nul_uri(self):
+        image_path = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
+        with Reader("image/jpeg", image_path) as reader:
+            with self.assertRaises(Error) as caught:
+                reader.resource_to_stream("thumbnail\x00", io.BytesIO())
+        self.assertIn("null byte", str(caught.exception))
+
+    def test_format_embeddable_rejects_embedded_nul(self):
+        with self.assertRaises(Error) as caught:
+            format_embeddable("image/\x00jpeg", b"junk")
+        self.assertIn("null byte", str(caught.exception))
+
+    def test_ed25519_sign_rejects_embedded_nul_private_key(self):
+        with self.assertRaises(Error) as caught:
+            ed25519_sign(b"somedata", "key\x00withnul")
+        self.assertIn("null byte", str(caught.exception))
+
     def test_check_bytes_arg_rejects_none_and_empty(self):
         """Native rejects a null pointer and a zero size."""
         for bad in (None, b""):

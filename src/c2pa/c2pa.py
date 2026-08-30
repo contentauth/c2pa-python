@@ -1160,6 +1160,7 @@ class C2paSignerInfo(ctypes.Structure):
             alg = alg_str
         elif isinstance(alg, str):
             # String to bytes, as requested by native lib
+            _check_cstr_arg("alg", alg)
             alg = alg.encode('utf-8')
         elif isinstance(alg, bytes):
             # In bytes already
@@ -1177,6 +1178,7 @@ class C2paSignerInfo(ctypes.Structure):
             pass
         elif isinstance(ta_url, str):
             # String to bytes, as requested by native lib
+            _check_cstr_arg("ta_url", ta_url)
             ta_url = ta_url.encode('utf-8')
         elif isinstance(ta_url, bytes):
             # In bytes already
@@ -1957,6 +1959,8 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         raise C2paError(f"Failed to serialize settings to JSON: {e}")
 
     try:
+        _check_cstr_arg("settings", settings_str)
+        _check_cstr_arg("format", format)
         settings_bytes = settings_str.encode('utf-8')
         format_bytes = format.encode('utf-8')
     except (AttributeError, UnicodeEncodeError) as e:
@@ -3597,6 +3601,7 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error writing the resource to stream
         """
+        _check_cstr_arg("uri", uri)
         uri_str = uri.encode('utf-8')
         with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
@@ -4672,6 +4677,7 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     Raises:
         C2paError: If there was an error converting the manifest
     """
+    _check_cstr_arg("format", format)
     format_str = format.encode('utf-8')
     manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
         manifest_bytes
@@ -4805,6 +4811,7 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
 
         # Encode private key to bytes
         try:
+            _check_cstr_arg("private_key", private_key)
             key_bytes = private_key.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
