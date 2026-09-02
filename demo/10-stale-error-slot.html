@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The error that belonged to someone else</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="crumb"><a href="index.html">All problems</a> &nbsp;/&nbsp; 10</div>
+
+<h1>The error that belonged to someone else</h1>
+<p class="standfirst">The native error slot is never cleared, so a call that fails without writing a message reports the previous one.</p>
+
+<div class="diagrams">
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag">background</span><span class="panel-claim">how two threads come to share one object</span></div>
+<figure>
+<svg viewBox="0 0 620 262" role="img" aria-label="One reader object referenced by two threads at once; the GIL prevents them running Python simultaneously but not from touching the same object, and each thread has its own error slot.">
+  <defs>
+    <marker id="shReader" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">a Python object has no owning thread &mdash; it belongs to whoever holds a reference</text>
+
+  <rect x="216" y="34" width="188" height="56" rx="5" fill="var(--card)" stroke="currentColor" stroke-width="1.4"/>
+  <text x="310" y="56" font-size="11.5" text-anchor="middle" fill="currentColor">one Reader</text>
+  <text x="310" y="72" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.65">one native handle inside it</text>
+
+  <text x="86" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread A</text>
+  <text x="534" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread B</text>
+  <line x1="216" y1="72" x2="120" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shReader)"/>
+  <line x1="404" y1="72" x2="500" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shReader)"/>
+  <text x="150" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+  <text x="470" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+
+  <rect x="14" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="134" y="159" font-size="10" text-anchor="middle" fill="currentColor">reads, and reads the error slot</text>
+  <rect x="366" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="486" y="159" font-size="10" text-anchor="middle" fill="currentColor">reads, and reads its own error slot</text>
+
+  <text x="14" y="200" font-size="10.5" fill="currentColor" opacity="0.7">nothing copies it, nothing hands it over: a closure, an attribute or an argument is enough</text>
+
+  <rect x="14" y="212" width="592" height="40" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="26" y="230" font-size="10" fill="var(--accent)">the GIL stops both threads running Python at the same instant &mdash; it does not stop them</text>
+  <text x="26" y="245" font-size="10" fill="var(--accent)">touching the same object, and it is given away entirely during a native call</text>
+</svg>
+<figcaption>The object is shared, but the error slot is not: each thread has its own. That is why one thread's marker cannot clear another thread's pending error.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag before">before</span><span class="panel-claim">main: the slot is only ever read</span></div>
+<figure>
+<svg viewBox="0 0 620 250" role="img" aria-label="On main a first failure writes a message into the error slot; nothing clears it, so a later unrelated failure that writes nothing reads that same message back.">
+  <defs>
+    <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="b1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">one thread, over time</text>
+  <rect x="318" y="28" width="288" height="212" rx="5" fill="currentColor" opacity="0.05"/>
+  <text x="462" y="46" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">error slot</text>
+
+  <text x="14" y="76" font-size="12" fill="currentColor">Reader(bad file)</text>
+  <text x="14" y="92" font-size="10.5" fill="currentColor" opacity="0.6">fails, writes message</text>
+  <line x1="180" y1="76" x2="314" y2="76" stroke="currentColor" stroke-width="1.3" marker-end="url(#b1)"/>
+  <rect x="330" y="62" width="264" height="26" rx="4" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="462" y="79" font-size="10.5" text-anchor="middle" fill="currentColor">"NotSupported: type is unsupported"</text>
+
+  <text x="14" y="130" font-size="12" fill="currentColor">read, raised</text>
+  <line x1="314" y1="126" x2="180" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#b1)"/>
+  <text x="330" y="147" font-size="10.5" fill="currentColor" opacity="0.6">nothing clears it</text>
+
+  <text x="14" y="186" font-size="12" fill="currentColor">load_settings(bad)</text>
+  <text x="14" y="202" font-size="10.5" fill="var(--accent)">fails, writes nothing</text>
+  <line x1="180" y1="186" x2="314" y2="186" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#b1r)"/>
+  <rect x="330" y="172" width="264" height="26" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="462" y="189" font-size="10.5" text-anchor="middle" fill="var(--accent)">still the old message</text>
+
+  <text x="14" y="232" font-size="12" fill="var(--accent)">raises the wrong error</text>
+  <line x1="326" y1="228" x2="196" y2="228" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#b1r)"/>
+</svg>
+<figcaption>The second failure inherits the first failure's message, and its exception type.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag after">after</span><span class="panel-claim">reading consumes: a marker is written back</span></div>
+<figure>
+<svg viewBox="0 0 620 250" role="img" aria-label="On the branch every read of the error slot writes a known marker back into it, so a later failure that writes nothing reads the marker and is reported as having no error of its own.">
+  <defs>
+    <marker id="g1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="g1g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+  </defs>
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">one thread, over time</text>
+  <rect x="318" y="28" width="288" height="212" rx="5" fill="currentColor" opacity="0.05"/>
+  <text x="462" y="46" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">error slot</text>
+
+  <text x="14" y="76" font-size="12" fill="currentColor">Reader(bad file)</text>
+  <line x1="180" y1="76" x2="314" y2="76" stroke="currentColor" stroke-width="1.3" marker-end="url(#g1)"/>
+  <rect x="330" y="62" width="264" height="26" rx="4" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="462" y="79" font-size="10.5" text-anchor="middle" fill="currentColor">"NotSupported: type is unsupported"</text>
+
+  <text x="14" y="130" font-size="12" fill="currentColor">read, raised</text>
+  <text x="14" y="146" font-size="10.5" fill="var(--ok)">then marker written back</text>
+  <line x1="314" y1="126" x2="180" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#g1)"/>
+  <line x1="180" y1="142" x2="314" y2="142" stroke="var(--ok)" stroke-width="1.3" marker-end="url(#g1g)"/>
+  <rect x="330" y="130" width="264" height="24" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="462" y="146" font-size="10.5" text-anchor="middle" fill="var(--ok)">marker = "no error of our own"</text>
+
+  <text x="14" y="192" font-size="12" fill="currentColor">load_settings(bad)</text>
+  <text x="14" y="208" font-size="10.5" fill="currentColor" opacity="0.6">fails, writes nothing</text>
+  <line x1="180" y1="192" x2="314" y2="192" stroke="currentColor" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#g1)"/>
+  <rect x="330" y="180" width="264" height="24" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="462" y="196" font-size="10.5" text-anchor="middle" fill="var(--ok)">marker still there</text>
+
+  <text x="14" y="234" font-size="12" fill="var(--ok)">marker reads as None: "Unknown error"</text>
+  <line x1="326" y1="230" x2="270" y2="230" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#g1g)"/>
+</svg>
+<figcaption>Reading the slot marks it. A failure that writes nothing now reads back "no error" instead of a stale message.</figcaption>
+</figure>
+</div>
+
+</div>
+
+<div class="footnote">
+<h2>Notes</h2>
+<p>Both threads reach the same object because both hold a reference to it; the GIL keeps them from running Python at the same instant but is handed away entirely during a native call &mdash; <a href="20-native-section.html">the GIL figure on page 20</a> shows what it does and does not cover.</p>
+<p>The slot is thread-local and sticky. Python cannot empty it &mdash; the library exposes no call for that &mdash; so the branch writes a known value in instead, produced by asking the library to free address <code>2</code>, which it can never be tracking. That free fails predictably and leaves a message the wrapper recognises.</p>
+<p>The exact text is learned at import rather than hardcoded, so it matches the build actually loaded. If the learned text does not contain <code>0x2</code>, the mechanism switches itself off and the library behaves as it did on <code>main</code>.</p>
+<p><strong>Why it matters beyond a wrong message.</strong> When a consuming call fails, the wrapper decides who owns the pointer by reading this slot. A stale <code>UntrackedPointer:</code> message makes it conclude the pointer is still Python's, and the object is kept alive holding memory the native side already freed.</p>
+<div class="refs">
+c2pa.py:986 &nbsp;_NO_ERROR_MARKER_ADDR<br>
+c2pa.py:1013-1037 &nbsp;_read_native_error &mdash; marks on both exit paths<br>
+c2pa.py:1428-1457 &nbsp;_learn_no_error_marker_text<br>
+main:696-716 &nbsp;_read_native_error &mdash; "Peeks: the error stays in the native slot"<br>
+tests &nbsp;test_stale_error_not_misattributed_after_preset_error, test_reading_the_native_error_consumes_it
+</div>
+</div>
+
+<div class="pagenav">
+  <a href="index.html">&larr; All problems</a>
+  <a href="20-native-section.html">20 &nbsp;The native section &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>

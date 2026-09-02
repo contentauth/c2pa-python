@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What this branch fixes</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<h1>What this branch fixes</h1>
+<p class="standfirst">Seven problems in the Python C2PA wrapper, one page each: a diagram of what went wrong before, a diagram of what the fix does, and a short note underneath.</p>
+
+<p>Most of these corrupt native memory rather than raise an exception, so the visible symptom is a crash somewhere unrelated, a hang, or output that is quietly wrong. On <code>main</code>, <code>ManagedResource.__init__</code> is three assignments: no lock, no record of calls in progress, no deferred cleanup.</p>
+
+<div class="cards">
+
+<a class="card" href="10-stale-error-slot.html">
+  <div class="card-num">10</div>
+  <div class="card-title">The error that belonged to someone else <span class="tag crash">memory</span></div>
+  <p class="card-desc">The library leaves error messages in a slot nothing ever clears, so a call that fails without writing its own reports the previous one &mdash; and a stale message about pointer ownership makes the wrapper free memory twice.</p>
+</a>
+
+<a class="card" href="20-native-section.html">
+  <div class="card-num">20</div>
+  <div class="card-title">The native section <span class="tag">concept</span></div>
+  <p class="card-desc">A critical section protects data from other threads. This protects a stretch of time on one thread: the gap between a call returning and its error being read. A finalizer for an unrelated object, running in that gap, destroys the message.</p>
+</a>
+
+<a class="card" href="30-close-during-call.html">
+  <div class="card-num">30</div>
+  <div class="card-title">Closing something another thread is using <span class="tag crash">memory</span></div>
+  <p class="card-desc">A <code>close()</code> on one thread frees a handle another thread has already passed into a native call. The obvious fix &mdash; hold a lock &mdash; deadlocks, because those calls run your own code.</p>
+</a>
+
+<a class="card" href="40-borrow-vs-consume.html">
+  <div class="card-num">40</div>
+  <div class="card-title">A consume that starts during a borrow <span class="tag crash">memory</span></div>
+  <p class="card-desc">Deferring a close does not help when the free happens inside the library, during a different call. A borrowing call validates its pointer once and never re-checks, so the usual protection never fires.</p>
+</a>
+
+<a class="card" href="50-context-sign-callback.html">
+  <div class="card-num">50</div>
+  <div class="card-title">The signer callback freed mid-signature <span class="tag crash">memory</span></div>
+  <p class="card-desc">What gets freed is a function pointer Python created, which native calls through while signing. The quiet version signs the file without ever calling the signer, and reports success.</p>
+</a>
+
+<a class="card" href="60-third-thread-gc.html">
+  <div class="card-num">60</div>
+  <div class="card-title">The thread that frees it never used it <span class="tag crash">memory</span></div>
+  <p class="card-desc">Every other page shows two threads doing something deliberate. Reference counting frees an object wherever its last reference dies &mdash; which can be a pool worker that only returned a value and never touched it.</p>
+</a>
+
+<a class="card" href="70-blocking-callback.html">
+  <div class="card-num">70</div>
+  <div class="card-title">The callback that waits for another thread</div>
+  <p class="card-desc">The scenario that rules out the fix everyone reaches for first. A callback starts a helper thread that needs the same object and waits for it; a per-object lock deadlocks, and a reentrant one does too.</p>
+</a>
+
+</div>
+
+<p class="card-desc" style="margin-top:2.5rem">Code references are to <code>src/c2pa/c2pa.py</code>; the &ldquo;before&rdquo; quotes are from <code>git show main:src/c2pa/c2pa.py</code>.</p>
+
+</div>
+</body>
+</html>

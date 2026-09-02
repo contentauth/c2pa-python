@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Closing something another thread is using</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="crumb"><a href="index.html">All problems</a> &nbsp;/&nbsp; 30</div>
+
+<h1>Closing something another thread is using</h1>
+<p class="standfirst">A <code>close()</code> frees a handle another thread has already passed into a native call.</p>
+
+<div class="diagrams">
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag">background</span><span class="panel-claim">how thread B gets hold of thread A's reader</span></div>
+<figure>
+<svg viewBox="0 0 620 262" role="img" aria-label="One reader referenced by two threads: one calls json, the other calls close, with no transfer of ownership between them.">
+  <defs>
+    <marker id="shReader" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">a Python object has no owning thread &mdash; it belongs to whoever holds a reference</text>
+
+  <rect x="216" y="34" width="188" height="56" rx="5" fill="var(--card)" stroke="currentColor" stroke-width="1.4"/>
+  <text x="310" y="56" font-size="11.5" text-anchor="middle" fill="currentColor">one Reader</text>
+  <text x="310" y="72" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.65">one native handle inside it</text>
+
+  <text x="86" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread A</text>
+  <text x="534" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread B</text>
+  <line x1="216" y1="72" x2="120" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shReader)"/>
+  <line x1="404" y1="72" x2="500" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shReader)"/>
+  <text x="150" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+  <text x="470" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+
+  <rect x="14" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="134" y="159" font-size="10" text-anchor="middle" fill="currentColor">reader.json()</text>
+  <rect x="366" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="486" y="159" font-size="10" text-anchor="middle" fill="currentColor">reader.close()</text>
+
+  <text x="14" y="200" font-size="10.5" fill="currentColor" opacity="0.7">nothing copies it, nothing hands it over: a closure, an attribute or an argument is enough</text>
+
+  <rect x="14" y="212" width="592" height="40" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="26" y="230" font-size="10" fill="var(--accent)">the GIL stops both threads running Python at the same instant &mdash; it does not stop them</text>
+  <text x="26" y="245" font-size="10" fill="var(--accent)">touching the same object, and it is given away entirely during a native call</text>
+</svg>
+<figcaption>No handover happens. Both threads simply hold the same reference, so both may call methods on it at any time.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag before">before</span><span class="panel-claim">main: close frees immediately</span></div>
+<figure>
+<svg viewBox="0 0 620 268" role="img" aria-label="On main, thread A validates a handle and enters a native call which releases the GIL; thread B calls close which frees the handle at once, while thread A's native code is still reading through it.">
+  <defs>
+    <marker id="b3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="b3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="80" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread A</text>
+  <text x="310" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">native</text>
+  <text x="540" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread B</text>
+  <line x1="80" y1="26" x2="80" y2="252" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <line x1="540" y1="26" x2="540" y2="252" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <rect x="196" y="26" width="228" height="226" rx="5" fill="currentColor" opacity="0.045"/>
+
+  <text x="80" y="48" font-size="11.5" text-anchor="middle" fill="currentColor">reader.json()</text>
+  <text x="80" y="63" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">handle checked: valid</text>
+  <line x1="92" y1="80" x2="290" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#b3)"/>
+  <text x="190" y="74" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.7">hands the GIL away</text>
+
+  <rect x="220" y="92" width="180" height="44" rx="4" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="310" y="112" font-size="10.5" text-anchor="middle" fill="currentColor">running, holding</text>
+  <text x="310" y="126" font-size="10.5" text-anchor="middle" fill="currentColor">the pointer</text>
+
+  <text x="540" y="114" font-size="11.5" text-anchor="middle" fill="var(--accent)">close()</text>
+  <line x1="528" y1="130" x2="406" y2="150" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#b3r)"/>
+  <text x="466" y="128" font-size="10" text-anchor="middle" fill="var(--accent)">frees now</text>
+
+  <rect x="220" y="158" width="180" height="26" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="310" y="175" font-size="10.5" text-anchor="middle" fill="var(--accent)">memory released</text>
+  <text x="310" y="204" font-size="10.5" text-anchor="middle" fill="var(--accent)">native still reading it</text>
+
+  <line x1="290" y1="230" x2="92" y2="230" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#b3r)"/>
+  <text x="190" y="224" font-size="10" text-anchor="middle" fill="var(--accent)">crash, or garbage</text>
+</svg>
+<figcaption>The validity check passed before the free. Nothing re-checks it, and the fault happens inside native code with no Python traceback.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag after">after</span><span class="panel-claim">calls are counted; the close is recorded and deferred</span></div>
+<figure>
+<svg viewBox="0 0 620 268" role="img" aria-label="On the branch the call raises an in-flight counter; a close arriving during it marks the object closed and records the free instead of performing it, and the free runs when the counter returns to zero.">
+  <defs>
+    <marker id="g3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="g3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+  </defs>
+  <text x="80" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread A</text>
+  <text x="310" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">native</text>
+  <text x="540" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread B</text>
+  <line x1="80" y1="26" x2="80" y2="252" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <line x1="540" y1="26" x2="540" y2="252" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <rect x="196" y="26" width="228" height="226" rx="5" fill="currentColor" opacity="0.045"/>
+
+  <text x="80" y="48" font-size="11.5" text-anchor="middle" fill="currentColor">reader.json()</text>
+  <text x="80" y="63" font-size="10" text-anchor="middle" fill="var(--ok)">_inflight = 1</text>
+  <line x1="92" y1="80" x2="290" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#g3)"/>
+
+  <rect x="220" y="92" width="180" height="44" rx="4" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="310" y="112" font-size="10.5" text-anchor="middle" fill="currentColor">running, holding</text>
+  <text x="310" y="126" font-size="10.5" text-anchor="middle" fill="currentColor">the pointer</text>
+
+  <text x="540" y="114" font-size="11.5" text-anchor="middle" fill="currentColor">close()</text>
+  <rect x="440" y="126" width="166" height="42" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="523" y="143" font-size="10" text-anchor="middle" fill="var(--ok)">marks CLOSED now,</text>
+  <text x="523" y="157" font-size="10" text-anchor="middle" fill="var(--ok)">records the free</text>
+  <text x="523" y="182" font-size="10" text-anchor="middle" fill="var(--ok)">frees nothing yet</text>
+
+  <line x1="290" y1="206" x2="92" y2="206" stroke="currentColor" stroke-width="1.3" marker-end="url(#g3)"/>
+  <text x="190" y="200" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.7">call returns intact</text>
+
+  <text x="80" y="230" font-size="10.5" text-anchor="middle" fill="var(--ok)">_inflight = 0</text>
+  <rect x="150" y="218" width="250" height="24" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="275" y="234" font-size="10.5" text-anchor="middle" fill="var(--ok)">recorded free runs here, once</text>
+</svg>
+<figcaption>The object is unusable from the moment close is called, but the memory outlives the call that is using it.</figcaption>
+</figure>
+</div>
+
+</div>
+
+<div class="footnote">
+<h2>Notes</h2>
+<p>Both threads reach the same object because both hold a reference to it; the GIL keeps them from running Python at the same instant but is handed away entirely during a native call &mdash; <a href="20-native-section.html">the GIL figure on page 20</a> shows what it does and does not cover.</p>
+<p><strong>Why not just hold a lock.</strong> These native calls run caller-supplied stream callbacks, which can call back into this API, possibly from a new thread. A lock held across the call would deadlock against that re-entry. So the lock is held only long enough to change a counter, never across the call itself &mdash; <a href="70-blocking-callback.html">page 70</a> shows the case that makes this unavoidable.</p>
+<p>Two independent reasons defer a teardown &mdash; this object's own call being in flight, and <a href="20-native-section.html">the native section</a>. The recorded flag merges with <code>and</code>, so a "close without freeing" can never be upgraded to a free by a later caller who does not know the pointer already moved.</p>
+<div class="refs">
+c2pa.py:265-273 &nbsp;the new per-resource state<br>
+c2pa.py:346-363 &nbsp;_native_call &mdash; counts, does not lock across the call<br>
+c2pa.py:464-476 &nbsp;_teardown &mdash; the deferring branch<br>
+main:264-267 &nbsp;__init__ was three assignments; main:330-337 &nbsp;_teardown freed at once<br>
+tests &nbsp;test_close_inside_callback_defers_free, test_deferred_consume_is_not_upgraded_to_free
+</div>
+</div>
+
+<div class="pagenav">
+  <a href="20-native-section.html">&larr; 20 &nbsp;The native section</a>
+  <a href="40-borrow-vs-consume.html">40 &nbsp;Borrow vs consume &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>
