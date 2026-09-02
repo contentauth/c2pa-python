@@ -404,17 +404,15 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         entered_gap = threading.Event()
         release_gap = threading.Event()
 
-        real_native_call = reader._native_call
+        real_consume_and_swap = reader._consume_and_swap
 
-        @contextlib.contextmanager
-        def gated_native_call():
-            with real_native_call():
-                yield
+        def gated_consume_and_swap(ffi_call, error_message):
+            real_consume_and_swap(ffi_call, error_message)
             # Pauses in with_fragment's window before it reassigns _own_stream/_fragment_streams.
             entered_gap.set()
             release_gap.wait(5)
 
-        reader._native_call = gated_native_call
+        reader._consume_and_swap = gated_consume_and_swap
 
         result = {}
 
@@ -503,7 +501,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
                 return result
 
         swapped.append(reader._own_stream)
-        reader._lock = lambda: GatedLock(real_lock())
+        reader._lock = lambda **kw: GatedLock(real_lock(**kw))
 
         served = {}
 
@@ -603,21 +601,19 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
 
         # Parks one call between its native call
-        # and its native handle bookkeeping.
-        real_native_call = reader._native_call
+        # and its stream bookkeeping.
+        real_consume_and_swap = reader._consume_and_swap
         in_gap = threading.Event()
         contended = threading.Event()
         leave_gap = threading.Event()
 
-        @contextlib.contextmanager
-        def gated_native_call():
-            with real_native_call():
-                yield
+        def gated_consume_and_swap(ffi_call, error_message):
+            real_consume_and_swap(ffi_call, error_message)
             if not in_gap.is_set():
                 in_gap.set()
                 leave_gap.wait(10)
 
-        reader._native_call = gated_native_call
+        reader._consume_and_swap = gated_consume_and_swap
 
         class ContentionReportingLock:
             """Flags when a caller finds the lock it wraps already held.
@@ -714,7 +710,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
                     wrapper._closed,
                     "reader retained a released stream wrapper")
         finally:
-            reader._native_call = real_native_call
+            reader._consume_and_swap = real_consume_and_swap
             reader._fragment_lock = real_fragment_lock
             reader.close()
 
@@ -4145,8 +4141,8 @@ class TestLocking(unittest.TestCase):
         real_state_lock = ManagedResource._state_lock
 
         def make_tracking(real):
-            def tracking(resource):
-                lock = real(resource)
+            def tracking(resource, **kw):
+                lock = real(resource, **kw)
                 depth = getattr(held, 'stack', None)
                 if depth is None:
                     depth = held.stack = []
@@ -4809,14 +4805,13 @@ class TestLocking(unittest.TestCase):
             checked += 1
             if key in class_a:
                 continue
-            if "_native_call()" not in body:
+            if ("_native_call()" not in body
+                    and "_exclusive_native_call()" not in body
+                    and "_consume_and_swap(" not in body):
                 unguarded.append("{}.{}".format(*key))
 
         self.assertGreater(checked, 0, "coverage scan found no methods")
-        self.assertEqual(
-            unguarded, [],
-            "these hand a Stream to native without _native_call(): {}".format(
-                unguarded))
+        self.assertEqual(unguarded, [])
 
     def test_every_borrowed_handle_is_guarded(self):
         """When a method hands a second object's handle to the native library,
@@ -5177,8 +5172,8 @@ class TestLocking(unittest.TestCase):
             any("flush failed" in line for line in logs.output),
             "the flush failure was swallowed instead of logged")
 
-    def test_section_drain_error_still_raises_when_the_body_succeeds(self):
-        """With no body error, a failed flush is still reported."""
+    def test_drain_errors_log(self):
+        """Log flushing failures."""
 
         class FlushRaises:
             _pending_teardown = True
@@ -5186,9 +5181,11 @@ class TestLocking(unittest.TestCase):
             def _maybe_flush_pending(self):
                 raise RuntimeError("flush failed")
 
-        with self.assertRaises(RuntimeError):
+        with self.assertLogs("c2pa", level="ERROR") as captured:
             with _native_section():
                 c2pa_module._register_for_section_flush(FlushRaises())
+        self.assertTrue(
+            any("flush failed" in message for message in captured.output))
 
     def test_context_sign_after_close_raises_rather_than_skipping_signer(self):
         """Signing through a closed Context must raise, not silently succeed.
@@ -5311,6 +5308,316 @@ class TestLocking(unittest.TestCase):
             "shared-signer teardown race failed (rc={}):\n{}".format(
                 result.returncode, result.stderr[-2000:]))
         self.assertIn("OK", result.stdout)
+
+
+class TestSwapConsumeExclusion(unittest.TestCase):
+    """with_archive, with_fragment must be rejected during other in-flight calls.
+    """
+
+    _MANIFEST = {
+        "claim_generator": "c2pa_python_test",
+        "claim_generator_info": [{
+            "name": "c2pa_python_test",
+            "version": "0.1.0",
+        }],
+        "format": "image/jpeg",
+        "title": "Python Test",
+        "ingredients": [],
+        "assertions": [],
+    }
+
+    def _archive_bytes(self):
+        builder = Builder(self._MANIFEST)
+        try:
+            archive = io.BytesIO()
+            builder.to_archive(archive)
+            archive.seek(0)
+            return archive
+        finally:
+            builder.close()
+
+    def test_with_archive_rejected_when_to_archive_in_progress(self):
+        archive = self._archive_bytes()
+        builder = Builder(self._MANIFEST)
+
+        inside = threading.Event()
+        release = threading.Event()
+
+        class BlockingSink(io.BytesIO):
+            def write(self, data):
+                inside.set()
+                release.wait(10)
+                return super().write(data)
+
+            def seek(self, *args):
+                inside.set()
+                release.wait(10)
+                return super().seek(*args)
+
+        borrow_errors = []
+
+        def borrow():
+            try:
+                builder.to_archive(BlockingSink())
+            except Exception as e:  # noqa: BLE001 - asserted below
+                borrow_errors.append(e)
+
+        worker = threading.Thread(target=borrow, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(
+                inside.wait(10), "to_archive never reached its callback")
+
+            with self.assertRaises(Error) as raised:
+                builder.with_archive(archive)
+            self.assertIn("in use", str(raised.exception))
+        finally:
+            release.set()
+            worker.join(10)
+
+        self.assertFalse(worker.is_alive(), "to_archive hung")
+        self.assertEqual(borrow_errors, [])
+
+        # The refusal must leave the builder untouched and usable.
+        self.assertEqual(builder._lifecycle_state, LifecycleState.ACTIVE)
+        builder.add_action('{"action": "c2pa.color_adjustments"}')
+        builder.close()
+
+    def test_with_fragment_rejected_when_native_in_progress(self):
+        init_path = os.path.join(FIXTURES_FOLDER, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_FOLDER, "dash1.m4s")
+        with open(init_path, "rb") as f:
+            init_bytes = f.read()
+        with open(fragment_path, "rb") as f:
+            fragment_bytes = f.read()
+
+        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        try:
+            with reader._native_call():
+                with self.assertRaises(Error) as raised:
+                    reader.with_fragment(
+                        "video/mp4",
+                        io.BytesIO(init_bytes),
+                        io.BytesIO(fragment_bytes))
+            self.assertIn("in use", str(raised.exception))
+
+            # The refusal must leave the reader untouched: the swap still
+            # works once the borrow is gone.
+            self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
+            reader.with_fragment(
+                "video/mp4",
+                io.BytesIO(init_bytes),
+                io.BytesIO(fragment_bytes))
+            reader.json()
+        finally:
+            reader.close()
+
+    def test_close_during_with_archive_defers_and_frees(self):
+        archive_bytes = self._archive_bytes().getvalue()
+        builder = Builder(self._MANIFEST)
+
+        inside = threading.Event()
+        release = threading.Event()
+
+        class BlockingArchive(io.BytesIO):
+            def read(self, *args):
+                inside.set()
+                release.wait(10)
+                return super().read(*args)
+
+            def seek(self, *args):
+                inside.set()
+                release.wait(10)
+                return super().seek(*args)
+
+        outcome = {}
+
+        def consume():
+            try:
+                builder.with_archive(BlockingArchive(archive_bytes))
+                outcome["result"] = "ok"
+            except Exception as e:  # noqa: BLE001 - asserted below
+                outcome["result"] = e
+
+        worker = threading.Thread(target=consume, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(
+                inside.wait(10), "with_archive never reached its callback")
+            # Defers: the swap is counted in flight.
+            builder.close()
+        finally:
+            release.set()
+            worker.join(10)
+
+        self.assertFalse(worker.is_alive(), "with_archive hung")
+        # The deferred teardown freed the replacement handle: closed for
+        # good, nothing left to free, exactly one release.
+        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
+        self.assertIsNone(builder._handle)
+        self.assertTrue(builder._released)
+        self.assertIsNone(builder._pending_teardown)
+
+    def test_calling_close_should_not_corrupt_other_objects(self):
+        """Other threads asking for close() should not corrupt objects.
+        """
+        real_free = ManagedResource._free_native_ptr
+
+        k = 1
+        while True:
+            archive = self._archive_bytes()
+            builder = Builder(self._MANIFEST)
+
+            freed = []
+            ManagedResource._free_native_ptr = staticmethod(
+                lambda p, _real=real_free: (freed.append(int(
+                    ctypes.cast(p, ctypes.c_void_p).value or 0)),
+                    _real(p))[1])
+
+            real_state_lock = builder._state_lock
+            enters = [0]
+            injected = []
+
+            class LockProxy:
+                def __init__(self, inner):
+                    self._inner = inner
+
+                def __enter__(self):
+                    enters[0] += 1
+                    self._n = enters[0]
+                    self._inner.__enter__()
+                    return self
+
+                def __exit__(self, *exc):
+                    result = self._inner.__exit__(*exc)
+                    if self._n == k and not injected:
+                        injected.append(True)
+                        builder._state_lock = real_state_lock
+                        closer = threading.Thread(target=builder.close)
+                        closer.start()
+                        closer.join(10)
+                        builder._state_lock = gated
+                    return result
+
+            def gated(_lock=real_state_lock):
+                return LockProxy(_lock())
+
+            builder._state_lock = gated
+            try:
+                try:
+                    builder.with_archive(archive)
+                except Error:
+                    pass
+            finally:
+                builder._state_lock = real_state_lock
+                ManagedResource._free_native_ptr = real_free
+
+            with self.subTest(injection_point=k):
+                self.assertFalse(
+                    builder._released
+                    and builder._lifecycle_state == LifecycleState.ACTIVE,
+                    "resource resurrected to ACTIVE after its close()")
+                self.assertEqual(
+                    len(freed), len(set(freed)),
+                    f"a pointer was freed twice: {freed}")
+                builder.close()
+                self.assertIsNone(
+                    builder._handle,
+                    "a handle survived every close(): it leaks")
+
+            if not injected:
+                # k exceeded the number of lock releases in the
+                # operation: the sweep is complete.
+                self.assertGreater(k, 2, "sweep never covered the "
+                                         "historical bug's window")
+                break
+            k += 1
+
+    def test_second_mutating_call_is_rejected(self):
+        builder = Builder(self._MANIFEST)
+
+        inside = threading.Event()
+        release = threading.Event()
+
+        class BlockingSink(io.BytesIO):
+            def write(self, data):
+                inside.set()
+                release.wait(10)
+                return super().write(data)
+
+            def seek(self, *args):
+                inside.set()
+                release.wait(10)
+                return super().seek(*args)
+
+        worker = threading.Thread(
+            target=lambda: builder.to_archive(BlockingSink()), daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(
+                inside.wait(10), "to_archive never reached its callback")
+
+            with self.assertRaises(Error) as second_mut:
+                builder.to_archive(io.BytesIO())
+            self.assertIn("modifies", str(second_mut.exception))
+
+            # A _lock-path native call is refused too: the in-flight
+            # mutating call holds `&mut` on the same native object.
+            with self.assertRaises(Error) as read_call:
+                builder.add_action('{"action": "c2pa.color_adjustments"}')
+            self.assertIn("modifies", str(read_call.exception))
+        finally:
+            release.set()
+            worker.join(10)
+
+        self.assertFalse(worker.is_alive(), "first to_archive hung")
+        # Both refused calls work once the mutating call has returned.
+        builder.to_archive(io.BytesIO())
+        builder.add_action('{"action": "c2pa.color_adjustments"}')
+        builder.close()
+
+    def test_read_during_mutation_is_rejected(self):
+        with open(os.path.join(FIXTURES_FOLDER, "C.jpg"), "rb") as f:
+            image = f.read()
+        reader = Reader("image/jpeg", io.BytesIO(image))
+        manifest = reader.get_active_manifest()
+        uri = (manifest or {}).get("thumbnail", {}).get("identifier")
+        self.assertTrue(uri, "fixture must carry a thumbnail resource")
+
+        inside = threading.Event()
+        release = threading.Event()
+
+        class BlockingSink(io.BytesIO):
+            def write(self, data):
+                inside.set()
+                release.wait(10)
+                return super().write(data)
+
+            def seek(self, *args):
+                inside.set()
+                release.wait(10)
+                return super().seek(*args)
+
+        worker = threading.Thread(
+            target=lambda: reader.resource_to_stream(uri, BlockingSink()),
+            daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(
+                inside.wait(10),
+                "resource_to_stream never reached its callback")
+
+            with self.assertRaises(Error) as raised:
+                reader.detailed_json()
+            self.assertIn("modifies", str(raised.exception))
+        finally:
+            release.set()
+            worker.join(10)
+
+        self.assertFalse(worker.is_alive(), "resource_to_stream hung")
+        # Works again once the mutating call has returned.
+        self.assertTrue(reader.detailed_json())
+        reader.close()
 
 
 if __name__ == '__main__':

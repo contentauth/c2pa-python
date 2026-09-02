@@ -99,7 +99,7 @@ Python owns and frees two kinds of things: the **single current native handle** 
 
 Therefore, the managed resources have the following principles:
 
-- Each `ManagedResource` holds exactly one `_handle`. `_swap_handle()` replaces it with the pointer a consuming call returned and does not free the old value, since the native side took it (see [Consume-and-swap](#consume-and-swap)).
+- Each `ManagedResource` holds exactly one `_handle`. `_consume_and_swap()` replaces it with the pointer a consuming call returned and does not free the old value, since the native side took it (see [Consume-and-swap](#consume-and-swap)).
 - `_teardown(free_handle=False)`, `_consume_no_replacement()`, and `_consume_into()` all close or advance the object without calling `c2pa_free`, because ownership moved to the native side.
 - Only a few sites free a live handle, and most free a pointer this layer still provably owns: normal teardown (`_teardown(free_handle=True)`); the create-then-validate path, which frees a freshly created pointer if activation fails; and the constructors that free a raw pointer when wrapping it raises, since no instance took ownership (`Signer.from_info`, `Signer.from_callback`, `Builder.from_archive`). The exception is `_release_handle()`, a *guarded* free used only when ownership is unknown (a consuming call failed without setting an error, or a Python exception was raised before the native side reported anything): if the native side already took the pointer, its address is no longer in the registry and `c2pa_free` is a `-1` no-op, so the free touches no memory. No path frees a pointer known to have been consumed and reallocated (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)).
 - `_release()` drops stream wrappers, callbacks, and caches before the native pointer is freed (see [Subclass-specific cleanup with `_release()`](#subclass-specific-cleanup)).
@@ -112,7 +112,7 @@ Each risk and its mechanism:
 
 | Hazard | Covered by | How |
 | --- | --- | --- |
-| Freeing a pointer a consuming call already took (single flow) | `_swap_handle` / `_teardown(free_handle=False)` triage | The consumed pointer is abandoned, never freed. The retained-vs-consumed decision reads the native error tag (`UntrackedPointer:` / `WrongPointerType:` / `NullParameter:` / `InvalidBufferSize:` mean not taken). |
+| Freeing a pointer a consuming call already took (single flow) | `_consume_and_swap` / `_teardown(free_handle=False)` triage | The consumed pointer is abandoned, never freed. The retained-vs-consumed decision reads the native error tag (`UntrackedPointer:` / `WrongPointerType:` / `NullParameter:` / `InvalidBufferSize:` mean not taken). |
 | A forked child freeing a pointer its parent owns | PID stamp (`record_owner_pid` / `is_foreign_process`) | Cleanup in a process that did not allocate the pointer nulls the handle and marks `CLOSED` without freeing (see [Fork safety](#fork-safety)). |
 | Two **threads** racing a `close()` against an in-flight native call on the same object, where the allocator recycles a just-freed address | `_op_lock` / `_native_call()` / `_pending_teardown` | A close arriving while a native call is in flight is recorded rather than applied. The last caller to leave `_native_call()` performs the deferred free (see [Locking and in-flight tracking](#locking-and-in-flight-tracking)). |
 
@@ -277,7 +277,7 @@ The mark is provisional. `_abort_consume()` restores the previous state when the
 
 `_raise_consume_failure()` performs that restore, on the pre-consume branch only. The reservation is held until the branch is known. `_read_native_error()` is itself a native call and releases the GIL, so a resource restored to `ACTIVE` before the error is classified is visible as usable to another thread while the native side may already own its handle.
 
-`_consume_and_swap()` is excluded. `_swap_handle()` requires the resource to stay `ACTIVE` and the object remains usable with its replacement pointer, so there is no `CLOSED` mark to make and no check. Its callers (`Reader.with_fragment`, `Builder.with_archive`) pass streams whose callbacks re-enter this API, so they hold their own `_native_call()`. `Reader.with_fragment()` additionally serializes itself with a lock of its own, described in [`Reader.with_fragment()`](#readerwith_fragment).
+`_consume_and_swap()` is excluded. `_consume_and_swap()` requires the resource to stay `ACTIVE` and the object remains usable with its replacement pointer, so there is no `CLOSED` mark to make and no check. Its callers (`Reader.with_fragment`, `Builder.with_archive`) pass streams whose callbacks re-enter this API, so they hold their own `_native_call()`. `Reader.with_fragment()` additionally serializes itself with a lock of its own, described in [`Reader.with_fragment()`](#readerwith_fragment).
 
 ### Context lifetime during a context-sign
 
@@ -299,7 +299,7 @@ A sign cannot start once the Context is closed, and raises `C2paError` instead. 
 | **Cleanup is idempotent** | Calling `close()` (or exiting a `with` block) multiple times is safe; after the first successful cleanup, further calls do nothing. |
 | **Cleanup never raises (ordinary errors)** | The cleanup path catches and logs `Exception`, never re-raising it. `_release()` runs inside `_safe_release()`, which logs and swallows; the `c2pa_free` call has its own handler; and `_cleanup_resources()` wraps both. The original exception from the `with` block (if any) is never masked. **Asynchronous interrupts are the deliberate exception.** The cleanup handlers catch `Exception`, which excludes the `BaseException` signals the interpreter raises to unwind a process (a cancellation request or an exit in progress). Those propagate through cleanup untouched, and the remaining free may not run. Such a signal means the process is being torn down and its address space, native allocations included, is about to be reclaimed as a whole. Catching it would suppress a shutdown the caller asked for in order to complete a free that is about to become irrelevant, so the handlers stay scoped to `Exception`. |
 | **State transitions are one-way** | Lifecycle moves only from UNINITIALIZED to ACTIVE to CLOSED. A closed resource cannot be reactivated. |
-| **Transitions go through helper methods** | Subclasses call `_activate()`, `_swap_handle()` or `_teardown()` and never assign `_handle` or `_lifecycle_state` directly. `_activate()` and `_swap_handle()` validate before mutating, so an object cannot end up active with a null handle. |
+| **Transitions go through helper methods** | Subclasses call `_activate()`, `_consume_and_swap()` or `_teardown()` and never assign `_handle` or `_lifecycle_state` directly. `_activate()` and `_consume_and_swap()` validate before mutating, so an object cannot end up active with a null handle. |
 | **Ownership transfer is safe** | When a pointer is transferred elsewhere (e.g. via `_teardown(free_handle=False)`), the object stops managing it and does not call `c2pa_free` on it. |
 | **Public methods validate lifecycle state** | Every public method that uses the handle calls `_ensure_valid_state()` before doing so; closed or invalid state yields `C2paError` instead of undefined behavior or crashes. The exceptions touch no handle: `is_valid` reports the state rather than requiring it, and the `get_supported_mime_types` classmethods query the library itself. |
 
@@ -339,7 +339,7 @@ stateDiagram-v2
     [*] --> UNINITIALIZED : __init__()
     UNINITIALIZED --> ACTIVE : _activate(handle)
     UNINITIALIZED --> CLOSED : close() before activation
-    ACTIVE --> ACTIVE : _swap_handle(new_handle)
+    ACTIVE --> ACTIVE : _consume_and_swap(new_handle)
     ACTIVE --> CLOSED : close() / __exit__ / __del__ / _teardown()
 ```
 
@@ -354,7 +354,7 @@ Each transition has one method that performs it, and subclasses must go through 
 | Method | Transition | What it enforces |
 | --- | --- | --- |
 | `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
-| `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
+| `_consume_and_swap(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
 | `_teardown(free_handle=False)` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two it enforces no precondition on the current state: it closes whatever it is given. |
 | `_release_handle()` | ACTIVE to CLOSED | Frees the handle (guarded, via `_teardown(free_handle=True)`) and closes the object. Same post-state as the consumed teardown. A resource that is already non-ACTIVE takes the other branch, which clears the handle without freeing it; the reserved consume paths call `_teardown()` directly for that reason. |
 
@@ -590,7 +590,7 @@ On success the object stays `ACTIVE` because the Python-side object is still val
 
 One `with_fragment()` call does two things:
 
-1. The FFI call consumes the Reader's current handle and returns a replacement, which `_swap_handle()` stores.
+1. The FFI call consumes the Reader's current handle and returns a replacement, which `_consume_and_swap()` stores.
 2. The Reader updates its own Python-side fields: the `Stream` wrappers it owns and the manifest caches. Both still describe the consumed handle.
 
 `_fragment_streams` holds the `Stream` wrapper for the current fragment. Each call replaces that list rather than appending to it, closing the previous wrapper immediately. The native reader never reads a superseded fragment back, and each open wrapper pins a native stream, its callbacks, and the caller's buffer.
@@ -637,7 +637,7 @@ self._consume_and_swap(
     Reader._ERROR_MESSAGES['fragment_error'])
 ```
 
-The call is passed as a lambda because the helper supplies the handle and, on success, replaces it via `_swap_handle()`.
+The call is passed as a lambda because the helper supplies the handle and, on success, replaces it via `_consume_and_swap()`.
 
 The helper exists because a failed return can be ambiguous. The native functions run in phases: it validates the **borrowed pointer** (passed in without transferring ownership; the caller still owns it unless the callee explicitly takes it over), then takes ownership, then does the work. A failure in the first phase and a failure after the second come back to Python as the same value (a null pointer, or a non-zero status), but they leave ownership in opposite places.
 
@@ -668,7 +668,7 @@ Three consume helpers share this triage; they differ only in what the FFI call r
 
 | Helper | Success return | Success action |
 | --- | --- | --- |
-| `_consume_and_swap()` | a replacement pointer | `_swap_handle()`, resource stays `ACTIVE` |
+| `_consume_and_swap()` | a replacement pointer | installs the replacement, resource stays `ACTIVE` |
 | `_consume_no_replacement()` | a status code (`0` = ok) | `_teardown(free_handle=False)`, resource `CLOSED` |
 | `_consume_into()` | a *different* object's pointer | `_teardown(free_handle=False)`, the pointer returned for the caller to own |
 
@@ -785,7 +785,7 @@ different situation when writing a new subclass:
 | A Python instance needs to wrap a handle a native call already returned, without creating a new one | `_wrap_native_handle(handle)` (classmethod) |
 | Ordinary teardown (`close()`, `__del__`) | Neither: these already route through `_cleanup_resources()` and `_teardown()`. Nothing outside `ManagedResource` itself calls `_teardown()` directly. |
 
-`_activate()` and `_swap_handle()` are two low-level primitives this
+`_activate()` and `_consume_and_swap()` are two low-level primitives this
 situation table builds on.
 
 ## Implementing a subclass of `ManagedResource`
@@ -852,7 +852,7 @@ class NativeResource(ManagedResource):
 
 - `_init_attrs()` called after an FFI call that can raise leaves `_release()` accessing attributes that do not exist yet when that call fails, crashing with `AttributeError`. It belongs immediately after `super().__init__()`, before anything that can fail.
 
-- Assigning `self._handle` or `self._lifecycle_state` directly bypasses the checks that make the lifecycle safe. `_activate()` refuses a null handle and refuses to run on an already-active object; `_swap_handle()` requires the resource to be active and the replacement non-null. Direct assignment gives up both, and the resulting bugs (an ACTIVE object with a null handle, or a silently discarded pointer) surface far from their cause.
+- Assigning `self._handle` or `self._lifecycle_state` directly bypasses the checks that make the lifecycle safe. `_activate()` refuses a null handle and refuses to run on an already-active object; `_consume_and_swap()` requires the resource to be active and the replacement non-null. Direct assignment gives up both, and the resulting bugs (an ACTIVE object with a null handle, or a silently discarded pointer) surface far from their cause.
 
 - A `_release()` that raises has its exception silently swallowed by `_cleanup_resources()`, visible only in the logs. A small lifecycle for managed resources would let `_release()` check whether they need releasing; the actual release call wrapped in try/except is a fallback for unexpected failures.
 
