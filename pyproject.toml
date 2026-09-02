@@ -27,11 +27,6 @@ dependencies = [
     "requests>=2.0.0"
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=8.1.0"
-]
-
 [project.scripts]
 download-artifacts = "c2pa.build:download_artifacts"
 
