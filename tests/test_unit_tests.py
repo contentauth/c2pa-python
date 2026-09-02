@@ -8517,7 +8517,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         res._activate(0xCAFE)
 
         # Fails without setting any error of its own.
-        # The sentinel inside _invoke_consume must have cleared
+        # The marker written inside _invoke_consume must have cleared
         # the stale tag, so this routes to the "no error of our own" branch.
         with self.assertRaises(Error):
             res._consume_no_replacement(lambda h: -1, "op failed: {}")
@@ -9399,7 +9399,7 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
         # The fake native call sets no error of its own,
-        # the planted sentinel _invoke_consume is left in the slot.
+        # the marker planted by _invoke_consume is left in the slot.
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
         freed = self._instrument_frees()
@@ -9411,7 +9411,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         finally:
             c2pa_module._lib.c2pa_reader_with_fragment = real_call
 
-        # The sentinel survived, not the stale tag.
+        # The marker survived, not the stale tag.
         self.assertIsNone(reader._handle)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
         # Ownership is unknown, so the handle is freed once. c2pa_free
@@ -9934,32 +9934,32 @@ class TestErrorPlumbing(unittest.TestCase):
             "type is unsupported", str(second.exception),
             "the later failure reported the handled error's message")
 
-    def test_the_no_native_error_sentinel_never_reaches_a_caller(self):
-        """The sentinel is an internal marker, not a message for users."""
-        sentinel = c2pa_module._NATIVE_NO_ERROR_TEXT
+    def test_the_no_error_marker_never_reaches_a_caller(self):
+        """The marker is internal, not a message for users."""
+        marker = c2pa_module._NO_ERROR_MARKER_TEXT
 
-        c2pa_module._mark_sentinel_no_native_error()
+        c2pa_module._write_no_error_marker()
         self.assertIsNone(
             c2pa_module._read_native_error(),
-            "the sentinel was reported as if it were a native error")
+            "the marker was reported as if it were a native error")
 
-        c2pa_module._mark_sentinel_no_native_error()
+        c2pa_module._write_no_error_marker()
         with self.assertRaises(Error) as ctx:
             c2pa_module._check_ffi_operation_result(None, "fallback: {}")
-        self.assertNotIn(sentinel, str(ctx.exception))
+        self.assertNotIn(marker, str(ctx.exception))
         self.assertIn("Unknown error", str(ctx.exception))
 
-    def test_mark_sentinel_writes_the_learned_text(self):
-        c2pa_module._mark_sentinel_no_native_error()
+    def test_write_no_error_marker_writes_the_learned_text(self):
+        c2pa_module._write_no_error_marker()
         raw = c2pa_module._lib.c2pa_error()
         try:
             text = ctypes.string_at(raw).decode('utf-8')
         finally:
             c2pa_module._lib.c2pa_string_free(raw)
-        self.assertEqual(text, c2pa_module._NATIVE_NO_ERROR_TEXT)
+        self.assertEqual(text, c2pa_module._NO_ERROR_MARKER_TEXT)
 
-    def test_read_native_error_maps_sentinel_to_none(self):
-        c2pa_module._mark_sentinel_no_native_error()
+    def test_read_native_error_maps_the_marker_to_none(self):
+        c2pa_module._write_no_error_marker()
         self.assertIsNone(c2pa_module._read_native_error())
 
     def test_read_native_error_marks_the_slot_when_the_pointer_is_null(self):
@@ -10121,7 +10121,7 @@ class TestErrorPlumbing(unittest.TestCase):
         so this module loads against native builds that lack it."""
         for fn in (c2pa_module.ManagedResource._invoke_consume,
                   c2pa_module._read_native_error,
-                  c2pa_module._mark_sentinel_no_native_error):
+                  c2pa_module._write_no_error_marker):
             self.assertNotIn(
                 'c2pa_error_set_last', inspect.getsource(fn))
 
@@ -10136,7 +10136,7 @@ class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
 
     def setUp(self):
         # Leave no message from an earlier test in this thread's slot.
-        c2pa_module._mark_sentinel_no_native_error()
+        c2pa_module._write_no_error_marker()
 
     def test_non_consuming_failure_does_not_inherit_a_read_error(self):
         c2pa_module._lib.c2pa_error_set_last(b"Signature: earlier task")
@@ -10203,7 +10203,7 @@ class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
         thread.start()
         self.assertTrue(set_on_worker.wait(5))
 
-        c2pa_module._mark_sentinel_no_native_error()
+        c2pa_module._write_no_error_marker()
         marked_on_main.set()
         thread.join(5)
 
@@ -10219,7 +10219,7 @@ class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
                          inspect.getsource(
                              c2pa_module._check_ffi_operation_result))
         # _read_native_error is what re-marks the slot after every read.
-        self.assertIn("_mark_sentinel_no_native_error",
+        self.assertIn("_write_no_error_marker",
                       inspect.getsource(c2pa_module._read_native_error))
 
 

@@ -5559,13 +5559,13 @@ class TestSwapConsumeExclusion(unittest.TestCase):
 
             with self.assertRaises(Error) as second_mut:
                 builder.to_archive(io.BytesIO())
-            self.assertIn("modifies", str(second_mut.exception))
+            self.assertIn("mutating operation", str(second_mut.exception))
 
             # A _lock-path native call is refused too: the in-flight
             # mutating call holds `&mut` on the same native object.
             with self.assertRaises(Error) as read_call:
                 builder.add_action('{"action": "c2pa.color_adjustments"}')
-            self.assertIn("modifies", str(read_call.exception))
+            self.assertIn("mutating operation", str(read_call.exception))
         finally:
             release.set()
             worker.join(10)
@@ -5609,7 +5609,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
 
             with self.assertRaises(Error) as raised:
                 reader.detailed_json()
-            self.assertIn("modifies", str(raised.exception))
+            self.assertIn("mutating operation", str(raised.exception))
         finally:
             release.set()
             worker.join(10)

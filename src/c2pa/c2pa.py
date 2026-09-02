@@ -403,7 +403,7 @@ class ManagedResource:
                 "c2pa_free returned %s for an untracked pointer",
                 result)
             # Reset error slot.
-            _mark_sentinel_no_native_error()
+            _write_no_error_marker()
         return result
 
     def _ensure_valid_state(self):
@@ -632,7 +632,7 @@ class ManagedResource:
             C2paError: If the call raised any other exception.
         """
         # Same thread that makes the call, same thread-local slot.
-        _mark_sentinel_no_native_error()
+        _write_no_error_marker()
         try:
             return ffi_call(self._handle)
         except ctypes.ArgumentError:
@@ -983,16 +983,14 @@ class C2paStream(ctypes.Structure):
 
 # Address passed to c2pa_free to plant a marker in the native error slot.
 # 2 is not an allocatable address.
-_MARKER_ADDR = 2
+_NO_ERROR_MARKER_ADDR = 2
 
-# Exact text the native lib writes for a failed free of _MARKER_ADDR.
-_NATIVE_NO_ERROR_TEXT = None
+# Exact text the native lib writes for a failed free of _NO_ERROR_MARKER_ADDR.
+_NO_ERROR_MARKER_TEXT = None
 
 
-def _mark_sentinel_no_native_error():
-    """Write the no-error marker into this thread's native error slot.
-
-    A c2pa_free of an address the registry does not track writes
+def _write_no_error_marker():
+    """A c2pa_free of an address the registry does not track writes
     an expected error message learned at import into the
     thread-local error slot and returns -1.
 
@@ -1000,16 +998,16 @@ def _mark_sentinel_no_native_error():
     failed without setting its own error from a stale message left
     by an earlier call on the same thread.
 
-    No-op if not marker found on import.
+    No-op when the marker text could not be learned at import.
     """
-    if _NATIVE_NO_ERROR_TEXT is None:
+    if _NO_ERROR_MARKER_TEXT is None:
         return
-    _lib.c2pa_free(_MARKER_ADDR)
+    _lib.c2pa_free(_NO_ERROR_MARKER_ADDR)
 
 
-def _is_no_native_error(message: str) -> bool:
-    """True for the sentinel marker meaning "no current error of our own"."""
-    return message == _NATIVE_NO_ERROR_TEXT
+def _is_no_error_marker(message: str) -> bool:
+    """True for the marker meaning "no current error of our own"."""
+    return message == _NO_ERROR_MARKER_TEXT
 
 
 def _read_native_error() -> Optional[str]:
@@ -1026,15 +1024,15 @@ def _read_native_error() -> Optional[str]:
     if not error:
         # NULL means the message could not be rendered, not that the slot
         # is empty, so it still has to be marked.
-        _mark_sentinel_no_native_error()
+        _write_no_error_marker()
         return None
     try:
         message = ctypes.string_at(error).decode('utf-8')
     finally:
         _lib.c2pa_string_free(error)
 
-    _mark_sentinel_no_native_error()
-    if not message or _is_no_native_error(message):
+    _write_no_error_marker()
+    if not message or _is_no_error_marker(message):
         return None
     return message
 
@@ -1427,7 +1425,7 @@ _setup_function(
 _setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
 
 
-def _learn_sentinel_no_native_error_text():
+def _learn_no_error_marker_text():
     """Plant the marker once and read back the exact text the native lib
     produces for it, so equality checks match this build of the lib.
 
@@ -1436,7 +1434,7 @@ def _learn_sentinel_no_native_error_text():
 
     No-op/None if the marker couldn't be learned.
     """
-    _lib.c2pa_free(_MARKER_ADDR)
+    _lib.c2pa_free(_NO_ERROR_MARKER_ADDR)
     raw = _lib.c2pa_error()
     if not raw:
         logger.warning(
@@ -1450,16 +1448,16 @@ def _learn_sentinel_no_native_error_text():
         logger.warning(
             "c2pa: error-slot marker not set, some errors may be stale")
         return None
-    marker_hex = hex(_MARKER_ADDR)
+    marker_hex = hex(_NO_ERROR_MARKER_ADDR)
     if marker_hex not in text:
         logger.warning(
-            "c2pa: error-slot marker unclear, some errors may be stale",
+            "c2pa: error-slot marker %s unclear, some errors may be stale",
             marker_hex)
         return None
     return text
 
 
-_NATIVE_NO_ERROR_TEXT = _learn_sentinel_no_native_error_text()
+_NO_ERROR_MARKER_TEXT = _learn_no_error_marker_text()
 
 _setup_function(
     _lib.c2pa_context_builder_set_signer,
