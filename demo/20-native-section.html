@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The native section</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="crumb"><a href="index.html">All problems</a> &nbsp;/&nbsp; 20 &nbsp;&middot;&nbsp; concept</div>
+
+<h1>The native section</h1>
+<p class="standfirst">Not a lock protecting data from other threads &mdash; a marked stretch of time on one thread, between a call returning and its error being read. Any free inside it destroys the message.</p>
+
+<div class="diagrams">
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag">background</span><span class="panel-claim">shared objects, per-thread windows</span></div>
+<figure>
+<svg viewBox="0 0 620 262" role="img" aria-label="One object referenced from two threads; the native section state is thread-local, so a window open on one thread does not defer frees on the other.">
+  <defs>
+    <marker id="shResource" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">a Python object has no owning thread &mdash; it belongs to whoever holds a reference</text>
+
+  <rect x="216" y="34" width="188" height="56" rx="5" fill="var(--card)" stroke="currentColor" stroke-width="1.4"/>
+  <text x="310" y="56" font-size="11.5" text-anchor="middle" fill="currentColor">one Resource</text>
+  <text x="310" y="72" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.65">one native handle inside it</text>
+
+  <text x="86" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread A</text>
+  <text x="534" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread B</text>
+  <line x1="216" y1="72" x2="120" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shResource)"/>
+  <line x1="404" y1="72" x2="500" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shResource)"/>
+  <text x="150" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+  <text x="470" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+
+  <rect x="14" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="134" y="159" font-size="10" text-anchor="middle" fill="currentColor">may open a native section</text>
+  <rect x="366" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="486" y="159" font-size="10" text-anchor="middle" fill="currentColor">may open its own, separately</text>
+
+  <text x="14" y="200" font-size="10.5" fill="currentColor" opacity="0.7">nothing copies it, nothing hands it over: a closure, an attribute or an argument is enough</text>
+
+  <rect x="14" y="212" width="592" height="40" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="26" y="230" font-size="10" fill="var(--accent)">the GIL stops both threads running Python at the same instant &mdash; it does not stop them</text>
+  <text x="26" y="245" font-size="10" fill="var(--accent)">touching the same object, and it is given away entirely during a native call</text>
+</svg>
+<figcaption>The section is thread-local because the error slot it protects is. A window open on thread A must not gate thread B's frees, or the two would block each other.</figcaption>
+</figure>
+
+<div class="panel-note">
+<p>A Python object lives on the process heap &mdash; one region of memory shared by every thread. A thread is not a container that holds objects; it is a separate execution position, with its own call stack, walking through that same shared memory.</p>
+
+<p>So nothing switches threads and nothing is handed over. In the probe behind this figure, a <code>Reader</code> created on <code>MainThread</code> and used from <code>worker-1</code> stayed at the same address the whole time, with the same <code>id()</code>. Two threads simply looked at the same place.</p>
+
+<p>What is shared is the name. An ordinary closure is enough:</p>
+
+<pre><code>r = Reader("image/jpeg", io.BytesIO(img))
+
+def worker():
+    return r.json()          # closure captures r
+
+threading.Thread(target=worker).start()</code></pre>
+
+<p>No serialisation, no copy, no transfer step. Compare <code>multiprocessing</code>, where a genuinely separate heap forces objects to be pickled across &mdash; there <code>id(r)</code> would differ and mutations would not be visible. Threads have no such boundary, and that is exactly what separates them from processes.</p>
+</div>
+</div>
+
+<p class="bridge">The glossary sentence that follows is about <em>executing bytecode</em>: it says nothing about which objects a thread may reach. The GIL keeps <code>MainThread</code> and <code>worker-1</code> from running Python instructions in the same instant. It does not stop them both holding a reference to one <code>Reader</code>, and it does not stop one calling <code>close()</code> while the other is mid-call.</p>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag">background</span><span class="panel-claim">what the GIL is, and why it does not save you here</span></div>
+<figure>
+<svg viewBox="0 0 620 320" role="img" aria-label="The GIL assures only one thread executes Python bytecode at a time, but it is always released during input output and native calls, and Python does not guarantee that high-level statements are atomic.">
+  <defs>
+    <marker id="gilr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+  </defs>
+
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.8">the global interpreter lock &mdash; a token inside CPython. Only its holder runs Python bytecode.</text>
+
+  <rect x="14" y="28" width="592" height="62" rx="4" fill="currentColor" opacity="0.05"/>
+  <text x="26" y="46" font-size="10" fill="currentColor" opacity="0.75">"assure that only one thread executes Python bytecode at a time" &mdash; Python glossary</text>
+  <rect x="26" y="56" width="118" height="20" rx="3" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="85" y="70" font-size="9.5" text-anchor="middle" fill="currentColor">thread A holds it</text>
+  <rect x="152" y="56" width="118" height="20" rx="3" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="211" y="70" font-size="9.5" text-anchor="middle" fill="currentColor">thread B holds it</text>
+  <rect x="278" y="56" width="118" height="20" rx="3" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="337" y="70" font-size="9.5" text-anchor="middle" fill="currentColor">thread A holds it</text>
+  <text x="410" y="70" font-size="9.5" fill="currentColor" opacity="0.6">taking turns, never simultaneously</text>
+
+  <line x1="14" y1="106" x2="606" y2="106" stroke="currentColor" stroke-width="1" opacity="0.2"/>
+
+  <text x="14" y="128" font-size="11" fill="var(--accent)">1 &nbsp;it is handed away for the whole of a native call</text>
+  <rect x="14" y="138" width="592" height="56" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="26" y="155" font-size="10" fill="var(--accent)">"the GIL is always released when doing I/O" &mdash; Python glossary</text>
+  <rect x="26" y="164" width="230" height="20" rx="3" fill="var(--card)" stroke="var(--accent)" stroke-width="1"/>
+  <text x="141" y="178" font-size="9.5" text-anchor="middle" fill="var(--accent)">thread A: inside the native call</text>
+  <rect x="264" y="164" width="230" height="20" rx="3" fill="var(--card)" stroke="var(--accent)" stroke-width="1"/>
+  <text x="379" y="178" font-size="9.5" text-anchor="middle" fill="var(--accent)">thread B: running Python</text>
+  <text x="502" y="178" font-size="9.5" fill="var(--accent)">at once</text>
+
+  <line x1="14" y1="210" x2="606" y2="210" stroke="currentColor" stroke-width="1" opacity="0.2"/>
+
+  <text x="14" y="232" font-size="11" fill="var(--accent)">2 &nbsp;and it never made a statement indivisible</text>
+  <rect x="14" y="242" width="592" height="66" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="26" y="259" font-size="10" fill="var(--accent)">"Python does not guarantee that high-level statements are atomic" &mdash; Python glossary</text>
+  <text x="26" y="278" font-size="10" font-family="ui-monospace, Menlo, monospace" fill="var(--accent)">self._ensure_valid_state()   &larr; the handle is checked</text>
+  <text x="26" y="296" font-size="10" font-family="ui-monospace, Menlo, monospace" fill="var(--accent)">_lib.c2pa_reader_json(self._handle)   &larr; it is used</text>
+  <line x1="430" y1="266" x2="430" y2="286" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#gilr)"/>
+  <text x="530" y="272" font-size="9.5" text-anchor="middle" fill="var(--accent)">another thread</text>
+  <text x="530" y="284" font-size="9.5" text-anchor="middle" fill="var(--accent)">runs in this gap</text>
+</svg>
+<figcaption>Two independent reasons the GIL does not prevent these bugs: it is given up entirely during a native call, and it was never a guarantee that a check and the use that follows it happen as one step.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag before">before</span><span class="panel-claim">main: a finalizer's free lands in the window</span></div>
+<figure>
+<svg viewBox="0 0 620 232" role="img" aria-label="On main, between a native call returning and the error being read, an unrelated object's finalizer frees a handle, and that free writes UntrackedPointer over the message about to be read.">
+  <defs>
+    <marker id="b4r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">one thread &mdash; no second thread involved</text>
+
+  <line x1="20" y1="62" x2="600" y2="62" stroke="currentColor" stroke-width="1.4" opacity="0.32"/>
+  <rect x="150" y="44" width="300" height="36" rx="4" fill="var(--accent-soft)"/>
+  <text x="300" y="38" font-size="10.5" text-anchor="middle" fill="var(--accent)">the window</text>
+
+  <circle cx="150" cy="62" r="4" fill="currentColor"/>
+  <text x="150" y="99" font-size="11" text-anchor="middle" fill="currentColor">call returns</text>
+  <text x="150" y="113" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">message now in slot</text>
+
+  <circle cx="450" cy="62" r="4" fill="currentColor"/>
+  <text x="450" y="99" font-size="11" text-anchor="middle" fill="currentColor">error read</text>
+  <text x="450" y="113" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">ownership decided from it</text>
+
+  <line x1="300" y1="140" x2="300" y2="86" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#b4r)"/>
+  <text x="300" y="155" font-size="10.5" text-anchor="middle" fill="var(--accent)">unrelated object collected &rarr; __del__ &rarr; c2pa_free</text>
+
+  <rect x="150" y="172" width="300" height="26" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="300" y="189" font-size="10.5" text-anchor="middle" fill="var(--accent)">slot overwritten: "Other: UntrackedPointer: 0x..."</text>
+  <text x="300" y="218" font-size="10.5" text-anchor="middle" fill="var(--accent)">the real message is gone, and the wrong one steers the decision</text>
+</svg>
+<figcaption>A free of an untracked pointer writes its own complaint into the same slot. CPython runs finalizers at any bytecode boundary, so this needs no threads at all.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag after">after</span><span class="panel-claim">the window is marked; frees inside it are queued</span></div>
+<figure>
+<svg viewBox="0 0 620 250" role="img" aria-label="On the branch the thread is marked as inside a native section; a teardown arriving during it is recorded on a pending list and the free runs only when the outermost section closes.">
+  <defs>
+    <marker id="g4g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+  </defs>
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">one thread</text>
+
+  <line x1="20" y1="62" x2="600" y2="62" stroke="currentColor" stroke-width="1.4" opacity="0.32"/>
+  <rect x="150" y="44" width="300" height="36" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="300" y="38" font-size="10.5" text-anchor="middle" fill="var(--ok)">_native_section: depth &gt; 0</text>
+
+  <circle cx="150" cy="62" r="4" fill="currentColor"/>
+  <text x="150" y="99" font-size="11" text-anchor="middle" fill="currentColor">call returns</text>
+  <circle cx="450" cy="62" r="4" fill="var(--ok)"/>
+  <text x="450" y="99" font-size="11" text-anchor="middle" fill="currentColor">error read</text>
+  <text x="450" y="113" font-size="10" text-anchor="middle" fill="var(--ok)">message intact</text>
+
+  <line x1="300" y1="140" x2="300" y2="86" stroke="var(--ok)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#g4g)"/>
+  <text x="300" y="155" font-size="10.5" text-anchor="middle" fill="var(--ok)">same __del__ &rarr; teardown sees depth &gt; 0</text>
+
+  <rect x="150" y="170" width="300" height="26" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="300" y="187" font-size="10.5" text-anchor="middle" fill="var(--ok)">queued on pending_resources &mdash; no free yet</text>
+
+  <line x1="468" y1="62" x2="560" y2="62" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#g4g)"/>
+  <text x="560" y="99" font-size="10.5" text-anchor="middle" fill="var(--ok)">depth 0:</text>
+  <text x="560" y="113" font-size="10.5" text-anchor="middle" fill="var(--ok)">queue drains</text>
+
+  <text x="300" y="222" font-size="10.5" text-anchor="middle" fill="currentColor" opacity="0.65">the free still happens &mdash; just after the message has been read</text>
+  <text x="300" y="240" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.5">nested sections raise the depth; only the outermost close drains</text>
+</svg>
+<figcaption>The free is postponed, not skipped. Without the pending list it would never happen at all, because nothing else would touch that object again.</figcaption>
+</figure>
+</div>
+
+</div>
+
+<div class="footnote">
+<h2>Notes</h2>
+<p><strong>Objects do not belong to threads.</strong> If they did, a <code>close()</code> on thread B could not reach thread A's handle, and most of this branch would be unnecessary.</p>
+<p><strong>Why the window exists.</strong> A C interface cannot raise an exception, so failure arrives in two pieces: a return value, and a message fetched by a separate <code>c2pa_error()</code> call. Between the two, arbitrary Python runs.</p>
+<p><strong>Thread-local</strong> because the native slot is: one thread's section must not gate another's frees. <strong>Depth-counted</strong> because native calls nest &mdash; and <code>_read_native_error</code> is itself one. A boolean would be cleared by the innermost exit while an outer classification was still reading.</p>
+<p><strong>The drain never hides your exception.</strong> It keeps only the first failure and returns it rather than raising; the bare <code>raise</code> re-raises whatever the body threw. A cleanup problem is logged, never substituted for the error you were reporting.</p>
+<div class="refs">
+c2pa.py:1040-1101 &nbsp;_native_section, _in_native_section, _register_for_section_flush<br>
+c2pa.py:473-474 &nbsp;registration &nbsp;&middot;&nbsp; c2pa.py:517-521 &nbsp;re-registration<br>
+c2pa.py:1071-1081 &nbsp;_drain &mdash; swaps the list, isolates each failure<br>
+main &nbsp;none of these symbols exist<br>
+tests &nbsp;test_native_section_defers_unrelated_finalizer_free, test_section_drain_error_does_not_mask_the_body_error
+</div>
+</div>
+
+<div class="pagenav">
+  <a href="10-stale-error-slot.html">&larr; 10 &nbsp;Stale error</a>
+  <a href="30-close-during-call.html">30 &nbsp;Close during a call &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>
