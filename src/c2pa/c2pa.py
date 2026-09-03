@@ -13,12 +13,14 @@
 
 # Version: 0.37.9
 
+import contextlib
 import ctypes
 import enum
 import json
 import logging
 import sys
 import os
+import threading
 import warnings
 import weakref
 from abc import ABC, abstractmethod
@@ -233,9 +235,9 @@ class ManagedResource:
       - Call `_activate(handle)` once the native pointer is created and
         validated, which takes ownership of it and marks the resource active.
         Never assign `self._handle` or `self._lifecycle_state` directly.
-      - Call `_swap_handle(new_handle)` instead when an FFI call consumed the
-        current handle and returned a replacement (the success side of
-        `_consume_and_swap`).
+      - Call `_consume_and_swap(ffi_call, message)` when an FFI call consumes
+        the current handle and returns a replacement: reserve the handle,
+        run the call, setup the new handle.
       - Call `_teardown(free_handle=False)` when an FFI call took ownership of
         the handle without returning a replacement: the new owner frees it,
         so this does not.
@@ -264,7 +266,149 @@ class ManagedResource:
     def __init__(self):
         self._lifecycle_state = LifecycleState.UNINITIALIZED
         self._handle = None
+        self._op_lock = threading.RLock()
+        self._inflight = 0
+        self._mut_inflight = 0
+        self._pending_teardown = None
+        self._teardown_lock = threading.Lock()
+        self._released = False
         record_owner_pid(self)
+
+    def _live_op_lock(self):
+        """Return this resource's operation lock, for mutual exclusion.
+
+        Reentrant: a finalizer can run at any bytecode boundary, including
+        inside a region this thread already locked, and a consuming call
+        tears the handle down from inside the locked region.
+
+        Falls back to a fresh lock when the attribute is missing.
+
+        Never hold this across a native call that drives stream callbacks
+        (construction, resource_to_stream, the Builder stream methods,
+        signing).
+        Those calls release the Global Interpreter Lock (GIL)
+        and re-enter caller-supplied Python code, which may call back into
+        this API on another thread.
+
+        Raises in a forked child instead of returning the lock: a child
+        inherits it in whatever state it had at fork(), and no thread in
+        the child exists to release it, so acquiring there hangs forever.
+        The child's copy is as unusable as a closed resource, so it
+        reports the same error.
+        """
+        if is_foreign_process(self):
+            raise C2paError(f"{type(self).__name__} is closed")
+
+        lock = getattr(self, '_op_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            try:
+                self._op_lock = lock
+            except Exception:
+                pass
+        return lock
+
+    def _live_teardown_lock(self):
+        """Lock to protect teardowns.
+
+        Held only for plain attribute updates, never across a native call or
+        an acquisition of the operation lock, so it can be taken either alone
+        or inside the operation lock without an ordering cycle.
+
+        Falls back to a fresh lock when the attribute is missing.
+        """
+        lock = getattr(self, '_teardown_lock', None)
+        if lock is None:
+            lock = threading.Lock()
+            try:
+                self._teardown_lock = lock
+                lock = self._teardown_lock
+            except Exception:
+                pass
+        return lock
+
+    def _ensure_not_borrowed(self):
+        """Raise if a native call is in flight on this handle.
+
+        Raises:
+            C2paError: If a native call is in flight on this resource.
+        """
+        if getattr(self, '_inflight', 0) > 0:
+            name = type(self).__name__
+            raise C2paError(
+                f"{name} is in use by another operation and "
+                f"cannot be consumed")
+
+    def _ensure_no_mutating_call(self):
+        """Raise if a mutating native call is in flight on this handle.
+
+        Raises:
+            C2paError: when a mutating native call is in progress.
+        """
+        if getattr(self, '_mut_inflight', 0) > 0:
+            raise C2paError(
+                f"{type(self).__name__} is running a mutating operation")
+
+    @contextlib.contextmanager
+    def _guarded_op(self, *, refuse_mut=True):
+        """Hold this resource's operation lock its duration,
+        and mark this thread as inside a native-error section.
+
+        Note: Ordering is important and as the native section opens first
+        for the native call and closes last.
+
+        Never hold this across a native call that drives stream callbacks.
+        Those calls release the Global Interpreter Lock
+        and re-enter caller-supplied code, which may call back into this API
+        on another thread.
+        """
+        with _native_section():
+            try:
+                with self._live_op_lock():
+                    if refuse_mut:
+                        self._ensure_no_mutating_call()
+                    yield
+            finally:
+                self._maybe_flush_pending()
+
+    @contextlib.contextmanager
+    def _native_call(self):
+        """Hold the handle valid across a native call that runs
+        caller-supplied stream callbacks, so _live_op_lock() can't be held.
+        Count the call as in-flight/in-progress.
+        A free intent (teardown) is registered and the last caller frees.
+        A free intent marks the resource as closed, preventing further use.
+        """
+        with self._live_op_lock():
+            self._ensure_valid_state()
+            self._inflight = getattr(self, '_inflight', 0) + 1
+        try:
+            with _native_section():
+                yield
+        finally:
+            with self._live_op_lock():
+                self._inflight -= 1
+            self._maybe_flush_pending()
+
+    @contextlib.contextmanager
+    def _exclusive_native_call(self):
+        """Exclusively marks this handle as being mutated.
+        A free intent (teardown) is registered and the last caller frees.
+        A free intent marks the resource as closed, preventing further use.
+        """
+        with self._live_op_lock():
+            self._ensure_valid_state()
+            self._ensure_no_mutating_call()
+            self._mut_inflight = getattr(self, '_mut_inflight', 0) + 1
+            self._inflight = getattr(self, '_inflight', 0) + 1
+        try:
+            with _native_section():
+                yield
+        finally:
+            with self._live_op_lock():
+                self._mut_inflight -= 1
+                self._inflight -= 1
+            self._maybe_flush_pending()
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -284,8 +428,10 @@ class ManagedResource:
         result = _lib.c2pa_free(ptr)
         if result != 0:
             logger.debug(
-                "c2pa_free returned %s for an untracked pointer ",
+                "c2pa_free returned %s for an untracked pointer",
                 result)
+            # Reset error slot.
+            _write_no_error_marker()
         return result
 
     def _ensure_valid_state(self):
@@ -321,12 +467,94 @@ class ManagedResource:
     def _teardown(self, free_handle: bool):
         """Close the object: run _release, optionally free the handle, null it.
         free_handle=False (consumed) frees nothing, the new owner needs to free.
+
+        The frees run under an operation lock.
+        Deferred when any gate is blocking:
+        - this resource's own handle is in flight in a native call
+        - this thread is inside a native-error section for some call
+        - someone else holds the operation lock (free intent gets queued)
+
+        The forked-child case is handled before the lock is taken, because
+        _live_op_lock() raises in a child: this path has to finish rather
+        than report an error, so it cannot rely on acquiring.
         """
         if is_foreign_process(self):
             self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
+        if getattr(self, '_released', False):
+            return
+        self._record_pending_intent(free_handle)
+
+        lock = self._live_op_lock()
+        if not lock.acquire(blocking=False):
+            self._close_lifecycle()
+            _register_for_section_flush(self)
+            return
+
+        try:
+            if getattr(self, '_released', False):
+                # Checks released as it recorded possible free intents.
+                return
+            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
+                # Closes the resource so it can't be used anymore.
+                # Records also pending actual frees.
+                self._close_lifecycle()
+                if _in_native_section():
+                    _register_for_section_flush(self)
+                return
+
+            with self._live_teardown_lock():
+                pending = getattr(self, '_pending_teardown', None)
+                if pending is not None:
+                    free_handle = pending and free_handle
+                    self._pending_teardown = None
+            self._finish_teardown(free_handle)
+        finally:
+            lock.release()
+
+    def _record_pending_intent(self, free_handle: bool):
+        """Queue a teardown intent, leaving the resource usable until
+        the intent runs.
+        A queued consume wins over a free, since native already owns a
+        consumed handle: freeing it again corrupts memory, where a missed
+        free only leaks.
+        """
+        with self._live_teardown_lock():
+            pending = getattr(self, '_pending_teardown', None)
+            if pending is None:
+                self._pending_teardown = free_handle
+            else:
+                self._pending_teardown = pending and free_handle
+
+    def _close_lifecycle(self):
+        """Close the resource so it can no longer be used."""
+        with self._live_teardown_lock():
+            self._lifecycle_state = LifecycleState.CLOSED
+
+    def _record_pending_teardown(self, free_handle: bool):
+        """Record a teardown intent and queue it.
+        Also closes the resource, and a queued consume wins
+        over a (new) teardown request.
+        """
+        self._record_pending_intent(free_handle)
+        self._close_lifecycle()
+
+    def _finish_teardown(self, free_handle: bool):
+        """Once teardown can run, runs the actual release.
+        Steps: release, null the handle, free if requested.
+        """
+        if is_foreign_process(self):
+            self._handle = None
+            self._lifecycle_state = LifecycleState.CLOSED
+            return
+
+        if getattr(self, '_released', False):
+            # Already done by another caller (concurrent caller).
+            return
+
+        self._released = True
         self._lifecycle_state = LifecycleState.CLOSED
         self._safe_release()
 
@@ -338,13 +566,56 @@ class ManagedResource:
                 logger.error("Failed to free native %s resources",
                              type(self).__name__, exc_info=True)
 
-    def _release_handle(self):
-        """Free this handle, then close the object. Used only where ownership is
-        unknown (a guarded free is a real free if ours, a no-op if not).
+    def _has_pending_teardown(self) -> bool:
+        """Check if a teardown request is waiting for the resource."""
+        return getattr(self, '_pending_teardown', None) is not None
+
+    def _flush_pending_pass(self):
+        """Attempt to run pending teardowns.
         """
-        if self._lifecycle_state != LifecycleState.ACTIVE:
-            self._handle = None
-            self._lifecycle_state = LifecycleState.CLOSED
+
+        with self._live_op_lock():
+            if getattr(self, '_pending_teardown', None) is None:
+                return
+            if getattr(self, '_inflight', 0) > 0:
+                return
+            if _in_native_section():
+                _register_for_section_flush(self)
+                return
+            with self._live_teardown_lock():
+                free_handle = self._pending_teardown
+                self._pending_teardown = None
+            self._finish_teardown(free_handle)
+
+    def _maybe_flush_pending(self):
+        """Recheck if a teardown can run after something
+        that blocked it cleared.
+        """
+        if is_foreign_process(self):
+            return
+
+        self._flush_pending_pass()
+        if self._has_pending_teardown() and not getattr(
+                self, '_released', False):
+            self._flush_pending_pass()
+
+    def _release_handle(self):
+        """Free this handle and close the object, unless a queued teardown
+        already owns the free. Used only where ownership is unknown
+        (a guarded free is a real free if ours, a no-op if not).
+        Nulling the handle under a queued teardown would leave it nothing
+        to free.
+        """
+        with self._live_op_lock():
+            owned_elsewhere = getattr(
+                self, '_pending_teardown', None) is not None
+            if not owned_elsewhere and (
+                    self._lifecycle_state != LifecycleState.ACTIVE):
+                self._handle = None
+                self._lifecycle_state = LifecycleState.CLOSED
+                owned_elsewhere = True
+        if owned_elsewhere:
+            self._maybe_flush_pending()
             return
         self._teardown(free_handle=True)
 
@@ -373,22 +644,21 @@ class ManagedResource:
 
     def _create_and_activate(self, ffi_call, error_message, *,
                              check=lambda r: not r):
-        """Obtain a fresh native pointer, validate it, and take ownership.
-        On any failure before ownership transfers, the pointer is freed
-        and the error re-raised.
+        """Get a new pointer/handle, validate, take ownership.
 
         Args:
             ffi_call: Zero-arg callable returning a fresh native pointer.
             error_message: Message for the C2paError raised on failure.
-            check: Predicate marking a result invalid
-                (default: a falsy pointer).
+            check: Lambda determining result invalidity.
 
         Raises:
-            C2paError: If the pointer fails validation; it is freed first.
+            C2paError: If the pointer fails the validation step.
         """
-        ptr = ffi_call()
+        ptr = None
         try:
-            _check_ffi_operation_result(ptr, error_message, check=check)
+            with _native_section():
+                ptr = ffi_call()
+                _check_ffi_operation_result(ptr, error_message, check=check)
             self._activate(ptr)
         except Exception:
             if ptr:
@@ -396,36 +666,31 @@ class ManagedResource:
             raise
         return ptr
 
-    def _swap_handle(self, new_handle):
-        """Replace the handle after an FFI call consumed the old one and
-        returned a replacement.
-        A null return from such a call is ambiguous (the callee may have
-        failed validation before taking ownership, or failed the operation
-        after), so callers must not call this with a null replacement.
-        Requires the resource to be active.
-
-        Args:
-            new_handle: Non-null native pointer returned by the FFI call
-
-        Raises:
-            C2paError: If the resource is not ACTIVE or new_handle is null
-        """
-        name = type(self).__name__
-        if self._lifecycle_state != LifecycleState.ACTIVE:
-            raise C2paError(
-                f"{name}: cannot swap the handle of a resource that is not "
-                f"active ({self._lifecycle_state.name})")
-        if not new_handle:
-            raise C2paError(f"{name}: cannot swap in a null handle")
-
-        self._handle = new_handle
-
     # Errors set by native lib, hinting at the cause of the error
     # These errors here means the pointer got somehow rejected by the lib,
     # so it is still ours to deal with.
-    _PRE_CONSUME_ERROR_TAGS = ("UntrackedPointer:", "WrongPointerType:")
+    _PRE_CONSUME_ERROR_TAGS = (
+        "UntrackedPointer:",
+        "WrongPointerType:",
+    )
 
-    def _invoke_consume(self, ffi_call, error_message):
+    # An error tag starts the message or follows this one wrapper.
+    _NATIVE_ERROR_WRAPPER = "Other: "
+
+    @staticmethod
+    def _is_pre_consume_rejection(error: str) -> bool:
+        """True when native rejected the handle before taking ownership.
+
+        Anchored, not a substring search: native quotes caller text verbatim,
+        so a tag mid-message describes the caller's input.
+        """
+        body = error
+        if body.startswith(ManagedResource._NATIVE_ERROR_WRAPPER):
+            body = body[len(ManagedResource._NATIVE_ERROR_WRAPPER):]
+        return any(body.startswith(tag)
+                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS)
+
+    def _invoke_consume(self, ffi_call, error_message, *, reserved=False):
         """Run an FFI call that consumes this handle, returning its raw result.
 
         A marshalling ArgumentError is re-raised untouched (call never reached
@@ -439,11 +704,16 @@ class ManagedResource:
                 result (a replacement pointer, a status code, ...).
             error_message: Format string with one placeholder, used to wrap a
                 callback exception.
+            reserved: True when the caller reserved the handle with
+                _begin_consume(), which frees here rather than through
+                _release_handle().
 
         Raises:
             ctypes.ArgumentError: If marshalling failed; handle untouched.
             C2paError: If the call raised any other exception.
         """
+        # Same thread that makes the call, same thread-local slot.
+        _write_no_error_marker()
         try:
             return ffi_call(self._handle)
         except ctypes.ArgumentError:
@@ -451,40 +721,51 @@ class ManagedResource:
             # is untouched and still ours. Re-raise as-is.
             raise
         except Exception as e:
-            self._release_handle()
+            if reserved:
+                # Resource left close (handle set).
+                self._teardown(free_handle=True)
+            else:
+                self._release_handle()
             raise C2paError(error_message.format(e)) from e
 
-    def _raise_consume_failure(self, error_message):
+    def _raise_consume_failure(self, error_message, previous_state=None):
         """Raise the error from an FFI handler consuming call.
 
         The native error is read before any free so a free's own
-        pointer-tracking error cannot overwrite it: the native error slot is
-        sticky and thread-local and the SDK does not clear it before the call,
-        so this trusts that the failing native path set its own error.
+        pointer-tracking error cannot overwrite it.
+        The native error slot is sticky and thread-local,
+        and the native SDK does not clear it before the call.
+        _invoke_consume marks the slot as carrying no error right before a
+        consuming call, so a failure that sets no error of its own reads back
+        as no error rather than as a stale one left by an earlier call.
 
-        That ordering is required:
-        c2pa_free on a handle the registry no longer tracks returns -1 and
-        overwrites the slot with its own "Other: UntrackedPointer: 0x..."
-        message. Freeing first would therefore replace the real failure
-        with another one and, because that substitute carries a pre-consume
-        tag, invert the retain/consume decision made below.
+        A caller that reserved the handle with _begin_consume() passes
+        previous_state and stays reserved until this classification finishes.
+        _read_native_error() is a native call and releases the GIL, so a
+        resource restored to ACTIVE before the tags are examined is visible as
+        usable to another thread while native may already own its handle. Only
+        the pre-consume branch hands the resource back.
 
         Args:
             error_message: Format string with one placeholder, used when the
                 native layer offers no error of its own.
+            previous_state: Lifecycle state to restore if the handle turns out
+                to have been rejected before native took ownership. None when
+                the caller holds no reservation.
 
         Raises:
             C2paError: Always; typed by the native error when there is one.
         """
         error = _read_native_error()
         if error:
-            if any(tag in error
-                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS):
+            if ManagedResource._is_pre_consume_rejection(error):
                 logger.warning(
                     "%s: native call rejected the handle before taking "
                     "ownership (%s); handle retained",
                     type(self).__name__,
                     error)
+                if previous_state is not None:
+                    self._abort_consume(previous_state)
                 _raise_typed_c2pa_error(error)
 
             # A non-tag error means the native side took ownership then failed,
@@ -494,20 +775,114 @@ class ManagedResource:
             self._teardown(free_handle=False)
             _raise_typed_c2pa_error(error)
 
-        # No error in the slot: ownership is unknown, so free defensively.
-        self._release_handle()
+        # No error of its own: ownership is unknown, so free defensively.
+        # c2pa_free returns -1 for an address native already reclaimed.
+        # A reservation leaves the resource CLOSED with the handle set,
+        # which _release_handle() nulls without freeing.
+        if previous_state is not None:
+            self._teardown(free_handle=True)
+        else:
+            self._release_handle()
         raise C2paError(error_message.format("Unknown error"))
 
-    def _consume_and_swap(self, ffi_call, error_message):
-        """Run an FFI call that consumes this handle and returns a replacement.
-        On success the native lib consumed the handle and returned a new one,
-        which we swap in. A null return is a failure.
+    def _begin_consume(self):
+        """Reserve this handle for a consuming call, or raise.
+        This is the initiation of an exclusive borrow.
+
+        Marks the resource as closed, stopping other borrows.
+        After this, the call is considered in-flight.
+        The caller owns the matching decrement.
+
+        Returns:
+            The lifecycle state to restore if the call turns out not to have
+            consumed the handle.
+
+        Raises:
+            C2paError: Unusable resource or native call in progress.
         """
-        new_ptr = self._invoke_consume(ffi_call, error_message)
-        if new_ptr:
-            self._swap_handle(new_ptr)
-            return
-        self._raise_consume_failure(error_message)
+        with self._live_op_lock():
+            # A consumed or closed resource has no handle left to hand over;
+            # without this the call would pass a null pointer to native.
+            self._ensure_valid_state()
+            self._ensure_not_borrowed()
+            previous = self._lifecycle_state
+            self._lifecycle_state = LifecycleState.CLOSED
+            self._inflight = getattr(self, '_inflight', 0) + 1
+            return previous
+
+    def _abort_consume(self, previous_state):
+        """Undo _begin_consume() after a call that did not take the handle.
+
+        A pre-consume tag usually means the handle is still ours, so the
+        resource becomes usable again. The tag can also name another tracked
+        argument, which this does not distinguish.
+
+        A deferred free still happens when the section drains, so a resource
+        with a queued teardown stays closed.
+        """
+        with self._live_op_lock():
+            if self._pending_teardown is not None:
+                return
+            if self._lifecycle_state == LifecycleState.CLOSED and self._handle:
+                self._lifecycle_state = previous_state
+
+    def _consume_and_swap(self, ffi_call, error_message):
+        """Run an FFI call consuming the handle, reserving it.
+        A replacement handle will be swapping in on success
+        (a returned null value is a failure).
+        """
+
+        previous_state = self._begin_consume()
+        try:
+            with _native_section():
+                new_ptr = self._invoke_consume(
+                    ffi_call, error_message, reserved=True)
+                if new_ptr:
+                    with self._live_op_lock():
+                        self._handle = new_ptr
+                        if self._pending_teardown is None:
+                            self._lifecycle_state = previous_state
+                    return
+                self._raise_consume_failure(error_message, previous_state)
+        except BaseException:
+            self._abort_consume(previous_state)
+            raise
+        finally:
+            # Decrement to handle parallel potential in-flight consumers.
+            with self._live_op_lock():
+                self._inflight -= 1
+            self._maybe_flush_pending()
+
+    def _consume_reserved(self, ffi_call, error_message, *, succeeded):
+        """Run a reserved consuming call and mark the handle consumed on
+        success.
+
+        Args:
+            succeeded: Reads the call's raw result and returns whether it
+                succeeded. Each entry point has its own convention: a status
+                code, or a replacement pointer.
+
+        Returns:
+            The call's raw result, for callers that hand it on.
+        """
+        previous_state = self._begin_consume()
+        try:
+            with _native_section():
+                result = self._invoke_consume(
+                    ffi_call, error_message, reserved=True)
+                if succeeded(result):
+                    self._teardown(free_handle=False)
+                    return result
+                self._raise_consume_failure(error_message, previous_state)
+        except BaseException:
+            self._abort_consume(previous_state)
+            raise
+        finally:
+            # Same order as _consume_and_swap: drop _inflight under the
+            # lock, then flush.
+            with self._live_op_lock():
+                self._inflight -= 1
+            self._maybe_flush_pending()
 
     def _consume_no_replacement(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle on success, when the native
@@ -515,11 +890,9 @@ class ManagedResource:
         handle. A non-zero status is a failure routed to
         _raise_consume_failure.
         """
-        result = self._invoke_consume(ffi_call, error_message)
-        if result == 0:
-            self._teardown(free_handle=False)
-            return
-        self._raise_consume_failure(error_message)
+        self._consume_reserved(
+            ffi_call, error_message,
+            succeeded=lambda status: status == 0)
 
     def _consume_into(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle and returns a *different*
@@ -527,11 +900,10 @@ class ManagedResource:
         and the new pointer is returned for the caller to own. A null return is
         a failure routed to _raise_consume_failure.
         """
-        result = self._invoke_consume(ffi_call, error_message)
-        if result:
-            self._teardown(free_handle=False)
-            return result
-        self._raise_consume_failure(error_message)
+        # A null pointer is falsy.
+        return self._consume_reserved(
+            ffi_call, error_message,
+            succeeded=lambda pointer: bool(pointer))
 
     @classmethod
     def _wrap_native_handle(cls, handle):
@@ -572,10 +944,8 @@ class ManagedResource:
                 if hasattr(self, '_lifecycle_state'):
                     self._lifecycle_state = LifecycleState.CLOSED
                 return
-            if (
-                hasattr(self, '_lifecycle_state')
-                and self._lifecycle_state != LifecycleState.CLOSED
-            ):
+            if hasattr(self, '_lifecycle_state'):
+                # Closes here must defer to the teardown checks.
                 self._teardown(free_handle=True)
         except Exception:
             pass
@@ -693,25 +1063,123 @@ class C2paStream(ctypes.Structure):
     ]
 
 
+# Address passed to c2pa_free to plant a marker in the native error slot.
+# 2 is not an allocatable address.
+_NO_ERROR_MARKER_ADDR = 2
+
+# Exact text the native lib writes for a failed free of _NO_ERROR_MARKER_ADDR.
+_NO_ERROR_MARKER_TEXT = None
+
+
+def _write_no_error_marker():
+    """A c2pa_free of an address the registry does not track writes
+    an expected error message learned at import into the
+    thread-local error slot and returns -1.
+
+    This marker mechanism exists to distinguish a consuming call that
+    failed without setting its own error from a stale message left
+    by an earlier call on the same thread.
+
+    No-op when the marker text could not be learned at import.
+    """
+    if _NO_ERROR_MARKER_TEXT is None:
+        return
+    _lib.c2pa_free(_NO_ERROR_MARKER_ADDR)
+
+
+def _is_no_error_marker(message: str) -> bool:
+    """True for the marker meaning "no current error of our own"."""
+    return message == _NO_ERROR_MARKER_TEXT
+
+
 def _read_native_error() -> Optional[str]:
     """Read the last error from the native library, or None if unset.
 
-    Peeks: the error stays in the native slot,
-    until the next error overwrites it.
-
-    With no error set the native side still returns an owned pointer to an
-    empty string, so the pointer alone does not tell us whether there is an
-    error. Only a non-empty message counts as one; the empty string still
-    has to be freed.
+    The slot is marked as carrying no error before returning, so a
+    given error is reported once, by the caller that observes it. The native
+    slot is thread-local and sticky, so a message left in place stays readable
+    indefinitely and is available to be reported again by a later,
+    unrelated call that failed without setting an error of its own
+    (or a missing clear of an error slot).
     """
     error = _lib.c2pa_error()
     if not error:
+        # NULL means the message could not be rendered, not that the slot
+        # is empty, so it still has to be marked.
+        _write_no_error_marker()
         return None
     try:
         message = ctypes.string_at(error).decode('utf-8')
     finally:
         _lib.c2pa_string_free(error)
-    return message or None
+
+    _write_no_error_marker()
+    if not message or _is_no_error_marker(message):
+        return None
+    return message
+
+
+_native_section_state = threading.local()
+
+
+def _in_native_section() -> bool:
+    """True while this thread is between an FFI call and reading back the
+    native error it may have set (see _native_section())."""
+    return getattr(_native_section_state, 'depth', 0) > 0
+
+
+def _register_for_section_flush(resource):
+    """Record that `resource`'s teardown was deferred only because this
+    thread's native-error section was open."""
+    pending = getattr(_native_section_state, 'pending_resources', None)
+    if pending is not None:
+        pending.append(resource)
+
+
+@contextlib.contextmanager
+def _native_section():
+    """Mark this thread as inside a section where a native call's result is
+    about to be read back: an error-slot check, or a consuming call's
+    success/failure classification.
+
+    Reentrant: a nested native call on the same thread nests.
+    """
+    state = _native_section_state
+    depth = getattr(state, 'depth', 0)
+    state.depth = depth + 1
+    if depth == 0:
+        state.pending_resources = []
+
+    def _drain():
+        """Flush every deferred resource. Returns the first error raised."""
+        pending, state.pending_resources = state.pending_resources, []
+        first_error = None
+        for resource in pending:
+            try:
+                resource._maybe_flush_pending()
+            except BaseException as e:  # noqa: BLE001
+                if first_error is None:
+                    first_error = e
+        return first_error
+
+    try:
+        yield
+    except BaseException:
+        state.depth -= 1
+        if state.depth == 0:
+            drain_error = _drain()
+            if drain_error is not None:
+                logger.error(
+                    "Deferred teardown failed while unwinding: %s",
+                    drain_error)
+        raise
+    else:
+        state.depth -= 1
+        if state.depth == 0:
+            drain_error = _drain()
+            if drain_error is not None:
+                logger.error(
+                    "Deferred teardown failed: %s", drain_error)
 
 
 class C2paSignerInfo(ctypes.Structure):
@@ -751,6 +1219,7 @@ class C2paSignerInfo(ctypes.Structure):
             alg = alg_str
         elif isinstance(alg, str):
             # String to bytes, as requested by native lib
+            _check_cstr_arg("alg", alg)
             alg = alg.encode('utf-8')
         elif isinstance(alg, bytes):
             # In bytes already
@@ -768,6 +1237,7 @@ class C2paSignerInfo(ctypes.Structure):
             pass
         elif isinstance(ta_url, str):
             # String to bytes, as requested by native lib
+            _check_cstr_arg("ta_url", ta_url)
             ta_url = ta_url.encode('utf-8')
         elif isinstance(ta_url, bytes):
             # In bytes already
@@ -1036,6 +1506,41 @@ _setup_function(
 )
 _setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
 
+
+def _learn_no_error_marker_text():
+    """Plant the marker once and read back the exact text the native lib
+    produces for it, so equality checks match this build of the lib.
+
+    Runs on the importing thread; the text is a format constant, so the
+    learned value holds for every thread.
+
+    No-op/None if the marker couldn't be learned.
+    """
+    _lib.c2pa_free(_NO_ERROR_MARKER_ADDR)
+    raw = _lib.c2pa_error()
+    if not raw:
+        logger.warning(
+            "c2pa: could not find out error marker")
+        return None
+    try:
+        text = ctypes.string_at(raw).decode('utf-8')
+    finally:
+        _lib.c2pa_string_free(raw)
+    if not text:
+        logger.warning(
+            "c2pa: error-slot marker not set, some errors may be stale")
+        return None
+    marker_hex = hex(_NO_ERROR_MARKER_ADDR)
+    if marker_hex not in text:
+        logger.warning(
+            "c2pa: error-slot marker %s unclear, some errors may be stale",
+            marker_hex)
+        return None
+    return text
+
+
+_NO_ERROR_MARKER_TEXT = _learn_no_error_marker_text()
+
 _setup_function(
     _lib.c2pa_context_builder_set_signer,
     [ctypes.POINTER(C2paContextBuilder), ctypes.POINTER(C2paSigner)],
@@ -1249,10 +1754,61 @@ def _convert_to_py_string(value) -> str:
                 # Ignore clean up issues
                 pass
     except (ctypes.ArgumentError, TypeError, ValueError, OSError):
-        # Invalid pointer type or value
+        # Invalid pointer type or value, gracefully handled by native lib.
+        try:
+            _lib.c2pa_string_free(value)
+        except Exception:
+            pass
         return ""
 
     return py_string
+
+
+def _check_cstr_arg(name: str, value) -> None:
+    """Reject a string argument the native layer would refuse.
+    Checking here keeps the rejection on this side of the boundary,
+    where the handle is known to be untouched.
+
+    Raises:
+        C2paError: With same message the native layer would have produced.
+    """
+    if value is None:
+        raise C2paError(f"NullParameter: {name}")
+
+    embedded_nul = (
+        '\x00' in value if isinstance(value, str) else b'\x00' in value)
+    if embedded_nul:
+        # ctypes truncates at the first NUL.
+        raise C2paError(f"NullParameter: {name} contains a null byte")
+
+
+def _check_handle_arg(name: str, handle) -> None:
+    """Reject a null handle argument.
+    Note: registry membership is not observable from Python,
+    so a tracked-but-invalid pointer still reaches native.
+
+    Raises:
+        C2paError: With same message the native layer would have produced.
+    """
+    if not handle:
+        raise C2paError(f"NullParameter: {name}")
+
+
+def _check_bytes_arg(name: str, buffer) -> None:
+    """Reject a byte buffer the native layer would refuse.
+
+    Native rejects a null pointer and any size outside 1..=isize::MAX.
+    An empty buffer reaches it as size 0.
+    Checking here keeps the rejection on this side of the boundary,
+    where the handle is known to be untouched.
+
+    Raises:
+        C2paError: With same message the native layer would have produced.
+    """
+    if buffer is None:
+        raise C2paError(f"NullParameter: {name}")
+    if len(buffer) == 0:
+        raise C2paError(f"InvalidBufferSize: 0 for '{name}'")
 
 
 def _raise_typed_c2pa_error(error_str: str) -> None:
@@ -1452,16 +2008,35 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         raise C2paError(f"Failed to serialize settings to JSON: {e}")
 
     try:
+        _check_cstr_arg("settings", settings_str)
+        _check_cstr_arg("format", format)
         settings_bytes = settings_str.encode('utf-8')
         format_bytes = format.encode('utf-8')
     except (AttributeError, UnicodeEncodeError) as e:
         raise C2paError(f"Failed to encode settings to UTF-8: {e}")
 
-    result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
-    _check_ffi_operation_result(
-        result,
-        "Error loading settings",
-        check=lambda r: r != 0)
+    with _native_section():
+        result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
+        _check_ffi_operation_result(
+            result,
+            "Error loading settings",
+            check=lambda r: r != 0)
+
+
+@contextlib.contextmanager
+def _context_guard(context):
+    """Hold a caller-supplied context valid across a native call.
+
+    ContextProvider requires only is_valid and execution_context.
+    _native_call may also be implemented on other handlers, and
+    will leverage managed resources capabilities accordingly.
+    """
+    native_call = getattr(context, "_native_call", None)
+    if native_call is None:
+        yield
+        return
+    with native_call():
+        yield
 
 
 class ContextProvider(ABC):
@@ -1469,6 +2044,11 @@ class ContextProvider(ABC):
 
     Subclass to implement a custom context provider.
     The built-in Context class is the standard implementation.
+
+    A provider that does not derive from ManagedResource is used without
+    in-flight teardown protection: closing it on another thread while a Reader
+    or Builder is being constructed from it can free the native context while
+    that construction is still using it.
     """
 
     @property
@@ -1548,16 +2128,17 @@ class Settings(ManagedResource):
         Returns:
             self, for method chaining.
         """
-        self._ensure_valid_state()
-
         path_bytes = _to_utf8_bytes(path, "settings path")
         value_bytes = _to_utf8_bytes(value, "settings value")
 
-        _check_ffi_operation_result(
-            _lib.c2pa_settings_set_value(
-                self._handle, path_bytes, value_bytes),
-            "Failed to set settings value",
-            check=lambda r: r != 0)
+        with self._guarded_op():
+            self._ensure_valid_state()
+
+            _check_ffi_operation_result(
+                _lib.c2pa_settings_set_value(
+                    self._handle, path_bytes, value_bytes),
+                "Failed to set settings value",
+                check=lambda r: r != 0)
 
         return self
 
@@ -1574,15 +2155,16 @@ class Settings(ManagedResource):
         Returns:
             self, for method chaining.
         """
-        self._ensure_valid_state()
-
         data_bytes = _to_utf8_bytes(data, "settings data")
 
-        _check_ffi_operation_result(
-            _lib.c2pa_settings_update_from_string(
-                self._handle, data_bytes, b"json"),
-            "Failed to update settings",
-            check=lambda r: r != 0)
+        with self._guarded_op():
+            self._ensure_valid_state()
+
+            _check_ffi_operation_result(
+                _lib.c2pa_settings_update_from_string(
+                    self._handle, data_bytes, b"json"),
+                "Failed to update settings",
+                check=lambda r: r != 0)
 
         return self
 
@@ -1692,16 +2274,25 @@ class Context(ManagedResource, ContextProvider):
             # a successful build consumes it, so close() is then a no-op.
             with self._NativeBuilder() as nb:
                 if settings is not None:
-                    _check_ffi_operation_result(
-                        _lib.c2pa_context_builder_set_settings(
-                            nb._handle, settings._c_settings),
-                        "Failed to set settings on Context",
-                        check=lambda r: r != 0)
+                    # Count in-progress reads.
+                    with nb._guarded_op(), settings._native_call():
+                        _check_ffi_operation_result(
+                            _lib.c2pa_context_builder_set_settings(
+                                nb._handle, settings._c_settings),
+                            "Failed to set settings on Context",
+                            check=lambda r: r != 0)
 
                 if signer is not None:
-                    signer._ensure_valid_state()
-                    # A rejected signer is retained, not closed and leaked.
+                    # No in-flight guard around the hand-off: the consume
+                    # marks the signer CLOSED under its lock before calling
+                    # native, which is what stops a signer.close() on another
+                    # thread from freeing the handle mid-transfer. That mark
+                    # also makes the consume refuse to start while another
+                    # thread is borrowing the handle to sign with.
+                    #
+                    # Retain a rejected signer for later teardown.
                     self._signer_callback_cb = signer._callback_cb
+                    _check_handle_arg('builder', nb._handle)
                     signer._consume_no_replacement(
                         lambda h: _lib.c2pa_context_builder_set_signer(
                             nb._handle, h),
@@ -1813,6 +2404,8 @@ class Stream:
         self._closed = False
         self._initialized = False
         self._stream = None
+        # Serializes close() and __del__ against a concurrent double-free.
+        self._close_lock = threading.RLock()
 
         # Generate unique stream ID using object ID and counter
         stream_counter = next(Stream._stream_id_counter)
@@ -2034,22 +2627,27 @@ class Stream:
         try:
             if is_foreign_process(self):
                 return
-            # Only cleanup if not already closed and we have a valid stream
-            if hasattr(self, '_closed') and not self._closed:
-                stream = self._stream
-                if hasattr(self, '_stream') and stream:
-                    # Use internal cleanup to avoid calling close() which could
-                    # cause issues
-                    try:
-                        _lib.c2pa_release_stream(stream)
-                    except Exception:
-                        # Destructors shouldn't raise exceptions
-                        logger.error("Failed to release Stream")
-                        pass
-                    finally:
-                        self._stream = None
-                        self._closed = True
-                        self._initialized = False
+            lock = getattr(self, '_close_lock', None)
+            if lock is not None and not lock.acquire(blocking=False):
+                return
+            try:
+                # Only cleanup if not already closed and we have a valid stream
+                if hasattr(self, '_closed') and not self._closed:
+                    stream = self._stream
+                    if hasattr(self, '_stream') and stream:
+                        try:
+                            _lib.c2pa_release_stream(stream)
+                        except Exception:
+                            # Destructors shouldn't raise exceptions
+                            logger.error("Failed to release Stream")
+                            pass
+                        finally:
+                            self._stream = None
+                            self._closed = True
+                            self._initialized = False
+            finally:
+                if lock is not None:
+                    lock.release()
         except Exception:
             # Destructors must not raise exceptions
             pass
@@ -2062,45 +2660,52 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        if self._closed:
-            return
+        # Checked before the lock, as _live_op_lock() and __del__ do:
+        # a child inherits _close_lock in whatever state it had at fork(),
+        # and the thread holding it does not exist there to release it.
         if is_foreign_process(self):
             self._closed = True
             self._initialized = False
             return
 
-        try:
-            # Clean up stream first as it depends on callbacks
-            # Note: We don't close self._file_like_stream as we don't own it,
-            # the opener owns it.
-            stream = self._stream
-            if stream:
-                try:
-                    _lib.c2pa_release_stream(stream)
-                except Exception as e:
-                    logger.error(
-                        Stream._ERROR_MESSAGES['stream_error'].format(
-                            str(e)))
-                finally:
-                    self._stream = None
+        # Serializes against __del__ / a concurrent close().
+        with self._close_lock:
+            if self._closed:
+                return
 
-            # Clean up callbacks
-            for attr in ['_read_cb', '_seek_cb', '_write_cb', '_flush_cb']:
-                if hasattr(self, attr):
+            try:
+                # Clean up stream first as it depends on callbacks
+                # Note: We don't close self._file_like_stream as we don't
+                # own it, the opener owns it.
+                stream = self._stream
+                if stream:
                     try:
-                        setattr(self, attr, None)
+                        _lib.c2pa_release_stream(stream)
                     except Exception as e:
                         logger.error(
-                            Stream._ERROR_MESSAGES['callback_error'].format(
-                                attr, str(e)))
+                            Stream._ERROR_MESSAGES['stream_error'].format(
+                                str(e)))
+                    finally:
+                        self._stream = None
 
-        except Exception as e:
-            logger.error(
-                Stream._ERROR_MESSAGES['cleanup_error'].format(
-                    str(e)))
-        finally:
-            self._closed = True
-            self._initialized = False
+                # Clean up callbacks
+                for attr in [
+                        '_read_cb', '_seek_cb', '_write_cb', '_flush_cb']:
+                    if hasattr(self, attr):
+                        try:
+                            setattr(self, attr, None)
+                        except Exception as e:
+                            logger.error(
+                                Stream._ERROR_MESSAGES['callback_error']
+                                .format(attr, str(e)))
+
+            except Exception as e:
+                logger.error(
+                    Stream._ERROR_MESSAGES['cleanup_error'].format(
+                        str(e)))
+            finally:
+                self._closed = True
+                self._initialized = False
 
     def write_to_target(self, dest_stream):
         self._file_like_stream.seek(0)
@@ -2507,9 +3112,7 @@ class Reader(ManagedResource):
 
         else:
             # format_or_path is a format string, stream is a stream object
-            with Stream(stream) as stream_obj:
-                self._create_reader(
-                    format_bytes, stream_obj, manifest_data)
+            self._init_from_stream(stream, format_bytes, manifest_data)
 
     @staticmethod
     def _resolve_format_bytes(format_or_path, stream) -> Optional[bytes]:
@@ -2580,6 +3183,24 @@ class Reader(ManagedResource):
             raise C2paError.Io(
                 Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
+    def _init_from_stream(self, stream, format_bytes,
+                          manifest_data=None):
+        """Create a reader from a caller-supplied stream object.
+        The native reader reads through this stream as long as it's alive,
+        so the wrapper is stored on the instance and released by _release().
+
+        Args:
+            stream: A stream-like object owned by the caller
+            format_bytes: UTF-8 encoded format/MIME type
+            manifest_data: Optional manifest bytes
+        """
+        try:
+            self._own_stream = Stream(stream)
+            self._create_reader(format_bytes, self._own_stream, manifest_data)
+        except Exception:
+            self._close_streams()
+            raise
+
     def _init_from_context(self, context, format_or_path,
                            stream, manifest_data=None):
         """Initialize Reader from a Context object implementing
@@ -2605,20 +3226,27 @@ class Reader(ManagedResource):
             self._own_stream = Stream(stream)
 
         try:
-            # Adopt before the consuming call: _consume_and_swap needs an
-            # active resource, and cleanup then owns the pointer either way.
-            self._create_and_activate(
-                lambda: _lib.c2pa_reader_from_context(
-                    context.execution_context),
-                Reader._ERROR_MESSAGES['reader_error'])
+            # The Context is caller-supplied and may be shared, so its handle
+            # needs its own in-flight guard across the native call.
+            with _context_guard(context):
+                # Adopt before the consuming call: _consume_and_swap needs an
+                # active resource, and cleanup then owns the pointer either
+                # way.
+                self._create_and_activate(
+                    lambda: _lib.c2pa_reader_from_context(
+                        context.execution_context),
+                    Reader._ERROR_MESSAGES['reader_error'])
 
+            _check_cstr_arg('format', format_arg)
+            _check_handle_arg('stream', self._own_stream._stream)
             if manifest_data is not None:
+                _check_bytes_arg('manifest_data', manifest_data)
                 manifest_array = (
                     ctypes.c_ubyte *
                     len(manifest_data)).from_buffer_copy(manifest_data)
                 # Consume current reader,
                 # with manifest data and stream (C FFI pattern),
-                # to create a new one (switch out)
+                # to switch it out using _consume_and_swap.
                 self._consume_and_swap(
                     lambda handle: (
                         _lib.c2pa_reader_with_manifest_data_and_stream(
@@ -2649,6 +3277,13 @@ class Reader(ManagedResource):
         # Tracks a file we opened ourselves and must close later.
         self._backing_file = None
 
+        # Fragment streams handed to the native reader by with_fragment,
+        # which it keeps reading from for the rest of its lifecycle.
+        self._fragment_streams = []
+
+        # Serializes with_fragment against itself.
+        self._fragment_lock = threading.RLock()
+
         # Caches for manifest JSON string and parsed data.
         # These are invalidated when with_fragment() is called.
         self._manifest_json_str_cache = None
@@ -2672,6 +3307,12 @@ class Reader(ManagedResource):
                 logger.warning("Failed to close Reader backing file")
             finally:
                 self._backing_file = None
+        for fragment in getattr(self, '_fragment_streams', []):
+            try:
+                fragment.close()
+            except Exception:
+                logger.warning("Failed to close Reader fragment stream")
+        self._fragment_streams = []
 
     def _release(self):
         """Release Reader-specific resources (caches, stream, backing file).
@@ -2693,22 +3334,24 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the JSON
         """
-        if self._manifest_data_cache is None:
-            if self._manifest_json_str_cache is None:
-                self._manifest_json_str_cache = self.json()
+        # Locked so the cache fields can't be read and written
+        # across concurrent handle swaps.
+        with self._guarded_op():
+            if self._manifest_data_cache is None:
+                if self._manifest_json_str_cache is None:
+                    self._manifest_json_str_cache = self.json()
 
-            try:
-                self._manifest_data_cache = json.loads(
-                    self._manifest_json_str_cache
-                )
-            except json.JSONDecodeError:
-                # Reset cache to reattempt read, possibly
-                self._manifest_data_cache = None
-                self._manifest_json_str_cache = None
-                # Failed to parse manifest JSON
-                return None
+                try:
+                    self._manifest_data_cache = json.loads(
+                        self._manifest_json_str_cache
+                    )
+                except json.JSONDecodeError:
+                    # Next call should retry the read.
+                    self._manifest_data_cache = None
+                    self._manifest_json_str_cache = None
+                    return None
 
-        return self._manifest_data_cache
+            return self._manifest_data_cache
 
     def with_fragment(self, format: Optional[str], stream,
                       fragment_stream) -> "Reader":
@@ -2731,29 +3374,81 @@ class Reader(ManagedResource):
             C2paError: If there was an error processing the fragment.
                 On failure the native call may already have consumed the
                 underlying object, in which case this Reader is closed and
-                cannot be retried: create a new one instead of reusing this
-                instance.
+                cannot be retried: create a new one.
+            C2paError: If another thread is inside this method on the same
+                Reader, or another native call is in flight on it.
         """
-        self._ensure_valid_state()
-
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
-        with Stream(stream) as main_obj, Stream(fragment_stream) as frag_obj:
-            self._consume_and_swap(
-                lambda handle: _lib.c2pa_reader_with_fragment(
-                    handle,
-                    format_arg,
-                    main_obj._stream,
-                    frag_obj._stream,
-                ),
-                Reader._ERROR_MESSAGES['fragment_error'])
+        # A forked child cannot wait on a lock no surviving thread will
+        # release, so it reports the same error _live_op_lock() does.
+        if is_foreign_process(self):
+            raise C2paError(f"{type(self).__name__} is closed")
 
-        # Invalidate caches: processing a new BMFF fragment updates the native
-        # reader's state, which can change the manifest data it returns.
-        # The cached JSON string and parsed dict may now be stale, so clear
-        # them to force a fresh read from the native layer on next access.
-        self._manifest_json_str_cache = None
-        self._manifest_data_cache = None
+        # The native call and the ownership transfer are one unit.
+        # Reentrant so a thread already here can continue.
+        if not self._fragment_lock.acquire(blocking=False):
+            raise C2paError(
+                f"{type(self).__name__} is already processing a fragment "
+                f"on another thread")
+        try:
+            # The native reader keeps reading through both streams.
+            main_obj = Stream(stream)
+            frag_obj = None
+            try:
+                frag_obj = Stream(fragment_stream)
+                _check_cstr_arg('format', format_arg)
+                _check_handle_arg('stream', main_obj._stream)
+                _check_handle_arg('fragment', frag_obj._stream)
+                self._consume_and_swap(
+                    lambda handle: _lib.c2pa_reader_with_fragment(
+                        handle,
+                        format_arg,
+                        main_obj._stream,
+                        frag_obj._stream,
+                    ),
+                    Reader._ERROR_MESSAGES['fragment_error'])
+            except Exception:
+                main_obj.close()
+                if frag_obj is not None:
+                    frag_obj.close()
+                raise
+
+            with self._guarded_op(refuse_mut=False):
+                try:
+                    self._ensure_valid_state()
+                except Exception:
+                    main_obj.close()
+                    frag_obj.close()
+                    raise
+
+                # Replace the streams this reader owned, closing the previous
+                # ones (only the current fragment is retained).
+                previous = self._own_stream
+                previous_fragments = self._fragment_streams
+                self._own_stream = main_obj
+                self._fragment_streams = [frag_obj]
+                if previous is not None and previous is not main_obj:
+                    try:
+                        previous.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to close previous Reader stream")
+                for fragment in previous_fragments:
+                    if fragment is frag_obj:
+                        continue
+                    try:
+                        fragment.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to close Reader fragment stream")
+
+                # Cleared here because these describe the replaced handle,
+                # and a reader must never be served them.
+                self._manifest_json_str_cache = None
+                self._manifest_data_cache = None
+        finally:
+            self._fragment_lock.release()
 
         return self
 
@@ -2767,19 +3462,18 @@ class Reader(ManagedResource):
             C2paError: If there was an error getting the JSON
         """
 
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        # Return cached result if available
-        if self._manifest_json_str_cache is not None:
+            if self._manifest_json_str_cache is not None:
+                return self._manifest_json_str_cache
+
+            result = _lib.c2pa_reader_json(self._handle)
+            _check_ffi_operation_result(
+                result, "Error during manifest parsing in Reader")
+
+            self._manifest_json_str_cache = _convert_to_py_string(result)
             return self._manifest_json_str_cache
-
-        result = _lib.c2pa_reader_json(self._handle)
-        _check_ffi_operation_result(result,
-                                    "Error during manifest parsing in Reader")
-
-        # Cache the result and return it
-        self._manifest_json_str_cache = _convert_to_py_string(result)
-        return self._manifest_json_str_cache
 
     def detailed_json(self) -> str:
         """Get the detailed JSON representation of the C2PA manifest store.
@@ -2797,13 +3491,14 @@ class Reader(ManagedResource):
                       the Reader has been closed.
         """
 
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_detailed_json(self._handle)
-        _check_ffi_operation_result(
-            result, "Error during detailed manifest parsing in Reader")
+            result = _lib.c2pa_reader_detailed_json(self._handle)
+            _check_ffi_operation_result(
+                result, "Error during detailed manifest parsing in Reader")
 
-        return _convert_to_py_string(result)
+            return _convert_to_py_string(result)
 
     def crjson(self) -> str:
         """Get the manifest store as a crJSON string.
@@ -2819,12 +3514,13 @@ class Reader(ManagedResource):
                       call returns null.
         """
 
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_crjson(self._handle)
-        _check_ffi_operation_result(result, "Error parsing crJSON")
+            result = _lib.c2pa_reader_crjson(self._handle)
+            _check_ffi_operation_result(result, "Error parsing crJSON")
 
-        return _convert_to_py_string(result)
+            return _convert_to_py_string(result)
 
     def _get_manifest_field(self, extractor):
         """Extract a field from (cached) manifest data, or None if unavailable.
@@ -2940,10 +3636,9 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error writing the resource to stream
         """
-        self._ensure_valid_state()
-
+        _check_cstr_arg("uri", uri)
         uri_str = uri.encode('utf-8')
-        with Stream(stream) as stream_obj:
+        with self._exclusive_native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
                 self._handle, uri_str, stream_obj._stream)
 
@@ -2964,11 +3659,12 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error checking the embedded status
         """
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_is_embedded(self._handle)
+            result = _lib.c2pa_reader_is_embedded(self._handle)
 
-        return bool(result)
+            return bool(result)
 
     def get_remote_url(self) -> Optional[str]:
         """Get the remote URL of the manifest if it was obtained remotely.
@@ -2981,17 +3677,16 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the remote URL
         """
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_reader_remote_url(self._handle)
+            result = _lib.c2pa_reader_remote_url(self._handle)
 
-        if result is None:
-            # No remote URL set (manifest is embedded)
-            return None
+            if result is None:
+                # No remote URL set (manifest is embedded).
+                return None
 
-        # Convert the C string to Python string
-        url_str = _convert_to_py_string(result)
-        return url_str
+            return _convert_to_py_string(result)
 
 
 class Signer(ManagedResource):
@@ -3019,10 +3714,12 @@ class Signer(ManagedResource):
         Raises:
             C2paError: If there was an error creating the signer
         """
-        signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
+        with _native_section():
+            signer_ptr = _lib.c2pa_signer_from_info(ctypes.byref(signer_info))
 
-        _check_ffi_operation_result(
-            signer_ptr, "Failed to create signer from configured signer_info")
+            _check_ffi_operation_result(
+                signer_ptr,
+                "Failed to create signer from configured signer_info")
 
         try:
             return cls(signer_ptr)
@@ -3145,16 +3842,17 @@ class Signer(ManagedResource):
         callback_cb = SignerCallback(wrapped_callback)
 
         # Create the signer with the wrapped callback
-        signer_ptr = _lib.c2pa_signer_create(
-            None,
-            callback_cb,
-            alg,
-            certs_bytes,
-            tsa_url_bytes
-        )
+        with _native_section():
+            signer_ptr = _lib.c2pa_signer_create(
+                None,
+                callback_cb,
+                alg,
+                certs_bytes,
+                tsa_url_bytes
+            )
 
-        _check_ffi_operation_result(signer_ptr,
-                                    "Failed to create signer")
+            _check_ffi_operation_result(signer_ptr,
+                                        "Failed to create signer")
 
         try:
             # Create and return the signer instance with the callback
@@ -3209,16 +3907,17 @@ class Signer(ManagedResource):
         Raises:
             C2paError: If there was an error getting the size
         """
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_signer_reserve_size(self._handle)
+            result = _lib.c2pa_signer_reserve_size(self._handle)
 
-        _check_ffi_operation_result(
-            result,
-            "Failed to get reserve size",
-            check=lambda r: r < 0)
+            _check_ffi_operation_result(
+                result,
+                "Failed to get reserve size",
+                check=lambda r: r < 0)
 
-        return result
+            return result
 
 
 class Builder(ManagedResource):
@@ -3315,11 +4014,11 @@ class Builder(ManagedResource):
         stream_obj = Stream(stream)
 
         try:
-            handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
+            with _native_section():
+                handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
 
-            _check_ffi_operation_result(handle,
-                                        "Failed to create builder from archive"
-                                        )
+                _check_ffi_operation_result(
+                    handle, "Failed to create builder from archive")
 
             try:
                 # A builder from an archive here carries no context.
@@ -3388,12 +4087,18 @@ class Builder(ManagedResource):
         if not context.is_valid:
             raise C2paError("Context is not valid")
 
-        # Adopt before the consuming call: _consume_and_swap needs an
-        # active resource, and cleanup then owns the pointer either way.
-        self._create_and_activate(
-            lambda: _lib.c2pa_builder_from_context(context.execution_context),
-            Builder._ERROR_MESSAGES['builder_error'])
+        # The Context is caller-supplied and may be shared,
+        # so its handle needs its own in-flight guard across
+        # the native call, especially for state checks.
+        with _context_guard(context):
+            # Adopt before the consuming call.
+            self._create_and_activate(
+                lambda: _lib.c2pa_builder_from_context(
+                    context.execution_context),
+                Builder._ERROR_MESSAGES['builder_error'])
 
+        _check_cstr_arg('manifest_json', json_str)
+        # _consume_and_swap reserves the handle.
         self._consume_and_swap(
             lambda handle: _lib.c2pa_builder_with_definition(
                 handle, json_str),
@@ -3416,8 +4121,9 @@ class Builder(ManagedResource):
         into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
-        self._ensure_valid_state()
-        _lib.c2pa_builder_set_no_embed(self._handle)
+        with self._guarded_op():
+            self._ensure_valid_state()
+            _lib.c2pa_builder_set_no_embed(self._handle)
 
     def set_remote_url(self, remote_url: str):
         """Set the remote URL.
@@ -3431,15 +4137,17 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error setting the remote URL
         """
-        self._ensure_valid_state()
-
         url_bytes = _to_utf8_bytes(remote_url, "remote URL")
-        result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
 
-        _check_ffi_operation_result(
-            result,
-            Builder._ERROR_MESSAGES['url_error'],
-            check=lambda r: r != 0)
+        with self._guarded_op():
+            self._ensure_valid_state()
+
+            result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
+
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['url_error'],
+                check=lambda r: r != 0)
 
     def set_intent(
         self,
@@ -3467,18 +4175,19 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error setting the intent
         """
-        self._ensure_valid_state()
+        with self._guarded_op():
+            self._ensure_valid_state()
 
-        result = _lib.c2pa_builder_set_intent(
-            self._handle,
-            ctypes.c_uint(intent),
-            ctypes.c_uint(digital_source_type),
-        )
+            result = _lib.c2pa_builder_set_intent(
+                self._handle,
+                ctypes.c_uint(intent),
+                ctypes.c_uint(digital_source_type),
+            )
 
-        _check_ffi_operation_result(
-            result,
-            Builder._ERROR_MESSAGES['intent_error'],
-            check=lambda r: r != 0)
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['intent_error'],
+                check=lambda r: r != 0)
 
     def add_resource(self, uri: str, stream: Any):
         """Add a resource to the builder.
@@ -3491,10 +4200,8 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error adding the resource
         """
-        self._ensure_valid_state()
-
         uri_bytes = _to_utf8_bytes(uri, "resource URI")
-        with Stream(stream) as stream_obj:
+        with self._exclusive_native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_add_resource(
                 self._handle, uri_bytes, stream_obj._stream)
 
@@ -3555,7 +4262,7 @@ class Builder(ManagedResource):
         ingredient_str = _to_utf8_bytes(ingredient_json, "ingredient JSON")
         format_str = _to_utf8_bytes(format, "ingredient format")
 
-        with Stream(source) as source_stream:
+        with self._exclusive_native_call(), Stream(source) as source_stream:
             result = (
                 _lib.c2pa_builder_add_ingredient_from_stream(
                     self._handle,
@@ -3582,15 +4289,17 @@ class Builder(ManagedResource):
             C2paError: If there was an error adding the action
             C2paError.Encoding: If the action JSON contains invalid UTF-8 chars
         """
-        self._ensure_valid_state()
-
         action_str = _to_utf8_bytes(action_json, "action JSON")
-        result = _lib.c2pa_builder_add_action(self._handle, action_str)
 
-        _check_ffi_operation_result(
-            result,
-            Builder._ERROR_MESSAGES['action_error'],
-            check=lambda r: r != 0)
+        with self._guarded_op():
+            self._ensure_valid_state()
+
+            result = _lib.c2pa_builder_add_action(self._handle, action_str)
+
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['action_error'],
+                check=lambda r: r != 0)
 
     def to_archive(self, stream: Any) -> None:
         """Write an archive of the builder to a stream.
@@ -3602,9 +4311,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error writing the archive
         """
-        self._ensure_valid_state()
-
-        with Stream(stream) as stream_obj:
+        with self._exclusive_native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_to_archive(
                 self._handle, stream_obj._stream)
 
@@ -3629,7 +4336,7 @@ class Builder(ManagedResource):
 
         ingredient_id_str = _to_utf8_bytes(ingredient_id, "ingredient_id")
 
-        with Stream(stream) as stream_obj:
+        with self._exclusive_native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_write_ingredient_archive(
                 self._handle, ingredient_id_str, stream_obj._stream)
 
@@ -3649,9 +4356,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error reading the archive
         """
-        self._ensure_valid_state()
-
-        with Stream(stream) as stream_obj:
+        with self._exclusive_native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_builder_add_ingredient_from_archive(
                 self._handle, stream_obj._stream)
 
@@ -3676,11 +4381,13 @@ class Builder(ManagedResource):
             C2paError: If there was an error loading the archive. On failure
                 the native call may already have consumed the underlying
                 object, in which case this Builder is closed and cannot be
-                retried: create a new one instead of reusing this instance.
+                retried: create a new one.
+            C2paError: If another native call is in flight on this Builder.
         """
         self._ensure_valid_state()
 
         with Stream(stream) as stream_obj:
+            _check_handle_arg('stream', stream_obj._stream)
             self._consume_and_swap(
                 lambda handle: _lib.c2pa_builder_with_archive(
                     handle, stream_obj._stream),
@@ -3728,35 +4435,43 @@ class Builder(ManagedResource):
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
         try:
-            if signer is not None:
-                result = _lib.c2pa_builder_sign(
-                    self._handle,
-                    format_arg,
-                    source_stream._stream,
-                    dest_stream._stream,
-                    signer._handle,
-                    ctypes.byref(manifest_bytes_ptr)
-                )
-            else:
-                result = _lib.c2pa_builder_sign_context(
-                    self._handle,
-                    format_arg,
-                    source_stream._stream,
-                    dest_stream._stream,
-                    ctypes.byref(manifest_bytes_ptr),
-                )
-            # Sign borrows the Builder without taking ownership.
-            # Closing here ensures resources clean up,
-            # and single use/single sign done by a Builder.
-            self.close()
+            # Signing needs short guard sections (a Signer can be used in parallel).
+            with self._exclusive_native_call():
+                if signer is not None:
+                    with signer._native_call():
+                        result = _lib.c2pa_builder_sign(
+                            self._handle,
+                            format_arg,
+                            source_stream._stream,
+                            dest_stream._stream,
+                            signer._handle,
+                            ctypes.byref(manifest_bytes_ptr)
+                        )
+                else:
+                    # The Context pins the consumed signer's callback, which
+                    # native invokes during this call
+                    with _context_guard(self._context):
+                        result = _lib.c2pa_builder_sign_context(
+                            self._handle,
+                            format_arg,
+                            source_stream._stream,
+                            dest_stream._stream,
+                            ctypes.byref(manifest_bytes_ptr),
+                        )
         except Exception as e:
             self.close()
             raise C2paError(f"Error during signing: {e}") from e
 
-        _check_ffi_operation_result(
-            result,
-            "Error during signing",
-            check=lambda r: r < 0)
+        try:
+            # _native_call already closed, so close() can free.
+            with _native_section():
+                _check_ffi_operation_result(
+                    result,
+                    "Error during signing",
+                    check=lambda r: r < 0)
+        finally:
+            # Single use for a Builder, once signed, close.
+            self.close()
 
         # Capture the manifest bytes if available
         manifest_bytes = b""
@@ -3982,25 +4697,30 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     Raises:
         C2paError: If there was an error converting the manifest
     """
+    _check_cstr_arg("format", format)
     format_str = format.encode('utf-8')
     manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
         manifest_bytes
     )
     result_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
-    result = _lib.c2pa_format_embeddable(
-        format_str,
-        manifest_array,
-        len(manifest_bytes),
-        ctypes.byref(result_bytes_ptr)
-    )
+    with _native_section():
+        result = _lib.c2pa_format_embeddable(
+            format_str,
+            manifest_array,
+            len(manifest_bytes),
+            ctypes.byref(result_bytes_ptr)
+        )
 
-    _check_ffi_operation_result(
-        result,
-        "Failed to format embeddable manifest",
-        check=lambda r: r < 0)
+        _check_ffi_operation_result(
+            result,
+            "Failed to format embeddable manifest",
+            check=lambda r: r < 0)
 
     size = result
+    if not result_bytes_ptr:
+        raise C2paError(
+            "Failed to format embeddable manifest: no data returned")
     try:
         result_bytes = ctypes.string_at(result_bytes_ptr, size)
     except Exception as e:
@@ -4114,20 +4834,22 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
 
         # Encode private key to bytes
         try:
+            _check_cstr_arg("private_key", private_key)
             key_bytes = private_key.encode('utf-8')
         except UnicodeError as e:
             raise C2paError.Encoding(
                 f"Invalid UTF-8 characters in private key: {str(e)}")
 
         # Perform the signing operation
-        signature_ptr = _lib.c2pa_ed25519_sign(
-            data_array,
-            data_size,
-            key_bytes
-        )
+        with _native_section():
+            signature_ptr = _lib.c2pa_ed25519_sign(
+                data_array,
+                data_size,
+                key_bytes
+            )
 
-        _check_ffi_operation_result(signature_ptr,
-                                    "Failed to sign data with Ed25519")
+            _check_ffi_operation_result(signature_ptr,
+                                        "Failed to sign data with Ed25519")
 
         try:
             # Ed25519 signatures are always 64 bytes

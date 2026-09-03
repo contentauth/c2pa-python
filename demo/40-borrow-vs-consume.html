@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A consume that starts during a borrow</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="crumb"><a href="index.html">All problems</a> &nbsp;/&nbsp; 40</div>
+
+<h1>A consume that starts during a borrow</h1>
+<p class="standfirst">A borrowing call validates its pointer once. A consuming call on another thread then hands that same pointer to the library to be freed.</p>
+
+<div class="diagrams">
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag">background</span><span class="panel-claim">one builder, two threads, two kinds of call</span></div>
+<figure>
+<svg viewBox="0 0 620 262" role="img" aria-label="One builder referenced by two threads, one borrowing the handle and one consuming it, sharing a single native handle.">
+  <defs>
+    <marker id="shBuilder" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">a Python object has no owning thread &mdash; it belongs to whoever holds a reference</text>
+
+  <rect x="216" y="34" width="188" height="56" rx="5" fill="var(--card)" stroke="currentColor" stroke-width="1.4"/>
+  <text x="310" y="56" font-size="11.5" text-anchor="middle" fill="currentColor">one Builder</text>
+  <text x="310" y="72" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.65">one native handle inside it</text>
+
+  <text x="86" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread A</text>
+  <text x="534" y="126" font-size="11" text-anchor="middle" fill="currentColor">thread B</text>
+  <line x1="216" y1="72" x2="120" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shBuilder)"/>
+  <line x1="404" y1="72" x2="500" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#shBuilder)"/>
+  <text x="150" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+  <text x="470" y="86" font-size="9.5" text-anchor="middle" fill="currentColor" opacity="0.6">same reference</text>
+
+  <rect x="14" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="134" y="159" font-size="10" text-anchor="middle" fill="currentColor">to_archive() &mdash; borrows</text>
+  <rect x="366" y="138" width="240" height="34" rx="4" fill="currentColor" opacity="0.06"/>
+  <text x="486" y="159" font-size="10" text-anchor="middle" fill="currentColor">with_archive() &mdash; consumes</text>
+
+  <text x="14" y="200" font-size="10.5" fill="currentColor" opacity="0.7">nothing copies it, nothing hands it over: a closure, an attribute or an argument is enough</text>
+
+  <rect x="14" y="212" width="592" height="40" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="26" y="230" font-size="10" fill="var(--accent)">the GIL stops both threads running Python at the same instant &mdash; it does not stop them</text>
+  <text x="26" y="245" font-size="10" fill="var(--accent)">touching the same object, and it is given away entirely during a native call</text>
+</svg>
+<figcaption>Both calls act on the same native handle. Nothing in Python prevents the second from starting while the first is still running.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag before">before</span><span class="panel-claim">main: no entry guard, the consume proceeds</span></div>
+<figure>
+<svg viewBox="0 0 620 258" role="img" aria-label="On main, thread A borrows a handle and is still reading it when thread B's consuming call hands the same pointer to the library, which frees it during the call.">
+  <defs>
+    <marker id="b5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="b5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="80" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread A &mdash; borrows</text>
+  <text x="310" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">native</text>
+  <text x="540" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread B &mdash; consumes</text>
+  <line x1="80" y1="26" x2="80" y2="242" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <line x1="540" y1="26" x2="540" y2="242" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <rect x="196" y="26" width="228" height="216" rx="5" fill="currentColor" opacity="0.045"/>
+
+  <text x="80" y="48" font-size="11.5" text-anchor="middle" fill="currentColor">to_archive(out)</text>
+  <line x1="92" y1="66" x2="290" y2="66" stroke="currentColor" stroke-width="1.3" marker-end="url(#b5)"/>
+  <text x="190" y="60" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.7">pointer checked once</text>
+
+  <rect x="220" y="78" width="180" height="42" rx="4" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="310" y="97" font-size="10.5" text-anchor="middle" fill="currentColor">reading through it,</text>
+  <text x="310" y="111" font-size="10.5" text-anchor="middle" fill="currentColor">never re-checks</text>
+
+  <text x="540" y="104" font-size="11.5" text-anchor="middle" fill="var(--accent)">with_archive(data)</text>
+  <line x1="528" y1="122" x2="406" y2="140" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#b5r)"/>
+  <text x="466" y="118" font-size="10" text-anchor="middle" fill="var(--accent)">hands ownership over</text>
+
+  <rect x="220" y="148" width="180" height="40" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="310" y="165" font-size="10.5" text-anchor="middle" fill="var(--accent)">native frees the pointer</text>
+  <text x="310" y="179" font-size="10.5" text-anchor="middle" fill="var(--accent)">inside the call</text>
+
+  <line x1="290" y1="216" x2="92" y2="216" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#b5r)"/>
+  <text x="190" y="210" font-size="10" text-anchor="middle" fill="var(--accent)">A reads freed memory</text>
+</svg>
+<figcaption>The registry check that normally catches a freed pointer already passed, at the top of thread A's call.</figcaption>
+</figure>
+</div>
+
+<div class="panel">
+<div class="panel-label"><span class="panel-tag after">after</span><span class="panel-claim">the consume is refused while a borrow is in flight</span></div>
+<figure>
+<svg viewBox="0 0 620 258" role="img" aria-label="On the branch the consuming call checks the in-flight counter, is refused with an exception, and thread A's borrow completes untouched.">
+  <defs>
+    <marker id="g5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="g5g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+  </defs>
+  <text x="80" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread A &mdash; borrows</text>
+  <text x="310" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">native</text>
+  <text x="540" y="16" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">thread B &mdash; consumes</text>
+  <line x1="80" y1="26" x2="80" y2="242" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <line x1="540" y1="26" x2="540" y2="242" stroke="currentColor" stroke-width="1.1" opacity="0.28"/>
+  <rect x="196" y="26" width="228" height="216" rx="5" fill="currentColor" opacity="0.045"/>
+
+  <text x="80" y="48" font-size="11.5" text-anchor="middle" fill="currentColor">to_archive(out)</text>
+  <text x="80" y="63" font-size="10" text-anchor="middle" fill="var(--ok)">_inflight = 1</text>
+  <line x1="92" y1="80" x2="290" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#g5)"/>
+
+  <rect x="220" y="92" width="180" height="42" rx="4" fill="var(--card)" stroke="currentColor" stroke-width="1"/>
+  <text x="310" y="118" font-size="10.5" text-anchor="middle" fill="currentColor">reading, undisturbed</text>
+
+  <text x="540" y="112" font-size="11.5" text-anchor="middle" fill="currentColor">with_archive(data)</text>
+  <rect x="432" y="124" width="174" height="46" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
+  <text x="519" y="141" font-size="10" text-anchor="middle" fill="var(--ok)">_ensure_not_borrowed()</text>
+  <text x="519" y="156" font-size="10" text-anchor="middle" fill="var(--ok)">sees _inflight &gt; 0</text>
+  <text x="519" y="186" font-size="10.5" text-anchor="middle" fill="var(--ok)">C2paError raised</text>
+  <text x="519" y="200" font-size="10" text-anchor="middle" fill="var(--ok)">nothing crosses the boundary</text>
+
+  <line x1="290" y1="222" x2="92" y2="222" stroke="currentColor" stroke-width="1.3" marker-end="url(#g5)"/>
+  <text x="190" y="216" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.7">A completes normally</text>
+</svg>
+<figcaption>Refused rather than queued: waiting would mean waiting on caller-supplied callbacks of unbounded duration.</figcaption>
+</figure>
+</div>
+
+</div>
+
+<div class="footnote">
+<h2>Notes</h2>
+<p>Both threads reach the same object because both hold a reference to it; the GIL keeps them from running Python at the same instant but is handed away entirely during a native call &mdash; <a href="20-native-section.html">the GIL figure on page 20</a> shows what it does and does not cover.</p>
+<p><strong>Why deferring does not work here.</strong> A racing <code>close()</code> can be postponed because <em>Python</em> performs that free. A consuming call's free happens inside the library, during the call, as part of taking ownership. Python neither schedules it nor can postpone it.</p>
+<p>Two checks cover the two orderings. <code>_ensure_not_borrowed()</code> catches a borrow already running. Marking the object <code>CLOSED</code> before releasing the lock catches one arriving afterwards, because every borrowing call re-checks validity under that same lock.</p>
+<p>A separate counter tracks mutating calls, so two mutations cannot overlap and a read cannot run during one.</p>
+<div class="refs">
+c2pa.py:310-320 &nbsp;_ensure_not_borrowed &nbsp;&middot;&nbsp; c2pa.py:322-330 &nbsp;_ensure_no_mutating_call<br>
+c2pa.py:722-730 &nbsp;_begin_consume &mdash; check, then mark CLOSED under the lock<br>
+main:501-510 &nbsp;_consume_and_swap called straight through, no guard<br>
+tests &nbsp;test_consume_during_foreign_borrow_raises, test_unborrowed_consume_proceeds
+</div>
+</div>
+
+<div class="pagenav">
+  <a href="30-close-during-call.html">&larr; 30 &nbsp;Close during a call</a>
+  <a href="50-context-sign-callback.html">50 &nbsp;Signer callback &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>
