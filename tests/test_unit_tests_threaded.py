@@ -213,7 +213,7 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
 
         def hold_the_lock():
             held = (reader._fragment_lock if fragment_lock
-                    else reader._lock())
+                    else reader._guarded_op())
             with held:
                 holding.set()
                 release.wait(30)
@@ -245,8 +245,8 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         holder.start()
         self.assertTrue(holding.wait(self._TIMEOUT),
                         "helper thread never acquired _close_lock")
-        # Cleanups run last-registered-first, so this one runs after the two
-        # below have released the lock and joined the holder.
+        # Cleanups run last-registered-first, so this one runs after
+        # release.set and holder.join.
         self.addCleanup(self._reclaim_foreign_stream, stream)
         self.addCleanup(holder.join, self._TIMEOUT)
         self.addCleanup(release.set)
@@ -380,7 +380,7 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
 
 class TestReaderWithFragmentConcurrency(unittest.TestCase):
     """with_fragment's native call and its stream-ownership transfer
-    must must not interleave with another with_fragment on the same Reader.
+    must not interleave with another with_fragment on the same Reader.
     """
 
     def setUp(self):
@@ -431,7 +431,8 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
             entered_gap.wait(5),
             "with_fragment never reached the post-native-call gap")
 
-        # close() must win the race cleanly, not leave with_fragment hung, crashed, or silently successful.
+        # close() must win the race, and with_fragment must not hang,
+        # crash, or succeed without signalling.
         reader.close()
         release_gap.set()
         worker.join(5)
@@ -475,11 +476,11 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         # Populates the cache with the soon to be replaced handle.
         self.assertEqual(reader.json(), before)
 
-        real_lock = reader._lock
+        real_lock = reader._guarded_op
         at_gap = threading.Event()
         leave_gap = threading.Event()
         # _native_call takes this lock before the swap does,
-        # so park on the acquisition that actually performed the swap.
+        # so park on the acquisition that performed the swap.
         swapped = []
 
         class GatedLock:
@@ -501,7 +502,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
                 return result
 
         swapped.append(reader._own_stream)
-        reader._lock = lambda **kw: GatedLock(real_lock(**kw))
+        reader._guarded_op = lambda **kw: GatedLock(real_lock(**kw))
 
         served = {}
 
@@ -539,7 +540,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
                 "json() must not be served a manifest cached from the "
                 "handle with_fragment already replaced")
         finally:
-            reader._lock = real_lock
+            reader._guarded_op = real_lock
             reader.close()
 
     def test_manifest_accessors_stay_consistent_while_fragments_advance(self):
@@ -553,6 +554,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         stop = threading.Event()
         unexpected = []
         served = []
+        swaps = []
 
         def read_manifest():
             while not stop.is_set():
@@ -568,10 +570,12 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
             while not stop.is_set():
                 try:
                     self._advance(reader)
+                    swaps.append(None)
                 except Error:
                     pass
                 except BaseException as e:      # noqa: BLE001 - asserted below
                     unexpected.append(repr(e))
+                time.sleep(0.001)
 
         workers = ([threading.Thread(target=read_manifest, daemon=True)
                     for _ in range(3)]
@@ -590,6 +594,9 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
                 "a manifest accessor or fragment advance hung")
             self.assertEqual(unexpected, [])
             self.assertTrue(served, "no manifest was ever read")
+            self.assertGreater(
+                len(swaps), 1,
+                "fragments did not advance during the run")
             self.assertTrue(
                 set(served) <= valid,
                 "a manifest was served that matches neither the pre- nor the "
@@ -3515,7 +3522,7 @@ class TestWithFragmentReentrancy(unittest.TestCase):
             "the lock the running call holds")
         self.assertIsInstance(
             state["result"], Error,
-            "the re-entrant call must be refused, not silently interleaved")
+            "the re-entrant call must be refused, not interleaved")
 
     def test_same_thread_reentry_does_not_corrupt_the_reader(self):
         """_fragment_lock is reentrant, so a callback calling with_fragment
@@ -3661,7 +3668,7 @@ class TestConsumeReservationWindow(unittest.TestCase):
         def observer():
             if not reading.wait(10):
                 return
-            # The consuming call is mid-classification right now.
+            # The consuming call is mid-classification at this point.
             seen_valid.append(resource.is_valid)
             may_finish.set()
 
@@ -3806,6 +3813,251 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(set(counts.values()), {1},
                          "a dropped resource was freed more than once")
 
+    def test_cross_closing_inside_lock_regions_does_not_deadlock(self):
+        """Tests cocnurrent closes do not deadlock.
+        """
+        first = _ConcreteResource()
+        first._activate(0x40001)
+        second = _ConcreteResource()
+        second._activate(0x40002)
+
+        holding = threading.Barrier(2, timeout=5)
+        queued = threading.Barrier(2, timeout=5)
+        failures = []
+
+        def worker(mine, theirs):
+            try:
+                with mine._guarded_op():
+                    # Both locks required,
+                    holding.wait()
+                    theirs.close()
+                    # Teardowns queue.
+                    queued.wait()
+            except BaseException as error:
+                failures.append(error)
+
+        threads = [
+            threading.Thread(target=worker, args=(first, second), daemon=True),
+            threading.Thread(target=worker, args=(second, first), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "cross-closing workers")
+
+        self.assertEqual(failures, [], "workers raised: {}".format(failures))
+
+        counts = {handle: value
+                  for handle, value in self._free_counts().items()
+                  if handle in (0x40001, 0x40002)}
+        self.assertEqual(counts, {0x40001: 1, 0x40002: 1},
+                         "cross-closed handles were not each freed once")
+
+    def test_failed_locked_region_still_flushes_a_queued_teardown(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50001)
+
+        holding = threading.Event()
+        queued = threading.Event()
+
+        def holder():
+            try:
+                with resource._guarded_op():
+                    holding.set()
+                    queued.wait(self.JOIN_TIMEOUT)
+                    raise RuntimeError("locked region failed")
+            except RuntimeError:
+                pass
+
+        def closer():
+            holding.wait(self.JOIN_TIMEOUT)
+            resource.close()
+            queued.set()
+
+        threads = [
+            threading.Thread(target=holder, daemon=True),
+            threading.Thread(target=closer, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "failing locked region")
+
+        self.assertEqual(self._free_counts().get(0x50001), 1,
+                         "a teardown queued during the region was orphaned")
+
+    def test_close_racing_a_consumed_handle_does_not_free_it(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50002)
+
+        resource._inflight = 1
+        resource._teardown(free_handle=False)
+        self.assertIs(resource._pending_teardown, False,
+                      "the consume was not recorded")
+
+        resource._inflight = 0
+        resource.close()
+        self.assertIsNone(self._free_counts().get(0x50002),
+                          "a consumed handle was freed by a racing close")
+
+        resource._maybe_flush_pending()
+        self.assertIsNone(self._free_counts().get(0x50002),
+                          "a later flush freed a consumed handle")
+
+    def test_close_against_a_bare_lock_holder_is_not_orphaned(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50003)
+
+        holding = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with resource._live_op_lock():
+                holding.set()
+                release.wait(self.JOIN_TIMEOUT)
+            resource._release_handle()
+
+        def closer():
+            holding.wait(self.JOIN_TIMEOUT)
+            resource.close()
+            release.set()
+
+        threads = [
+            threading.Thread(target=holder, daemon=True),
+            threading.Thread(target=closer, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "bare lock holder")
+
+        self.assertEqual(self._free_counts().get(0x50003), 1,
+                         "a teardown queued against the lock was orphaned")
+
+    def test_close_queued_inside_a_flush_hold_is_not_orphaned(self):
+        resource = _ConcreteResource()
+        resource._activate(0x60001)
+
+        real_lock = resource._op_lock
+        closed = threading.Event()
+        join_timeout = self.JOIN_TIMEOUT
+
+        class GatedLock:
+            def acquire(self, blocking=True, timeout=-1):
+                if timeout == -1:
+                    return real_lock.acquire(blocking)
+                return real_lock.acquire(blocking, timeout)
+
+            def release(self):
+                return real_lock.release()
+
+            def __enter__(self):
+                real_lock.acquire()
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                if not closed.is_set():
+                    worker = threading.Thread(
+                        target=lambda: (resource.close(), closed.set()),
+                        daemon=True)
+                    worker.start()
+                    worker.join(join_timeout)
+                real_lock.release()
+                return False
+
+        resource._op_lock = GatedLock()
+        try:
+            resource._maybe_flush_pending()
+        finally:
+            resource._op_lock = real_lock
+
+        self.assertEqual(self._free_counts().get(0x60001), 1,
+                         "a teardown queued during a flush was orphaned")
+
+    def test_close_recording_after_a_flush_is_not_orphaned(self):
+        resource = _ConcreteResource()
+        resource._activate(0x70001)
+
+        real_lock = resource._op_lock
+        real_record = ManagedResource._record_pending_intent
+        reached_record = threading.Event()
+        flusher_done = threading.Event()
+        closer_done = threading.Event()
+        join_timeout = self.JOIN_TIMEOUT
+
+        def gated_record(target, free_handle):
+            if (target is resource
+                    and threading.current_thread().name == "delayed-closer"):
+                reached_record.set()
+                flusher_done.wait(join_timeout)
+            return real_record(target, free_handle)
+
+        class GatedLock:
+            def acquire(self, blocking=True, timeout=-1):
+                if timeout == -1:
+                    return real_lock.acquire(blocking)
+                return real_lock.acquire(blocking, timeout)
+
+            def release(self):
+                return real_lock.release()
+
+            def __enter__(self):
+                real_lock.acquire()
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                if not closer_done.is_set() and not reached_record.is_set():
+                    worker = threading.Thread(
+                        target=lambda: (resource.close(), closer_done.set()),
+                        name="delayed-closer",
+                        daemon=True)
+                    worker.start()
+                    reached_record.wait(join_timeout)
+                real_lock.release()
+                return False
+
+        ManagedResource._record_pending_intent = gated_record
+        resource._op_lock = GatedLock()
+        try:
+            resource._maybe_flush_pending()
+        finally:
+            resource._op_lock = real_lock
+            flusher_done.set()
+            closer_done.wait(join_timeout)
+            ManagedResource._record_pending_intent = real_record
+
+        self.assertEqual(self._free_counts().get(0x70001), 1,
+                         "a teardown recorded after a flush was orphaned")
+
+    def test_stream_finalizer_does_not_block_on_a_held_close_lock(self):
+        stream = Stream(io.BytesIO(self.image_bytes))
+        self.addCleanup(stream.close)
+
+        holding = threading.Event()
+        release = threading.Event()
+        returned = threading.Event()
+
+        def holder():
+            with stream._close_lock:
+                holding.set()
+                release.wait(self.JOIN_TIMEOUT)
+
+        def finalizer():
+            stream.__del__()
+            returned.set()
+
+        holder_thread = threading.Thread(target=holder, daemon=True)
+        holder_thread.start()
+        self.assertTrue(holding.wait(self.JOIN_TIMEOUT),
+                        "holder never took the close lock")
+
+        finalizer_thread = threading.Thread(target=finalizer, daemon=True)
+        finalizer_thread.start()
+        finalizer_thread.join(5)
+        blocked = not returned.is_set()
+
+        release.set()
+        self._join_all([holder_thread, finalizer_thread], "stream finalizer")
+        self.assertFalse(blocked,
+                         "__del__ waited for a close lock held elsewhere")
+
     def test_settings_relayed_across_threads_stays_usable(self):
         ManagedResource._free_native_ptr = self._real_free
 
@@ -3913,12 +4165,13 @@ class TestLocking(unittest.TestCase):
 
         class Dropped:
             def __del__(self):
-                # Runs on this thread, inside the locked region below.
-                with resource._lock():
+                # Runs on this thread, inside the locked region body()
+                # holds.
+                with resource._guarded_op():
                     observed.append(True)
 
         def body():
-            with resource._lock():
+            with resource._guarded_op():
                 dropped = Dropped()
                 del dropped
                 gc.collect()
@@ -4137,8 +4390,8 @@ class TestLocking(unittest.TestCase):
         data = self.image_bytes
         held = threading.local()
         violations = []
-        real_lock = ManagedResource._lock
-        real_state_lock = ManagedResource._state_lock
+        real_lock = ManagedResource._guarded_op
+        real_live_op_lock = ManagedResource._live_op_lock
 
         def make_tracking(real):
             def tracking(resource, **kw):
@@ -4165,8 +4418,8 @@ class TestLocking(unittest.TestCase):
                 return Tracked()
             return tracking
 
-        ManagedResource._lock = make_tracking(real_lock)
-        ManagedResource._state_lock = make_tracking(real_state_lock)
+        ManagedResource._guarded_op = make_tracking(real_lock)
+        ManagedResource._live_op_lock = make_tracking(real_live_op_lock)
         try:
             reader = Reader("image/jpeg", io.BytesIO(data))
             reader.json()
@@ -4175,8 +4428,8 @@ class TestLocking(unittest.TestCase):
             reader.get_remote_url()
             reader.close()
         finally:
-            ManagedResource._lock = real_lock
-            ManagedResource._state_lock = real_state_lock
+            ManagedResource._guarded_op = real_lock
+            ManagedResource._live_op_lock = real_live_op_lock
 
         self.assertEqual(violations, [],
                          "a thread held two operation locks at once")
@@ -4308,6 +4561,31 @@ class TestLocking(unittest.TestCase):
         self.assertIsNone(reader._pending_teardown)
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
 
+    def test_with_fragment_closes_main_stream_when_second_stream_fails(self):
+        """Streams in with_fragment on failure must not get into a broken state"""
+        opened = []
+        real_init = Stream.__init__
+
+        def tracking_init(wrapper, source):
+            if opened:
+                raise ValueError("fragment stream could not be built")
+            real_init(wrapper, source)
+            opened.append(wrapper)
+
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        self.addCleanup(reader.close)
+
+        with patch.object(Stream, '__init__', tracking_init):
+            with self.assertRaises(ValueError):
+                reader.with_fragment(
+                    "video/mp4",
+                    io.BytesIO(self.image_bytes),
+                    io.BytesIO(self.image_bytes))
+
+        self.assertEqual(len(opened), 1, "main stream was never built")
+        self.assertTrue(opened[0].closed,
+                        "main stream was left open for the collector")
+
     def test_cross_thread_close_during_callback_defers_free(self):
         """A close() from inside a stream callback must not free the handle
         the native call is still using."""
@@ -4341,8 +4619,8 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(reader._inflight, 0)
 
     def test_deferred_teardown_still_closes(self):
-        """After a deferred free the resource is closed and a later close()
-        is a no-op rather than a second free."""
+        """After a deferred free the resource is closed and a later
+        close() frees nothing."""
         freed = self._counted_free()
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
         uri = self._thumbnail_uri(reader)
@@ -4650,8 +4928,8 @@ class TestLocking(unittest.TestCase):
 
         The native free is already single (the handle is nulled after the
         first teardown), so a free-counting test cannot see this: it is
-        _release() -- the Python-side stream/cache cleanup a subclass
-        overrides -- that must not run twice. _teardown() has to be
+        What must not run twice is _release(), the Python-side
+        stream/cache cleanup a subclass overrides. _teardown() has to be
         idempotent under its own lock.
 
         Gate _teardown so the first close() pauses on entry, before taking
@@ -4954,7 +5232,7 @@ class TestLocking(unittest.TestCase):
                                      io.BytesIO(img), io.BytesIO())
                         builder.close()
                     except Exception:
-                        # A consumed signer may legitimately be rejected;
+                        # A consumed signer may be rejected;
                         # only a crash is a failure here.
                         pass
 
@@ -5041,7 +5319,7 @@ class TestLocking(unittest.TestCase):
                                      io.BytesIO())
                         builder.close()
                     except Exception:
-                        # A closed context may legitimately be rejected;
+                        # A closed context may be rejected;
                         # only a crash is a failure here.
                         entered.set()
 
@@ -5121,7 +5399,7 @@ class TestLocking(unittest.TestCase):
                 "the flush freed while a native section was still open")
             self.assertIsNotNone(
                 context._pending_teardown,
-                "the deferral was dropped instead of re-registered")
+                "the deferral was dropped")
 
             section.__exit__(None, None, None)
             self.assertEqual(
@@ -5170,7 +5448,7 @@ class TestLocking(unittest.TestCase):
 
         self.assertTrue(
             any("flush failed" in line for line in logs.output),
-            "the flush failure was swallowed instead of logged")
+            "the flush failure was not logged")
 
     def test_drain_errors_log(self):
         """Log flushing failures."""
@@ -5280,7 +5558,7 @@ class TestLocking(unittest.TestCase):
                                io.BytesIO(img), io.BytesIO())
                         b.close()
                     except Exception:
-                        # A closed signer may legitimately be rejected;
+                        # A closed signer may be rejected;
                         # only a crash is a failure here.
                         pass
 
@@ -5474,7 +5752,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
                     ctypes.cast(p, ctypes.c_void_p).value or 0)),
                     _real(p))[1])
 
-            real_state_lock = builder._state_lock
+            real_live_op_lock = builder._live_op_lock
             enters = [0]
             injected = []
 
@@ -5492,24 +5770,24 @@ class TestSwapConsumeExclusion(unittest.TestCase):
                     result = self._inner.__exit__(*exc)
                     if self._n == k and not injected:
                         injected.append(True)
-                        builder._state_lock = real_state_lock
+                        builder._live_op_lock = real_live_op_lock
                         closer = threading.Thread(target=builder.close)
                         closer.start()
                         closer.join(10)
-                        builder._state_lock = gated
+                        builder._live_op_lock = gated
                     return result
 
-            def gated(_lock=real_state_lock):
+            def gated(_lock=real_live_op_lock):
                 return LockProxy(_lock())
 
-            builder._state_lock = gated
+            builder._live_op_lock = gated
             try:
                 try:
                     builder.with_archive(archive)
                 except Error:
                     pass
             finally:
-                builder._state_lock = real_state_lock
+                builder._live_op_lock = real_live_op_lock
                 ManagedResource._free_native_ptr = real_free
 
             with self.subTest(injection_point=k):

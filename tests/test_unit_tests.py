@@ -8409,8 +8409,8 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             del bystander  # last reference dropped: __del__ fires right here
             return None  # the real call failed but set no error of its own
 
-        # A bare section, not victim._native_call(): the consume needs the
-        # error section, not a borrow on its own handle. _ensure_not_borrowed
+        # A bare section: the consume needs the error section, but not a
+        # borrow on its own handle. _ensure_not_borrowed
         # refuses a consume nested in a _native_call() on the same resource.
         with c2pa_module._native_section():
             with self.assertRaises(Error):
@@ -8451,7 +8451,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             call_cm.__exit__(None, None, None)
         # Both gates clear only once native_call's own exit drops inflight
-        # to 0 -- that is what should finally trigger the free.
+        # to 0, which is what should trigger the free.
         self.assertEqual(self.freed, [0xCAFE])
 
     def test_nested_native_sections_flush_only_at_outermost_close(self):
@@ -9100,7 +9100,7 @@ class TestManagedResourceObjects(TestContextAPIs):
             all(s.closed for s in superseded[:-1]),
             "a superseded fragment stream was dropped without being closed")
 
-        # The reader still works on the fragment it currently holds.
+        # The reader still works on the fragment it holds.
         self.assertTrue(reader.json())
 
     def test_with_archive_post_consume_failure_consumes_handle(self):
@@ -9212,9 +9212,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         message = str(caught.exception)
         self.assertTrue(
             self._is_pre_consume_rejection(message),
-            f"the native rejection wording changed and no longer matches "
-            f"_PRE_CONSUME_ERROR_TAGS; ownership will be misjudged: "
-            f"{message!r}")
+            f"rejection wording does not match _PRE_CONSUME_ERROR_TAGS, "
+            f"so ownership will be misjudged: {message!r}")
         reader.close()
 
     def test_stale_handle_is_actually_rejected_every_time(self):
@@ -9265,7 +9264,7 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         self.assertTrue(
             self._is_pre_consume_rejection(str(caught.exception)),
-            "the perf scenarios' bogus handle is no longer rejected, so "
+            "the perf bogus handle was not rejected, so "
             "with_fragment_pre_consume_rejection measures nothing")
         # Handle kept, so the reader still works and frees normally.
         self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
@@ -9278,7 +9277,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
 
-        # Set a recognizable error, so anything stale shows up below.
+        # Set a recognizable error, so anything stale is caught by the
+        # assertNotIn checks.
         c2pa_module._lib.c2pa_error_set_last(
             b"NotSupported: planted by the test")
 
@@ -9381,7 +9381,8 @@ class TestManagedResourceObjects(TestContextAPIs):
             c2pa_module._lib.c2pa_error = original
 
     def test_null_return_with_no_native_error_is_treated_as_consumed(self):
-        # A null with no error of its own used to be the case that broke:
+        # A null with no error of its own is the case that breaks without
+        # the marker:
         # the slot still held whatever an unrelated, earlier call on this same
         # (pooled) thread left behind, and a stale UntrackedPointer/
         # WrongPointerType tag would make this call believe it still owned a
@@ -9770,7 +9771,7 @@ class TestErrorPlumbing(unittest.TestCase):
 
     def test_pre_consume_tag_match_skips_the_one_wrapper(self):
         """A tag reaches the classifier behind at most one "Other: " wrapper.
-        The match is anchored after that wrapper, not a substring search..
+        The match is anchored after that wrapper, not a substring search.
         """
         classify = ManagedResource._is_pre_consume_rejection
 
@@ -9984,8 +9985,8 @@ class TestErrorPlumbing(unittest.TestCase):
 
         self.assertIsNone(
             c2pa_module._read_native_error(),
-            "the message left behind by the NULL branch stayed readable "
-            "and is now reportable by an unrelated later failure")
+            "the NULL branch left the message in the slot instead of "
+            "planting the marker")
 
     def test_a_failure_after_a_null_read_does_not_inherit_the_old_message(self):
         """The message surviving a NULL read must not become someone's error."""
@@ -10046,15 +10047,17 @@ class TestErrorPlumbing(unittest.TestCase):
                 f"caller text was read as a pointer rejection: {message!r}")
 
     def test_caller_text_quoting_a_tag_reaches_the_error_slot(self):
-        """The forged wording above is what the library really produces."""
+        """test_caller_text_quoting_a_tag_is_not_a_rejection forges this
+        wording; the library really produces it.
+        """
         c2pa_module._lib.c2pa_builder_from_json(
             b'{"claim_generator_info": "NullParameter: injected"}')
         message = c2pa_module._read_native_error()
 
         self.assertIn(
             "NullParameter:", message,
-            "caller text no longer reaches the error slot verbatim, so this "
-            "test no longer exercises the case it was written for")
+            "caller text did not reach the error slot verbatim: the "
+            "forged wording is stale")
         self.assertFalse(
             c2pa_module.ManagedResource._is_pre_consume_rejection(message),
             f"a caller-supplied string forged a pointer rejection: {message!r}")
@@ -10145,7 +10148,7 @@ class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
             c2pa_module._read_native_error(), "Signature: earlier task")
 
         # A later, unrelated failure that sets no error of its own must
-        # report its own fallback, not the message above.
+        # report its own fallback, not the planted Signature message.
         with self.assertRaises(Error) as ctx:
             c2pa_module._check_ffi_operation_result(
                 0, "later op failed: {}", check=lambda r: r == 0)
@@ -10288,7 +10291,7 @@ class TestConsumeOwnership(unittest.TestCase):
 
         An ArgumentError means the call never reached native, so the handle is
         untouched and must NOT be freed. Without this, a zero-free assertion
-        could pass simply because the counter never fires.
+        could pass because the counter never fires.
         """
         def bad_marshal(handle):
             raise ctypes.ArgumentError("marshalling failed")
@@ -10416,8 +10419,7 @@ class TestContextProviderContract(unittest.TestCase):
 
 
 class TestLockOrderStaticAnalysis(unittest.TestCase):
-    """Static analysis over the source, not runtime behavior:
-    no threads are spawned here.
+    """Static analysis over the source: no threads are spawned here.
     """
 
     def test_no_conflicting_lock_acquisition_order(self):
@@ -10464,13 +10466,19 @@ class TestLockOrderStaticAnalysis(unittest.TestCase):
                     and any(ctx.attr in attrs
                             for attrs in lock_attrs_by_class.values())):
                 return ctx.attr
-            # with self._lock(): returns _op_lock itself.
+            # with self._guarded_op(): returns _op_lock itself, and the
+            # accessors return the lock they are named for.
+            lock_by_method = {
+                "_guarded_op": "_op_lock",
+                "_live_op_lock": "_op_lock",
+                "_live_teardown_lock": "_teardown_lock",
+            }
             if (isinstance(ctx, ast.Call)
                     and isinstance(ctx.func, ast.Attribute)
-                    and ctx.func.attr == "_lock"
+                    and ctx.func.attr in lock_by_method
                     and isinstance(ctx.func.value, ast.Name)
                     and ctx.func.value.id == "self"):
-                return "_op_lock"
+                return lock_by_method[ctx.func.attr]
             return None
 
         def lock_name_for_acquire(node):

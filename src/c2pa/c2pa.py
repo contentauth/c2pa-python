@@ -270,10 +270,11 @@ class ManagedResource:
         self._inflight = 0
         self._mut_inflight = 0
         self._pending_teardown = None
+        self._teardown_lock = threading.Lock()
         self._released = False
         record_owner_pid(self)
 
-    def _state_lock(self):
+    def _live_op_lock(self):
         """Return this resource's operation lock, for mutual exclusion.
 
         Reentrant: a finalizer can run at any bytecode boundary, including
@@ -307,6 +308,25 @@ class ManagedResource:
                 pass
         return lock
 
+    def _live_teardown_lock(self):
+        """Lock to protect teardowns.
+
+        Held only for plain attribute updates, never across a native call or
+        an acquisition of the operation lock, so it can be taken either alone
+        or inside the operation lock without an ordering cycle.
+
+        Falls back to a fresh lock when the attribute is missing.
+        """
+        lock = getattr(self, '_teardown_lock', None)
+        if lock is None:
+            lock = threading.Lock()
+            try:
+                self._teardown_lock = lock
+                lock = self._teardown_lock
+            except Exception:
+                pass
+        return lock
+
     def _ensure_not_borrowed(self):
         """Raise if a native call is in flight on this handle.
 
@@ -330,35 +350,43 @@ class ManagedResource:
                 f"{type(self).__name__} is running a mutating operation")
 
     @contextlib.contextmanager
-    def _lock(self, *, refuse_mut=True):
+    def _guarded_op(self, *, refuse_mut=True):
         """Hold this resource's operation lock its duration,
         and mark this thread as inside a native-error section.
+
+        Note: Ordering is important and as the native section opens first
+        for the native call and closes last.
+
         Never hold this across a native call that drives stream callbacks.
         Those calls release the Global Interpreter Lock
         and re-enter caller-supplied code, which may call back into this API
         on another thread.
         """
-        with self._state_lock(), _native_section():
-            if refuse_mut:
-                self._ensure_no_mutating_call()
-            yield
+        with _native_section():
+            try:
+                with self._live_op_lock():
+                    if refuse_mut:
+                        self._ensure_no_mutating_call()
+                    yield
+            finally:
+                self._maybe_flush_pending()
 
     @contextlib.contextmanager
     def _native_call(self):
         """Hold the handle valid across a native call that runs
-        caller-supplied stream callbacks, so _state_lock() can't be held.
+        caller-supplied stream callbacks, so _live_op_lock() can't be held.
         Count the call as in-flight/in-progress.
         A free intent (teardown) is registered and the last caller frees.
         A free intent marks the resource as closed, preventing further use.
         """
-        with self._state_lock():
+        with self._live_op_lock():
             self._ensure_valid_state()
             self._inflight = getattr(self, '_inflight', 0) + 1
         try:
             with _native_section():
                 yield
         finally:
-            with self._state_lock():
+            with self._live_op_lock():
                 self._inflight -= 1
             self._maybe_flush_pending()
 
@@ -368,7 +396,7 @@ class ManagedResource:
         A free intent (teardown) is registered and the last caller frees.
         A free intent marks the resource as closed, preventing further use.
         """
-        with self._state_lock():
+        with self._live_op_lock():
             self._ensure_valid_state()
             self._ensure_no_mutating_call()
             self._mut_inflight = getattr(self, '_mut_inflight', 0) + 1
@@ -377,7 +405,7 @@ class ManagedResource:
             with _native_section():
                 yield
         finally:
-            with self._state_lock():
+            with self._live_op_lock():
                 self._mut_inflight -= 1
                 self._inflight -= 1
             self._maybe_flush_pending()
@@ -440,41 +468,78 @@ class ManagedResource:
         """Close the object: run _release, optionally free the handle, null it.
         free_handle=False (consumed) frees nothing, the new owner needs to free.
 
-        Holds the operation lock so the free cannot happen between another
-        thread's state check and its use of the handle in a native call.
-
-        Deferred (instead of run now) when either gate is blocking:
+        The frees run under an operation lock.
+        Deferred when any gate is blocking:
         - this resource's own handle is in flight in a native call
-        - this thread is inside a native-error section for some call,
-        that may access the native error slot.
+        - this thread is inside a native-error section for some call
+        - someone else holds the operation lock (free intent gets queued)
 
         The forked-child case is handled before the lock is taken, because
-        _lock() raises in a child: this path has to finish rather than report
-        an error, so it cannot rely on acquiring.
+        _live_op_lock() raises in a child: this path has to finish rather
+        than report an error, so it cannot rely on acquiring.
         """
         if is_foreign_process(self):
             self._handle = None
             self._lifecycle_state = LifecycleState.CLOSED
             return
 
-        with self._state_lock():
+        if getattr(self, '_released', False):
+            return
+        self._record_pending_intent(free_handle)
+
+        lock = self._live_op_lock()
+        if not lock.acquire(blocking=False):
+            self._close_lifecycle()
+            _register_for_section_flush(self)
+            return
+
+        try:
             if getattr(self, '_released', False):
                 # Checks released as it recorded possible free intents.
                 return
             if getattr(self, '_inflight', 0) > 0 or _in_native_section():
                 # Closes the resource so it can't be used anymore.
                 # Records also pending actual frees.
-                if self._pending_teardown is None:
-                    self._pending_teardown = free_handle
-                else:
-                    self._pending_teardown = (
-                        self._pending_teardown and free_handle)
-                self._lifecycle_state = LifecycleState.CLOSED
+                self._close_lifecycle()
                 if _in_native_section():
                     _register_for_section_flush(self)
                 return
 
+            with self._live_teardown_lock():
+                pending = getattr(self, '_pending_teardown', None)
+                if pending is not None:
+                    free_handle = pending and free_handle
+                    self._pending_teardown = None
             self._finish_teardown(free_handle)
+        finally:
+            lock.release()
+
+    def _record_pending_intent(self, free_handle: bool):
+        """Queue a teardown intent, leaving the resource usable until
+        the intent runs.
+        A queued consume wins over a free, since native already owns a
+        consumed handle: freeing it again corrupts memory, where a missed
+        free only leaks.
+        """
+        with self._live_teardown_lock():
+            pending = getattr(self, '_pending_teardown', None)
+            if pending is None:
+                self._pending_teardown = free_handle
+            else:
+                self._pending_teardown = pending and free_handle
+
+    def _close_lifecycle(self):
+        """Close the resource so it can no longer be used."""
+        with self._live_teardown_lock():
+            self._lifecycle_state = LifecycleState.CLOSED
+
+    def _record_pending_teardown(self, free_handle: bool):
+        """Record a teardown intent and queue it.
+        Also closes the resource, and a queued consume wins
+        over a (new) teardown request.
+        """
+        self._record_pending_intent(free_handle)
+        self._close_lifecycle()
 
     def _finish_teardown(self, free_handle: bool):
         """Once teardown can run, runs the actual release.
@@ -501,26 +566,38 @@ class ManagedResource:
                 logger.error("Failed to free native %s resources",
                              type(self).__name__, exc_info=True)
 
-    def _maybe_flush_pending(self):
-        """Called when a gate that may have been blocking a deferred
-        teardown clears (this resource's own _inflight dropping to 0, or
-        this thread's native-error section closing).
-        """
-        if is_foreign_process(self):
-            return
+    def _has_pending_teardown(self) -> bool:
+        """Check if a teardown request is waiting for the resource."""
+        return getattr(self, '_pending_teardown', None) is not None
 
-        with self._state_lock():
-            if self._pending_teardown is None:
+    def _flush_pending_pass(self):
+        """Attempt to run pending teardowns.
+        """
+
+        with self._live_op_lock():
+            if getattr(self, '_pending_teardown', None) is None:
                 return
             if getattr(self, '_inflight', 0) > 0:
                 return
             if _in_native_section():
-                # An enclosing section is still open; re-register, since
-                # the deferral is the only path left to this free.
                 _register_for_section_flush(self)
                 return
-            free_handle, self._pending_teardown = self._pending_teardown, None
+            with self._live_teardown_lock():
+                free_handle = self._pending_teardown
+                self._pending_teardown = None
             self._finish_teardown(free_handle)
+
+    def _maybe_flush_pending(self):
+        """Recheck if a teardown can run after something
+        that blocked it cleared.
+        """
+        if is_foreign_process(self):
+            return
+
+        self._flush_pending_pass()
+        if self._has_pending_teardown() and not getattr(
+                self, '_released', False):
+            self._flush_pending_pass()
 
     def _release_handle(self):
         """Free this handle and close the object, unless a queued teardown
@@ -529,13 +606,17 @@ class ManagedResource:
         Nulling the handle under a queued teardown would leave it nothing
         to free.
         """
-        with self._state_lock():
-            if self._pending_teardown is not None:
-                return
-            if self._lifecycle_state != LifecycleState.ACTIVE:
+        with self._live_op_lock():
+            owned_elsewhere = getattr(
+                self, '_pending_teardown', None) is not None
+            if not owned_elsewhere and (
+                    self._lifecycle_state != LifecycleState.ACTIVE):
                 self._handle = None
                 self._lifecycle_state = LifecycleState.CLOSED
-                return
+                owned_elsewhere = True
+        if owned_elsewhere:
+            self._maybe_flush_pending()
+            return
         self._teardown(free_handle=True)
 
     def _activate(self, handle):
@@ -575,7 +656,7 @@ class ManagedResource:
         """
         ptr = None
         try:
-            with self._lock():
+            with _native_section():
                 ptr = ffi_call()
                 _check_ffi_operation_result(ptr, error_message, check=check)
             self._activate(ptr)
@@ -601,7 +682,7 @@ class ManagedResource:
         """True when native rejected the handle before taking ownership.
 
         Anchored, not a substring search: native quotes caller text verbatim,
-        so a tag mid-message describes the caller's input, not ownership.
+        so a tag mid-message describes the caller's input.
         """
         body = error
         if body.startswith(ManagedResource._NATIVE_ERROR_WRAPPER):
@@ -719,7 +800,7 @@ class ManagedResource:
         Raises:
             C2paError: Unusable resource or native call in progress.
         """
-        with self._state_lock():
+        with self._live_op_lock():
             # A consumed or closed resource has no handle left to hand over;
             # without this the call would pass a null pointer to native.
             self._ensure_valid_state()
@@ -739,7 +820,7 @@ class ManagedResource:
         A deferred free still happens when the section drains, so a resource
         with a queued teardown stays closed.
         """
-        with self._state_lock():
+        with self._live_op_lock():
             if self._pending_teardown is not None:
                 return
             if self._lifecycle_state == LifecycleState.CLOSED and self._handle:
@@ -757,7 +838,7 @@ class ManagedResource:
                 new_ptr = self._invoke_consume(
                     ffi_call, error_message, reserved=True)
                 if new_ptr:
-                    with self._state_lock():
+                    with self._live_op_lock():
                         self._handle = new_ptr
                         if self._pending_teardown is None:
                             self._lifecycle_state = previous_state
@@ -768,7 +849,7 @@ class ManagedResource:
             raise
         finally:
             # Decrement to handle parallel potential in-flight consumers.
-            with self._state_lock():
+            with self._live_op_lock():
                 self._inflight -= 1
             self._maybe_flush_pending()
 
@@ -797,8 +878,9 @@ class ManagedResource:
             self._abort_consume(previous_state)
             raise
         finally:
-            # Ordering is important, matches _consume_and_swap
-            with self._state_lock():
+            # Same order as _consume_and_swap: drop _inflight under the
+            # lock, then flush.
+            with self._live_op_lock():
                 self._inflight -= 1
             self._maybe_flush_pending()
 
@@ -2049,7 +2131,7 @@ class Settings(ManagedResource):
         path_bytes = _to_utf8_bytes(path, "settings path")
         value_bytes = _to_utf8_bytes(value, "settings value")
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             _check_ffi_operation_result(
@@ -2075,7 +2157,7 @@ class Settings(ManagedResource):
         """
         data_bytes = _to_utf8_bytes(data, "settings data")
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             _check_ffi_operation_result(
@@ -2193,7 +2275,7 @@ class Context(ManagedResource, ContextProvider):
             with self._NativeBuilder() as nb:
                 if settings is not None:
                     # Count in-progress reads.
-                    with nb._lock(), settings._native_call():
+                    with nb._guarded_op(), settings._native_call():
                         _check_ffi_operation_result(
                             _lib.c2pa_context_builder_set_settings(
                                 nb._handle, settings._c_settings),
@@ -2546,7 +2628,9 @@ class Stream:
             if is_foreign_process(self):
                 return
             lock = getattr(self, '_close_lock', None)
-            with lock if lock is not None else contextlib.nullcontext():
+            if lock is not None and not lock.acquire(blocking=False):
+                return
+            try:
                 # Only cleanup if not already closed and we have a valid stream
                 if hasattr(self, '_closed') and not self._closed:
                     stream = self._stream
@@ -2561,6 +2645,9 @@ class Stream:
                             self._stream = None
                             self._closed = True
                             self._initialized = False
+            finally:
+                if lock is not None:
+                    lock.release()
         except Exception:
             # Destructors must not raise exceptions
             pass
@@ -2573,7 +2660,7 @@ class Stream:
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
         """
-        # Checked before the lock, as _lock() and __del__ do:
+        # Checked before the lock, as _live_op_lock() and __del__ do:
         # a child inherits _close_lock in whatever state it had at fork(),
         # and the thread holding it does not exist there to release it.
         if is_foreign_process(self):
@@ -3249,7 +3336,7 @@ class Reader(ManagedResource):
         """
         # Locked so the cache fields can't be read and written
         # across concurrent handle swaps.
-        with self._lock():
+        with self._guarded_op():
             if self._manifest_data_cache is None:
                 if self._manifest_json_str_cache is None:
                     self._manifest_json_str_cache = self.json()
@@ -3287,15 +3374,14 @@ class Reader(ManagedResource):
             C2paError: If there was an error processing the fragment.
                 On failure the native call may already have consumed the
                 underlying object, in which case this Reader is closed and
-                cannot be retried: create a new one instead of reusing this
-                instance.
+                cannot be retried: create a new one.
             C2paError: If another thread is inside this method on the same
                 Reader, or another native call is in flight on it.
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
         # A forked child cannot wait on a lock no surviving thread will
-        # release, so it reports the same error _lock() does.
+        # release, so it reports the same error _live_op_lock() does.
         if is_foreign_process(self):
             raise C2paError(f"{type(self).__name__} is closed")
 
@@ -3308,8 +3394,9 @@ class Reader(ManagedResource):
         try:
             # The native reader keeps reading through both streams.
             main_obj = Stream(stream)
-            frag_obj = Stream(fragment_stream)
+            frag_obj = None
             try:
+                frag_obj = Stream(fragment_stream)
                 _check_cstr_arg('format', format_arg)
                 _check_handle_arg('stream', main_obj._stream)
                 _check_handle_arg('fragment', frag_obj._stream)
@@ -3323,10 +3410,11 @@ class Reader(ManagedResource):
                     Reader._ERROR_MESSAGES['fragment_error'])
             except Exception:
                 main_obj.close()
-                frag_obj.close()
+                if frag_obj is not None:
+                    frag_obj.close()
                 raise
 
-            with self._lock(refuse_mut=False):
+            with self._guarded_op(refuse_mut=False):
                 try:
                     self._ensure_valid_state()
                 except Exception:
@@ -3374,7 +3462,7 @@ class Reader(ManagedResource):
             C2paError: If there was an error getting the JSON
         """
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             if self._manifest_json_str_cache is not None:
@@ -3403,7 +3491,7 @@ class Reader(ManagedResource):
                       the Reader has been closed.
         """
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_reader_detailed_json(self._handle)
@@ -3426,7 +3514,7 @@ class Reader(ManagedResource):
                       call returns null.
         """
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_reader_crjson(self._handle)
@@ -3571,7 +3659,7 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error checking the embedded status
         """
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_reader_is_embedded(self._handle)
@@ -3589,7 +3677,7 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the remote URL
         """
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_reader_remote_url(self._handle)
@@ -3819,7 +3907,7 @@ class Signer(ManagedResource):
         Raises:
             C2paError: If there was an error getting the size
         """
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_signer_reserve_size(self._handle)
@@ -4033,7 +4121,7 @@ class Builder(ManagedResource):
         into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
             _lib.c2pa_builder_set_no_embed(self._handle)
 
@@ -4051,7 +4139,7 @@ class Builder(ManagedResource):
         """
         url_bytes = _to_utf8_bytes(remote_url, "remote URL")
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
@@ -4087,7 +4175,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error setting the intent
         """
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_builder_set_intent(
@@ -4203,7 +4291,7 @@ class Builder(ManagedResource):
         """
         action_str = _to_utf8_bytes(action_json, "action JSON")
 
-        with self._lock():
+        with self._guarded_op():
             self._ensure_valid_state()
 
             result = _lib.c2pa_builder_add_action(self._handle, action_str)
@@ -4293,7 +4381,7 @@ class Builder(ManagedResource):
             C2paError: If there was an error loading the archive. On failure
                 the native call may already have consumed the underlying
                 object, in which case this Builder is closed and cannot be
-                retried: create a new one instead of reusing this instance.
+                retried: create a new one.
             C2paError: If another native call is in flight on this Builder.
         """
         self._ensure_valid_state()
