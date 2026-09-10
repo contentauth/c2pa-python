@@ -1,2 +1,2 @@
-# only used in the training example
-cryptography>=47.0.0
+# Runtime has no pure-Python pip dependencies (crypto lives in the native lib).
+# `cryptography` is a test-only extra: see pyproject.toml / requirements-dev.txt.
