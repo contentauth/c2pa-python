@@ -1,2 +1,1 @@
-# Runtime has no pure-Python pip dependencies (crypto lives in the native lib).
-# `cryptography` is a test-only extra: see pyproject.toml / requirements-dev.txt.
+# cryptography moved to requirements-dev.txt (used by tests/examples only).

@@ -26,13 +26,6 @@ dependencies = [
     "requests>=2.0.0"
 ]
 
-# `cryptography` is only used by the tests/examples (callback signers), not by
-# the runtime bindings, so it is a test-only extra rather than an install dep.
-[project.optional-dependencies]
-test = [
-    "cryptography>=41.0.0"
-]
-
 [project.scripts]
 download-artifacts = "c2pa.build:download_artifacts"
 

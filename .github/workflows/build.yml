@@ -272,8 +272,8 @@ jobs:
       - name: Install wheel for testing
         run: |
           source venv/bin/activate
-          # `[test]` extra pulls cryptography for the callback-signer tests.
-          pip install "$(ls dist/c2pa_python-*.whl)[test]"
+          pip install "$(ls dist/c2pa_python-*.whl)"
+          pip install -r requirements-dev.txt
 
       - name: Run unittest tests on installed wheel
         run: |
@@ -373,8 +373,8 @@ jobs:
           .\venv\Scripts\activate
           $wheel = Get-ChildItem -Path dist -Filter "c2pa_python-*.whl" | Select-Object -First 1
           if (-not $wheel) { Write-Error "No wheel file found in dist directory"; exit 1 }
-          # `[test]` extra pulls cryptography for the callback-signer tests.
-          pip install "$($wheel.FullName)[test]"
+          pip install "$($wheel.FullName)"
+          pip install -r requirements-dev.txt
           pip install pytest
 
       - name: Run tests with pytest (venv)
@@ -454,8 +454,8 @@ jobs:
       - name: Install wheel for testing
         run: |
           source venv/bin/activate
-          # `[test]` extra pulls cryptography for the callback-signer tests.
-          pip install "$(ls dist/c2pa_python-*.whl)[test]"
+          pip install "$(ls dist/c2pa_python-*.whl)"
+          pip install -r requirements-dev.txt
 
       - name: Run unittest tests on installed wheel
         run: |
