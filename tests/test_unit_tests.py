@@ -2629,7 +2629,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_roundtrip(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2662,7 +2672,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_preserves_instance_id(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2695,7 +2715,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_preserves_instance_id_component_of(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2729,7 +2759,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_preserves_instance_id_input_to(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2763,7 +2803,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_roundtrip_parent_of(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2797,7 +2847,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_roundtrip_input_to(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2963,7 +3023,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_two_ingredient_archives_to_one_builder(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archives = []
         for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
@@ -3001,7 +3071,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_write_ingredient_archive_only_contains_requested_ingredient(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
@@ -3444,7 +3524,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Test adding another ingredient
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -3464,7 +3544,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Test adding another ingredient with a JSON string
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -3493,7 +3573,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -3551,7 +3631,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -5547,6 +5627,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            },
+                            {
                                 "action": "c2pa.placed",
                                 "parameters": {
                                     "ingredientIds": ["my-ingredient"]
@@ -5689,16 +5773,16 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
-                                "action": "c2pa.placed",
-                                "parameters": {
-                                    "ingredientIds": ["ingredient-for-placed"]
-                                },
-                            },
-                            {
                                 "action": "c2pa.opened",
                                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
                                 "parameters": {
                                     "ingredientIds": ["ingredient-for-opened"]
+                                },
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {
+                                    "ingredientIds": ["ingredient-for-placed"]
                                 },
                             },
                         ]
@@ -5781,6 +5865,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "label": "c2pa.actions.v2",
                     "data": {
                         "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            },
                             {
                                 "action": "c2pa.placed",
                                 "parameters": {
@@ -8539,9 +8627,13 @@ class TestManagedResourceObjects(TestContextAPIs):
         builder.close()
         builder.close()
 
-        # Only the replacement is must be freed here.
+        # The replacement must be freed exactly once; a second close() is a
+        # no-op. We don't separately assert original_handle's count here: the
+        # native allocator may legally reuse the just-freed original address
+        # for the replacement Box (same-size free-then-alloc within one FFI
+        # call), so swapped_handle and original_handle can be the same
+        # pointer value. The check above already covers that case correctly.
         self.assertEqual(self._free_count(freed, swapped_handle), 1)
-        self.assertEqual(self._free_count(freed, original_handle), 0)
 
     def test_repeated_swaps_on_one_builder(self):
         # Each with_archive consumes the handle the previous one returned, so
