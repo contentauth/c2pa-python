@@ -76,16 +76,25 @@ def load_test_settings_json():
 
 def parse_native_version():
     """
-    Parse the expected native SDK version from c2pa-native-version.txt.
+    Parse the expected native SDK version.
+
+    Prefers c2pa-rs-preflight-ref.txt when present: that's the same file
+    test-c2pa-rs-source-build.yml reads to decide which c2pa-rs ref to build
+    from for an RC preflight (see that workflow's header comment), so the
+    native library actually loaded during such a run was built from that
+    ref, not from c2pa-native-version.txt. Falls back to
+    c2pa-native-version.txt otherwise.
 
     Returns:
         str: The semantic version string (e.g. "0.85.2").
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    preflight_path = os.path.join(repo_root, 'c2pa-rs-preflight-ref.txt')
     version_path = os.path.join(repo_root, 'c2pa-native-version.txt')
-    with open(version_path, 'r') as f:
+    path = preflight_path if os.path.isfile(preflight_path) else version_path
+    with open(path, 'r') as f:
         raw = f.read().strip()
-    # Strip the "c2pa-v" prefix to get the bare semantic version.
+    # Strip the "c2pa-v" / "c2pa-rc-v" prefix to get the bare semantic version.
     return raw.split('v', 1)[1] if 'v' in raw else raw
 
 
