@@ -78,20 +78,22 @@ def parse_native_version():
     """
     Parse the expected native SDK version.
 
-    Prefers c2pa-rs-preflight-ref.txt when present: that's the same file
-    test-c2pa-rs-source-build.yml reads to decide which c2pa-rs ref to build
-    from for an RC preflight (see that workflow's header comment), so the
-    native library actually loaded during such a run was built from that
-    ref, not from c2pa-native-version.txt. Falls back to
-    c2pa-native-version.txt otherwise.
+    Reads c2pa-rs-preflight-ref.txt instead of c2pa-native-version.txt when
+    C2PA_PREFLIGHT_RUN is set: that flag is set only by
+    test-c2pa-rs-source-build.yml's own "Run tests" step, because the
+    presence of c2pa-rs-preflight-ref.txt in the checked-out tree isn't by
+    itself proof of anything -- an ordinary build.yml run on a branch that
+    happens to carry that file (e.g. this PR) still downloads and installs
+    the real pinned release, not the preflight ref.
 
     Returns:
         str: The semantic version string (e.g. "0.85.2").
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    preflight_path = os.path.join(repo_root, 'c2pa-rs-preflight-ref.txt')
-    version_path = os.path.join(repo_root, 'c2pa-native-version.txt')
-    path = preflight_path if os.path.isfile(preflight_path) else version_path
+    if os.environ.get('C2PA_PREFLIGHT_RUN'):
+        path = os.path.join(repo_root, 'c2pa-rs-preflight-ref.txt')
+    else:
+        path = os.path.join(repo_root, 'c2pa-native-version.txt')
     with open(path, 'r') as f:
         raw = f.read().strip()
     # Strip the "c2pa-v" / "c2pa-rc-v" prefix to get the bare semantic version.

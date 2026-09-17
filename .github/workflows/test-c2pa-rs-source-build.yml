@@ -121,6 +121,8 @@ jobs:
 
       - name: Run tests
         working-directory: c2pa-python
+        env:
+          C2PA_PREFLIGHT_RUN: "1"
         run: python ./tests/test_unit_tests.py
 
   tests-windows:
@@ -201,4 +203,6 @@ jobs:
 
       - name: Run tests
         working-directory: c2pa-python
+        env:
+          C2PA_PREFLIGHT_RUN: "1"
         run: python .\tests\test_unit_tests.py
