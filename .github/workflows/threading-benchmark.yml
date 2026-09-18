@@ -1,0 +1,59 @@
+name: Python SDK threading invariants
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: read
+
+jobs:
+  threading-benchmark:
+    name: Python SDK thread-safety invariants
+    runs-on: ubuntu-24.04-arm
+    # Backstop: the scenarios arm their own hang detector, but a guard that
+    # blocks the interpreter before that timer is armed would otherwise hold the
+    # runner for its full allowance.
+    timeout-minutes: 20
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'check-threading-benchmark') &&
+      (
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'OWNER'
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      # Shares the memray perf image: same native library and fixtures, and
+      # these scenarios need no memray.
+      - name: Build perf image
+        run: make perf-image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Runs before the suite so a harness that cannot see a crash, a hang or an
+      # exception fails the job instead of reporting green.
+      - name: Check the harness can detect failures
+        run: make threading-bench-self-test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run thread-safety invariants
+        run: make threading-bench
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The captured stderr holds the all-threads traceback, which is the
+      # diagnostic for a violated invariant or a blocked guard.
+      - name: Upload failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threading-invariant-logs
+          path: tests/perf/reports/*-threads.log
+          if-no-files-found: ignore
