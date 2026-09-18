@@ -752,6 +752,8 @@ ctx = Context()
 assert isinstance(ctx, ContextProvider)  # True
 ```
 
+A provider that does not derive from `ManagedResource` runs without in-flight teardown protection. `Reader` and `Builder` check `is_valid` before use, but nothing defers a teardown that arrives mid-construction, so closing such a provider on another thread while a `Reader` or `Builder` is being built from it can free the native context while that construction is still using it. The built-in `Context` carries that protection. Custom providers that share a context across threads should keep it alive for the duration of any construction that uses it.
+
 ## Migrating from load_settings
 
 The `load_settings()` function is deprecated. Replace it with `Settings` and `Context` APIs:

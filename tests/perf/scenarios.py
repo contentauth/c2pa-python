@@ -587,8 +587,8 @@ def scenario_reader_with_fragment_pre_consume_rejection(
             # Fail loudly: without these the scenario still runs when the
             # ownership logic regresses, and a rejection that stops being
             # recognised looks identical to a pass.
-            if not any(tag in str(e) for tag in
-                       c2pa_module.ManagedResource._PRE_CONSUME_ERROR_TAGS):
+            if not c2pa_module.ManagedResource._is_pre_consume_rejection(
+                    str(e)):
                 raise AssertionError(
                     f"expected a pre-consume rejection, got: {e}") from e
             if reader._handle is None:
@@ -1297,6 +1297,40 @@ def scenario_swap_chain_churn(iterations: int = 100) -> None:
     context.close()
 
 
+def scenario_deferred_teardown_flush_queue(iterations: int = 100) -> None:
+    """Close resources from inside an open native-error section, so their
+    teardowns defer onto one pending list and are drained together when the
+    section closes.
+
+    Two resources per iteration rather than one: a single-element queue cannot
+    show a resource stranded behind its predecessor.
+    """
+    signed_bytes = SIGNED_JPEG.read_bytes()
+    real_free = c2pa_module.ManagedResource._free_native_ptr
+    for _ in _iterate(iterations):
+        first = Reader("image/jpeg", io.BytesIO(signed_bytes))
+        second = Reader("image/jpeg", io.BytesIO(signed_bytes))
+
+        freed = []
+        c2pa_module.ManagedResource._free_native_ptr = staticmethod(
+            lambda ptr: (freed.append(ptr), real_free(ptr))[1])
+        try:
+            with c2pa_module._native_section():
+                first.close()
+                second.close()
+                # Fail loudly: a free here means the teardown was not deferred.
+                if freed:
+                    raise AssertionError(
+                        "teardown inside a section freed immediately "
+                        "instead of deferring")
+            if len(freed) != 2:
+                raise AssertionError(
+                    f"drain freed {len(freed)} of 2 deferred handles; "
+                    f"the rest leak")
+        finally:
+            c2pa_module.ManagedResource._free_native_ptr = real_free
+
+
 def scenario_fork_swap_cleanup(iterations: int = 100) -> None:
     """Fork safety benchmark scenario:
     the handle a Builder owns at fork time came from with_archive(), which
@@ -1403,6 +1437,7 @@ SCENARIOS = {
     "fork_contended_mutex_wrap": scenario_fork_contended_mutex_wrap,
     "fork_consumed_signer": scenario_fork_consumed_signer,
     "swap_chain_churn": scenario_swap_chain_churn,
+    "deferred_teardown_flush_queue": scenario_deferred_teardown_flush_queue,
 }
 
 
