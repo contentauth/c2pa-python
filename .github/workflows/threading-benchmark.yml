@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   threading-benchmark:
-    name: Python SDK thread-safety invariants
+    name: Python SDK threading tests
     runs-on: ubuntu-24.04-arm
     # Backstop: the scenarios arm their own hang detector, but a guard that
     # blocks the interpreter before that timer is armed would otherwise hold the

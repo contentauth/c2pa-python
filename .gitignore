@@ -127,5 +127,5 @@ src/c2pa/libs/
 tests/perf/reports/*.html
 tests/perf/reports/*.bin
 
-# Threading invariant failure logs
+# Threading failure logs
 tests/perf/reports/*.log
