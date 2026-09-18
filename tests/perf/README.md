@@ -321,8 +321,8 @@ signer trampoline.
 ### Injection is verified every round
 
 A scenario whose callback is never reached reports `NOT_PARKED` and fails. Without
-that check, a scenario that silently stopped forcing anything would keep passing
-while testing nothing. A `with_fragment` candidate hit exactly this during
+that check, a scenario that stopped forcing anything would keep passing while
+testing nothing. A `with_fragment` candidate hit exactly this during
 development: it returned `NO_URI` on both hardened and unhardened code, because an
 MP4 init segment has no thumbnail resource to stream. It was dropped rather than
 kept as an always-green test.
@@ -343,9 +343,9 @@ it works.
 
 `no_free_during_parked_call` is the most direct: it instruments
 `ManagedResource._free_native_ptr`, the single funnel every free passes through, and
-counts frees landing while a call is provably open. Unhardened code frees the in-use
-handle once per round, which is the use-after-free observed rather than inferred
-from a crash.
+starts counting once the callback confirms the call is still open. Unhardened code
+frees the in-use handle once per round, which is the use-after-free observed rather
+than inferred from a crash.
 
 `trampoline_held_during_sign` covers the worst failure mode. The freed object there
 is an ordinary refcounted Python object whose only reference is one attribute on the
@@ -467,8 +467,9 @@ in-process hang detector is armed.
 
 - The container re-downloads the native library at start-up. `entrypoint.sh`
   calls the GitHub API every run and gets `403 rate limit exceeded` after a few dozen
-  unauthenticated runs. Python then never starts and the container exits 1 with only
-  downloader output, which silently voids a whole batch. The Make targets forward
+  unauthenticated runs. Python then never starts, and the container exits 1 with only
+  downloader output, which gives no sign that a whole batch of results is void. The
+  Make targets forward
   `GITHUB_TOKEN` for this reason. For a long unauthenticated local loop, bypass the
   entrypoint with `docker run --entrypoint python ...`. The library is already in
   `src/c2pa/libs/`, so nothing needs to be downloaded.
@@ -477,7 +478,7 @@ in-process hang detector is armed.
 - The signing algorithm enum is `C2paSigningAlg`, not `SigningAlg`.
 - `Builder.sign()` is `sign(signer, format, source, dest=None)` or
   `sign(format, source, dest=None)`, and returns manifest bytes. Calling
-  `sign(fmt, source, out)` silently makes `out` the source and signs nothing, so
-  scenarios assert on the returned manifest length.
+  `sign(fmt, source, out)` binds `out` to `source` instead of `dest`, and signs
+  nothing while raising no error, so scenarios assert on the returned manifest length.
 - `Reader.with_fragment(format, stream, fragment_stream)` takes three arguments.
 - `_handle` is a ctypes pointer object, not an int. Use `repr()`, never `int()`.

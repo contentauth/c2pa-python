@@ -17,14 +17,14 @@ There is no baseline file. Each scenario asserts a fixed invariant of the
 binding, so there is nothing to drift against: the expected value is declared in
 the registry beside the scenario.
 
-The scenarios force a teardown to land inside an open native call and then check
-the guard state, rather than waiting for a use-after-free to fault. A fault only
-happens when the allocator has reused the freed page, so crash-based detection is
-probabilistic; a guard-state assertion is deterministic.
+The scenarios force a teardown to run while a native call is still open, and then
+check the guard state instead of waiting for a use-after-free to fault. A fault
+only happens when the allocator has reused the freed page, so crash-based detection
+is probabilistic; a guard-state assertion is deterministic.
 
 A scenario that cannot reach its injection point reports NOT_PARKED and fails,
-because a scenario that silently stops forcing anything would otherwise keep
-passing while testing nothing.
+because a scenario that stops forcing anything would otherwise keep passing
+while testing nothing.
 
 Usage:
     python -m tests.perf.run_thread_profile [--scenario NAME]
@@ -68,9 +68,9 @@ _CRASH_CODES = frozenset(
 # faulthandler prints this banner before dumping every thread on timeout.
 _HANG_MARKER = "Timeout ("
 
-# Status values. A crash and an ordinary exception are deliberately distinct:
-# an ImportError and a failed artifact download both surface as exit 1, and
-# reporting those as crashes would invent findings that do not exist.
+# Status values. A crash and an ordinary exception stay separate: an
+# ImportError and a failed artifact download both surface as exit 1, and
+# reporting either as a crash would invent a finding that does not exist.
 _PASS = "pass"
 _VIOLATED = "VIOLATED"
 _CRASHED = "CRASHED"

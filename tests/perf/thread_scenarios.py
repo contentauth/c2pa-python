@@ -20,8 +20,8 @@ holds that native call open with the GIL released. A teardown issued from anothe
 thread then lands mid-call by construction rather than by luck.
 
 Every scenario reports the outcome of each round as a counter dict, and reports
-NOT_PARKED when its callback never ran. A scenario whose injection silently stops
-working would otherwise keep passing while testing nothing.
+NOT_PARKED when its callback never ran. A scenario whose injection stops working
+would otherwise keep passing while testing nothing.
 """
 
 import io
@@ -179,8 +179,8 @@ class _ParkedResourceCall:
     """Runs resource_to_stream on a worker thread and parks inside its callback.
 
     Used as a context manager: the body runs while the native call is open. On
-    entry `parked` says whether the callback was actually reached; when it is
-    False the body must not assert anything.
+    entry `parked` says whether the callback was reached; when it is False the
+    body must not assert anything.
     """
 
     def __init__(self, reader: Reader, uri: str):
@@ -284,9 +284,10 @@ def scenario_trampoline_held_during_sign(rounds: int = 20) -> dict:
 def scenario_no_free_during_parked_call(rounds: int = 20) -> dict:
     """A handle must not be freed while a native call still holds it.
 
-    c2pa_free is reached through the single funnel ManagedResource._free_native_ptr,
-    so counting calls to it while a call is provably open measures the
-    use-after-free directly rather than waiting for it to fault.
+    c2pa_free is reached through the single funnel ManagedResource._free_native_ptr.
+    A round only counts once its callback has parked, which confirms the call is
+    still open, so counting frees from that point measures the use-after-free
+    directly rather than waiting for it to fault.
 
     freed=0: the teardown was deferred until the call returned.
     freed=1: the in-use handle was freed mid-call (pre-fix behaviour).
