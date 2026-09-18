@@ -9,7 +9,7 @@
 <body>
 <div class="wrap">
 
-<div class="crumb"><a href="index.html">All problems</a> &nbsp;/&nbsp; 50</div>
+<div class="crumb"><a href="index.html">Demo walkthrough</a> &nbsp;/&nbsp; 30</div>
 
 <h1>The signer callback freed mid-signature</h1>
 <p class="standfirst">What gets freed is a function pointer Python created, which the library calls through while signing.</p>
@@ -24,7 +24,7 @@
     <marker id="shContext" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
   </defs>
 
-  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">a Python object has no owning thread &mdash; it belongs to whoever holds a reference</text>
+  <text x="14" y="16" font-size="11" fill="currentColor" opacity="0.7">a Python object has no owning thread: it belongs to whoever holds a reference</text>
 
   <rect x="216" y="34" width="188" height="56" rx="5" fill="var(--card)" stroke="currentColor" stroke-width="1.4"/>
   <text x="310" y="56" font-size="11.5" text-anchor="middle" fill="currentColor">one Context</text>
@@ -45,7 +45,7 @@
   <text x="14" y="200" font-size="10.5" fill="currentColor" opacity="0.7">nothing copies it, nothing hands it over: a closure, an attribute or an argument is enough</text>
 
   <rect x="14" y="212" width="592" height="40" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
-  <text x="26" y="230" font-size="10" fill="var(--accent)">the GIL stops both threads running Python at the same instant &mdash; it does not stop them</text>
+  <text x="26" y="230" font-size="10" fill="var(--accent)">the GIL stops both threads running Python at the same instant, but it does not stop them</text>
   <text x="26" y="245" font-size="10" fill="var(--accent)">touching the same object, and it is given away entirely during a native call</text>
 </svg>
 <figcaption>The trampoline is kept alive by one attribute on the shared Context. Either thread can drop the last reference to it.</figcaption>
@@ -128,7 +128,7 @@
   <rect x="150" y="234" width="250" height="24" rx="4" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.2"/>
   <text x="275" y="250" font-size="10.5" text-anchor="middle" fill="var(--ok)">callback released here, by the last to leave</text>
 </svg>
-<figcaption>The same guard also refuses a sign that starts on an already-closed context, instead of signing without the signer.</figcaption>
+<figcaption>The same guard also refuses a sign that starts on an already-closed context. A sign without a signer never runs.</figcaption>
 </figure>
 </div>
 
@@ -136,21 +136,21 @@
 
 <div class="footnote">
 <h2>Notes</h2>
-<p>Both threads reach the same object because both hold a reference to it; the GIL keeps them from running Python at the same instant but is handed away entirely during a native call &mdash; <a href="20-native-section.html">the GIL figure on page 20</a> shows what it does and does not cover.</p>
+<p>Both threads reach the same object because both hold a reference to it. The GIL keeps them from running Python at the same instant but is handed away entirely during a native call: <a href="10-native-section.html">the GIL figure on page 10</a> shows what it does and does not cover.</p>
 <p><strong>What a trampoline is.</strong> To let native code call a Python function, <code>ctypes</code> builds a small object native can call like a C function. It is an ordinary Python object with ordinary reference counting, and nothing on the native side holds a reference to it. Keeping it alive as long as native might call it is the caller's job; here the <code>Context</code> holds that reference.</p>
-<p><strong>The quiet failure.</strong> If the callback is already gone when the sign begins, native signs <em>without calling it</em> and reports success. You get a file that looks signed and is not. The guard's validity check turns that into an exception.</p>
-<p>The guard is duck-typed, so a caller-supplied context implementing only the published contract still works &mdash; at the cost of no in-flight protection. A test exists to ensure the built-in <code>Context</code> never falls into that unprotected branch.</p>
+<p><strong>The failure with no error.</strong> If the callback is already gone when the sign begins, native signs <em>without calling it</em> and reports success. The output file looks signed; the signer never ran. The guard's validity check turns that into an exception.</p>
+<p>The guard is duck-typed, so a caller-supplied context implementing only the published contract still works, at the cost of no in-flight protection. A test exists to ensure the built-in <code>Context</code> never falls into that unprotected branch.</p>
 <div class="refs">
 c2pa.py:4362-4372 &nbsp;the guarded context-sign<br>
-c2pa.py:1945-1957 &nbsp;_context_guard &mdash; duck-typed on _native_call<br>
+c2pa.py:1945-1957 &nbsp;_context_guard: duck-typed on _native_call<br>
 main:1722-1724 &nbsp;_release dropped the callback unconditionally<br>
 tests &nbsp;test_context_sign_after_close_raises_rather_than_skipping_signer, test_built_in_context_still_gets_in_flight_protection
 </div>
 </div>
 
 <div class="pagenav">
-  <a href="40-borrow-vs-consume.html">&larr; 40 &nbsp;Borrow vs consume</a>
-  <a href="60-third-thread-gc.html">60 &nbsp;The third thread &rarr;</a>
+  <a href="20-close-during-call.html">&larr; 20 &nbsp;Closing something another thread is using</a>
+  <span></span>
 </div>
 
 </div>
