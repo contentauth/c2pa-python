@@ -2635,6 +2635,8 @@ class Stream:
                 if hasattr(self, '_closed') and not self._closed:
                     stream = self._stream
                     if hasattr(self, '_stream') and stream:
+                        self._closed = True
+                        self._initialized = False
                         try:
                             _lib.c2pa_release_stream(stream)
                         except Exception:
@@ -2643,8 +2645,6 @@ class Stream:
                             pass
                         finally:
                             self._stream = None
-                            self._closed = True
-                            self._initialized = False
             finally:
                 if lock is not None:
                     lock.release()
@@ -2679,6 +2679,8 @@ class Stream:
                 # own it, the opener owns it.
                 stream = self._stream
                 if stream:
+                    self._closed = True
+                    self._initialized = False
                     try:
                         _lib.c2pa_release_stream(stream)
                     except Exception as e:
