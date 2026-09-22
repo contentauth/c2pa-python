@@ -1,0 +1,208 @@
+name: Test against c2pa-rs built from source
+
+# Validates c2pa-python against a c2pa-rs git ref that has no published
+# release artifacts (e.g. a release candidate tag), by building the native
+# library from source instead of downloading a prebuilt one.
+#
+# This is the reusable tool for RC preflights: commit the target ref to
+# c2pa-rs-preflight-ref.txt on a PR branch. Its mere presence is what opts
+# the PR in, so this reruns automatically on every push to that PR -- same
+# as any other check -- instead of you having to remember to re-dispatch by
+# hand while iterating on fixes. Delete the file again once the PR is done
+# with the RC (or once c2pa-rs ships a real release and you bump
+# c2pa-native-version.txt through the normal process instead).
+#
+# Deliberately no workflow_dispatch trigger here: dispatching this workflow
+# against the default branch would run in a context with write access to
+# the default branch's Actions cache scope, while checking out and
+# executing an arbitrary, unvalidated c2pa-rs ref -- exactly the cache
+# poisoning pattern CodeQL's actions/cache-poisoning/poisonable-step query
+# looks for. A same-repo pull_request only ever gets write access to its
+# own branch's cache scope, so that path doesn't have the same exposure.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-ref:
+    name: Resolve c2pa-rs ref to test
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve ref
+        id: resolve
+        run: |
+          if [ -f c2pa-rs-preflight-ref.txt ]; then
+            ref="$(tr -d '\r\n' < c2pa-rs-preflight-ref.txt)"
+          else
+            ref=""
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          if [ -z "$ref" ]; then
+            echo "No c2pa-rs-preflight-ref.txt in this tree -- nothing to test, downstream jobs will skip."
+          else
+            echo "Testing against c2pa-rs ref: $ref"
+          fi
+
+  tests-unix:
+    name: Unit tests (Unix, ${{ matrix.os }})
+    needs: resolve-ref
+    if: |
+      needs.resolve-ref.outputs.ref != '' && (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.user.login == 'dependabot[bot]' ||
+        contains(github.event.pull_request.labels.*.name, 'safe to test')
+      )
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest, ubuntu-24.04-arm ]
+
+    steps:
+      - name: Checkout c2pa-python
+        uses: actions/checkout@v4
+        with:
+          path: c2pa-python
+
+      - name: Checkout c2pa-rs (${{ needs.resolve-ref.outputs.ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: contentauth/c2pa-rs
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+          path: c2pa-rs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          # No pip cache here: this job checks out and builds an arbitrary,
+          # not-necessarily-reviewed c2pa-rs ref, and CodeQL flags caching in
+          # that context as a cache-poisoning vector into the default branch.
+
+      - name: Install project dependencies
+        working-directory: c2pa-python
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Build native library from c2pa-rs source
+        working-directory: c2pa-python
+        env:
+          C2PA_RS_PATH: ${{ github.workspace }}/c2pa-rs
+          # Build for the runner's own arch rather than the universal2 macOS
+          # default: it's what a local `pip install -e .` picks up anyway,
+          # and skips the slow cross-compiled second-arch OpenSSL build.
+          C2PA_LIBS_PLATFORM: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || (matrix.os == 'ubuntu-24.04-arm' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu') }}
+        run: python scripts/build_local_artifacts.py --clean
+
+      - name: Install package in development mode
+        working-directory: c2pa-python
+        run: |
+          pip uninstall -y c2pa
+          pip install -e .
+
+      - name: Verify installation
+        working-directory: c2pa-python
+        run: python -c "from c2pa import C2paError; print('C2paError imported successfully')"
+
+      - name: Run tests
+        working-directory: c2pa-python
+        env:
+          C2PA_PREFLIGHT_RUN: "1"
+        run: python ./tests/test_unit_tests.py
+
+  tests-windows:
+    name: Unit tests (Windows, ${{ matrix.runs-on }})
+    needs: resolve-ref
+    if: |
+      needs.resolve-ref.outputs.ref != '' && (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.user.login == 'dependabot[bot]' ||
+        contains(github.event.pull_request.labels.*.name, 'safe to test')
+      )
+
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: windows-latest
+            python-version: "3.10"
+          - runs-on: windows-11-arm
+            python-version: "3.11"  # win-arm runner needs 3.11 at least
+
+    steps:
+      - name: Checkout c2pa-python
+        uses: actions/checkout@v4
+        with:
+          path: c2pa-python
+
+      - name: Checkout c2pa-rs (${{ needs.resolve-ref.outputs.ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: contentauth/c2pa-rs
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+          path: c2pa-rs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # No pip cache here: this job checks out and builds an arbitrary,
+          # not-necessarily-reviewed c2pa-rs ref, and CodeQL flags caching in
+          # that context as a cache-poisoning vector into the default branch.
+
+      - name: Install ARM64 OpenSSL via vcpkg (Windows ARM64)
+        if: matrix.runs-on == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          # Pre-installed OpenSSL on runner fails build.
+          # Static OpenSSL to avoid runtime DLL load complexities.
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:arm64-windows-static-md
+          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static-md"
+          echo "OPENSSL_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      - name: Install project dependencies
+        working-directory: c2pa-python
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Build native library from c2pa-rs source
+        working-directory: c2pa-python
+        env:
+          C2PA_RS_PATH: ${{ github.workspace }}\c2pa-rs
+        run: python scripts\build_local_artifacts.py --clean
+
+      - name: Install package in development mode
+        working-directory: c2pa-python
+        run: |
+          pip uninstall -y c2pa
+          pip install -e .
+
+      - name: Verify installation
+        working-directory: c2pa-python
+        run: python -c "from c2pa import C2paError; print('C2paError imported successfully')"
+
+      - name: Run tests
+        working-directory: c2pa-python
+        env:
+          C2PA_PREFLIGHT_RUN: "1"
+        run: python .\tests\test_unit_tests.py
