@@ -87,16 +87,27 @@ def load_test_settings_json():
 
 def parse_native_version():
     """
-    Parse the expected native SDK version from c2pa-native-version.txt.
+    Parse the expected native SDK version.
+
+    Reads c2pa-rs-preflight-ref.txt instead of c2pa-native-version.txt when
+    C2PA_PREFLIGHT_RUN is set: that flag is set only by
+    test-c2pa-rs-source-build.yml's own "Run tests" step, because the
+    presence of c2pa-rs-preflight-ref.txt in the checked-out tree isn't by
+    itself proof of anything -- an ordinary build.yml run on a branch that
+    happens to carry that file (e.g. this PR) still downloads and installs
+    the real pinned release, not the preflight ref.
 
     Returns:
         str: The semantic version string (e.g. "0.85.2").
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    version_path = os.path.join(repo_root, 'c2pa-native-version.txt')
-    with open(version_path, 'r') as f:
+    if os.environ.get('C2PA_PREFLIGHT_RUN'):
+        path = os.path.join(repo_root, 'c2pa-rs-preflight-ref.txt')
+    else:
+        path = os.path.join(repo_root, 'c2pa-native-version.txt')
+    with open(path, 'r') as f:
         raw = f.read().strip()
-    # Strip the "c2pa-v" prefix to get the bare semantic version.
+    # Strip the "c2pa-v" / "c2pa-rc-v" prefix to get the bare semantic version.
     return raw.split('v', 1)[1] if 'v' in raw else raw
 
 
@@ -2639,7 +2650,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_roundtrip(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2672,7 +2693,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_preserves_instance_id(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2705,7 +2736,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_preserves_instance_id_component_of(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2739,7 +2780,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_preserves_instance_id_input_to(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2773,7 +2824,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_roundtrip_parent_of(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2807,7 +2868,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_ingredient_from_archive_roundtrip_input_to(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         builder = Builder.from_json(manifest)
         ingredient_json = {
@@ -2973,7 +3044,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_add_two_ingredient_archives_to_one_builder(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archives = []
         for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
@@ -3011,7 +3092,17 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_write_ingredient_archive_only_contains_requested_ingredient(self):
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                        }]
+                    }
+                }
+            ],
         }
         archive_builder = Builder.from_json(manifest)
         for title, instance_id in [("A.jpg", "ingredient-A"), ("B.jpg", "ingredient-B")]:
@@ -3454,7 +3545,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Test adding another ingredient
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -3474,7 +3565,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         # Test adding another ingredient with a JSON string
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -3503,7 +3594,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -3561,7 +3652,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         ingredient_json = '{"test": "ingredient2"}'
         with open(self.testPath2, 'rb') as f:
-            builder.add_ingredient(ingredient_json, "image/png", f)
+            builder.add_ingredient(ingredient_json, "image/jpeg", f)
 
         builder.close()
 
@@ -5557,6 +5648,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            },
+                            {
                                 "action": "c2pa.placed",
                                 "parameters": {
                                     "ingredientIds": ["my-ingredient"]
@@ -5699,16 +5794,16 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "data": {
                         "actions": [
                             {
-                                "action": "c2pa.placed",
-                                "parameters": {
-                                    "ingredientIds": ["ingredient-for-placed"]
-                                },
-                            },
-                            {
                                 "action": "c2pa.opened",
                                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
                                 "parameters": {
                                     "ingredientIds": ["ingredient-for-opened"]
+                                },
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {
+                                    "ingredientIds": ["ingredient-for-placed"]
                                 },
                             },
                         ]
@@ -5791,6 +5886,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                     "label": "c2pa.actions.v2",
                     "data": {
                         "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            },
                             {
                                 "action": "c2pa.placed",
                                 "parameters": {
@@ -8728,9 +8827,13 @@ class TestManagedResourceObjects(TestContextAPIs):
         builder.close()
         builder.close()
 
-        # Only the replacement is must be freed here.
+        # The replacement must be freed exactly once; a second close() is a
+        # no-op. We don't separately assert original_handle's count here: the
+        # native allocator may legally reuse the just-freed original address
+        # for the replacement Box (same-size free-then-alloc within one FFI
+        # call), so swapped_handle and original_handle can be the same
+        # pointer value. The check above already covers that case correctly.
         self.assertEqual(self._free_count(freed, swapped_handle), 1)
-        self.assertEqual(self._free_count(freed, original_handle), 0)
 
     def test_repeated_swaps_on_one_builder(self):
         # Each with_archive consumes the handle the previous one returned, so
