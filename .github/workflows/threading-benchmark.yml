@@ -1,4 +1,4 @@
-name: Threading tests
+name: Python SDK threading checks
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   threading-benchmark:
-    name: Python threading tests
+    name: Python SDK threading checks
     runs-on: ubuntu-24.04-arm
     # Backstop: In case there is a hang.
     timeout-minutes: 20

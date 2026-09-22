@@ -241,7 +241,7 @@ def scenario_trampoline_held_during_sign(rounds: int = 20) -> dict:
     a sign that never invoked the signer can still report success.
 
     HELD: the in-flight guard kept the trampoline alive.
-    DROPPED: the only reference was dropped mid-call (pre-fix behaviour).
+    DROPPED: the only reference was dropped mid-call.
     """
     source = SOURCE_JPEG.read_bytes()
     manifest = {**MANIFEST_BASE, "format": "image/jpeg"}
@@ -290,7 +290,7 @@ def scenario_no_free_during_parked_call(rounds: int = 20) -> dict:
     directly rather than waiting for it to fault.
 
     freed=0: the teardown was deferred until the call returned.
-    freed=1: the in-use handle was freed mid-call (pre-fix behaviour).
+    freed=1: the in-use handle was freed mid-call.
     """
     signed = SIGNED_JPEG.read_bytes()
 
@@ -330,6 +330,69 @@ def scenario_no_free_during_parked_call(rounds: int = 20) -> dict:
     return _tally(rounds, one_round)
 
 
+def scenario_builder_no_free_during_parked_sign(rounds: int = 20) -> dict:
+    """The Builder handle must not be freed while c2pa_builder_sign_context
+    still holds it, parked inside the Context signer's callback.
+
+    freed=0: the teardown was deferred until sign returned.
+    freed=1: the in-use handle was freed mid-call.
+    """
+    source = SOURCE_JPEG.read_bytes()
+    manifest = {**MANIFEST_BASE, "format": "image/jpeg"}
+
+    def one_round():
+        inside = threading.Event()
+        release = threading.Event()
+        signer = _callback_signer(inside, release)
+        context = Context(signer=signer)
+        builder = Builder(manifest, context=context)
+
+        freed_while_open = []
+        watching = {"active": False}
+        original = c2pa_module.ManagedResource.__dict__["_free_native_ptr"]
+        underlying = getattr(original, "__func__", original)
+
+        def traced(ptr):
+            if watching["active"]:
+                freed_while_open.append(ptr)
+            return underlying(ptr)
+
+        c2pa_module.ManagedResource._free_native_ptr = staticmethod(traced)
+        result: dict = {}
+
+        def worker():
+            try:
+                result["manifest"] = builder.sign(
+                    "image/jpeg", io.BytesIO(source))
+            except Exception as err:
+                result["error"] = type(err).__name__
+
+        thread = threading.Thread(target=worker, name="parked-builder-sign")
+        thread.start()
+        try:
+            if not inside.wait(_PARK_TIMEOUT):
+                release.set()
+                thread.join(_JOIN_TIMEOUT)
+                return NOT_PARKED
+
+            watching["active"] = True
+            _close_quietly(builder)
+            watching["active"] = False
+            count = len(freed_while_open)
+
+            release.set()
+            thread.join(_JOIN_TIMEOUT)
+            if thread.is_alive():
+                return "HUNG"
+            return f"freed={count}"
+        finally:
+            c2pa_module.ManagedResource._free_native_ptr = staticmethod(
+                underlying)
+            _close_quietly(context)
+
+    return _tally(rounds, one_round)
+
+
 def scenario_read_refused_during_mutation(rounds: int = 20) -> dict:
     """A read must be refused while a mutating call is in flight.
 
@@ -338,7 +401,7 @@ def scenario_read_refused_during_mutation(rounds: int = 20) -> dict:
     blocking here would deadlock against the callback that holds the call open.
 
     REFUSED: C2paError, as designed.
-    ALLOWED: the read was served during the mutation (pre-fix behaviour).
+    ALLOWED: the read was served during the mutation.
     """
     signed = SIGNED_JPEG.read_bytes()
 
@@ -373,7 +436,7 @@ def scenario_second_mutation_refused(rounds: int = 20) -> dict:
     track of which pointer native owns.
 
     REFUSED: C2paError, as designed.
-    ALLOWED: both mutations proceeded (pre-fix behaviour).
+    ALLOWED: both mutations proceeded.
     """
     signed = SIGNED_JPEG.read_bytes()
 
@@ -408,6 +471,8 @@ THREAD_SCENARIOS = {
         scenario_trampoline_held_during_sign, "HELD"),
     "no_free_during_parked_call": (
         scenario_no_free_during_parked_call, "freed=0"),
+    "builder_no_free_during_parked_sign": (
+        scenario_builder_no_free_during_parked_sign, "freed=0"),
     "read_refused_during_mutation": (
         scenario_read_refused_during_mutation, "REFUSED"),
     "second_mutation_refused": (
