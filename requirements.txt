@@ -1,2 +1,1 @@
-# only used in the training example
-cryptography>=47.0.0
+# cryptography moved to requirements-dev.txt (used by tests/examples only).

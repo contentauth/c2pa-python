@@ -273,6 +273,7 @@ jobs:
         run: |
           source venv/bin/activate
           pip install dist/c2pa_python-*.whl
+          pip install -r requirements-dev.txt
 
       - name: Run unittest tests on installed wheel
         run: |
@@ -373,7 +374,7 @@ jobs:
           $wheel = Get-ChildItem -Path dist -Filter "c2pa_python-*.whl" | Select-Object -First 1
           if (-not $wheel) { Write-Error "No wheel file found in dist directory"; exit 1 }
           pip install $wheel.FullName
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
           pip install pytest
 
       - name: Run tests with pytest (venv)
@@ -454,6 +455,7 @@ jobs:
         run: |
           source venv/bin/activate
           pip install dist/c2pa_python-*.whl
+          pip install -r requirements-dev.txt
 
       - name: Run unittest tests on installed wheel
         run: |
