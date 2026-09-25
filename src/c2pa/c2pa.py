@@ -81,6 +81,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_signer_create',
     'c2pa_signer_from_info',
     'c2pa_signer_reserve_size',
+    'c2pa_signer_with_ocsp_response',
     'c2pa_ed25519_sign',
     'c2pa_signature_free',
     # Settings bindings
@@ -953,6 +954,11 @@ _setup_function(_lib.c2pa_signer_from_info,
 _setup_function(
     _lib.c2pa_signer_reserve_size, [
         ctypes.POINTER(C2paSigner)], ctypes.c_int64)
+_setup_function(
+    _lib.c2pa_signer_with_ocsp_response, [
+        ctypes.POINTER(C2paSigner),
+        ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t],
+    ctypes.POINTER(C2paSigner))
 _setup_function(
     _lib.c2pa_ed25519_sign, [
         ctypes.POINTER(
@@ -3003,6 +3009,7 @@ class Signer(ManagedResource):
         'callback_error': "Error in signer callback: {}",
         'invalid_certs': "Invalid certificate data: {}",
         'invalid_tsa': "Invalid TSA URL: {}",
+        'ocsp_error': "Error stapling OCSP response: {}",
         'encoding_error': "Invalid UTF-8 characters in input: {}"
     }
 
@@ -3219,6 +3226,37 @@ class Signer(ManagedResource):
             check=lambda r: r < 0)
 
         return result
+
+    def with_ocsp_response(self, ocsp_response: bytes) -> 'Signer':
+        """Staple a DER-encoded OCSP response into every signature this
+        signer produces.
+
+        Calls stack: call once per certificate along the chain, signing
+        certificate first. The caller fetches the responses and keeps them
+        fresh: OCSP responses expire, so create a new signer when they are
+        refreshed.
+
+        Args:
+            ocsp_response: The DER-encoded OCSP response
+
+        Returns:
+            This signer instance, for method chaining.
+
+        Raises:
+            C2paError: If the response is empty or could not be stapled
+        """
+        self._ensure_valid_state()
+
+        ocsp_array = (
+            ctypes.c_ubyte *
+            len(ocsp_response)).from_buffer_copy(ocsp_response)
+        # This native call retains the original signer on failure.
+        result = _lib.c2pa_signer_with_ocsp_response(
+            self._handle, ocsp_array, len(ocsp_response))
+        self._swap_handle(_check_ffi_operation_result(
+            result, Signer._ERROR_MESSAGES['ocsp_error']))
+
+        return self
 
 
 class Builder(ManagedResource):
