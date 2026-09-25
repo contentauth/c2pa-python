@@ -255,6 +255,11 @@ class ManagedResource:
     The native pointer is freed automatically via `_free_native_ptr`.
     """
 
+    _inflight = 0
+    _mut_inflight = 0
+    _pending_teardown: Optional[bool] = None
+    _released = False
+
     def _init_attrs(self):
         """Set this class's own attributes to their defaults.
 
@@ -333,7 +338,7 @@ class ManagedResource:
         Raises:
             C2paError: If a native call is in flight on this resource.
         """
-        if getattr(self, '_inflight', 0) > 0:
+        if self._inflight > 0:
             name = type(self).__name__
             raise C2paError(
                 f"{name} is in use by another operation and "
@@ -345,7 +350,7 @@ class ManagedResource:
         Raises:
             C2paError: when a mutating native call is in progress.
         """
-        if getattr(self, '_mut_inflight', 0) > 0:
+        if self._mut_inflight > 0:
             raise C2paError(
                 f"{type(self).__name__} is running a mutating operation")
 
@@ -371,45 +376,63 @@ class ManagedResource:
             finally:
                 self._maybe_flush_pending()
 
-    @contextlib.contextmanager
-    def _native_call(self):
-        """Hold the handle valid across a native call that runs
-        caller-supplied stream callbacks, so _live_op_lock() can't be held.
-        Count the call as in-flight/in-progress.
-        A free intent (teardown) is registered and the last caller frees.
-        A free intent marks the resource as closed, preventing further use.
+    def _begin_reservation(self, *, mutating, refuse):
+        """Count a native call as in flight, or raise.
+
+        Only place counters go up.
+        `refuse` runs under the lock, before counting,
+        and raises to reject the call.
         """
+        try:
+            with self._live_op_lock():
+                self._ensure_valid_state()
+                refuse()
+                if mutating:
+                    self._mut_inflight += 1
+                self._inflight += 1
+        except BaseException:
+            self._maybe_flush_pending()
+            raise
+
+    def _end_reservation(self, *, mutating):
+        """Uncount a _begin_reservation() call and run any queued teardown.
+        The only place the counters go down."""
         with self._live_op_lock():
-            self._ensure_valid_state()
-            self._ensure_no_mutating_call()
-            self._inflight = getattr(self, '_inflight', 0) + 1
+            if mutating:
+                self._mut_inflight -= 1
+            self._inflight -= 1
+        self._maybe_flush_pending()
+
+    @contextlib.contextmanager
+    def _reserve(self, *, mutating, refuse):
+        """Hold a reservation across a native call.
+        The lock is not held across the call itself:
+        the call may run caller-supplied reentrant callbacks.
+        A teardown that arrives meanwhile queues until
+        the last call out.
+        """
+        self._begin_reservation(mutating=mutating, refuse=refuse)
         try:
             with _native_section():
                 yield
         finally:
-            with self._live_op_lock():
-                self._inflight -= 1
-            self._maybe_flush_pending()
+            self._end_reservation(mutating=mutating)
+
+    @contextlib.contextmanager
+    def _native_call(self):
+        """Reserve the handle for a shared call:
+        other shared calls may run alongside it, no mutating call may."""
+        with self._reserve(mutating=False,
+                           refuse=self._ensure_no_mutating_call):
+            yield
 
     @contextlib.contextmanager
     def _exclusive_native_call(self):
-        """Exclusively marks this handle as being mutated.
-        A free intent (teardown) is registered and the last caller frees.
-        A free intent marks the resource as closed, preventing further use.
-        """
-        with self._live_op_lock():
-            self._ensure_valid_state()
-            self._ensure_no_mutating_call()
-            self._mut_inflight = getattr(self, '_mut_inflight', 0) + 1
-            self._inflight = getattr(self, '_inflight', 0) + 1
-        try:
-            with _native_section():
-                yield
-        finally:
-            with self._live_op_lock():
-                self._mut_inflight -= 1
-                self._inflight -= 1
-            self._maybe_flush_pending()
+        """Reserve the handle for a mutating call:
+        no other mutating call may run alongside it."""
+        with self._reserve(mutating=True,
+                           refuse=self._ensure_no_mutating_call):
+            yield
 
     @staticmethod
     def _free_native_ptr(ptr):
@@ -480,11 +503,10 @@ class ManagedResource:
         than report an error, so it cannot rely on acquiring.
         """
         if is_foreign_process(self):
-            self._handle = None
-            self._lifecycle_state = LifecycleState.CLOSED
+            self._detach_in_child()
             return
 
-        if getattr(self, '_released', False):
+        if self._released:
             return
         self._record_pending_intent(free_handle)
 
@@ -495,10 +517,10 @@ class ManagedResource:
             return
 
         try:
-            if getattr(self, '_released', False):
+            if self._released:
                 # Checks released as it recorded possible free intents.
                 return
-            if getattr(self, '_inflight', 0) > 0 or _in_native_section():
+            if self._inflight > 0 or _in_native_section():
                 # Closes the resource so it can't be used anymore.
                 # Records also pending actual frees.
                 self._close_lifecycle()
@@ -507,7 +529,7 @@ class ManagedResource:
                 return
 
             with self._live_teardown_lock():
-                pending = getattr(self, '_pending_teardown', None)
+                pending = self._pending_teardown
                 if pending is not None:
                     free_handle = pending and free_handle
                     self._pending_teardown = None
@@ -523,7 +545,7 @@ class ManagedResource:
         free only leaks.
         """
         with self._live_teardown_lock():
-            pending = getattr(self, '_pending_teardown', None)
+            pending = self._pending_teardown
             if pending is None:
                 self._pending_teardown = free_handle
             else:
@@ -542,16 +564,25 @@ class ManagedResource:
         self._record_pending_intent(free_handle)
         self._close_lifecycle()
 
+    def _detach_in_child(self):
+        """In a forked child:
+        null this copy's handle and mark it closed, without freeing.
+        The parent still owns the native pointer.
+        """
+        if hasattr(self, '_handle'):
+            self._handle = None
+        if hasattr(self, '_lifecycle_state'):
+            self._lifecycle_state = LifecycleState.CLOSED
+
     def _finish_teardown(self, free_handle: bool):
         """Once teardown can run, runs the actual release.
         Steps: release, null the handle, free if requested.
         """
         if is_foreign_process(self):
-            self._handle = None
-            self._lifecycle_state = LifecycleState.CLOSED
+            self._detach_in_child()
             return
 
-        if getattr(self, '_released', False):
+        if self._released:
             # Already done by another caller (concurrent caller).
             return
 
@@ -569,16 +600,16 @@ class ManagedResource:
 
     def _has_pending_teardown(self) -> bool:
         """Check if a teardown request is waiting for the resource."""
-        return getattr(self, '_pending_teardown', None) is not None
+        return self._pending_teardown is not None
 
     def _flush_pending_pass(self):
         """Attempt to run pending teardowns.
         """
 
         with self._live_op_lock():
-            if getattr(self, '_pending_teardown', None) is None:
+            if self._pending_teardown is None:
                 return
-            if getattr(self, '_inflight', 0) > 0:
+            if self._inflight > 0:
                 return
             if _in_native_section():
                 _register_for_section_flush(self)
@@ -596,8 +627,7 @@ class ManagedResource:
             return
 
         self._flush_pending_pass()
-        if self._has_pending_teardown() and not getattr(
-                self, '_released', False):
+        if self._has_pending_teardown() and not self._released:
             self._flush_pending_pass()
 
     def _release_handle(self):
@@ -608,8 +638,7 @@ class ManagedResource:
         to free.
         """
         with self._live_op_lock():
-            owned_elsewhere = getattr(
-                self, '_pending_teardown', None) is not None
+            owned_elsewhere = self._pending_teardown is not None
             if not owned_elsewhere and (
                     self._lifecycle_state != LifecycleState.ACTIVE):
                 self._handle = None
@@ -787,49 +816,36 @@ class ManagedResource:
         Raises:
             C2paError: Unusable resource or native call in progress.
         """
-        with self._live_op_lock():
-            # A consumed or closed resource has no handle left to hand over;
-            # without this the call would pass a null pointer to native.
-            self._ensure_valid_state()
-            self._ensure_not_borrowed()
-            self._mut_inflight = getattr(self, '_mut_inflight', 0) + 1
-            self._inflight = getattr(self, '_inflight', 0) + 1
+        self._begin_reservation(mutating=True,
+                                refuse=self._ensure_not_borrowed)
 
     def _end_consume(self):
         """Release a _begin_consume() reservation, then run any teardown
         that arrived while it was held."""
-        with self._live_op_lock():
-            self._mut_inflight -= 1
-            self._inflight -= 1
-        self._maybe_flush_pending()
+        self._end_reservation(mutating=True)
 
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call consuming the handle, reserving it.
         A replacement handle will be swapping in on success
         (a returned null value is a failure).
         """
+        def swap(new_ptr):
+            with self._live_op_lock():
+                self._handle = new_ptr
 
-        self._begin_consume()
-        try:
-            with _native_section():
-                new_ptr = self._invoke_consume(
-                    ffi_call, error_message, reserved=True)
-                if new_ptr:
-                    with self._live_op_lock():
-                        self._handle = new_ptr
-                    return
-                self._raise_consume_failure(error_message, reserved=True)
-        finally:
-            self._end_consume()
+        self._consume_reserved(ffi_call, error_message,
+                               succeeded=bool, on_success=swap)
 
-    def _consume_reserved(self, ffi_call, error_message, *, succeeded):
-        """Run a reserved consuming call and mark the handle consumed on
-        success.
+    def _consume_reserved(self, ffi_call, error_message, *, succeeded,
+                          on_success=None):
+        """Run a reserved consuming call, then act on success.
 
         Args:
             succeeded: Reads the call's raw result and returns whether it
                 succeeded. Each entry point has its own convention: a status
                 code, or a replacement pointer.
+            on_success: Called with the raw result on success. Default:
+                mark the handle consumed, closed, not freed.
 
         Returns:
             The call's raw result, for callers that hand it on.
@@ -840,7 +856,10 @@ class ManagedResource:
                 result = self._invoke_consume(
                     ffi_call, error_message, reserved=True)
                 if succeeded(result):
-                    self._teardown(free_handle=False)
+                    if on_success is None:
+                        self._teardown(free_handle=False)
+                    else:
+                        on_success(result)
                     return result
                 self._raise_consume_failure(error_message, reserved=True)
         finally:
@@ -896,15 +915,7 @@ class ManagedResource:
         """Release native resources idempotently."""
         try:
             if is_foreign_process(self):
-                # A forked child holds a separate copy of this object and the
-                # parent still owns the real handle and frees it. Mark this
-                # copy closed and null its handle so the child cannot mistake
-                # it for usable or free it, but do not free here.
-                # Mutating this copy does not touch the parent's.
-                if hasattr(self, '_handle'):
-                    self._handle = None
-                if hasattr(self, '_lifecycle_state'):
-                    self._lifecycle_state = LifecycleState.CLOSED
+                self._detach_in_child()
                 return
             if hasattr(self, '_lifecycle_state'):
                 # Closes here must defer to the teardown checks.
@@ -921,7 +932,7 @@ class ManagedResource:
         return (
             self._lifecycle_state == LifecycleState.ACTIVE
             and self._handle is not None
-            and getattr(self, '_mut_inflight', 0) == 0
+            and self._mut_inflight == 0
         )
 
     def close(self) -> None:

@@ -4293,7 +4293,19 @@ class TestLocking(unittest.TestCase):
             "claim_generator_info": [
                 {"name": "python_test", "version": "0.0.1"}],
             "format": "image/jpeg",
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                }
+            ],
         }
         errors = []
 
@@ -5007,7 +5019,19 @@ class TestLocking(unittest.TestCase):
             "claim_generator_info": [
                 {"name": "python_test", "version": "0.0.1"}],
             "format": "image/jpeg",
-            "assertions": [],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                }
+            ],
         }
         signer = Signer.from_info(signer_info)
         builder = Builder(manifest)
