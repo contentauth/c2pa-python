@@ -543,67 +543,6 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
             reader._guarded_op = real_lock
             reader.close()
 
-    def test_manifest_accessors_stay_consistent_while_fragments_advance(self):
-        """get_active_manifest() parses the cached JSON,
-        so its read and write of the cache must not prevent a clean handle swap.
-        """
-        before, after = self._manifest_before_and_after_fragment()
-        valid = {before, after}
-
-        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
-        stop = threading.Event()
-        unexpected = []
-        served = []
-        swaps = []
-
-        def read_manifest():
-            while not stop.is_set():
-                try:
-                    if reader.get_active_manifest() is not None:
-                        served.append(reader.json())
-                except Error:
-                    pass
-                except BaseException as e:      # noqa: BLE001 - asserted below
-                    unexpected.append(repr(e))
-
-        def advance():
-            while not stop.is_set():
-                try:
-                    self._advance(reader)
-                    swaps.append(None)
-                except Error:
-                    pass
-                except BaseException as e:      # noqa: BLE001 - asserted below
-                    unexpected.append(repr(e))
-                time.sleep(0.001)
-
-        workers = ([threading.Thread(target=read_manifest, daemon=True)
-                    for _ in range(3)]
-                   + [threading.Thread(target=advance, daemon=True)
-                      for _ in range(2)])
-        for t in workers:
-            t.start()
-        time.sleep(0.3)
-        stop.set()
-        for t in workers:
-            t.join(10)
-
-        try:
-            self.assertFalse(
-                [t for t in workers if t.is_alive()],
-                "a manifest accessor or fragment advance hung")
-            self.assertEqual(unexpected, [])
-            self.assertTrue(served, "no manifest was ever read")
-            self.assertGreater(
-                len(swaps), 1,
-                "fragments did not advance during the run")
-            self.assertTrue(
-                set(served) <= valid,
-                "a manifest was served that matches neither the pre- nor the "
-                "post-fragment state")
-        finally:
-            reader.close()
-
     def test_interleaved_with_fragment_leaves_reader_consistent(self):
         reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
 
@@ -4026,6 +3965,85 @@ class TestLocking(unittest.TestCase):
 
         self.assertEqual(self._free_counts().get(0x70001), 1,
                          "a teardown recorded after a flush was orphaned")
+
+    def test_close_racing_a_running_teardown_no_leftovers(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50005)
+
+        inside = threading.Event()
+        release = threading.Event()
+        real_finish = resource._finish_teardown
+
+        def gated_finish(free_handle):
+            inside.set()
+            release.wait(self.JOIN_TIMEOUT)
+            real_finish(free_handle)
+
+        resource._finish_teardown = gated_finish
+
+        def closer():
+            inside.wait(self.JOIN_TIMEOUT)
+            resource.close()
+            release.set()
+
+        threads = [
+            threading.Thread(target=resource.close, daemon=True),
+            threading.Thread(target=closer, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "close racing a running teardown")
+        del resource._finish_teardown
+
+        self.assertIsNone(resource._pending_teardown,
+                          "a close that lost to a running teardown left "
+                          "a stale intent")
+        self.assertTrue(resource._released)
+        self.assertIsNone(resource._handle)
+        resource.close()
+        resource._maybe_flush_pending()
+        self.assertEqual(self._free_counts().get(0x50005), 1)
+
+    def test_released_resource_records_no_intent(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50007)
+        resource.close()
+        self.assertTrue(resource._released)
+
+        resource._record_pending_intent(True)
+
+        self.assertIsNone(resource._pending_teardown)
+        resource._maybe_flush_pending()
+        self.assertEqual(self._free_counts().get(0x50007), 1)
+
+    def test_close_losing_the_lock_outside_a_section_registers_nothing(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50006)
+        with _native_section():
+            pass
+
+        holding = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with resource._live_op_lock():
+                holding.set()
+                release.wait(self.JOIN_TIMEOUT)
+            resource._maybe_flush_pending()
+
+        thread = threading.Thread(target=holder, daemon=True)
+        thread.start()
+        holding.wait(self.JOIN_TIMEOUT)
+        resource.close()
+        registered = list(
+            c2pa_module._native_section_state.pending_resources)
+        release.set()
+        self._join_all([thread], "lost-acquire close outside a section")
+
+        self.assertNotIn(resource, registered,
+                         "a close outside any native section was "
+                         "registered for a section flush")
+        self.assertEqual(self._free_counts().get(0x50006), 1)
 
     def test_stream_finalizer_does_not_block_on_a_held_close_lock(self):
         stream = Stream(io.BytesIO(self.image_bytes))

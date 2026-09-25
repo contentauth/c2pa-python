@@ -513,7 +513,8 @@ class ManagedResource:
         lock = self._live_op_lock()
         if not lock.acquire(blocking=False):
             self._close_lifecycle()
-            _register_for_section_flush(self)
+            if _in_native_section():
+                _register_for_section_flush(self)
             return
 
         try:
@@ -545,6 +546,8 @@ class ManagedResource:
         free only leaks.
         """
         with self._live_teardown_lock():
+            if self._released:
+                return
             pending = self._pending_teardown
             if pending is None:
                 self._pending_teardown = free_handle
@@ -582,12 +585,12 @@ class ManagedResource:
             self._detach_in_child()
             return
 
-        if self._released:
-            # Already done by another caller (concurrent caller).
-            return
-
-        self._released = True
-        self._lifecycle_state = LifecycleState.CLOSED
+        with self._live_teardown_lock():
+            if self._released:
+                return
+            self._released = True
+            self._pending_teardown = None
+            self._lifecycle_state = LifecycleState.CLOSED
         self._safe_release()
 
         handle, self._handle = self._handle, None
