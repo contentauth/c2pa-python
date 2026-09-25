@@ -198,6 +198,48 @@ On success the object stays `ACTIVE`: the lifecycle state never changes, only th
 
 **Consume-and-close** takes the pointer and leaves the Python object nothing to wrap. Signing a `Builder`, or handing a `Signer` to a `Context`, both end this way: the object goes `CLOSED`, but without freeing the pointer, since native still owns it.
 
+### Example: signing a Builder
+
+`Builder.sign()` is a consume-and-close call:
+
+```python
+builder = Builder(manifest_json)
+builder.sign(signer, "image/jpeg", source, dest)
+# builder is now CLOSED: sign() consumed its handle
+```
+
+`sign()` hands the Builder's handle to `c2pa_builder_sign`, which takes ownership and writes the signed asset. There is no replacement pointer to install, so `ManagedResource` marks the Builder `CLOSED` without freeing anything: native already owns the pointer at that point. This is also why a `Builder` is single-use. Calling `sign()` again raises `C2paError`, since `is_valid` is now False.
+
+Each call below is a real `ManagedResource` method, in the order `sign()` calls them:
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant B as Builder
+
+    C->>B: sign(signer, format, source, dest)
+    B->>B: _ensure_valid_state()
+    Note right of B: Raises C2paError if not ACTIVE.<br/>Builder is still ACTIVE here.
+
+    B->>B: _exclusive_native_call()
+    Note right of B: Reserves the handle as a mutating call.<br/>Builder is ACTIVE, mutating.
+
+    B->>B: c2pa_builder_sign(handle, ...)
+    Note right of B: Native call runs.<br/>On return, native owns the handle<br/>whether this succeeded or raised.
+
+    alt native call raised
+        B->>B: close()
+        Note right of B: Builder is now CLOSED.
+        B-->>C: re-raises as C2paError
+    else native call returned
+        B->>B: close()
+        Note right of B: Builder is now CLOSED,<br/>unconditionally, in a finally block.
+        B-->>C: returns manifest bytes
+    end
+```
+
+Both branches end the same way: `close()` runs either way, so the Builder is always `CLOSED` once `sign()` returns or raises. Nothing about the outcome changes whether `close()` frees the pointer, since native already took it in `_exclusive_native_call()`'s reservation.
+
 ### Adopting a handle
 
 A native call can return a pointer that needs a Python wrapper around it, with no `__init__` call, since `__init__` would try to create a new native resource rather than wrap an existing one. `_wrap_native_handle()` handles this: it builds a bare instance, sets its lifecycle bookkeeping, runs `_init_attrs()` for subclass defaults, and activates the handle. Ownership transfers once that call returns; if it raises, no wrapper exists, and the caller still owns the pointer and must free it itself.
