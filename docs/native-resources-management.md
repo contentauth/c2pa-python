@@ -150,23 +150,23 @@ A `Reader`'s read methods, `.json()`, `.detailed_json()`, `.resource_to_stream()
 
 ## Crashes
 
-A Python bug raises an exception with a traceback. A native memory bug terminates the process, and the operating system reports it as a signal, since the failure happens outside anything Python's exception machinery watches.
+Usually, native memory bug terminates the process, and the operating system reports it as a signal, since the failure happens outside anything Python's exception machinery watches.
 
-SIGSEGV, segmentation fault, comes from the hardware: the CPU traps on a read or write to memory the process is not allowed to touch, and the kernel delivers SIGSEGV. This fires when a pointer no longer points at accessible memory, for instance freed memory the allocator has unmapped. Freeing memory does not always unmap it. Allocators often keep the pages and reuse them for a later allocation, so reading through a freed pointer often succeeds anyway, returning another object's bytes and corrupting state far from the code responsible. SIGSEGV happens on the unlucky path, when the pages are gone.
+SIGSEGV, segmentation fault, comes from the hardware: the CPU traps on a read or write to memory the process is not allowed to touch, and the kernel delivers SIGSEGV. This fires when a pointer no longer points at accessible memory, for instance freed memory the allocator has unmapped. Freeing memory does not always unmap it. Allocators often keep the pages and reuse them for a later allocation, so reading through a freed pointer can succeed, returning another object's bytes and corrupting state far from the code responsible. SIGSEGV happens when the pages are gone.
 
-SIGABRT, abort, comes from software: a program calls `abort()` on itself after detecting a broken invariant. Allocators do this when `free()` is handed a pointer it never issued, the same pointer twice, or a heap whose bookkeeping a stray write has damaged. Which signal a bug produces depends on the allocator: glibc raises SIGABRT with a diagnostic, the macOS allocator gives SIGTRAP, and a use-after-free that reaches unmapped pages gives SIGSEGV on both. In every case, the process terminates from inside native code. No exception, no `finally` block, no traceback.
+SIGABRT, abort, comes from software: a program calls `abort()` on itself after detecting a broken invariant. Allocators do this when `free()` is handed a pointer it never issued, the same pointer twice, or a heap whose bookkeeping a stray write has damaged.
+
+In every case, the process terminates from inside native code. No exception, no `finally` block, no traceback can be run by the Python code.
 
 ## Locking
 
 Each `ManagedResource` holds a reentrant lock, `_op_lock`, and the in-flight counters from [The full picture](#the-full-picture). Together they enforce that rule: a mutating call excludes every other call, and a `close()` arriving mid-call is deferred rather than applied immediately.
 
-`_op_lock` is a `threading.RLock`, reentrant, rather than a plain `Lock`, for two reasons. A finalizer can run at any point, including inside a method that already holds the lock on that thread, so `__del__` calling back into locked code must not deadlock against itself. And a consuming call tears the handle down from inside a region it already holds the lock in, so it needs to reacquire rather than block.
+`_op_lock` is a `threading.RLock`, reentrant, rather than a plain `Lock`. A finalizer can run at any point, including inside a method that already holds the lock on that thread, so `__del__` calling back into locked code must not deadlock against itself. And a consuming call tears the handle down from inside a region it already holds the lock in, so it needs to reacquire rather than block.
 
-The lock is never held across a native call that drives a stream callback (construction, `resource_to_stream`, signing, and the rest), since that callback can call back into this API on the same thread, and holding the lock there would deadlock against that reentry. Those calls increment an in-flight counter under the lock, release the lock, run the native call, then decrement the counter, which is the mechanism the [state diagram](#the-full-picture) describes as "a call in flight."
+The lock is never held across a native call that drives a stream callback, since that callback can call back into this API on the same thread, and holding the lock there would deadlock against that reentry. Those calls increment an in-flight counter under the lock, release the lock, run the native call, then decrement the counter, which is the mechanism the [state diagram](#the-full-picture) describes as "a call in flight."
 
-This is why the interpreter's Global Interpreter Lock, the GIL, does not make this safe on its own. CPython executes one bytecode instruction at a time under the GIL, so simple operations cannot corrupt a built-in container. But a foreign function call through ctypes releases the GIL for its duration, so another thread runs while native code runs, and a `close()` can land inside that window. `_op_lock` and the in-flight counters close it, not the GIL.
-
-### Why the native side cannot guard this alone
+This is why the interpreter's Global Interpreter Lock, the GIL, does not make this safe on its own. CPython executes one bytecode instruction at a time under the GIL, so simple operations cannot corrupt a built-in container. But a foreign function call through ctypes releases the GIL for its duration, so another thread runs while native code runs, and a `close()` can land inside that window. `_op_lock` and the in-flight counters avoids this case.
 
 The native library keeps its own bookkeeping for the pointers it hands out. That bookkeeping guards the pointer itself. It can't guard what Python does with the pointer.
 
@@ -182,13 +182,13 @@ Two threads acquiring the same pair of locks in opposite orders can deadlock, ea
 
 A shared call, a **borrow**, passes the handle to native and gets it back unchanged. A mutating call that ends by consuming the handle hands ownership to native, which frees the original pointer during the call. A borrow validates the pointer once on entry, then holds it for the whole call without checking again, so a consume starting midway through a borrow would free memory the borrow is reading.
 
-`ManagedResource` prevents this by refusing to start a consume while a borrow is in flight, and by reserving the handle as a mutating call for the whole duration of the consume, the same reservation any other mutating call makes. Every entry point checks the in-flight counters under `_op_lock` before it starts, so a call that would otherwise race a consume is refused instead with "running a mutating operation," and the resource's lifecycle state never changes until the consume is fully classified as a success or a failure. `Reader.with_fragment()` also serializes itself against other calls to itself with a lock of its own, covered in [`Reader.with_fragment()`](#readerwith_fragment).
+`ManagedResource` prevents this by refusing to start a consume while a borrow is in flight, and by reserving the handle as a mutating call for the whole duration of the consume, the same reservation any other mutating call makes. Every entry point checks the in-flight counters under `_op_lock` before it starts, so a call that would otherwise race a consume is refused instead with "running a mutating operation," and the resource's lifecycle state never changes until the consume is fully classified as a success or a failure. `Reader.with_fragment()` also serializes itself against other calls to itself with a lock of its own.
 
 ## Double frees
 
-Freeing the same native pointer twice corrupts the allocator's bookkeeping. A detecting allocator stops the process. An allocator that misses it lets the damage surface later, somewhere unrelated to the code responsible. Three hazards lead here, each with its own guard:
+Freeing the same native pointer twice corrupts the allocator's bookkeeping. A detecting allocator stops the process. An allocator that misses it lets the damage surface later, somewhere unrelated to the code responsible.
 
-| Hazard | Guarded by |
+| Risk | Mitigated by |
 | --- | --- |
 | Freeing a pointer a consuming call already took | The consumed pointer is abandoned rather than freed; the native error message says whether ownership actually moved (see [Consuming](#consuming)). |
 | A forked child process freeing a pointer its parent owns | A process-ID stamp on every object; cleanup in a process that did not allocate the pointer marks it closed without freeing (see [Fork safety](#fork-safety)). |
