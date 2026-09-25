@@ -90,26 +90,30 @@ A native call takes several steps in sequence: check the object is usable, hand 
 
 1. Thread A calls `reader.json()`. It checks the Reader is usable, then enters the native call.
 2. While that call is still running, thread B calls `reader.close()`, which frees the native pointer.
-3. Thread A's native code, still running, reads through the pointer it was given, now freed.
+3. Thread A's native code, still running, reads through the pointer it was given, now freed (which crashes).
 
-Step 3 reads freed memory. Depending on what the allocator has done with that memory, this crashes the process or returns another object's bytes, corrupting state far from the code responsible (see [Crashes](#crashes)).
+A Python object has no owning thread: it belongs to whoever holds a reference to it, and nothing about creating an object or passing it to another thread, in a closure or an argument, hands exclusive access to that thread. Both threads above hold a plain reference to the same object instance. Python lets either one call any method on it at any time.
 
-A Python object has no owning thread: it belongs to whoever holds a reference to it, and nothing about creating a `Reader` or passing it into a closure hands ownership from one thread to another. Any two threads sharing a reference to the same `Reader`, `Builder`, `Signer`, or `Context` can hit this race, so [Lifecycle states](#lifecycle-states) alone is not the whole model. A resource also needs a way to say "a call is using me right now, don't free me out from under it," which is what in-flight tracking adds next.
+The interleaving in step 2 could be possible because the CPython interpreter switches between threads between bytecode instructions, and a native call spans many of them. Calling a method by itself does not stop thread B from calling `close()` on the same object while that call runs, so thread B's `close()` can land at any point during thread A's call, including partway through. The `ManagedResource` class has functionalities to avoid that.
+
+Depending on what the allocator has done with that freed memory, this crashes the process or returns another object's bytes, corrupting state far from the code responsible.
+
+Any two threads sharing a reference to the same `Reader`, `Builder`, `Signer`, or `Context` can hit this race, so [Lifecycle states](#lifecycle-states) alone is not the whole model. A resource also needs a way to say "a call is using me right now, don't free me out from under it," which is what in-flight tracking adds next.
 
 ## In-flight calls
 
-Alongside its lifecycle state, every `ManagedResource` counts calls currently running against it. This is separate from the `ACTIVE`/`CLOSED` state: a resource can be `ACTIVE` and idle, or `ACTIVE` with one or more calls in flight, and those are different things a caller needs to know.
+Alongside its lifecycle state, every `ManagedResource` counts calls currently running against it. This is separate from the `ACTIVE`/`CLOSED` state: a resource can be `ACTIVE` and idle, or `ACTIVE` with one or more calls in flight.
 
-A call in flight is one of two kinds:
+A call in flight can be either:
 
 - **Shared**: several threads can run this kind of call on the same object at once. Reading a manifest with `.json()` is shared: nothing stops two threads from reading the same data at the same time.
-- **Mutating**: only one thread may run this kind of call at a time, and no shared call may start while it runs. Signing with `.sign()` is mutating: it changes what the object holds, so a concurrent read could see a half-updated result or a pointer being replaced out from under it.
+- **Mutating**: only one thread may run this kind of call at a time, and no shared call may start while it runs, because a concurrent read could see a half-updated result or a pointer being replaced out from under it.
 
-A `close()` arriving while any call, shared or mutating, is in flight does not free the pointer right away. It marks the resource so no new caller can start using it, and defers the free until every in-flight call returns. This closes the race from the previous section: thread B's `close()` takes effect at once from its own point of view, but the memory thread A is reading stays valid until thread A's call returns.
+A `close()` arriving while any call, shared or mutating, is in flight does not free the pointer immediately. It marks the resource so no new caller can start using it, and defers the free until all in-flight calls have returned. For instance, thread B's `close()` takes effect at once from its own point of view, but the memory thread A is reading stays valid until thread A's call returns.
 
-## The full picture
+## Lifecycle overview
 
-Lifecycle state and in-flight calls happen at the same time. A resource is always in one lifecycle state, `UNINITIALIZED`, `ACTIVE`, or `CLOSED`. Independently, while it is `ACTIVE`, zero or more calls may be in flight on it right now, and if any of them is mutating, no other call may start. Put together, this is the full picture every guard in `ManagedResource` checks before letting a call through:
+Lifecycle state and in-flight calls work together to manage a native resource. A resource is always in one lifecycle state, `UNINITIALIZED`, `ACTIVE`, or `CLOSED`. Independently, while it is `ACTIVE`, zero or more calls may be in flight on it right now, and if any of them is mutating, no other call may start. Together, this is the full picture every guard in `ManagedResource` checks before letting a call through:
 
 ```mermaid
 stateDiagram-v2
@@ -140,9 +144,9 @@ The `Mutating --> [*]` exit inside `ACTIVE` is a consuming call: one that hands 
 | `ACTIVE`, a mutating call in flight | **False** | `C2paError`: "running a mutating operation" |
 | `CLOSED` | False | `C2paError`: "is closed" |
 
-`is_valid` answers one question: would a call be accepted right now? It is `ACTIVE`, holding a handle, and no mutating call in flight. It is a lock-free snapshot, so a passing check does not keep the handle alive. Only a guarded call does that.
+`is_valid` defines if a call would be accepted right now. It is `ACTIVE`, holding a handle, and no mutating call in flight. It is a lock-free snapshot, so a passing check does not keep the handle alive. Only a guarded call does that.
 
-A `Reader`'s read methods, `.json()`, `.detailed_json()`, `.resource_to_stream()`, are shared. A `Builder`'s `.sign()` is mutating, and ends by consuming the Builder: signing closes it, so a `Builder` is single-use. `Reader.with_fragment()` is also mutating, and also consumes: it replaces the Reader's handle with a new one rather than closing the object (see [Consuming](#consuming)).
+A `Reader`'s read methods, `.json()`, `.detailed_json()`, `.resource_to_stream()`, are shared. A `Builder`'s `.sign()` is mutating, and ends by consuming the Builder: signing closes it, so a `Builder` is single-use (see [Consuming](#consuming)).
 
 ## Crashes
 
