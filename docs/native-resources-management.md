@@ -126,15 +126,15 @@ stateDiagram-v2
         Idle --> SharedBorrow: a shared call starts
         SharedBorrow --> Idle: it returns
         Idle --> Mutating: a mutating call starts
-        Mutating --> Idle: it returns
-        Mutating --> [*]: a consume succeeds
+        Mutating --> Idle: it returns, or a consume-and-swap succeeds
+        Mutating --> [*]: a consume-and-close succeeds
     }
 
     ACTIVE --> CLOSED: close() / __del__
     CLOSED --> [*]
 ```
 
-The `Mutating --> [*]` exit inside `ACTIVE` is a consuming call: one that hands the pointer to native and gets a replacement or a closed resource back, covered in [Consuming](#consuming).
+`Mutating` is entered by any mutating call, but the two ways out differ by what kind of call it was. An ordinary mutating call, or a consume-and-swap, returns to `Idle`: the resource stays `ACTIVE`, either unchanged or holding a new pointer. Only a consume-and-close exits `ACTIVE` into `CLOSED`, since that is the one kind of consuming call that leaves nothing to wrap. Both consuming shapes are covered in [Consuming](#consuming).
 
 | State | `is_valid` | What a caller sees |
 | --- | --- | --- |
@@ -194,57 +194,9 @@ There are two shapes a consuming call takes.
 
 **Consume-and-swap** replaces the object's internal state without discarding the Python-side wrapper. `Reader.with_fragment()` does this, feeding a new BMFF fragment into an existing Reader so the native library can rebuild its internal representation from prior fragments plus the new one, since a fresh `Reader` would lose that accumulated state. `Builder.with_archive()` does the same, loading an archive into an existing Builder while keeping its context and settings.
 
-```mermaid
-stateDiagram-v2
-    state "ACTIVE (ptr A)" as A
-    state "ACTIVE (ptr B)" as B
-
-    A --> B : consuming call swaps ptr A for ptr B
-    note right of B
-        Same Python object,
-        new native pointer
-    end note
-```
-
 On success the object stays `ACTIVE`: the lifecycle state never changes, only the pointer underneath it, and callers keep using the same object.
 
 **Consume-and-close** takes the pointer and leaves the Python object nothing to wrap. Signing a `Builder`, or handing a `Signer` to a `Context`, both end this way: the object goes `CLOSED`, but without freeing the pointer, since native still owns it.
-
-### Example: Transferring a Signer to a Context
-
-The transfer of a `Signer` into a `Context` shows the whole protocol in one place: the reservation that protects the handle during the call, and the triage that decides ownership afterward.
-
-```mermaid
-sequenceDiagram
-    participant C as Caller
-    participant S as Signer
-    participant X as Context
-    participant B as _NativeBuilder
-    participant N as Native lib
-
-    C->>X: Context(settings, signer)
-    X->>B: with _NativeBuilder() (owns the builder, close() frees it on any failure)
-    X->>X: copy signer's callback to the Context
-    Note right of X: Copy it before the transfer:<br/>a successful consume drops the Signer's own reference
-    X->>S: _consume_no_replacement(set_signer)
-    S->>S: reserve the handle as a mutating call
-    Note right of S: The reservation is the protection:<br/>a close() on another thread is deferred,<br/>and other calls are refused
-    S->>N: c2pa_context_builder_set_signer(builder_ptr, handle)
-
-    alt status 0 (success)
-        S->>S: close, pointer not freed (native took it)
-    else non-zero status
-        S->>S: guarded free (real free if still ours,<br/>no-op if native took it)
-        S->>S: raise
-    end
-
-    X->>B: build the context from the consumed builder
-    B->>N: c2pa_context_builder_build(builder_ptr)
-    N-->>X: context_ptr
-    X->>X: activate the new Context
-```
-
-The transfer is not wrapped in a shared-call reservation. It uses the mutating reservation described in [Borrowing vs consuming](#borrowing-vs-consuming), which defers a racing `signer.close()` until the transfer is classified.The temporary native builder used to construct the Context is itself a small `ManagedResource`, held inside a `with` block, so any failure along the way frees it through the same `close()` path rather than a bespoke handler.
 
 ### Adopting a handle
 
