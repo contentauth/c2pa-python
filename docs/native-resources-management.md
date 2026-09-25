@@ -84,7 +84,7 @@ stateDiagram-v2
 
 Once `CLOSED`, an object never becomes `ACTIVE` again. A construction that fails before activation can also close directly from `UNINITIALIZED`, since there is nothing to free, only a state to record.
 
-## Close during a call
+## Closing during a (native) call
 
 A native call takes several steps in sequence: check the object is usable, hand the pointer to native code, let the code run. Two threads sharing one object can interleave those steps:
 
@@ -178,7 +178,7 @@ Using a handle takes two steps: check it, then act on it. Native bookkeeping gua
 
 ### Lock ordering
 
-Two threads acquiring the same pair of locks in opposite orders can deadlock, each waiting on what the other holds. The SDK avoids this with one fixed order, from outermost to innermost: a method-specific lock (where a method serializes itself against other calls to itself), then the lock of the object a method is called on, then the lock of any object it borrows for the call. A borrowed object's lock is always taken inside the operating object's lock, never the reverse, and a lock held across a native call must be one no callback path acquires.
+Two threads acquiring the same pair of locks in opposite orders can deadlock, each waiting on what the other holds. This Python SDK avoids this with one fixed order, from outermost to innermost: a method-specific lock (where a method serializes itself against other calls to itself), then the lock of the object a method is called on, then the lock of any object it borrows for the call. A borrowed object's lock is always taken inside the operating object's lock, never the reverse, and a lock held across a native call must be one no callback path acquires.
 
 ### Borrowing vs consuming
 
@@ -248,11 +248,11 @@ The transfer is not wrapped in a shared-call reservation. It uses the mutating r
 
 ### Adopting a handle
 
-Ownership can also arrive from the other direction: a native call returns a pointer that needs a Python wrapper around it, with no `__init__` call, since `__init__` would try to create a new native resource rather than wrap an existing one. `_wrap_native_handle()` handles this: it builds a bare instance, sets its lifecycle bookkeeping, runs `_init_attrs()` for subclass defaults, and activates the handle. Ownership transfers once that call returns; if it raises, no wrapper exists, and the caller still owns the pointer and must free it itself.
+A native call can return a pointer that needs a Python wrapper around it, with no `__init__` call, since `__init__` would try to create a new native resource rather than wrap an existing one. `_wrap_native_handle()` handles this: it builds a bare instance, sets its lifecycle bookkeeping, runs `_init_attrs()` for subclass defaults, and activates the handle. Ownership transfers once that call returns; if it raises, no wrapper exists, and the caller still owns the pointer and must free it itself.
 
-`Reader._init_from_context` and `Builder._init_from_context` both do something that looks backward: they create a native object and activate it before making the consuming call that will feed it data. This is deliberate. A consuming call needs an active resource to read the handle from and swap the result into, and activating first puts the intermediate pointer under normal cleanup right away: whichever way the consuming call goes, `close()` and `__del__` free it correctly. Holding the raw pointer in a local variable instead would leave every failure path to decide for itself whether to free it.
+`Reader._init_from_context` and `Builder._init_from_context` both do something that looks backward: they create a native object and activate it before making the consuming call that will feed it data. A consuming call needs an active resource to read the handle from and swap the result into, and activating first puts the intermediate pointer under normal cleanup right away: whichever way the consuming call goes, `close()` and `__del__` free it correctly. Holding the raw pointer in a local variable instead would leave failure paths to decide whether to free it.
 
-## Guarantees
+## Object usability checks
 
 `is_valid`, defined in [Lifecycle overview](#lifecycle-overview), is a lock-free snapshot: it does not itself keep the handle alive, only a guarded call does that. `Context` implements the abstract `ContextProvider.is_valid` by inheriting the concrete one from `ManagedResource`, which Python's method resolution order finds first as long as `ManagedResource` is listed before `ContextProvider` in the class definition (`class Context(ManagedResource, ContextProvider)`). Listing them the other way around would leave the abstract declaration in front and raise `TypeError` at class definition time.
 
@@ -268,9 +268,9 @@ Every subclass gets these guarantees from `ManagedResource`, and must not break 
 
 ## Keeping references alive
 
-When a Python object passes a callback or a pointer to the native library, that reference must stay alive as long as native code might use it, and the garbage collector has no way to know that: it only sees Python references.
+When a Python object passes a callback or a pointer to the native library, that reference must stay alive as long as native code might use it. But the garbage collector has no way to know that: it only sees Python references.
 
-The SDK keeps these references as plain instance attributes on the owning object. A `Stream` stores its four callback objects this way, so they stay referenced as long as the `Stream` is alive (see [Reference cycles](#reference-cycles) for how those callbacks avoid keeping the `Stream` alive in return). A `Signer` consumed by a `Context` has its callback copied to an attribute on the `Context`, so the callback survives the `Signer` object closing.
+This Python SDK keeps these references as plain instance attributes on the owning object. A `Stream` stores its four callback objects this way, so they stay referenced as long as the `Stream` is alive (see [Reference cycles](#reference-cycles) for how those callbacks avoid keeping the `Stream` alive in return). A `Signer` consumed by a `Context` has its callback copied to an attribute on the `Context`, so the callback survives the `Signer` object closing.
 
 `_release()` sets these attributes to `None` during cleanup, letting them be collected, and it runs before the native pointer is freed, so anything the pointer depends on, an open file, a stream wrapper, is torn down first. This is `ManagedResource`'s ordering; `Stream` releases in the reverse order for reasons covered in [`Stream` cleanup](#stream-cleanup).
 
@@ -284,7 +284,7 @@ def _free_native_ptr(ptr):
     return _lib.c2pa_free(ptr)
 ```
 
-It returns `0` when the pointer was freed, and `-1` when the registry rejected an already-consumed or untracked address, the same `-1` a guarded free relies on. `ManagedResource` guarantees this is called once per pointer.
+It returns `0` when the pointer was freed, and `-1` when the registry rejected an already-consumed or untracked address. `ManagedResource` guarantees this is called once per pointer.
 
 ## Cleanup errors
 
@@ -316,15 +316,13 @@ flowchart TD
     H -->|yes| FREE["free the native pointer<br/>(logs on failure)"] --> DONE
 ```
 
-The "foreign process" branch is explained in [Fork safety](#fork-safety), next.
-
 ## Fork safety
 
 `fork()` copies the calling process, including every Python object holding a native pointer, but the underlying native allocation is not duplicated: there is still only one, and the parent owns it.
 
-If a forked child cleaned up its copy of that object normally, two things would go wrong. It would free a pointer the parent is using, a double-free. And more subtly, `fork()` only carries over the thread that called it, so if another thread held a native lock at fork time, that lock stays held forever in the child, and calling into native code to free anything can then block on it forever.
+If a forked child cleaned up its copy of that object normally, two things would go wrong. It would free a pointer the parent is using, a double-free. And `fork()` copies only the calling thread, not every thread the parent was running. Any lock another thread held at fork time comes over still locked, with no thread left in the child able to release it. If that lock happens to be one the native library uses internally, calling into native code to free anything in the child can then block forever.
 
-So the SDK never frees native memory in a process that did not allocate it. A process-ID stamp on every object guards this: cleanup in a process that did not allocate the pointer marks it closed without freeing. Every object is stamped with its creating process's ID at construction, and cleanup compares that stamp against the current process before doing anything:
+So this Python SDK never frees native memory in a process that did not allocate it. A process-ID stamp on every object guards this: cleanup in a process that did not allocate the pointer marks it closed without freeing. Every object is stamped with its creating process's ID at construction, and cleanup compares that stamp against the current process before doing anything:
 
 ```mermaid
 sequenceDiagram
@@ -402,23 +400,7 @@ Cleanup runs in the direction of dependency: whatever can invoke or reach the ot
 
 Each ctypes callback closes over the `Stream` it belongs to. Captured directly, that would be a reference cycle, the `Stream` holding the callback and the callback holding the `Stream`, so nothing in the loop would reach a zero reference count on its own, leaving cleanup to the slower cycle collector. The callbacks capture a weak reference instead, resolved fresh on each call, so the `Stream`'s reference count can reach zero and its cleanup stays on the deterministic path.
 
-### `Reader.with_fragment()`
-
-A `with_fragment()` call does two things: the FFI call consumes the Reader's current handle and returns a replacement, and the Reader updates its own Python-side fields, the `Stream` wrappers it owns and its manifest caches, to describe that new handle. Those two steps have to run as one unit, since two threads interleaving them could close a stream the native reader is still reading through, or leave stale wrappers describing a handle another thread already replaced.
-
-`Reader._fragment_lock` covers both steps, and `with_fragment()` is the only method that takes it. The guard spans the native call, so it cannot block waiting for the lock, since that call drives caller-supplied callbacks that could re-enter this API and deadlock. A second thread finding the lock held is refused at once instead, leaving the Reader untouched: no stream built, no handle consumed, so the call succeeds once the other thread returns. This means one thread feeds fragments to a Reader at a time, and the caller must serialize those calls itself. The refusal messages are stable enough for callers to match on:
-
-- `Reader is already processing a fragment on another thread`: another thread is already inside `with_fragment()` on this Reader.
-- `Reader is in use by another operation and cannot be consumed`: some other native call is in flight on this Reader.
-- `Reader is running a mutating operation`: what a read method on another thread sees while `with_fragment()` runs, per [Lifecycle overview](#lifecycle-overview).
-
-`resource_to_stream()`, by contrast, is a shared call: the underlying SDK method only reads, so other read methods on the same Reader run concurrently with it, a `close()` arriving meanwhile is deferred until it returns, and `with_fragment()` is refused until it returns, the same as any other mutating call.
-
-#### Cache invalidation
-
-A `Reader` caches its manifest data, keyed to the handle it was read from. A successful `with_fragment()` swap invalidates that cache, and both the invalidation and every cache read in `json()` happen under the resource's lock, so a reader never observes a half-updated cache. The handle swap runs as a shared-style in-flight call rather than under that lock (native calls never hold it, per [Locking](#locking)), so there is a window between the new handle landing and the old cache being cleared. A `json()` on another thread that acquires the lock inside that window finds the stale cache populated and returns it without consulting the handle, serving a manifest for the fragment just replaced. `_fragment_lock` does not close this window, since it only serializes `with_fragment()` against itself; a caller sharing one Reader across threads for both fragment-feeding and reading needs to serialize those two together itself.
-
-## Which method
+## Methods to use with a `ManagedResource`
 
 Writing a new `ManagedResource` subclass, each situation maps to one call:
 
