@@ -92,6 +92,21 @@ A native call takes several steps in sequence: check the object is usable, hand 
 2. While that call is still running, thread B calls `reader.close()`, which frees the native pointer.
 3. Thread A's native code, still running, reads through the pointer it was given, now freed (which crashes).
 
+Any code that hands work to a thread pool and waits on it with a timeout can hit it:
+
+```python
+with Reader("image.jpg") as reader:
+    future = thread_pool.submit(reader.json)
+    try:
+        future.result(timeout=2.0)
+    except TimeoutError:
+        pass
+# the `with` block exits here, calling reader.close(),
+# whether or not the pool thread's reader.json() finished
+```
+
+`future.result(timeout=...)` gives up waiting after the timeout. It does not stop the pool thread already running `reader.json()`, so that thread can still be mid-call when the `with` block exits on the timeout path. `close()` runs regardless, on the calling thread, while `reader.json()` may still be running on the pool thread. Same race as thread A and thread B above, reached through a wait-with-timeout instead of a hand-rolled thread.
+
 A Python object has no owning thread: it belongs to whoever holds a reference to it, and nothing about creating an object or passing it to another thread, in a closure or an argument, hands exclusive access to that thread. Both threads above hold a plain reference to the same object instance. Python lets either one call any method on it at any time.
 
 The interleaving in step 2 could be possible because the CPython interpreter switches between threads between bytecode instructions, and a native call spans many of them. Calling a method by itself does not stop thread B from calling `close()` on the same object while that call runs, so thread B's `close()` can land at any point during thread A's call, including partway through. The `ManagedResource` class has functionalities to avoid that.
