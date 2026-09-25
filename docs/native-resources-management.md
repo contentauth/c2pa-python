@@ -185,6 +185,8 @@ The lock is never held across a native call that drives a stream callback, since
 
 This is why the interpreter's Global Interpreter Lock, the GIL, does not make this safe on its own. CPython executes one bytecode instruction at a time under the GIL, so simple operations cannot corrupt a built-in container. But a foreign function call through ctypes releases the GIL for its duration, so another thread runs while native code runs, and a `close()` can land inside that window. `_op_lock` and the in-flight counters avoids this case.
 
+Free-threaded Python builds (no GIL at all) do not change this. `ctypes` is not a compiled C extension, so it is not subject to the opt-in check that silently re-enables the GIL for unmarked extensions: a native library loaded through `ctypes` runs with no GIL protection whether or not the GIL exists elsewhere in the process. A native call already ran with the GIL released, so removing the GIL entirely makes that the normal case instead of a temporary window.
+
 The native library keeps its own bookkeeping for the pointers it hands out. That bookkeeping guards the pointer itself. It can't guard what Python does with the pointer.
 
 A callback is Python code the native library calls partway through a call, to read a stream or sign a message. It belongs to Python, so the native library keeps no bookkeeping for it. If Python frees that callback's object while the call runs, the next invocation reaches memory Python gave up. `_op_lock` and the in-flight counters keep that memory alive for the call.
