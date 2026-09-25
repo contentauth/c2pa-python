@@ -10368,10 +10368,6 @@ class TestConsumeOwnership(unittest.TestCase):
 
     def test_generic_exception_frees_the_reserved_handle(self):
         """A reserved consume that raises must free, not drop, the handle.
-
-        _begin_consume() leaves the resource CLOSED with the handle still set,
-        which _release_handle() reads as "not ours" and nulls without freeing,
-        while _abort_consume() can no longer restore it.
         """
         def boom(handle):
             raise RuntimeError("callback failed after the reservation")

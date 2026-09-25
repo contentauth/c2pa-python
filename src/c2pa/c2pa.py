@@ -381,6 +381,7 @@ class ManagedResource:
         """
         with self._live_op_lock():
             self._ensure_valid_state()
+            self._ensure_no_mutating_call()
             self._inflight = getattr(self, '_inflight', 0) + 1
         try:
             with _native_section():
@@ -722,13 +723,12 @@ class ManagedResource:
             raise
         except Exception as e:
             if reserved:
-                # Resource left close (handle set).
                 self._teardown(free_handle=True)
             else:
                 self._release_handle()
             raise C2paError(error_message.format(e)) from e
 
-    def _raise_consume_failure(self, error_message, previous_state=None):
+    def _raise_consume_failure(self, error_message, *, reserved: bool):
         """Raise the error from an FFI handler consuming call.
 
         The native error is read before any free so a free's own
@@ -740,18 +740,13 @@ class ManagedResource:
         as no error rather than as a stale one left by an earlier call.
 
         A caller that reserved the handle with _begin_consume() passes
-        previous_state and stays reserved until this classification finishes.
-        _read_native_error() is a native call and releases the GIL, so a
-        resource restored to ACTIVE before the tags are examined is visible as
-        usable to another thread while native may already own its handle. Only
-        the pre-consume branch hands the resource back.
+        reserved=True (in-flight mark).
 
         Args:
             error_message: Format string with one placeholder, used when the
                 native layer offers no error of its own.
-            previous_state: Lifecycle state to restore if the handle turns out
-                to have been rejected before native took ownership. None when
-                the caller holds no reservation.
+            reserved: True when the caller reserved this handle with
+                _begin_consume().
 
         Raises:
             C2paError: Always; typed by the native error when there is one.
@@ -764,8 +759,6 @@ class ManagedResource:
                     "ownership (%s); handle retained",
                     type(self).__name__,
                     error)
-                if previous_state is not None:
-                    self._abort_consume(previous_state)
                 _raise_typed_c2pa_error(error)
 
             # A non-tag error means the native side took ownership then failed,
@@ -777,9 +770,7 @@ class ManagedResource:
 
         # No error of its own: ownership is unknown, so free defensively.
         # c2pa_free returns -1 for an address native already reclaimed.
-        # A reservation leaves the resource CLOSED with the handle set,
-        # which _release_handle() nulls without freeing.
-        if previous_state is not None:
+        if reserved:
             self._teardown(free_handle=True)
         else:
             self._release_handle()
@@ -787,15 +778,11 @@ class ManagedResource:
 
     def _begin_consume(self):
         """Reserve this handle for a consuming call, or raise.
-        This is the initiation of an exclusive borrow.
-
-        Marks the resource as closed, stopping other borrows.
-        After this, the call is considered in-flight.
-        The caller owns the matching decrement.
-
-        Returns:
-            The lifecycle state to restore if the call turns out not to have
-            consumed the handle.
+        This is the initiation of an exclusive borrow, and "counts"
+        as an in-progress call that mutates something.
+        This reservation is exclusive.
+        The resource stays ACTIVE while being consumed.
+        A teardown (deferred while the consume is in flight) closes it.
 
         Raises:
             C2paError: Unusable resource or native call in progress.
@@ -805,26 +792,16 @@ class ManagedResource:
             # without this the call would pass a null pointer to native.
             self._ensure_valid_state()
             self._ensure_not_borrowed()
-            previous = self._lifecycle_state
-            self._lifecycle_state = LifecycleState.CLOSED
+            self._mut_inflight = getattr(self, '_mut_inflight', 0) + 1
             self._inflight = getattr(self, '_inflight', 0) + 1
-            return previous
 
-    def _abort_consume(self, previous_state):
-        """Undo _begin_consume() after a call that did not take the handle.
-
-        A pre-consume tag usually means the handle is still ours, so the
-        resource becomes usable again. The tag can also name another tracked
-        argument, which this does not distinguish.
-
-        A deferred free still happens when the section drains, so a resource
-        with a queued teardown stays closed.
-        """
+    def _end_consume(self):
+        """Release a _begin_consume() reservation, then run any teardown
+        that arrived while it was held."""
         with self._live_op_lock():
-            if self._pending_teardown is not None:
-                return
-            if self._lifecycle_state == LifecycleState.CLOSED and self._handle:
-                self._lifecycle_state = previous_state
+            self._mut_inflight -= 1
+            self._inflight -= 1
+        self._maybe_flush_pending()
 
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call consuming the handle, reserving it.
@@ -832,7 +809,7 @@ class ManagedResource:
         (a returned null value is a failure).
         """
 
-        previous_state = self._begin_consume()
+        self._begin_consume()
         try:
             with _native_section():
                 new_ptr = self._invoke_consume(
@@ -840,18 +817,10 @@ class ManagedResource:
                 if new_ptr:
                     with self._live_op_lock():
                         self._handle = new_ptr
-                        if self._pending_teardown is None:
-                            self._lifecycle_state = previous_state
                     return
-                self._raise_consume_failure(error_message, previous_state)
-        except BaseException:
-            self._abort_consume(previous_state)
-            raise
+                self._raise_consume_failure(error_message, reserved=True)
         finally:
-            # Decrement to handle parallel potential in-flight consumers.
-            with self._live_op_lock():
-                self._inflight -= 1
-            self._maybe_flush_pending()
+            self._end_consume()
 
     def _consume_reserved(self, ffi_call, error_message, *, succeeded):
         """Run a reserved consuming call and mark the handle consumed on
@@ -865,7 +834,7 @@ class ManagedResource:
         Returns:
             The call's raw result, for callers that hand it on.
         """
-        previous_state = self._begin_consume()
+        self._begin_consume()
         try:
             with _native_section():
                 result = self._invoke_consume(
@@ -873,16 +842,9 @@ class ManagedResource:
                 if succeeded(result):
                     self._teardown(free_handle=False)
                     return result
-                self._raise_consume_failure(error_message, previous_state)
-        except BaseException:
-            self._abort_consume(previous_state)
-            raise
+                self._raise_consume_failure(error_message, reserved=True)
         finally:
-            # Same order as _consume_and_swap: drop _inflight under the
-            # lock, then flush.
-            with self._live_op_lock():
-                self._inflight -= 1
-            self._maybe_flush_pending()
+            self._end_consume()
 
     def _consume_no_replacement(self, ffi_call, error_message):
         """Run an FFI call that consumes this handle on success, when the native
@@ -952,10 +914,14 @@ class ManagedResource:
 
     @property
     def is_valid(self) -> bool:
-        """Check if the resource is in a valid (active) state."""
+        """Is the resource usable now?
+        ACTIVE, holding a handle, or a shared borrow,
+        and no mutating (exclusive) or consuming native call in progress now.
+        """
         return (
             self._lifecycle_state == LifecycleState.ACTIVE
             and self._handle is not None
+            and getattr(self, '_mut_inflight', 0) == 0
         )
 
     def close(self) -> None:
@@ -2054,15 +2020,16 @@ class ContextProvider(ABC):
     @property
     @abstractmethod
     def is_valid(self) -> bool:
-        """Whether this provider is in a usable state.
+        """Whether a call using this provider would be accepted right now.
 
-        Return True when the underlying native context is active
-        and its handle has not been freed or consumed. Return
-        False after the provider has been closed or invalidated.
+        Return True when the underlying native context is active, holds a
+        handle, and has no mutating or consuming native call in flight.
+        Return False after the provider has been closed or invalidated.
+        The answer is a snapshot and does not keep the handle alive.
 
         The ManagedResource base class provides a standard
-        implementation that checks lifecycle state and handle
-        presence.
+        implementation that checks lifecycle state, handle presence and
+        the mutating in-flight count.
         """
         ...
 
@@ -2283,13 +2250,6 @@ class Context(ManagedResource, ContextProvider):
                             check=lambda r: r != 0)
 
                 if signer is not None:
-                    # No in-flight guard around the hand-off: the consume
-                    # marks the signer CLOSED under its lock before calling
-                    # native, which is what stops a signer.close() on another
-                    # thread from freeing the handle mid-transfer. That mark
-                    # also makes the consume refuse to start while another
-                    # thread is borrowing the handle to sign with.
-                    #
                     # Retain a rejected signer for later teardown.
                     self._signer_callback_cb = signer._callback_cb
                     _check_handle_arg('builder', nb._handle)
@@ -3377,8 +3337,17 @@ class Reader(ManagedResource):
                 On failure the native call may already have consumed the
                 underlying object, in which case this Reader is closed and
                 cannot be retried: create a new one.
-            C2paError: If another thread is inside this method on the same
-                Reader, or another native call is in flight on it.
+            C2paError: "Reader is already processing a fragment on another
+                thread" when another thread is inside this method on the same
+                Reader. The Reader is untouched, and the call can be retried
+                after the other one returns. One thread feeds fragments to a
+                Reader, and the caller serializes those calls.
+            C2paError: "Reader is in use by another operation and cannot be
+                consumed" when another native call is in flight on it.
+
+        While this call runs, read methods on other threads raise
+        C2paError("Reader is running a mutating operation") and is_valid is
+        False. The Reader is usable again when the call returns successfully.
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
@@ -3626,7 +3595,7 @@ class Reader(ManagedResource):
         return self._get_manifest_field(lambda d: d.get("validation_results"))
 
     def resource_to_stream(self, uri: str, stream: Any) -> int:
-        """Write a resource to a stream.
+        """Write a resource to a stream (shared borrow).
 
         Args:
             uri: The URI of the resource to write
@@ -3640,7 +3609,7 @@ class Reader(ManagedResource):
         """
         _check_cstr_arg("uri", uri)
         uri_str = uri.encode('utf-8')
-        with self._exclusive_native_call(), Stream(stream) as stream_obj:
+        with self._native_call(), Stream(stream) as stream_obj:
             result = _lib.c2pa_reader_resource_to_stream(
                 self._handle, uri_str, stream_obj._stream)
 
