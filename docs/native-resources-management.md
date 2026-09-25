@@ -1,37 +1,37 @@
 # Native resource management
 
-`ManagedResource` is the internal base class the C2PA Python SDK uses to wrap native (Rust/FFI) pointers. `Reader`, `Builder`, `Signer`, `Context`, and `Settings` all subclass it.
+`ManagedResource` is the internal base class the C2PA Python SDK uses to wrap native (Rust/C FFI) pointers. `Reader`, `Builder`, `Signer`, `Context`, and `Settings` all subclass it.
 
 A `Reader`, for example, holds a pointer to memory the native library allocated. Python's garbage collector tracks the `Reader` object, but has no visibility into that native memory, so it can never free it. `ManagedResource` closes that gap: it frees the native pointer once, however the object stops being used.
 
 ## Vocabulary
 
-A **native pointer** is an address that says where a piece of memory lives. The C2PA SDK wraps a Rust library, the "native" library, which allocates memory Python cannot see.
+A **native pointer** is an address that says where a piece of memory lives. The C2PA SDK wraps a Rust library, the "native" library, which allocates (native) memory Python cannot see.
 
-A **handle** is the one native pointer a `ManagedResource` object holds at a time, stored in its `_handle` attribute.
+A **handle** is a native pointer a `ManagedResource` object holds at a time, stored in its `_handle` attribute.
 
-**Ownership** answers one question: who must free a given piece of native memory, exactly once. Freeing it zero times leaks memory. Freeing it twice corrupts the allocator and can crash the process.
+**Ownership** answers one question: who must free native memory (the handle), exactly one time. Freeing it zero times leaks memory. Freeing it twice corrupts the allocator and can crash the process.
 
-A pointer is **consumed** when a native call takes ownership of it, often returning a replacement pointer in its place. Once consumed, Python must never free the original.
+A pointer is **consumed** when a native call takes ownership of it, often returning a replacement pointer in its place (updating the handle). Once consumed, Python must never free the original.
 
 ## Garbage collection
 
-Python's garbage collector works by reference counting: each object counts how many references point to it, and reaching zero frees it. This works for pure Python objects, but a `Reader`'s native pointer sits outside that system. The collector sees the `Reader` wrapper and tracks references to it, but has no idea the `_handle` attribute points at memory of its own, and never calls the native free function. Collect the wrapper without freeing that memory first, and it leaks.
+Python's garbage collector works by reference counting: each object counts how many references point to it, and reaching zero frees the object. This works for pure Python objects, but a `Reader`'s native pointer sits outside that system. The collector sees the `Reader` wrapper and tracks references to it, but does not know the `_handle` attribute points at memory of its own (allocated by the native library), and the garbage collector never calls the native free function.
 
 ### About the finalizer hook `__del__`
 
-`__del__`, Python's finalizer hook, could free the native pointer whenever an object is collected, and `ManagedResource` uses it as a fallback. But its timing is unpredictable: garbage collection is non-deterministic, an object caught in a reference cycle waits for a separate cycle collector to run, and during interpreter shutdown Python may collect objects in any order, so a `__del__` that reads global state can find it torn down. On implementations that don't use reference counting, PyPy and GraalPy, `__del__` may not run until long after the last reference is gone, or not before the process exits. Every class that holds a native pointer should inherit from `ManagedResource` rather than rely on `__del__` alone.
+`__del__`, Python's finalizer hook, could free the native pointer whenever an object is collected, and `ManagedResource` uses it too. But the timing is unpredictable: garbage collection is non-deterministic, an object caught in a reference cycle waits for a separate cycle collector to run, and during interpreter shutdown Python may collect objects in any order, so a `__del__` that reads global state can find it already gone. Every class that holds a native pointer should inherit from `ManagedResource` rather than rely on `__del__` alone.
 
-## Releasing
+## Releasing memory
 
-`ManagedResource` gives every object three ways to release its native pointer: a `with` statement, an explicit `close()`, or, as a fallback only, the destructor.
+`ManagedResource` gives every object three ways to release its native pointer: a `with` statement, an explicit `close()`, or, as a fallback, the destructor.
 
-### `with`
+### `with` statement
 
 ```python
 with Reader("image.jpg") as reader:
     print(reader.json())
-# reader is automatically closed here, even if an exception occurs
+# reader is automatically closed here.
 ```
 
 On exit, `__exit__` calls `close()`, freeing the native pointer even if the block raised.
@@ -46,15 +46,15 @@ finally:
     reader.close()
 ```
 
-Calling `close()` directly is equivalent to exiting a `with` block. It is idempotent: a second call does nothing.
+Calling `close()` directly is equivalent to exiting a `with` block. `close()` is idempotent: a second call does nothing.
 
 ### Destructor
 
-Without `with` or `.close()`, `__del__` attempts the free when Python garbage-collects the object, for the reasons in [About the finalizer hook `__del__`](#about-the-finalizer-hook-__del__). Treat it as a safety net, not the primary mechanism.
+Without `with` or `.close()`, `__del__` attempts the free when Python garbage-collects the object (and it can't e known in advance when the garbage collector will run, and when it will release those resources).
 
 ### Nesting
 
-Multiple resources can share one `with` statement or nest in separate blocks. Either way, Python cleans them up in reverse order: right to left, or inner to outer.
+Multiple resources can share one `with` statement or nest in separate `with` blocks. They are cleaned up in reverse order: right to left (when sharing one statement), or inner to outer (when statements are nested).
 
 ```python
 with open("photo.jpg", "rb") as file, Reader("image/jpeg", file) as reader:
@@ -62,11 +62,11 @@ with open("photo.jpg", "rb") as file, Reader("image/jpeg", file) as reader:
 # reader is closed first, then file
 ```
 
-The order matters because the `Reader`'s native pointer reads the file's data through a [`Stream`](#streams) wrapper: the native library calls back into that stream to read bytes. Close the file first, and those callbacks stay reachable from native code but read from a closed file, which can read freed memory. Closing the Reader first frees the native pointer while the file is open, then closes the file. `with` guarantees this order: whatever is listed later, or nested deeper, is torn down first.
+`with` guarantees a release order: whatever is listed later, or nested deeper, is torn down first.
 
 ## Lifecycle states
 
-Every `ManagedResource` tracks one of three states:
+Every `ManagedResource` has 3 states:
 
 ```mermaid
 stateDiagram-v2
@@ -78,15 +78,15 @@ stateDiagram-v2
     CLOSED --> [*]
 ```
 
-- `UNINITIALIZED`: the Python object exists but has no native pointer yet. This is transient, lasting only for the duration of construction.
+- `UNINITIALIZED`: the (Python) object exists but has no native pointer (handle) yet. This is transient, lasting only for the duration of construction.
 - `ACTIVE`: the native pointer is valid, and the object can be used.
 - `CLOSED`: the native pointer has been freed, or ownership of it has moved elsewhere. Any further use raises `C2paError`.
 
-This is one-way: once `CLOSED`, an object never becomes `ACTIVE` again. A construction that fails before activation can also close straight from `UNINITIALIZED`, since there is nothing to free, only a state to record.
+Once `CLOSED`, an object never becomes `ACTIVE` again. A construction that fails before activation can also close directly from `UNINITIALIZED`, since there is nothing to free, only a state to record.
 
 ## Close during a call
 
-A native call takes several steps in sequence: check the object is usable, hand the pointer to native code, let that code run. Two threads sharing one object can interleave those steps:
+A native call takes several steps in sequence: check the object is usable, hand the pointer to native code, let the code run. Two threads sharing one object can interleave those steps:
 
 1. Thread A calls `reader.json()`. It checks the Reader is usable, then enters the native call.
 2. While that call is still running, thread B calls `reader.close()`, which frees the native pointer.
