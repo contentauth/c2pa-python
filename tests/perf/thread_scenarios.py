@@ -33,7 +33,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from c2pa import (
     Builder,
-    C2paError,
     C2paSigningAlg,
     Context,
     Reader,
@@ -156,8 +155,8 @@ def _callback_signer(inside, release) -> Signer:
 def _first_resource_uri(reader: Reader):
     """A resource identifier from the reader's manifest, or None.
 
-    resource_to_stream needs one, and it is the mutating call these scenarios
-    park inside.
+    resource_to_stream needs one, and it is the shared borrow that
+    no_free_during_parked_call parks inside.
     """
     manifest = json.loads(reader.json())
     for entry in manifest.get("manifests", {}).values():
@@ -393,77 +392,6 @@ def scenario_builder_no_free_during_parked_sign(rounds: int = 20) -> dict:
     return _tally(rounds, one_round)
 
 
-def scenario_read_refused_during_mutation(rounds: int = 20) -> dict:
-    """A read must be refused while a mutating call is in flight.
-
-    Serving a read from a resource whose handle is mid-swap can return another
-    object's bytes. The guard refuses instead, and must refuse rather than block:
-    blocking here would deadlock against the callback that holds the call open.
-
-    REFUSED: C2paError, as designed.
-    ALLOWED: the read was served during the mutation.
-    """
-    signed = SIGNED_JPEG.read_bytes()
-
-    def one_round():
-        reader = Reader("image/jpeg", io.BytesIO(signed))
-        reader.json()
-        uri = _first_resource_uri(reader)
-        if uri is None:
-            _close_quietly(reader)
-            return "NO_RESOURCE_URI"
-
-        try:
-            with _ParkedResourceCall(reader, uri) as parked:
-                if not parked.parked:
-                    return NOT_PARKED
-                try:
-                    reader.detailed_json()
-                    outcome = "ALLOWED"
-                except C2paError:
-                    outcome = "REFUSED"
-            return outcome
-        finally:
-            _close_quietly(reader)
-
-    return _tally(rounds, one_round)
-
-
-def scenario_second_mutation_refused(rounds: int = 20) -> dict:
-    """A second mutating call must be refused while one is in flight.
-
-    Two concurrent mutating calls can both drive the handle swap, which loses
-    track of which pointer native owns.
-
-    REFUSED: C2paError, as designed.
-    ALLOWED: both mutations proceeded.
-    """
-    signed = SIGNED_JPEG.read_bytes()
-
-    def one_round():
-        reader = Reader("image/jpeg", io.BytesIO(signed))
-        reader.json()
-        uri = _first_resource_uri(reader)
-        if uri is None:
-            _close_quietly(reader)
-            return "NO_RESOURCE_URI"
-
-        try:
-            with _ParkedResourceCall(reader, uri) as parked:
-                if not parked.parked:
-                    return NOT_PARKED
-                try:
-                    reader.resource_to_stream(uri, io.BytesIO())
-                    outcome = "ALLOWED"
-                except C2paError:
-                    outcome = "REFUSED"
-            return outcome
-        finally:
-            _close_quietly(reader)
-
-    return _tally(rounds, one_round)
-
-
 # Scenario name -> (function, expected outcome on hardened code).
 # The expected value is what the driver asserts; anything else fails the run.
 THREAD_SCENARIOS = {
@@ -473,10 +401,6 @@ THREAD_SCENARIOS = {
         scenario_no_free_during_parked_call, "freed=0"),
     "builder_no_free_during_parked_sign": (
         scenario_builder_no_free_during_parked_sign, "freed=0"),
-    "read_refused_during_mutation": (
-        scenario_read_refused_during_mutation, "REFUSED"),
-    "second_mutation_refused": (
-        scenario_second_mutation_refused, "REFUSED"),
 }
 
 # Derived so the name list cannot drift from the registry.

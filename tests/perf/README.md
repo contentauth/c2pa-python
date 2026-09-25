@@ -338,8 +338,6 @@ it works.
 | --- | --- | --- | --- |
 | `trampoline_held_during_sign` | the signer trampoline outlives a `Context` closed mid-sign | `HELD` | `DROPPED` |
 | `no_free_during_parked_call` | no `c2pa_free` while a call still holds the handle | `freed=0` | `freed=1` |
-| `read_refused_during_mutation` | a read during a mutating call is refused | `REFUSED` | `ALLOWED` |
-| `second_mutation_refused` | a second mutating call is refused | `REFUSED` | `ALLOWED` |
 
 `no_free_during_parked_call` is the most direct: it instruments
 `ManagedResource._free_native_ptr`, the single funnel every free passes through, and

@@ -3644,9 +3644,10 @@ class TestStreamCloseReentrancy(unittest.TestCase):
 class TestConsumeReservationWindow(unittest.TestCase):
     """The consume reservation must outlast ownership classification.
 
-    _read_native_error() is a native call that releases the GIL, so a resource
-    restored to ACTIVE before the error is classified is visible as usable to
-    another thread while native may already own its handle.
+    The reservation is a mutating in-flight mark. The lifecycle state stays
+    ACTIVE. _read_native_error() is a native call that releases the GIL, so a
+    reservation released before the error is classified would let another
+    thread use a handle native may already own.
     """
 
     def test_no_thread_sees_a_consumed_handle_as_valid(self):
@@ -5409,25 +5410,6 @@ class TestLocking(unittest.TestCase):
         finally:
             ManagedResource._free_native_ptr = real_free
 
-    def test_abort_consume_leaves_a_queued_teardown_closed(self):
-        """A resource whose free is already queued must not become usable.
-
-        The deferred free still runs when the section drains, so restoring
-        ACTIVE would hand the caller a resource that closes underneath it.
-        """
-        context = Context()
-        with _native_section():
-            context.close()
-            self.assertIsNotNone(context._pending_teardown)
-
-            context._abort_consume(LifecycleState.ACTIVE)
-            self.assertEqual(
-                context._lifecycle_state, LifecycleState.CLOSED,
-                "a resource with a queued teardown was revived")
-            self.assertFalse(
-                context.is_valid,
-                "a resource with a queued teardown reported itself usable")
-
     def test_section_drain_error_does_not_mask_the_body_error(self):
         """The body's exception is what the caller asked for, so it wins."""
 
@@ -5853,49 +5835,6 @@ class TestSwapConsumeExclusion(unittest.TestCase):
         builder.to_archive(io.BytesIO())
         builder.add_action('{"action": "c2pa.color_adjustments"}')
         builder.close()
-
-    def test_read_during_mutation_is_rejected(self):
-        with open(os.path.join(FIXTURES_FOLDER, "C.jpg"), "rb") as f:
-            image = f.read()
-        reader = Reader("image/jpeg", io.BytesIO(image))
-        manifest = reader.get_active_manifest()
-        uri = (manifest or {}).get("thumbnail", {}).get("identifier")
-        self.assertTrue(uri, "fixture must carry a thumbnail resource")
-
-        inside = threading.Event()
-        release = threading.Event()
-
-        class BlockingSink(io.BytesIO):
-            def write(self, data):
-                inside.set()
-                release.wait(10)
-                return super().write(data)
-
-            def seek(self, *args):
-                inside.set()
-                release.wait(10)
-                return super().seek(*args)
-
-        worker = threading.Thread(
-            target=lambda: reader.resource_to_stream(uri, BlockingSink()),
-            daemon=True)
-        worker.start()
-        try:
-            self.assertTrue(
-                inside.wait(10),
-                "resource_to_stream never reached its callback")
-
-            with self.assertRaises(Error) as raised:
-                reader.detailed_json()
-            self.assertIn("mutating operation", str(raised.exception))
-        finally:
-            release.set()
-            worker.join(10)
-
-        self.assertFalse(worker.is_alive(), "resource_to_stream hung")
-        # Works again once the mutating call has returned.
-        self.assertTrue(reader.detailed_json())
-        reader.close()
 
 
 if __name__ == '__main__':
