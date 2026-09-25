@@ -1639,6 +1639,23 @@ class TestBuilderWithSigner(unittest.TestCase):
         self.addCleanup(signer.close)
         return signer
 
+    def test_with_ocsp_response(self):
+        signer = self._local_signer()
+        reserve_size = signer.reserve_size()
+        ocsp_response = bytes(range(256)) * 4
+        with self.assertRaises(Error):
+            signer.with_ocsp_response(b"")
+        self.assertEqual(signer.reserve_size(), reserve_size)
+        self.assertIs(signer.with_ocsp_response(ocsp_response), signer)
+        self.assertEqual(
+            signer.reserve_size(), reserve_size + len(ocsp_response))
+
+        builder = Builder(self.manifestDefinitionV2)
+        with open(self.testPath, "rb") as source:
+            manifest_bytes = builder.sign(
+                signer, "image/jpeg", source, io.BytesIO())
+        self.assertIn(ocsp_response, manifest_bytes)
+
     def _active_signature_info(self, signed_bytes):
         """signature_info of the active manifest in a signed asset."""
         signed_bytes.seek(0)
