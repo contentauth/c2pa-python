@@ -334,8 +334,7 @@ class ManagedResource:
 
     def _ensure_not_borrowed(self):
         """Raise if any native call, shared or mutating, is in flight on
-        this handle. Gates the calls that need the handle to themselves:
-        consuming calls, and calls native takes as `*mut`.
+        this handle, ensuring exclusive mutating calls.
 
         Raises:
             C2paError: If a native call is in flight on this resource.
@@ -358,11 +357,6 @@ class ManagedResource:
     def _guarded_op(self, *, refuse_mut=True, exclusive=False):
         """Hold this resource's operation lock its duration,
         and mark this thread as inside a native-error section.
-
-        Pass exclusive=True when the native call takes this handle as `*mut`.
-        A shared _native_call() does not hold the lock while in native, so
-        the lock alone does not keep it out.
-        Exclusive refuses while one is in flight.
 
         Note: Ordering is important and as the native section opens first
         for the native call and closes last.
