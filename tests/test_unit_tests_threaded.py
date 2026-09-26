@@ -42,6 +42,9 @@ PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
+_REAL_FREE = ManagedResource.__dict__['_free_native_ptr']
+
+
 class _ConcreteResource(ManagedResource):
     """Minimal concrete subclass for testing ManagedResource cleanup."""
 
@@ -3658,12 +3661,18 @@ class TestLocking(unittest.TestCase):
     def setUp(self):
         # Flush pending finalizers through the real free first.
         gc.collect()
+        self.addCleanup(self._assert_free_hook_restored)
         self.freed = []
-        self._real_free = ManagedResource._free_native_ptr
+        self._real_free = _REAL_FREE
         ManagedResource._free_native_ptr = staticmethod(self.freed.append)
 
     def tearDown(self):
-        ManagedResource._free_native_ptr = self._real_free
+        ManagedResource._free_native_ptr = _REAL_FREE
+
+    def _assert_free_hook_restored(self):
+        self.assertIs(
+            ManagedResource.__dict__['_free_native_ptr'], _REAL_FREE,
+            "{} leaked a _free_native_ptr patch".format(self.id()))
 
     def _join_all(self, threads, what):
         for thread in threads:
@@ -4555,8 +4564,6 @@ class TestLocking(unittest.TestCase):
             return real(ptr)
 
         ManagedResource._free_native_ptr = staticmethod(counting)
-        self.addCleanup(
-            lambda: setattr(ManagedResource, '_free_native_ptr', real))
         return freed
 
     def _thumbnail_uri(self, reader):
@@ -5390,8 +5397,7 @@ class TestLocking(unittest.TestCase):
             "borrowed handles used without their own guard:\n  "
             + "\n  ".join(unguarded))
 
-    # FFI functions that take their receiver (first argument) as &mut in
-    # c2pa_c_ffi/src/c_api.rs (deref_mut_or_return_*).
+    # FFI functions that take their receiver (first argument) as &mut.
     MUTATING_FFI = frozenset({
         "c2pa_settings_set_value",
         "c2pa_settings_update_from_string",
@@ -6043,7 +6049,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
                     pass
             finally:
                 builder._live_op_lock = real_live_op_lock
-                ManagedResource._free_native_ptr = real_free
+                ManagedResource._free_native_ptr = _REAL_FREE
 
             with self.subTest(injection_point=k):
                 self.assertFalse(

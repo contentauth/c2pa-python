@@ -40,6 +40,8 @@ from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningA
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
 from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg
 import c2pa.c2pa as c2pa_module
+
+_REAL_FREE = ManagedResource.__dict__['_free_native_ptr']
 from pathlib import Path
 
 
@@ -7980,12 +7982,18 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def setUp(self):
         self.data_dir = FIXTURES_DIR
+        self.addCleanup(self._assert_free_hook_restored)
         self.freed = []
-        self._real_free = ManagedResource._free_native_ptr
+        self._real_free = _REAL_FREE
         ManagedResource._free_native_ptr = staticmethod(self.freed.append)
 
     def tearDown(self):
-        ManagedResource._free_native_ptr = self._real_free
+        ManagedResource._free_native_ptr = _REAL_FREE
+
+    def _assert_free_hook_restored(self):
+        self.assertIs(
+            ManagedResource.__dict__['_free_native_ptr'], _REAL_FREE,
+            "{} leaked a _free_native_ptr patch".format(self.id()))
 
     def _free_counts(self):
         counts = {}
@@ -8648,11 +8656,10 @@ class TestManagedResourceObjects(TestContextAPIs):
         """Record frees instead of performing them, and restore on teardown.
         """
         freed = []
-        real_free = ManagedResource._free_native_ptr
         ManagedResource._free_native_ptr = staticmethod(freed.append)
         self.addCleanup(
             lambda: setattr(
-                ManagedResource, '_free_native_ptr', real_free))
+                ManagedResource, '_free_native_ptr', _REAL_FREE))
         return freed
 
     def _free_count(self, freed, handle):
@@ -10355,7 +10362,7 @@ class TestConsumeOwnership(unittest.TestCase):
 
     def setUp(self):
         self.freed = []
-        self._real_free = ManagedResource._free_native_ptr
+        self._real_free = _REAL_FREE.__func__
 
         def counting_free(ptr):
             self.freed.append(ptr)
@@ -10364,7 +10371,7 @@ class TestConsumeOwnership(unittest.TestCase):
         ManagedResource._free_native_ptr = staticmethod(counting_free)
 
     def tearDown(self):
-        ManagedResource._free_native_ptr = staticmethod(self._real_free)
+        ManagedResource._free_native_ptr = _REAL_FREE
 
     def test_generic_exception_frees_the_reserved_handle(self):
         """A reserved consume that raises must free, not drop, the handle.
