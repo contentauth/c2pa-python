@@ -1,53 +1,362 @@
 # Native resource management
 
-`ManagedResource` is the internal base class used by the C2PA Python SDK to wrap native (Rust/FFI) pointers. When adding new wrappers around native resources `ManagedResource` should be subclassed and follow the documented lifecycle rules.
+`ManagedResource` is the internal base class the C2PA Python SDK uses to wrap native (Rust/C FFI) pointers. `Reader`, `Builder`, `Signer`, `Context`, and `Settings` all subclass it.
 
-## Why ManagedResource?
+A `Reader`, for example, holds a pointer to memory the native library allocated. Python's garbage collector tracks the `Reader` object, but has no visibility into that native memory, so it can never free it. `ManagedResource` closes that gap: it frees the native pointer once, however the object stops being used.
 
-`ManagedResource` is the internal base class responsible for managing native pointers owned by the C2PA Python SDK. It guarantees:
+## Vocabulary
 
-- Native memory is freed exactly once (no double-free).
-- Resources are cleaned up deterministically via context managers or explicit `close()`.
-- Ownership transfers (e.g. signer to context) are handled so the same pointer is not freed twice (and the objects/classes know which one owns what).
-- Cleanup never raises (trade-off to avoid raising errors on clean-up only, but errors are logged).
+A **native pointer** is an address that says where a piece of memory lives. The C2PA SDK wraps a Rust library, the "native" library, which allocates (native) memory Python cannot see.
 
-A new wrapper around a native resource inherits from `ManagedResource` and follows the documented lifecycle rules.
+A **handle** is a native pointer a `ManagedResource` object holds at a time, stored in its `_handle` attribute.
 
-## Definitions
+**Ownership** answers one question: who must free native memory (the handle), exactly one time. Freeing it zero times leaks memory. Freeing it twice corrupts the allocator and can crash the process.
 
-A **native pointer** is an address that says where a piece of memory lives. The C2PA SDK is a Python wrapper around a Rust library (the "native" library), and that library allocates memory Python cannot see. When the SDK creates a `Reader`, `Builder`, `Signer`, `Context`, or `Settings`, the Python object holds a native pointer to memory that the native library allocated and manages. Python's garbage collector tracks the Python object but knows nothing about the native memory behind the pointer, so it cannot free it.
+A pointer is **consumed** when a native call takes ownership of it, often returning a replacement pointer in its place (updating the handle). Once consumed, Python must never free the original.
 
-The **native side** of the Rust library is reached through its C FFI.
+## Garbage collection
 
-A **handle** is a single native pointer a `ManagedResource` object holds and manages, stored in its `_handle` attribute. Each object owns one handle at a time. The lifecycle machinery is mostly about tracking that one handle: creating it, swapping it, and freeing it.
+Python's garbage collector works by reference counting: each object counts how many references point to it, and reaching zero frees the object. This works for pure Python objects, but a `Reader`'s native pointer sits outside that system. The collector sees the `Reader` wrapper and tracks references to it, but does not know the `_handle` attribute points at memory of its own (allocated by the native library), and the garbage collector never calls the native free function.
 
-**Ownership** answers one question: who is responsible for freeing a piece of native memory. Native memory has to be freed (exactly once). The owner is whoever must free it. If nobody frees it, the memory leaks. If two owners each free it, the same memory is freed twice, which corrupts the allocator and can crash the process. So exactly one side owns each pointer at any moment, and that side frees it.
+### About the finalizer hook `__del__`
 
-**Taking ownership** or **transferring ownership** means that responsibility moves from one holder to another. When Python hands a pointer to the native side and the native side takes ownership, the old holder must stop trying to free it, or the pointer gets freed twice. The [Ownership transfer](#ownership-transfer) section covers how the Python SDK handles this.
+`__del__`, Python's finalizer hook, could free the native pointer whenever an object is collected, and `ManagedResource` uses it too. But the timing is unpredictable: garbage collection is non-deterministic, an object caught in a reference cycle waits for a separate cycle collector to run, and during interpreter shutdown Python may collect objects in any order, so a `__del__` that reads global state can find it already gone. Every class that holds a native pointer should inherit from `ManagedResource` rather than rely on `__del__` alone.
 
-A pointer is **consumed** when a native call takes ownership of the pointer passed to it, often returning a replacement pointer. Once a pointer is consumed, Python must not free it again, since the native side now owns it.
+## Releasing memory
 
-## Why is native resources management needed?
+`ManagedResource` gives every object three ways to release its native pointer: a `with` statement, an explicit `close()`, or, as a fallback, the destructor.
 
-### Native pointers in a Python wrapper
+### `with` statement
 
-The C2PA Python SDK is a wrapper around a native Rust library that exposes a C FFI. When the SDK creates a `Reader`, `Builder`, `Signer`, `Context`, or `Settings` object, that object holds a **pointer** to memory allocated on the native side (by the native library).
+```python
+with Reader("image.jpg") as reader:
+    print(reader.json())
+# reader is automatically closed here.
+```
 
-### How Python's garbage collector works
+On exit, `__exit__` calls `close()`, freeing the native pointer even if the block raised.
 
-Python manages its own objects' memory automatically through garbage collection. In CPython (the standard interpreter), this works primarily through reference counting: each object has a counter tracking how many references point to it, and when that counter reaches zero the object is deallocated. A secondary cycle-detecting collector handles the case where objects reference each other in a loop and their counts never reach zero on their own.
+### Explicit close
 
-### Why garbage collection is not enough for native memory
+```python
+reader = Reader("image.jpg")
+try:
+    print(reader.json())
+finally:
+    reader.close()
+```
 
-This system works well for pure Python objects, but native memory sits outside of it entirely. The garbage collector sees the Python wrapper object (e.g. a `Reader` instance) and tracks references to it, but it has no visibility into the native memory that the wrapper's `_handle` attribute points to. Memory allocated by native libraries is invisible to the garbage collector: it does not know the size of that native allocation, cannot tell when it is no longer needed, and will not call the native library's `c2pa_free` function to release it. If the Python wrapper of those native resources is collected without first calling `c2pa_free`, the native memory is never released and leaks.
+Calling `close()` directly is equivalent to exiting a `with` block. `close()` is idempotent: a second call does nothing.
 
-### Why __del__ is not reliable enough
+### Destructor
 
-Python does offer `__del__` as a hook that runs when an object is collected (finalizer), and `ManagedResource` uses it as a fallback to possibly clean up leftover resources at that point. But `__del__` cannot be relied on as the primary cleanup mechanism: its timing is unpredictable (due to being called when the garbage collection runs, which is non-deterministic itself), it may not run at all during interpreter shutdown, and other Python implementations (PyPy, GraalPy) that do not use reference counting make its behavior even less deterministic.
+Without `with` or `.close()`, `__del__` attempts the free when Python garbage-collects the object (and it can't e known in advance when the garbage collector will run, and when it will release those resources).
 
-In CPython, `__del__` runs synchronously when the last reference to an object disappears, which in simple cases happens at a predictable point (e.g. when a local variable goes out of scope). But if the object is part of a reference cycle, its reference count never reaches zero on its own. The cycle collector must discover and break the cycle first, and it runs periodically rather than immediately. An object caught in a cycle might sit in memory for an arbitrary amount of time before `__del__` fires. CPython's cycle collector does not guarantee an order when finalizing groups of objects in a cycle, so `__del__` methods that depend on other objects in the same cycle may find those objects already partially torn down. During interpreter shutdown, the situation is even less reliable: CPython clears module globals and may collect objects in an arbitrary order, and `__del__` methods that reference global state (like the `_lib` handle to the native library) can fail silently because those globals have already been set to `None`. PyPy and GraalPy use tracing garbage collectors (which periodically walk the object graph to find unreachable objects, rather than tracking individual reference counts) instead of reference counting, so `__del__` does not run when the last reference disappears. It runs at some later point when the GC happens to trace that region of the heap, which could be seconds or minutes later, or not at all if the process exits first.
+### Nesting
 
-`ManagedResource` is the internal base class that handles managed resources, especially their lifecycle and clean-up. Every class that holds a native pointer should inherit from it.
+Multiple resources can share one `with` statement or nest in separate `with` blocks. They are cleaned up in reverse order: right to left (when sharing one statement), or inner to outer (when statements are nested).
+
+```python
+with open("photo.jpg", "rb") as file, Reader("image/jpeg", file) as reader:
+    manifest = reader.json()
+# reader is closed first, then file
+```
+
+`with` guarantees a release order: whatever is listed later, or nested deeper, is torn down first.
+
+## Lifecycle states
+
+Every `ManagedResource` has 3 states:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> UNINITIALIZED : __init__()
+    UNINITIALIZED --> ACTIVE : _activate(handle)
+    UNINITIALIZED --> CLOSED : close() before activation
+    ACTIVE --> CLOSED : close() / __exit__ / __del__
+    CLOSED --> [*]
+```
+
+- `UNINITIALIZED`: the (Python) object exists but has no native pointer (handle) yet. This is transient, lasting only for the duration of construction.
+- `ACTIVE`: the native pointer is valid, and the object can be used.
+- `CLOSED`: the native pointer has been freed, or ownership of it has moved elsewhere. Any further use raises `C2paError`.
+
+Once `CLOSED`, an object never becomes `ACTIVE` again. A construction that fails before activation can also close directly from `UNINITIALIZED`, since there is nothing to free, only a state to record.
+
+## Closing during a (native) call
+
+A native call takes several steps in sequence: check the object is usable, hand the pointer to native code, let the code run. Two threads sharing one object can interleave those steps:
+
+1. Thread A calls `reader.json()`. It checks the Reader is usable, then enters the native call.
+2. While that call is still running, thread B calls `reader.close()`, which frees the native pointer.
+3. Thread A's native code, still running, reads through the pointer it was given, now freed (which crashes).
+
+Any code that hands work to a thread pool and waits on it with a timeout can hit it:
+
+```python
+with Reader("image.jpg") as reader:
+    future = thread_pool.submit(reader.json)
+    try:
+        future.result(timeout=2.0)
+    except TimeoutError:
+        pass
+# the `with` block exits here, calling reader.close(),
+# whether or not the pool thread's reader.json() finished
+```
+
+`future.result(timeout=...)` gives up waiting after the timeout. It does not stop the pool thread already running `reader.json()`, so that thread can still be mid-call when the `with` block exits on the timeout path. `close()` runs regardless, on the calling thread, while `reader.json()` may still be running on the pool thread. Same race as thread A and thread B above, reached through a wait-with-timeout instead of a hand-rolled thread.
+
+A Python object has no owning thread: it belongs to whoever holds a reference to it, and nothing about creating an object or passing it to another thread, in a closure or an argument, hands exclusive access to that thread. Both threads above hold a plain reference to the same object instance. Python lets either one call any method on it at any time.
+
+The interleaving in step 2 could be possible because the CPython interpreter switches between threads between bytecode instructions, and a native call spans many of them. Calling a method by itself does not stop thread B from calling `close()` on the same object while that call runs, so thread B's `close()` can land at any point during thread A's call, including partway through. The `ManagedResource` class has functionalities to avoid that.
+
+Depending on what the allocator has done with that freed memory, this crashes the process or returns another object's bytes, corrupting state far from the code responsible.
+
+Any two threads sharing a reference to the same `Reader`, `Builder`, `Signer`, or `Context` can hit this race, so [Lifecycle states](#lifecycle-states) alone is not the whole model. A resource also needs a way to say "a call is using me right now, don't free me out from under it," which is what in-flight tracking adds next.
+
+## In-flight calls
+
+Alongside its lifecycle state, every `ManagedResource` counts calls currently running against it. This is separate from the `ACTIVE`/`CLOSED` state: a resource can be `ACTIVE` and idle, or `ACTIVE` with one or more calls in flight.
+
+A call in flight can be either:
+
+- **Shared**: several threads can run this kind of call on the same object at once. Reading a manifest with `.json()` is shared: nothing stops two threads from reading the same data at the same time.
+- **Mutating**: only one thread may run this kind of call at a time, and no shared call may start while it runs, because a concurrent read could see a half-updated result or a pointer being replaced out from under it.
+
+A `close()` arriving while any call, shared or mutating, is in flight does not free the pointer immediately. It marks the resource so no new caller can start using it, and defers the free until all in-flight calls have returned. For instance, thread B's `close()` takes effect at once from its own point of view, but the memory thread A is reading stays valid until thread A's call returns.
+
+## Lifecycle overview
+
+Lifecycle state and in-flight calls work together to manage a native resource. A resource is always in one lifecycle state, `UNINITIALIZED`, `ACTIVE`, or `CLOSED`. Independently, while it is `ACTIVE`, zero or more calls may be in flight on it right now, and if any of them is mutating, no other call may start. Together, this is the full picture every guard in `ManagedResource` checks before letting a call through:
+
+```mermaid
+stateDiagram-v2
+    [*] --> UNINITIALIZED
+    UNINITIALIZED --> ACTIVE: _activate(handle)
+    UNINITIALIZED --> CLOSED: close() before activation
+
+    state ACTIVE {
+        [*] --> Idle
+        Idle --> SharedBorrow: a shared call starts
+        SharedBorrow --> Idle: it returns
+        Idle --> Mutating: a mutating call starts
+        Mutating --> Idle: it returns, or a consume-and-swap succeeds
+        Mutating --> [*]: a consume-and-close succeeds
+    }
+
+    ACTIVE --> CLOSED: close() / __del__
+    CLOSED --> [*]
+```
+
+`Mutating` is entered by any mutating call, but the two ways out differ by what kind of call it was. An ordinary mutating call, or a consume-and-swap, returns to `Idle`: the resource stays `ACTIVE`, either unchanged or holding a new pointer. Only a consume-and-close exits `ACTIVE` into `CLOSED`, since that is the one kind of consuming call that leaves nothing to wrap. Both consuming shapes are covered in [Consuming](#consuming).
+
+| State | `is_valid` | What a caller sees |
+| --- | --- | --- |
+| `UNINITIALIZED` | False | `C2paError`: "not properly initialized" |
+| `ACTIVE`, idle | True | normal operation |
+| `ACTIVE`, shared call(s) in flight | True | normal operation; more shared calls may join |
+| `ACTIVE`, a mutating call in flight | **False** | `C2paError`: "running a mutating operation" |
+| `CLOSED` | False | `C2paError`: "is closed" |
+
+`is_valid` defines if a call would be accepted right now. It is `ACTIVE`, holding a handle, and no mutating call in flight. It is a lock-free snapshot, so a passing check does not keep the handle alive. Only a guarded call does that.
+
+A `Reader`'s read methods, `.json()`, `.detailed_json()`, `.resource_to_stream()`, are shared. A `Builder`'s `.sign()` is mutating, and ends by consuming the Builder: signing closes it, so a `Builder` is single-use (see [Consuming](#consuming)).
+
+## Crashes
+
+Usually, native memory bug terminates the process, and the operating system reports it as a signal, since the failure happens outside anything Python's exception machinery watches.
+
+SIGSEGV, segmentation fault, comes from the hardware: the CPU traps on a read or write to memory the process is not allowed to touch, and the kernel delivers SIGSEGV. This fires when a pointer no longer points at accessible memory, for instance freed memory the allocator has unmapped. Freeing memory does not always unmap it. Allocators often keep the pages and reuse them for a later allocation, so reading through a freed pointer can succeed, returning another object's bytes and corrupting state far from the code responsible. SIGSEGV happens when the pages are gone.
+
+SIGABRT, abort, comes from software: a program calls `abort()` on itself after detecting a broken invariant. Allocators do this when `free()` is handed a pointer it never issued, the same pointer twice, or a heap whose bookkeeping a stray write has damaged.
+
+In every case, the process terminates from inside native code. No exception, no `finally` block, no traceback can be run by the Python code.
+
+## Locking
+
+Freeing the same native pointer twice corrupts the allocator's bookkeeping. A detecting allocator stops the process. An allocator that misses it lets the damage surface later, somewhere unrelated to the code responsible. Two threads racing a `close()` against an in-flight call on the same object is one way this happens: without a guard, thread B's `close()` could free the pointer while thread A's call is still reading through it, and if thread A's own cleanup runs afterward, that same pointer gets freed a second time.
+
+Each `ManagedResource` holds a reentrant lock, `_op_lock`, and the in-flight counters from [Lifecycle overview](#lifecycle-overview). Together they guard against that: a mutating call excludes every other call, and a `close()` arriving mid-call is deferred rather than applied immediately.
+
+`_op_lock` is a `threading.RLock`, reentrant, rather than a plain `Lock`. A finalizer can run at any point, including inside a method that already holds the lock on that thread, so `__del__` calling back into locked code must not deadlock against itself. And a consuming call tears the handle down from inside a region it already holds the lock in, so it needs to reacquire rather than block.
+
+The lock is never held across a native call that drives a stream callback, since that callback can call back into this API on the same thread, and holding the lock there would deadlock against that reentry. Those calls increment an in-flight counter under the lock, release the lock, run the native call, then decrement the counter, which is the mechanism the [state diagram](#lifecycle-overview) describes as "a call in flight."
+
+This is why the interpreter's Global Interpreter Lock, the GIL, does not make this safe on its own. CPython executes one bytecode instruction at a time under the GIL, so simple operations cannot corrupt a built-in container. But a foreign function call through ctypes releases the GIL for its duration, so another thread runs while native code runs, and a `close()` can land inside that window. `_op_lock` and the in-flight counters avoids this case.
+
+Free-threaded Python builds (no GIL at all) do not change this. `ctypes` is not a compiled C extension, so it is not subject to the opt-in check that silently re-enables the GIL for unmarked extensions: a native library loaded through `ctypes` runs with no GIL protection whether or not the GIL exists elsewhere in the process. A native call already ran with the GIL released, so removing the GIL entirely makes that the normal case instead of a temporary window.
+
+The native library keeps its own bookkeeping for the pointers it hands out. That bookkeeping guards the pointer itself. It can't guard what Python does with the pointer.
+
+A callback is Python code the native library calls partway through a call, to read a stream or sign a message. It belongs to Python, so the native library keeps no bookkeeping for it. If Python frees that callback's object while the call runs, the next invocation reaches memory Python gave up. `_op_lock` and the in-flight counters keep that memory alive for the call.
+
+Using a handle takes two steps: check it, then act on it. Native bookkeeping guards only the second step. A second thread can free the same address between the first thread's check and its use, a gap of machine instructions. The address can even be reissued to another object before that use runs, so a passed check now points at memory belonging to something else. Holding `_op_lock` across both steps closes that gap.
+
+### Lock ordering
+
+Two threads acquiring the same pair of locks in opposite orders can deadlock, each waiting on what the other holds. This Python SDK avoids this with one fixed order, from outermost to innermost: a method-specific lock (where a method serializes itself against other calls to itself), then the lock of the object a method is called on, then the lock of any object it borrows for the call. A borrowed object's lock is always taken inside the operating object's lock, never the reverse, and a lock held across a native call must be one no callback path acquires.
+
+### Borrowing vs consuming
+
+A shared call, a **borrow**, passes the handle to native and gets it back unchanged. A mutating call that ends by consuming the handle hands ownership to native, which frees the original pointer during the call. A borrow validates the pointer once on entry, then holds it for the whole call without checking again, so a consume starting midway through a borrow would free memory the borrow is reading.
+
+`ManagedResource` prevents this by refusing to start a consume while a borrow is in flight, and by reserving the handle as a mutating call for the whole duration of the consume, the same reservation any other mutating call makes. Every entry point checks the in-flight counters under `_op_lock` before it starts, so a call that would otherwise race a consume is refused instead with "running a mutating operation," and the resource's lifecycle state never changes until the consume is fully classified as a success or a failure. `Reader.with_fragment()` also serializes itself against other calls to itself with a lock of its own.
+
+## Consuming
+
+Consuming a handle is a mutating call that hands the pointer to native, which takes ownership and either returns a replacement pointer or frees the original. Python must never free a pointer it handed to a consuming call, whichever way the call ends, since the address may belong to a different object by the time it returns. Freeing a pointer a consuming call already took would double-free it, so the consumed pointer is abandoned rather than freed.
+
+There are two shapes a consuming call takes.
+
+**Consume-and-swap** replaces the object's internal state without discarding the Python-side wrapper. `Reader.with_fragment()` does this, feeding a new BMFF fragment into an existing Reader so the native library can rebuild its internal representation from prior fragments plus the new one, since a fresh `Reader` would lose that accumulated state. `Builder.with_archive()` does the same, loading an archive into an existing Builder while keeping its context and settings.
+
+On success the object stays `ACTIVE`: the lifecycle state never changes, only the pointer underneath it, and callers keep using the same object.
+
+**Consume-and-close** takes the pointer and leaves the Python object nothing to wrap. Signing a `Builder`, or handing a `Signer` to a `Context`, both end this way: the object goes `CLOSED`, but without freeing the pointer, since native still owns it.
+
+### Example: signing a Builder
+
+`Builder.sign()` is a consume-and-close call:
+
+```python
+builder = Builder(manifest_json)
+builder.sign(signer, "image/jpeg", source, dest)
+# builder is now CLOSED: sign() consumed its handle
+```
+
+`sign()` hands the Builder's handle to `c2pa_builder_sign`, which takes ownership and writes the signed asset. There is no replacement pointer to install, so `ManagedResource` marks the Builder `CLOSED` without freeing anything: native already owns the pointer at that point. This is also why a `Builder` is single-use. Calling `sign()` again raises `C2paError`, since `is_valid` is now False.
+
+Each call below is a real `ManagedResource` method, in the order `sign()` calls them:
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant B as Builder
+
+    C->>B: sign(signer, format, source, dest)
+    B->>B: _ensure_valid_state()
+    Note right of B: Raises C2paError if not ACTIVE.<br/>Builder is still ACTIVE here.
+
+    B->>B: _exclusive_native_call()
+    Note right of B: Reserves the handle as a mutating call.<br/>Builder is ACTIVE, mutating.
+
+    B->>B: c2pa_builder_sign(handle, ...)
+    Note right of B: Native call runs.<br/>On return, native owns the handle<br/>whether this succeeded or raised.
+
+    alt native call raised
+        B->>B: close()
+        Note right of B: Builder is now CLOSED.
+        B-->>C: re-raises as C2paError
+    else native call returned
+        B->>B: close()
+        Note right of B: Builder is now CLOSED,<br/>unconditionally, in a finally block.
+        B-->>C: returns manifest bytes
+    end
+```
+
+Both branches end the same way: `close()` runs either way, so the Builder is always `CLOSED` once `sign()` returns or raises. Nothing about the outcome changes whether `close()` frees the pointer, since native already took it in `_exclusive_native_call()`'s reservation.
+
+### Adopting a handle
+
+A native call can return a pointer that needs a Python wrapper around it, with no `__init__` call, since `__init__` would try to create a new native resource rather than wrap an existing one. `_wrap_native_handle()` handles this: it builds a bare instance, sets its lifecycle bookkeeping, runs `_init_attrs()` for subclass defaults, and activates the handle. Ownership transfers once that call returns; if it raises, no wrapper exists, and the caller still owns the pointer and must free it itself.
+
+`Reader._init_from_context` and `Builder._init_from_context` both do something that looks backward: they create a native object and activate it before making the consuming call that will feed it data. A consuming call needs an active resource to read the handle from and swap the result into, and activating first puts the intermediate pointer under normal cleanup right away: whichever way the consuming call goes, `close()` and `__del__` free it correctly. Holding the raw pointer in a local variable instead would leave failure paths to decide whether to free it.
+
+## Object usability checks
+
+`is_valid`, defined in [Lifecycle overview](#lifecycle-overview), is a lock-free snapshot: it does not itself keep the handle alive, only a guarded call does that. `Context` implements the abstract `ContextProvider.is_valid` by inheriting the concrete one from `ManagedResource`, which Python's method resolution order finds first as long as `ManagedResource` is listed before `ContextProvider` in the class definition (`class Context(ManagedResource, ContextProvider)`). Listing them the other way around would leave the abstract declaration in front and raise `TypeError` at class definition time.
+
+Every subclass gets these guarantees from `ManagedResource`, and must not break them:
+
+| Guarantee | What it means |
+| --- | --- |
+| Freed exactly once | Every native pointer reaches `c2pa_free` at most once: no leak, no double-free. |
+| Cleanup is idempotent | Calling `close()`, or exiting a `with` block, more than once does nothing after the first time. |
+| Cleanup never raises | An ordinary exception during cleanup is caught and logged, never re-raised, so it cannot mask an exception the `with` block itself raised. An interpreter shutdown signal is the one exception to this: it is allowed to interrupt cleanup, since the process is already going away. |
+| State transitions are one-way | Lifecycle only ever moves `UNINITIALIZED` to `ACTIVE` to `CLOSED`. Nothing reactivates a closed resource. |
+| Public methods check state first | Every method that uses the handle validates it before the native call, raising `C2paError` on anything but a usable `ACTIVE` resource rather than risking undefined behavior. |
+
+## Keeping references alive
+
+When a Python object passes a callback or a pointer to the native library, that reference must stay alive as long as native code might use it. But the garbage collector has no way to know that: it only sees Python references.
+
+This Python SDK keeps these references as plain instance attributes on the owning object. A `Stream` stores its four callback objects this way, so they stay referenced as long as the `Stream` is alive (see [Reference cycles](#reference-cycles) for how those callbacks avoid keeping the `Stream` alive in return). A `Signer` consumed by a `Context` has its callback copied to an attribute on the `Context`, so the callback survives the `Signer` object closing.
+
+`_release()` sets these attributes to `None` during cleanup, letting them be collected, and it runs before the native pointer is freed, so anything the pointer depends on, an open file, a stream wrapper, is torn down first. This is `ManagedResource`'s ordering; `Stream` releases in the reverse order for reasons covered in [`Stream` cleanup](#stream-cleanup).
+
+## Freeing memory
+
+The native library exposes one C function, `c2pa_free`, that deallocates memory it previously allocated. Every native pointer, whatever kind of object created it, is freed through this one path:
+
+```python
+@staticmethod
+def _free_native_ptr(ptr):
+    return _lib.c2pa_free(ptr)
+```
+
+It returns `0` when the pointer was freed, and `-1` when the registry rejected an already-consumed or untracked address. `ManagedResource` guarantees this is called once per pointer.
+
+## Cleanup errors
+
+Cleanup must not let an ordinary exception mask the exception that caused a `with` block to exit in the first place. `ManagedResource` enforces this at every level:
+
+- `close()` delegates to `_cleanup_resources()`, which wraps the whole sequence in a try/except that catches and logs `Exception` rather than re-raising it.
+- `_release()` runs inside a wrapper that logs any exception it raises and continues, so a subclass's `_release()` failing cannot stop the native pointer from being freed afterward.
+- A failed free of the native pointer is logged, not re-raised.
+- The object is marked `CLOSED` before `_release()` runs or anything is freed, so a cleanup that fails partway still leaves the object closed, and a second attempt does not repeat the damage.
+- `close()` on an already-closed object returns immediately.
+
+These handlers catch `Exception`, not `BaseException`. The interpreter's own unwinding signals, a cancellation or a shutdown in progress, are `BaseException`, so they pass through untouched and the remaining free may not run. This is deliberate: such a signal means the process is going away, address space and native allocations included, so holding cleanup open to finish a free that is about to become irrelevant would only delay the shutdown the caller asked for.
+
+All three cleanup entry points converge on one method:
+
+```mermaid
+flowchart TD
+    E["close() / __exit__ / __del__"] --> CR["_cleanup_resources()"]
+    CR --> FP{"foreign process?"}
+    FP -->|yes| N["null the handle, mark CLOSED,<br/>do not free"] --> DONE([return])
+    FP -->|no| ST{"already CLOSED?"}
+    ST -->|yes| DONE
+    ST -->|no| TD["run teardown"]
+    TD --> SET["mark released, CLOSED"]
+    SET --> REL["release subclass resources<br/>(logs, never raises)"]
+    REL --> NULL["take the pointer into a local,<br/>null the handle"]
+    NULL --> H{"pointer was set?"}
+    H -->|no| DONE
+    H -->|yes| FREE["free the native pointer<br/>(logs on failure)"] --> DONE
+```
+
+## Fork safety
+
+`fork()` copies the calling process, including every Python object holding a native pointer, but the underlying native allocation is not duplicated: there is still only one, and the parent owns it.
+
+If a forked child cleaned up its copy of that object normally, two things would go wrong. It would free a pointer the parent is using, a double-free. And `fork()` copies only the calling thread, not every thread the parent was running. Any lock another thread held at fork time comes over still locked, with no thread left in the child able to release it. If that lock happens to be one the native library uses internally, calling into native code to free anything in the child can then block forever.
+
+So this Python SDK never frees native memory in a process that did not allocate it. A process-ID stamp on every object guards this: cleanup in a process that did not allocate the pointer marks it closed without freeing. Every object is stamped with its creating process's ID at construction, and cleanup compares that stamp against the current process before doing anything:
+
+```mermaid
+sequenceDiagram
+    participant P as Parent process
+    participant O as Reader object
+    participant F as Forked child
+
+    P->>O: __init__ stamps the owning process ID
+    P->>F: fork()
+    Note over O,F: Child inherits a copy of the object.<br/>One native allocation, two Python copies.
+
+    F->>F: child's copy is cleaned up
+    F->>F: process ID does not match
+    Note right of F: Do not free: the parent owns it,<br/>and a native lock may be held<br/>by a thread that did not survive the fork
+    F->>F: null the handle, mark CLOSED
+
+    P->>O: close()
+    P->>P: frees the native pointer normally
+```
+
+The child's copy is not just skipped, it is nulled and marked `CLOSED`, so nothing in the child can go on to use or free it. This never touches the parent's copy, which stays valid.
+
+The memory a child skips freeing is not lost for good: a child that calls `exec()` replaces its address space, and a child that exits has its memory reclaimed by the operating system. Even a long-lived forked worker retains at most the objects it inherited at fork time, a bounded amount rather than a growing leak, since anything it allocates carries its own process ID and is freed normally.
 
 ## Class hierarchy
 
@@ -70,485 +379,41 @@ classDiagram
     ContextProvider <|-- Context
 ```
 
-Notes:
+`Context` inherits from both `ManagedResource` and `ContextProvider`. Python's multiple inheritance allows this. `ContextProvider` is an abstract base class requiring `is_valid` and `execution_context`; `Context` satisfies `is_valid` by inheriting the concrete version from `ManagedResource`, as long as `ManagedResource` is listed first in the class definition, `class Context(ManagedResource, ContextProvider)`. Listed the other way, Python's method resolution order would find the abstract declaration first and refuse to let `Context` be instantiated at all.
 
-- `Context` inherits from both `ManagedResource` and `ContextProvider` (Python supports multiple inheritance).
-- `Settings` inherits from `ManagedResource` only.
-- `ContextProvider` is an ABC (abstract base class) that requires two properties: `is_valid` and `execution_context`. The `is_valid` implementation lives on `ManagedResource`, so `Context` satisfies that part of the `ContextProvider` contract without duplicating the property.
+## Streams
 
-> [!NOTE]
-> **How `is_valid` resolves across both parents for Context**
->
-> Python's MRO (Method Resolution Order) is the order in which Python searches parent classes when looking up a method or property. For `Context(ManagedResource, ContextProvider)`, the MRO is `Context then ManagedResource then ContextProvider then ABC then object (base class)`. When `context.is_valid` is accessed, Python walks the MRO left-to-right and finds `ManagedResource.is_valid` first. Since `ContextProvider.is_valid` is abstract (it declares the requirement but has no implementation), `ManagedResource`'s concrete version both provides the behavior and satisfies the ABC contract.
->
-> The MRO is computed using C3 linearization, which enforces two rules: children appear before their parents, and left-to-right order from the class definition is preserved. For `class Context(ManagedResource, ContextProvider)`:
->
-> 1. `Context`: the class itself always comes first.
-> 2. `ManagedResource`: first listed parent, nothing else requires it to appear later.
-> 3. `ContextProvider`: second listed parent, must come after `ManagedResource` to preserve declaration order.
-> 4. `ABC`: parent of `ContextProvider`, must come after its child.
-> 5. `object`: root of everything (all objects), always last.
->
-> Putting `ManagedResource` first in the declaration matters: the concrete `is_valid` implementation is found immediately during lookup, rather than hitting the abstract declaration on `ContextProvider` first.
+Bytes reach the native library through a `Stream`, which wraps a Python file or memory stream so the native library can read and write it via callbacks. It does not inherit from `ManagedResource`, and uses a separate release function instead of `_free_native_ptr`.
 
-## Python frees only what Python owns
+### Not a `ManagedResource`
 
-The C FFI is consistent about one thing that shapes this whole layer: some calls consume the pointer passed to them and hand back a replacement, because the native side may free and reallocate the underlying value. A pointer that went into a consuming call must never be freed by Python afterwards. Its address may already have been reallocated to a different object (address space is not infinite, so addresses get reused).
+A `Reader` or `Builder` holds a resource that Python code calls methods on. A `Stream` holds a resource the native library calls back into instead, for read, seek, write, and flush. Ownership means something different for a resource that receives calls rather than makes them, so `Stream` gets its own release path instead of the shared one.
 
-Python owns and frees two kinds of things: the **single current native handle** for each object, and **Python-side resources it created itself** (stream wrappers, callbacks pinned so the native side can call back into them, caches). It swaps that one tracked handle to whatever a consuming call returns and, on the success path, never frees the value the call took. Beyond those owned resources it also carries bookkeeping it never frees (lifecycle state, the owning process ID, a borrowed reference to a caller-supplied `Context`), and it does not manage native reallocation itself: it swaps handles and, on the ambiguous failure paths, reads the native error tags to decide who still owns the pointer rather than assuming.
+`Stream` tracks its state with two flags, `_closed` and `_initialized`, rather than the `LifecycleState` machinery from [Lifecycle states](#lifecycle-states), but supports the same three cleanup paths: context manager, explicit `.close()`, `__del__` fallback.
 
-Therefore, the managed resources have the following principles:
+### Reentrant callbacks
 
-- Each `ManagedResource` holds exactly one `_handle`. `_swap_handle()` replaces it with the pointer a consuming call returned and does not free the old value, since the native side took it (see [Consume-and-swap](#consume-and-swap)).
-- `_teardown(free_handle=False)`, `_consume_no_replacement()`, and `_consume_into()` all close or advance the object without calling `c2pa_free`, because ownership moved to the native side.
-- Only a few sites free a live handle. Two of them free a pointer this layer still provably owns: normal teardown (`_teardown(free_handle=True)`), and the create-then-validate path, which frees a freshly created pointer if activation fails. The third, `_release_handle()`, is a *guarded* free used only when ownership is genuinely unknown (a consuming call failed without setting an error, or a Python exception was raised before the native side reported anything): if the native side already took the pointer, its address is no longer in the registry and `c2pa_free` is a `-1` no-op, so the free touches no memory. No path frees a pointer known to have been consumed and reallocated (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)).
-- `_release()` drops stream wrappers, callbacks, and caches before the native pointer is freed (see [Subclass-specific cleanup with `_release()`](#subclass-specific-cleanup)).
+A `Stream` registers four ctypes callbacks. Reading from the stream runs one of them, running caller-supplied Python, and the same reentrancy hazard applies as anywhere else in this doc: a native call driving one of these callbacks cannot hold a lock across the call, since the callback may call back into this API on the same thread.
 
-### Double-free risk mitigations
+Each callback checks the stream's own state before touching the underlying Python object, and reports an error rather than reading through it if the stream has been torn down.
 
-Three distinct risks. Two have a mechanism in this layer; the third is the caller's to synchronize:
+### `Stream` cleanup
 
-| Hazard | Covered by | How |
-| --- | --- | --- |
-| Freeing a pointer a consuming call already took (single flow) | `_swap_handle` / `_teardown(free_handle=False)` triage | The consumed pointer is abandoned, never freed. The retained-vs-consumed decision reads the native error tag (`UntrackedPointer:` / `WrongPointerType:` mean not taken). |
-| A forked child freeing a pointer its parent owns | PID stamp (`record_owner_pid` / `is_foreign_process`) | Cleanup in a process that did not allocate the pointer nulls the handle and marks `CLOSED` without freeing (see [Fork safety](#fork-safety)). |
-| Two **threads** in one process racing frees on distinct objects, where the allocator recycles a just-freed address | Not covered here | `ManagedResource` has no lock and no thread stamping. The PID stamp cannot see it: sibling threads share a PID. Safety for genuinely shared handles must come from the caller's own synchronization or from the native registry, not this layer. |
+`Stream` holds its own reentrant lock, `_close_lock`, serializing `close()`, `__del__`, and a `close()` from another thread against each other, for the same reason `_op_lock` is reentrant: a callback attribute set to `None` inside the locked region can drop the last reference to an object whose own finalizer then needs the same lock.
 
-The PID stamp is fork-only: it compares process IDs, and two threads in the same process always match. Sharing one `ManagedResource` instance across threads without external synchronization is outside what this layer protects against.
+Cleanup runs in the direction of dependency: whatever can invoke or reach the other side is torn down first. This reverses the order `ManagedResource` uses, because a `Stream`'s callbacks are invoked by native code rather than the other way around: `Stream` releases the native handle first, guaranteeing no callback can fire again, then drops the callback objects. `ManagedResource` instead runs subclass cleanup first, since its native pointer depends on those resources staying valid until then.
 
-## Guarantees provided by ManagedResource
+`close()` performs both steps. `__del__` performs the release, leaving the callback attributes in place, but this leaks nothing: `__del__` runs when the `Stream` is being collected, taking those attributes down with it.
 
-`ManagedResource` provides the following guarantees, invariants must be maintained when subclassing the `ManagedResource` class in new implementation/new native resources handlers:
+`Stream` never closes the Python object it wraps. The caller that opened a file owns that file. A `Reader` that opened the file itself tracks it separately and closes it during its own cleanup.
 
-| Guarantee | Description |
-| --- | --- |
-| **Pointer freed exactly once** | Each native pointer is passed to `c2pa_free` at most once. No leak (zero frees) and no double-free. |
-| **Cleanup is idempotent** | Calling `close()` (or exiting a `with` block) multiple times is safe; after the first successful cleanup, further calls do nothing. |
-| **Cleanup never raises (ordinary errors)** | The cleanup path catches and logs `Exception`, never re-raising it. `_release()` runs inside `_safe_release()`, which logs and swallows; the `c2pa_free` call has its own handler; and `_cleanup_resources()` wraps both. The original exception from the `with` block (if any) is never masked. **Asynchronous interrupts are the deliberate exception.** The cleanup handlers catch `Exception`, which excludes the `BaseException` signals the interpreter raises to unwind a process (a cancellation request or an exit in progress). Those propagate through cleanup untouched, and the remaining free may not run. Such a signal means the process is being torn down and its address space, native allocations included, is about to be reclaimed as a whole. Catching it would suppress a shutdown the caller asked for in order to complete a free that is about to become irrelevant, so the handlers stay scoped to `Exception`. |
-| **State transitions are one-way** | Lifecycle moves only from UNINITIALIZED to ACTIVE to CLOSED. A closed resource cannot be reactivated. |
-| **Transitions go through helper methods** | Subclasses call `_activate()`, `_swap_handle()` or `_teardown()` and never assign `_handle` or `_lifecycle_state` directly. `_activate()` and `_swap_handle()` validate before mutating, so an object cannot end up active with a null handle. |
-| **Ownership transfer is safe** | When a pointer is transferred elsewhere (e.g. via `_teardown(free_handle=False)`), the object stops managing it and does not call `c2pa_free` on it. |
-| **Public methods validate lifecycle state** | Every public API calls `_ensure_valid_state()` before use; closed or invalid state yields `C2paError` instead of undefined behavior or crashes. |
+### Reference cycles
 
-## Preventing garbage collection of live references
+Each ctypes callback closes over the `Stream` it belongs to. Captured directly, that would be a reference cycle, the `Stream` holding the callback and the callback holding the `Stream`, so nothing in the loop would reach a zero reference count on its own, leaving cleanup to the slower cycle collector. The callbacks capture a weak reference instead, resolved fresh on each call, so the `Stream`'s reference count can reach zero and its cleanup stays on the deterministic path.
 
-When a Python object passes a callback or pointer to the native library, that reference must stay alive for as long as the native side might use it. Python's garbage collector has no way to know that native code is still holding a reference to a Python callback.
+## Methods to use with a `ManagedResource`
 
-The SDK solves this by storing these references as instance attributes on the owning object. For example, `Stream` stores its four callback objects (`_read_cb`, `_seek_cb`, `_write_cb`, `_flush_cb`) as instance attributes. As long as the `Stream` object is alive, its callbacks have a nonzero reference count and will not be collected. Similarly, when a `Signer` is consumed by a `Context`, the Context copies the signer's `_callback_cb` to its own `_signer_callback_cb` attribute so the callback survives even though the Signer object is now closed.
-
-During cleanup, `_release()` sets these attributes to `None`, which drops the reference count on the callback objects and allows them to be collected. In the cleanup sequence, `_release()` runs first, then `c2pa_free` frees the native pointer. `_release()` goes first so that subclass-specific resources (open file handles, stream wrappers) are torn down before the native pointer they depend on is freed.
-
-## How native memory is freed
-
-The native Rust library exposes a single C FFI function, `c2pa_free`, that deallocates memory it previously allocated. `ManagedResource` wraps this in a static method:
-
-```python
-@staticmethod
-def _free_native_ptr(ptr):
-    return _lib.c2pa_free(ptr)
-```
-
-All native pointers are freed through this single path, regardless of which constructor created them (`c2pa_reader_from_stream`, `c2pa_builder_from_json`, `c2pa_signer_from_info`, etc.). No explicit `ctypes.cast` is needed: `c2pa_free`'s declared argtype is `c_void_p`, so ctypes converts any pointer instance on the way in. Casting explicitly with `ctypes.cast(ptr, c_void_p)` performs the same conversion but leaves a reference cycle behind on every call, which creates additional load on the (Python) garbage collector.
-
-It returns `c2pa_free`'s status code: `0` when the pointer was really freed, `-1` when the native registry rejected an already-consumed or untracked address. That `-1` is expected on the guarded-free paths and is handled gracefully by the native lib too.
-
-`ManagedResource` guarantees that `c2pa_free` is called exactly once per pointer: not zero times (leak), not twice (double-free).
-
-## Lifecycle states
-
-Each `ManagedResource` tracks its state with a `LifecycleState` enum:
-
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> UNINITIALIZED : __init__()
-    UNINITIALIZED --> ACTIVE : _activate(handle)
-    UNINITIALIZED --> CLOSED : close() before activation
-    ACTIVE --> ACTIVE : _swap_handle(new_handle)
-    ACTIVE --> CLOSED : close() / __exit__ / __del__ / _teardown()
-```
-
-- `UNINITIALIZED`: The Python object exists but the native pointer has not been set yet. This is a transient state during construction.
-- `ACTIVE`: The native pointer is valid. The object can be used.
-- `CLOSED`: The native pointer has been freed (or ownership was transferred). Any further use raises `C2paError`.
-
-`CLOSED` is a one-way state: once closed, an object cannot be reactivated. It is normally reached from `ACTIVE`, but a construction that fails before `_activate()` closes straight from `UNINITIALIZED` when `close()` or `__del__` runs (nothing to free, just marked closed).
-
-Each transition has one method that performs it, and subclasses must go through them rather than assigning `_handle` or `_lifecycle_state` directly:
-
-| Method | Transition | What it enforces |
-| --- | --- | --- |
-| `_activate(handle)` | UNINITIALIZED to ACTIVE | Rejects a null handle, and refuses to run on an already-activated resource. A rejected activation leaves the object exactly as it was. |
-| `_swap_handle(new_handle)` | ACTIVE to ACTIVE | Requires the resource to already be active and the replacement to be non-null. Used when an FFI call consumed the old handle and returned a new one. |
-| `_teardown(free_handle=False)` | ACTIVE to CLOSED | Drops the handle without freeing it, for when ownership passed to the native side (e.g. `Signer` into `Context`). Runs `_release()` first, so subclass cleanup still happens. Unlike the other two, it validates nothing. |
-| `_release_handle()` | ACTIVE to CLOSED | Frees the handle (guarded, via `_teardown(free_handle=True)`) and closes the object. Same post-state as the consumed teardown. |
-
-Because activation is the only way in, no code path can leave an object ACTIVE while holding a null handle.
-
-Two terms recur throughout this document. An **owned free** calls `c2pa_free` on a pointer this layer still provably holds: the normal `close()` / `__del__` path and the create-then-validate failure path both do this. A **guarded free** is the same call made when ownership is uncertain, which is what `_release_handle()` does: the native pointer registry tolerates being asked to free an address it no longer tracks, returning `-1` instead of crashing, so the free does not double-free a pointer the native side already took. That tolerance makes a guarded free safe to *issue*, but it is not free of consequence under concurrency — on a branch where the value is already known to be consumed, the layer skips the free rather than relying on the `-1`, because a stale free can race a recycled address (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)).
-
-`_teardown(free_handle)` is the one method that performs the ACTIVE to CLOSED transition, and the boolean decides the only thing that varies between the two exit paths: whether the native pointer is freed. Both paths run `_release()`, set `CLOSED`, and null the handle.
-
-| `free_handle` | When | What it does with the pointer |
-| --- | --- | --- |
-| `True` | Either the pointer is still provably ours (normal `close()`, `__del__`) — an owned free — or ownership is unknown after a failure (`_release_handle()`) — a guarded free. | Calls `c2pa_free`. On the owned paths the pointer is really freed; on the unknown-ownership path the registry returns `-1` without touching memory if the native side already took it. |
-| `False` | The native side already took ownership: a consuming FFI call swallowed the pointer, or it passed to another object. | Frees nothing; the new owner does. A `c2pa_free` here would double-free (or hit the guarded `-1` no-op that dirties the error slot and risks racing a recycled address). |
-
-Every public method calls `_ensure_valid_state()` before doing any work, which raises `C2paError` unless the resource is ACTIVE with a non-null handle.
-
-## Ways to clean up
-
-You can clean up using a `with` statement, explicitly by calling `close()`, or by using destructor fallback.
-
-### Using a "with" statement
-
-The recommended cleanup method is to use a `with` statement, like this:
-
-```python
-with Reader("image.jpg") as reader:
-    print(reader.json())
-# reader is automatically closed here, even if an exception occurs
-```
-
-When the `with` block exits, `__exit__` calls `close()`, which frees the native pointer. This is the safest approach because cleanup happens even if the code inside the block raises an exception.
-
-### Explicit close
-
-```python
-reader = Reader("image.jpg")
-try:
-    print(reader.json())
-finally:
-    reader.close()
-```
-
-Calling `close()` directly is equivalent to exiting a `with` block. It is idempotent: calling it multiple times is safe and does nothing after the first call.
-
-### Destructor fallback
-
-If neither the context manager nor an explicit `.close()` is used, `__del__` attempts to free the native pointer when Python garbage-collects the object. Per [Why `__del__` is not reliable enough](#why-__del__-is-not-reliable-enough), its timing is unpredictable and it may not run at all, so it is a safety net rather than a primary cleanup mechanism.
-
-## Error handling during cleanup
-
-Cleanup must not raise an *ordinary* exception. A failure during cleanup (for example, the native library crashing on free) should not mask the original exception that caused the `with` block to exit. `ManagedResource` enforces this:
-
-- `close()` delegates to `_cleanup_resources()`, which wraps the entire cleanup sequence in a try/except that catches and silences `Exception`.
-- `_release()` is never called directly during cleanup. It runs inside `_safe_release()`, which logs any `Exception` with a traceback and returns normally, so a subclass whose `_release()` raises an ordinary error cannot stop the native pointer from being freed afterwards.
-- If freeing the native pointer fails, the error is logged via Python's `logging` module but not re-raised.
-- The state is set to `CLOSED` as the very first step, before attempting to free anything. If cleanup fails halfway, the object is still marked closed, preventing a second attempt from doing further damage.
-- Cleanup is idempotent. Calling `close()` on an already-closed object returns immediately.
-
-These handlers catch `Exception`, not `BaseException`. The signals the interpreter raises to unwind a process (a cancellation request, or an exit already in progress) are `BaseException`, so they pass through cleanup untouched and the remaining free may not run. That is intentional: the signal means the whole process is going away, and its address space, native allocations included, is reclaimed on exit. Holding the interpreter in cleanup to finish a free that is about to become irrelevant would only delay the shutdown the caller asked for.
-
-All three cleanup entry points converge on the same method, and the exception handling sits at three different levels inside it:
-
-```mermaid
-flowchart TD
-    E["close() / __exit__ / __del__"] --> CR["_cleanup_resources()"]
-    CR --> FP{"foreign process?"}
-    FP -->|yes| N["null the handle, set CLOSED,<br/>do not free"] --> DONE([return])
-    FP -->|no| ST{"already CLOSED?"}
-    ST -->|yes| DONE
-    ST -->|no| SET["set CLOSED first"]
-    SET --> REL["_safe_release()<br/>logs and swallows"]
-    REL --> H{"handle set?"}
-    H -->|no| DONE
-    H -->|yes| FREE["_free_native_ptr()<br/>logs on failure"] --> NULL["_handle = None"] --> DONE
-```
-
-The `foreign process` branch is explained under [Fork safety](#fork-safety).
-
-## Nesting resources
-
-When multiple native resources are in play at once, they can share a single `with` statement or use nested blocks. Either way, Python cleans them up in reverse order (right to left, or inner to outer).
-
-```python
-with open("photo.jpg", "rb") as file, Reader("image/jpeg", file) as reader:
-    manifest = reader.json()
-# reader is closed first, then file
-```
-
-The same can be written with nested blocks if readability is better:
-
-```python
-with open("photo.jpg", "rb") as file:
-    with Reader("image/jpeg", file) as reader:
-        manifest = reader.json()
-```
-
-The order matters because resources often depend on each other. In both examples, the `Reader` holds a native pointer that references the file's data through a `Stream` wrapper. If the file handle were closed first, the native library would still hold a pointer into the stream's read callbacks, and any subsequent access (including cleanup) could read freed memory or trigger a segfault. By closing the Reader first, the native pointer is freed while the underlying file is still open and valid. Python's `with` statement guarantees this ordering: resources listed later (or nested deeper) are torn down first.
-
-## Reader lifecycle
-
-A `Reader` wraps a stream (or opens a file), passes it to the native library, and holds the returned pointer. While active, callers can use `.json()`, `.detailed_json()`, `.resource_to_stream()`, and other methods. Each of these checks state via `_ensure_valid_state()` before making the FFI call.
-
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> UNINITIALIZED : __init__()
-    UNINITIALIZED --> ACTIVE : Reader("image.jpg")
-    ACTIVE --> CLOSED : close() / exit with block
-    CLOSED --> [*]
-```
-
-While `ACTIVE`, callers can use `.json()`, `.detailed_json()`, etc. repeatedly without changing state. Calling `.close()` on an already-closed Reader is a no-op. Any other method call on a closed Reader raises `C2paError`.
-
-When the Reader is closed, it first releases its own resources (open file handles, stream wrappers) via `_release()`, then frees the native pointer via `c2pa_free`.
-
-## Builder lifecycle
-
-A `Builder` follows the same pattern as Reader, with one difference: **signing closes the builder**. A Builder is single-use, so after signing it cannot be reused.
-
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> UNINITIALIZED : __init__()
-    UNINITIALIZED --> ACTIVE : Builder.from_json(manifest)
-    ACTIVE --> CLOSED : .sign() or close()
-    CLOSED --> [*]
-
-    note left of CLOSED
-        .sign() closes the builder
-        to enforce single use
-    end note
-```
-
-While `ACTIVE`, callers can use `.add_ingredient()`, `.add_action()`, etc. repeatedly. `.sign()` closes the Builder when it returns, on both the success and the failure path. Closing without signing frees the pointer the same way.
-
-The native sign call borrows the builder's pointer rather than taking ownership of it, so `Builder` never marks it consumed and the pointer is freed normally through `c2pa_free`. The close enforces single use; it is not a memory-management requirement.
-
-## Ownership transfer
-
-Some operations transfer a native pointer from one object to another. When this happens, the original object must stop managing the pointer (e.g. so it is not freed twice).
-
-`_teardown(free_handle=False)` handles this. It runs `_release()`, then sets `_handle = None` and `_lifecycle_state = CLOSED` without freeing the pointer.
-
-In the SDK this happens in one place: passing a `Signer` to a `Context`. The Context runs a short-lived native context builder, feeds the signer into it, builds the context, and activates the result. The builder itself is wrapped in `_NativeBuilder` (a small `ManagedResource`), so every failure inside the `with` block frees it through `close()` unless a consuming call already took it. There is no raw pointer held across the calls and no bespoke error handler.
-
-The signer transfer goes through `_consume_no_replacement()`, which routes any failure to the shared triage (see [Why an ownership-taken failure does not free](#why-an-ownership-taken-failure-does-not-free)). That triage decides per error whether the signer was actually consumed: `set_signer` does *not* unconditionally take ownership.
-
-```mermaid
-sequenceDiagram
-    participant C as Caller
-    participant S as Signer
-    participant X as Context
-    participant B as _NativeBuilder
-    participant N as Native lib
-
-    C->>X: Context(settings, signer)
-    X->>B: with _NativeBuilder() (owns the builder, close() frees it on any failure)
-    X->>S: _ensure_valid_state()
-    X->>X: copy signer._callback_cb to _signer_callback_cb
-    Note right of X: Pin the callback first:<br/>the Signer is about to be consumed
-    X->>S: _consume_no_replacement(set_signer)
-    S->>N: c2pa_context_builder_set_signer(builder_ptr, handle)
-
-    alt status 0 (success)
-        S->>S: _teardown(free_handle=False)
-        Note right of S: Consumed: native took the signer
-    else pre-consume rejection (UntrackedPointer / WrongPointerType)
-        Note right of S: Rejected before ownership moved:<br/>Signer retained, typed error raised
-    else other error
-        S->>S: _teardown(free_handle=False)
-        Note right of S: Native took it then failed and dropped it
-    end
-
-    X->>B: _consume_into(build)
-    B->>N: c2pa_context_builder_build(builder_ptr)
-    N-->>X: context_ptr (builder consumed)
-    X->>X: _activate(context_ptr) (outside the with)
-```
-
-Details in that sequence that are easy to get wrong:
-
-- The callback is copied to the Context *before* the transfer. A successful consume runs `_release()`, which drops the Signer's reference to the callback; a Context that copied it afterwards would be pointing at a callback nothing keeps alive.
-- `set_signer` does not always take the pointer. A pre-consume rejection (`UntrackedPointer:` / `WrongPointerType:`) leaves the Signer `ACTIVE` and retained, so the triage must read the native error before deciding to close it. Treating every failure as "consumed" would close a signer the native side never took.
-- A `ctypes.ArgumentError` from `set_signer` is re-raised untouched by `_invoke_consume`: marshalling failed, the native function never ran, and the Signer still owns its handle. Only calls that reached native go through the consumed/retained triage.
-- The builder is never held as a raw local across the signer and build calls. `_NativeBuilder`'s `with` block owns it: a settings error, a retained-signer error, a build rejection, or an async interrupt all free it through `close()`, and a successful build consumes it so `close()` is then a no-op. The old raw-pointer recovery block that used to free `builder_ptr` on the un-reached-build path is gone.
-
-### Adopting a handle the SDK already owns
-
-Ownership can also arrive from the other direction: a native call returns a pointer that needs a Python wrapper around it. `_wrap_native_handle()` is the classmethod for that. It builds an instance with `object.__new__`, runs `ManagedResource.__init__` on it (which sets the lifecycle fields and stamps the owning process ID), runs `_init_attrs()` for the subclass attribute defaults, and calls `_activate()` with the handle.
-
-It deliberately skips `__init__`, because `__init__` would try to create a *new* native resource. That is why attribute defaults belong in `_init_attrs()`: it is the only initialization step this path runs.
-
-Ownership transfers only if the call returns. If `_wrap_native_handle()` raises, no wrapper exists to free the pointer, so the caller still owns it and must free it.
-
-## Consume-and-swap
-
-`_teardown(free_handle=False)` closes an object permanently. A different pattern is needed when the native library must replace an object's internal state without discarding the Python-side object. This happens with fragmented media: `Reader.with_fragment()` feeds a new BMFF fragment (used in DASH/HLS streaming) into an existing Reader, and the native library must rebuild its internal representation to account for the new data. The native API does this by consuming the old pointer and returning a new one. Creating a fresh `Reader` from scratch would not work because the native library needs the accumulated state from prior fragments.
-
-`Builder.with_archive()` follows the same pattern: it loads an archive into an existing Builder, replacing the manifest definition while preserving the Builder's context and settings.
-
-In both cases the FFI call consumes the current pointer and returns a replacement:
-
-```mermaid
-stateDiagram-v2
-    state "ACTIVE (ptr A)" as A
-    state "ACTIVE (ptr B)" as B
-
-    A --> B : C FFI call consumes ptr A, returns ptr B
-    note right of B
-        Same Python object,
-        new native pointer
-    end note
-```
-
-On success the object stays `ACTIVE` because the Python-side object is still valid: it has a live native pointer, its public methods still work, and callers may continue using it (e.g. reading the updated manifest or feeding in another fragment). The lifecycle state does not change because from `ManagedResource`'s perspective nothing has closed. Only the underlying native pointer has been swapped. This is different from a consumed teardown (`_teardown(free_handle=False)`), where the object transitions to `CLOSED` and becomes unusable. On the success path the old pointer must not be freed by `ManagedResource` because the native library already consumed it as part of the FFI call. The failure path is different and is covered by the triage in [`_consume_and_swap()`](#_consume_and_swap).
-
-### `_consume_and_swap()`
-
-Every call of this shape goes through one helper, which takes the FFI call as a callable and handles the outcomes:
-
-```python
-# Reader.with_fragment() internally does:
-self._consume_and_swap(
-    lambda handle: _lib.c2pa_reader_with_fragment(handle, format_bytes, stream),
-    Reader._ERROR_MESSAGES['reader_error'])
-```
-
-The call is passed as a lambda because the helper supplies the handle and, on success, replaces it via `_swap_handle()`.
-
-The helper exists because a failed return can be ambiguous. The native functions run in phases: it validates the **borrowed pointer** (passed in without transferring ownership; the caller still owns it unless the callee explicitly takes it over), then takes ownership, then does the work. A failure in the first phase and a failure after the second come back to Python as the same value (a null pointer, or a non-zero status), but they leave ownership in opposite places.
-
-```mermaid
-flowchart TD
-    CALL["FFI call(handle)"] --> V{"validate borrowed handle"}
-    V -->|invalid| R["reject: handle NOT taken<br/>sets UntrackedPointer / WrongPointerType"] --> F1["returns a failure value<br/>(null, or non-zero status)"]
-    V -->|valid| TAKE["take ownership of handle"]
-    TAKE --> WORK{"execute function logic"}
-    WORK -->|fails| DROP["native drops the value itself<br/>sets some other error"] --> F2["returns a failure value<br/>(null, or non-zero status)"]
-    WORK -->|succeeds| OK["returns replacement / 0 / new pointer"]
-
-    F1 -.failure value returned to Python.- AMB(["needs to consult error to know failure mode from Python"])
-    F2 -.failure value returned to Python.- AMB
-```
-
-The two failure paths are indistinguishable from the return value alone. Only the native error message set alongside them tells the phases apart:
-
-| Native error | Who owns the handle | What the helper does |
-| --- | --- | --- |
-| `UntrackedPointer:` or `WrongPointerType:` | Still ours: rejected before ownership moved | Handle kept, resource stays `ACTIVE`, typed error raised. Normal cleanup frees it later. |
-| Any other error | Taken, then the operation failed | `_teardown(free_handle=False)`: the native side already dropped the value, so nothing is freed here. Resource goes `CLOSED`, error typed from the native message. |
-| No error at all | Unknown | `_release_handle()` guarded free, the caller's message is raised with `"Unknown error"` filled in. |
-
-This error and ownership triage relies on the native error still being readable (and correctly being the last error encountered) after the call returns. Reading an error copies the message out and frees the copy, but leaves the native slot set until the next error overwrites it.
-
-Three consume helpers share this triage; they differ only in what the FFI call returns on success:
-
-| Helper | Success return | Success action |
-| --- | --- | --- |
-| `_consume_and_swap()` | a replacement pointer | `_swap_handle()`, resource stays `ACTIVE` |
-| `_consume_no_replacement()` | a status code (`0` = ok) | `_teardown(free_handle=False)`, resource `CLOSED` |
-| `_consume_into()` | a *different* object's pointer | `_teardown(free_handle=False)`, the pointer returned for the caller to own |
-
-`_consume_no_replacement()` is how a `Signer` is fed to a `Context` (`set_signer` returns a status code); `_consume_into()` is how that same `Context` build returns the new context pointer. A failure in any of the three is handled by the same native-error triage, so a pre-consume rejection retains the handle rather than assuming it was taken.
-
-#### Why an ownership-taken failure does not free
-
-A consuming FFI call can fail. It may reject the borrowed pointer before taking it, or it may take ownership first and then, on a later failure, drop the value itself.
-
-The native error message indicates which of the errors happened. A rejection carries one of the `_PRE_CONSUME_ERROR_TAGS` (`UntrackedPointer:` or `WrongPointerType:`), which means the handle was never taken and is retained. Any other error message means the native side may have taken ownership and already dropped the value. On top of those, preparing the call's own arguments can fail in Python before the native function ever runs (for example, encoding a bad value or a ctypes marshalling error other than `ArgumentError`), and that outcome is handled separately.
-
-The two settled branches each take the exact action their ownership implies. A pre-consume rejection (an error prefixed `UntrackedPointer:` or `WrongPointerType:`) means the handle is still the caller's, so it is retained and freed later by normal cleanup. Any other native error means the value is already gone, so `_teardown(free_handle=False)` runs the Python-side cleanup without freeing anything.
-
-Always calling the guarded free instead, even where the value is known to be gone, is tempting because a stale free looks like a harmless `-1` no-op. It is only harmless while the freed address stays unclaimed. The native registry rejects an address it no longer tracks, but once another thread allocates a fresh tracked object at that recycled address, the registry does track it again — and a stale free aimed at the old value would now find a live entry and destroy a different thread's object. The scenario is unlikely, but not unreachable: it needs a second thread inside its own FFI call, an allocator that hands back the exact address just freed, and that reuse to happen during the (narrow) window between the native drop and this free. But the window is real under concurrent use. The failure is a silent cross-thread corruption rather than a clean error, and the free is not needed in the first place on this branch. So where the value is known to be consumed, the free is skipped rather than issued and left to the registry to reject. The native error slot stays sticky: it holds whatever it last held until the next error overwrites it, and nothing clears it in between. Issuing an unneeded free would set an untracked-pointer error there that a later caller could mistake for the failure it actually asked about, so skipping the free keeps the slot free for the next real error.
-
-`_release_handle()` (a guarded free) is reserved for the two branches where ownership is not known for certain: a Python exception raised before native reports anything, and a failure that leaves the error slot empty (which no defined native failure is expected to produce). In both, a guarded free is a good default, since it is a real free when the handle is still ours and a `-1` no-op when the native side already took it.
-
-None of this is protected by a lock on the Python side: `ManagedResource` has no thread-safety mechanism of its own, and the retained-vs-consumed guarantee comes entirely from the native pointer registry and its thread-local error slot. As noted under [Which double-free risks this layer guards](#double-free-risk-mitigations), sharing one instance across threads without external synchronization is the caller's responsibility. This is a different hazard from [Fork safety](#fork-safety), which concerns a forked child process, not a thread within the same process.
-
-A consuming C FFI function first removes the pointer from its registry, then reconstructs the owned value from it. `untrack_or_return!` runs ahead of `Box::from_raw` in `c2pa_c_ffi`. If the address is unknown or the wrong type, the untrack step fails before ownership is taken and sets an error whose prefix (`UntrackedPointer:` or `WrongPointerType:`) identifies it as a pre-consume rejection. Once the value has been reconstructed, a later failure simply drops it, the same as any owned value going out of scope. The Python side stays defensive (and as generic as possible) rather than assuming any exact behavior: it retains the handle when it recognizes one of those rejection prefixes, and where the outcome is unclear it falls back to the guarded free. A native side that behaved differently would degrade in one of two bounded ways: If it kept a pointer the Python side treated as consumed, nothing would free that pointer and it would leak. If it had already released a pointer the Python side then tried to free, the registry would not find the address and the free would return `-1` without touching memory.
-
-### Adopting the handle before giving it away
-
-`Reader._init_from_context` and `Builder._init_from_context` both create a native object, immediately activate it, and only then make the consuming call. `_create_and_activate()` handles the create-then-activate half: it calls the FFI constructor, validates the result with `_check_ffi_operation_result`, and `_activate()`s it, freeing the pointer if either step fails so a rejected creation leaks nothing. Reduced to its shape:
-
-```python
-self._create_and_activate(
-    lambda: _lib.c2pa_reader_from_context(context.execution_context),
-    Reader._ERROR_MESSAGES['reader_error'])
-
-self._consume_and_swap(
-    lambda handle: _lib.c2pa_reader_with_stream(
-        handle, format_bytes, self._own_stream._stream,
-    ),
-    Reader._ERROR_MESSAGES['reader_error'])
-```
-
-Activating a handle that is about to be handed to the native library looks backwards, and there are two reasons for it. `_consume_and_swap` needs an active resource to read the handle from and swap the result into. It also puts the intermediate pointer under normal cleanup before anything can go wrong with it: whichever way the consuming call goes, `close()` and `__del__` will free the pointer if the native side did not take it. The alternative, holding the pointer in a local variable across the call, means every failure path has to decide for itself whether to free it.
-
-## Subclass-specific cleanup
-
-Each subclass can override `_release()` to clean up its own resources before the native pointer is freed. The base implementation does nothing.
-
-Examples from the codebase:
-
-| Class | What `_release()` cleans up |
-| --- | --- |
-| Reader | Drops the manifest caches, closes owned file handles and stream wrappers, and drops the reference to the Context |
-| Builder | Drops the reference to the Context |
-| Context | Drops the reference to the signer callback. `has_signer` is left as it was: it records how the Context was configured, and stays readable after close. |
-| Signer | Drops the reference to the signing callback |
-| Settings | (no override, nothing extra to clean up) |
-
-The cleanup order matters: `_release()` runs first (closing streams, dropping callbacks), then `c2pa_free` frees the native pointer. This order prevents the native library from accessing Python objects that no longer exist.
-
-### Dropping a Context reference
-
-`Reader` and `Builder` both keep a `_context` attribute that is written once and never read. It is not dead code: it is what keeps the Context alive while the native handle depends on it. Without that reference, `Reader("image/jpeg", stream, context=Context())` would let the Context become collectable as soon as the constructor returned, even though the reader is still using it.
-
-Clearing it in `_release()` is the other half of that. A closed Reader has no further use for the Context, and holding the reference would keep alive an object nothing can reach through the Reader's public API.
-
-Dropping the reference before the native pointer is freed is safe because the native side does not depend on the Python object staying alive. When a reader is created from a shared context, the native side takes its own reference-counted handle on that context (an `Arc` clone in the Rust library), so the native reader keeps the context alive independently of whether Python still points at it. (That native behavior is not visible from this repo, which ships a prebuilt binary; it is the contract this code is written against.)
-
-## Fork safety
-
-`fork()` copies the calling process, including every Python object holding a native pointer. The child gets its own copy of the wrapper object, but there is still only one native allocation, and the parent owns it.
-
-If the child's copy were cleaned up normally, two things would go wrong. The obvious one is a double-free: the child frees a pointer the parent is still using. The subtler one is a deadlock. `fork()` only carries over the calling thread, so a native mutex held by any other thread at the moment of the fork stays locked forever in the child. Calling into the native library to free anything can block on that mutex and never return.
-
-So the SDK does not free native memory in a process that did not allocate it. `ManagedResource.__init__` stamps the creating process ID onto the object (`record_owner_pid`), and `is_foreign_process()` compares it against the current PID during cleanup:
-
-```mermaid
-sequenceDiagram
-    participant P as Parent process
-    participant O as Reader object
-    participant F as Forked child
-
-    P->>O: __init__ stamps _owner_pid
-    P->>F: fork()
-    Note over O,F: Child inherits a copy of the object.<br/>One native allocation, two Python copies.
-
-    F->>F: child's copy is cleaned up
-    F->>F: is_foreign_process() is true
-    Note right of F: Do not free: the parent owns it,<br/>and a native mutex may be locked<br/>by a thread that did not survive the fork
-    F->>F: null the handle, mark CLOSED
-
-    P->>O: close()
-    P->>P: frees the native pointer normally
-```
-
-Both `_cleanup_resources()` and the consumed teardown take this branch. Neither simply skips the work: they null the handle and mark the object `CLOSED` so the child cannot go on to use it or try to free it later. Mutating the child's copy has no effect on the parent's, which is untouched and still valid.
-
-The memory the child skips is not lost for good. A child that calls `exec()` replaces its address space; a child that exits has its memory reclaimed by the OS. Even a long-lived child (a `multiprocessing` worker using the fork start method) retains at most the objects it inherited at fork time, which is a bounded, one-off amount rather than a growing leak. Anything the child allocates itself carries the child's own PID and is freed normally.
-
-> [!NOTE]
-> `is_foreign_process()` returns `False` when no owner PID was ever recorded, so an object that somehow missed the stamp is cleaned up as before rather than leaking silently.
-
-## Why is `Stream` not a `ManagedResource`?
-
-`Stream` wraps a Python stream-like object (file stream or memory stream) so the native library can read from and write to it via callbacks. It does not inherit from `ManagedResource`, and it uses `c2pa_release_stream()` instead of `c2pa_free()` for cleanup.
-
-The reason is that ownership runs in the opposite direction. A `Reader` or `Builder` holds a native resource that Python code calls methods on. A `Stream` holds a native handle that the native library calls *back into* (read, seek, write, flush). The native library needs a different release function to tear down the callback machinery.
-
-`Stream` tracks its own state with `_closed` and `_initialized` flags rather than `LifecycleState`, but it supports the same three cleanup paths: context manager, explicit `.close()`, and `__del__` fallback.
-
-## Which method to use when?
-
-`_create_and_activate`, `_consume_and_swap`, `_consume_no_replacement`,
-`_consume_into`, `_release_handle`, and `_wrap_native_handle` each apply to a
-different situation when writing a new subclass:
+Writing a new `ManagedResource` subclass, each situation maps to one call:
 
 | Situation | Call this |
 | --- | --- |
@@ -556,14 +421,11 @@ different situation when writing a new subclass:
 | An FFI call consumes the current handle and returns a replacement for the same object | `_consume_and_swap(ffi_call, error_message)` |
 | An FFI call consumes the current handle to configure or feed another object, returning only a status code | `_consume_no_replacement(ffi_call, error_message)` |
 | An FFI call consumes the current handle and returns a *different* object's pointer, for that object to own | `_consume_into(ffi_call, error_message)` |
-| A call fails and it is unclear whether native took the handle first (a Python exception before native reported anything, or an empty error slot) | `_release_handle()` |
+| A call fails and it is unclear whether native took the handle first | `_release_handle()` |
 | A Python instance needs to wrap a handle a native call already returned, without creating a new one | `_wrap_native_handle(handle)` (classmethod) |
-| Ordinary teardown (`close()`, `__del__`) | Neither: these already route through `_cleanup_resources()` and `_teardown()`. Nothing outside `ManagedResource` itself calls `_teardown()` directly. |
+| Ordinary teardown (`close()`, `__del__`) | Neither. These already route through the shared cleanup path. Nothing outside `ManagedResource` itself tears an object down directly. |
 
-`_activate()` and `_swap_handle()` are two low-level primitives this
-situation table builds on.
-
-## Implementing a subclass of `ManagedResource`
+## Subclassing
 
 To wrap a new native resource, inherit from `ManagedResource` and follow these rules:
 
@@ -597,7 +459,7 @@ class NativeResource(ManagedResource):
             "Failed to create MyResource: {}")
 
     def _release(self):
-        # 4. Clean up class-specific resources.
+        # 3. Clean up class-specific resources.
         #    Never let this method raise. Must be idempotent.
         #
         #    Consider defining a simple lifecycle for native resources
@@ -615,7 +477,7 @@ class NativeResource(ManagedResource):
                 self._my_stream = None
 
     def do_something(self):
-        # 5. Check state at the start of every public method.
+        # 4. Check state at the start of every public method.
         #    This raises C2paError if the resource is closed.
         self._ensure_valid_state()
         return _lib.c2pa_my_resource_do_something(self._handle)
@@ -623,18 +485,10 @@ class NativeResource(ManagedResource):
 
 ### Troubleshooting
 
-- An attribute set only in `__init__` is missing on an instance built by `_wrap_native_handle()`, because that path never runs `__init__`. The failure shows up later as an `AttributeError` from whichever method reads the attribute, often `_release()` during cleanup. Attributes belong in `_init_attrs()`, which `__init__` calls.
-
-- `_init_attrs()` called after an FFI call that can raise leaves `_release()` accessing attributes that do not exist yet when that call fails, crashing with `AttributeError`. It belongs immediately after `super().__init__()`, before anything that can fail.
-
-- Assigning `self._handle` or `self._lifecycle_state` directly bypasses the checks that make the lifecycle safe. `_activate()` refuses a null handle and refuses to run on an already-active object; `_swap_handle()` requires the resource to be active and the replacement non-null. Direct assignment gives up both, and the resulting bugs (an ACTIVE object with a null handle, or a silently discarded pointer) surface far from their cause.
-
-- A `_release()` that raises has its exception silently swallowed by `_cleanup_resources()`, visible only in the logs. A small lifecycle for managed resources would let `_release()` check whether they need releasing; the actual release call wrapped in try/except is a fallback for unexpected failures.
-
-- `_release()` can be called more than once (via `close()` then `__del__`, or multiple `close()` calls), so it must handle being called on an already-cleaned-up object. Setting attributes to `None` after closing them is the standard pattern.
-
-- Calling `c2pa_free` directly is not recommended. `ManagedResource` handles this. A redundant free of an already-released pointer is not a crash: the native pointer registry rejects an untracked address without touching memory and returns `-1`. `ManagedResource` relies on this guard so the unknown-ownership failure paths can issue a guarded free without risking a double-free. A manual free is still wrong — the lifecycle owns the pointer and bypassing it defeats the state checks.
-
-- When a subclass inherits from both `ManagedResource` and an ABC like `ContextProvider`, and both define a property with the same name (e.g. `is_valid`), Python resolves it using the MRO. The parent listed first in the class definition wins. With the ABC listed first, Python finds the abstract property before the concrete one and raises `TypeError: Can't instantiate abstract class`. The class with the concrete implementation therefore comes first (e.g. `class Context(ManagedResource, ContextProvider)`, not `class Context(ContextProvider, ManagedResource)`).
-
-- When two parent classes define the same method or property with different concrete implementations, the MRO silently picks the first one, which can cause subtle bugs where the wrong implementation is used. With shared property names across multiple inheritance, `ClassName.__mro__` or `ClassName.mro()` confirms the expected resolution order.
+- An attribute set only in `__init__` is missing on an instance built by `_wrap_native_handle()`, since that path never runs `__init__`. The failure shows up later as an `AttributeError` from whichever method reads the attribute, often `_release()` during cleanup. Attributes belong in `_init_attrs()`, which each subclass `__init__` calls and `_wrap_native_handle()` calls in its place.
+- Calling `_init_attrs()` after an FFI call that can raise leaves `_release()` reading attributes that do not exist yet when that call fails, crashing with `AttributeError`. It belongs right after `super().__init__()`, before anything that can fail.
+- Assigning `self._handle` or `self._lifecycle_state` directly bypasses the checks that make the lifecycle safe: `_activate()` refuses a null handle and an already-active object, and `_consume_and_swap()` requires an active resource and a non-null replacement. Direct assignment gives up both, and the resulting bugs, an `ACTIVE` object with a null handle or a silently discarded pointer, surface far from their cause.
+- A `_release()` that raises has its exception silently swallowed, visible only in the logs. Guard it so it can check whether there is anything left to release, with a try/except as the fallback for unexpected failures.
+- `_release()` can be called more than once, via `close()` then `__del__`, or multiple `close()` calls, so it must handle running on an already-cleaned-up object. The standard pattern sets attributes to `None` after closing them.
+- Call `c2pa_free` through `ManagedResource`, not directly, so the lifecycle's state checks stay in effect. A redundant free is not itself a crash, the registry rejects an untracked address safely, but a manual free bypasses everything this doc describes.
+- Multiple inheritance ordering matters for shared property names, covered in [Class hierarchy](#class-hierarchy). `ClassName.__mro__` confirms the resolution order when in doubt.
