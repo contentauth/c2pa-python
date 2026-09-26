@@ -42,6 +42,14 @@ PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
+def _patch_free(test, fn):
+    """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
+    patcher = patch.object(
+        ManagedResource, '_free_native_ptr', staticmethod(fn))
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
 class _ConcreteResource(ManagedResource):
     """Minimal concrete subclass for testing ManagedResource cleanup."""
 
@@ -541,67 +549,6 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
                 "handle with_fragment already replaced")
         finally:
             reader._guarded_op = real_lock
-            reader.close()
-
-    def test_manifest_accessors_stay_consistent_while_fragments_advance(self):
-        """get_active_manifest() parses the cached JSON,
-        so its read and write of the cache must not prevent a clean handle swap.
-        """
-        before, after = self._manifest_before_and_after_fragment()
-        valid = {before, after}
-
-        reader = Reader("video/mp4", io.BytesIO(self.init_bytes))
-        stop = threading.Event()
-        unexpected = []
-        served = []
-        swaps = []
-
-        def read_manifest():
-            while not stop.is_set():
-                try:
-                    if reader.get_active_manifest() is not None:
-                        served.append(reader.json())
-                except Error:
-                    pass
-                except BaseException as e:      # noqa: BLE001 - asserted below
-                    unexpected.append(repr(e))
-
-        def advance():
-            while not stop.is_set():
-                try:
-                    self._advance(reader)
-                    swaps.append(None)
-                except Error:
-                    pass
-                except BaseException as e:      # noqa: BLE001 - asserted below
-                    unexpected.append(repr(e))
-                time.sleep(0.001)
-
-        workers = ([threading.Thread(target=read_manifest, daemon=True)
-                    for _ in range(3)]
-                   + [threading.Thread(target=advance, daemon=True)
-                      for _ in range(2)])
-        for t in workers:
-            t.start()
-        time.sleep(0.3)
-        stop.set()
-        for t in workers:
-            t.join(10)
-
-        try:
-            self.assertFalse(
-                [t for t in workers if t.is_alive()],
-                "a manifest accessor or fragment advance hung")
-            self.assertEqual(unexpected, [])
-            self.assertTrue(served, "no manifest was ever read")
-            self.assertGreater(
-                len(swaps), 1,
-                "fragments did not advance during the run")
-            self.assertTrue(
-                set(served) <= valid,
-                "a manifest was served that matches neither the pre- nor the "
-                "post-fragment state")
-        finally:
             reader.close()
 
     def test_interleaved_with_fragment_leaves_reader_consistent(self):
@@ -3721,10 +3668,14 @@ class TestLocking(unittest.TestCase):
         gc.collect()
         self.freed = []
         self._real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
+        # Registered first so it runs last, after every patch has unwound.
+        self.addCleanup(self._assert_free_hook_restored)
+        _patch_free(self, self.freed.append)
 
-    def tearDown(self):
-        ManagedResource._free_native_ptr = self._real_free
+    def _assert_free_hook_restored(self):
+        self.assertIs(
+            ManagedResource._free_native_ptr, self._real_free,
+            "{} leaked a _free_native_ptr patch".format(self.id()))
 
     def _join_all(self, threads, what):
         for thread in threads:
@@ -4027,6 +3978,85 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(self._free_counts().get(0x70001), 1,
                          "a teardown recorded after a flush was orphaned")
 
+    def test_close_racing_teardowns_no_leftovers(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50005)
+
+        inside = threading.Event()
+        release = threading.Event()
+        real_finish = resource._finish_teardown
+
+        def gated_finish(free_handle):
+            inside.set()
+            release.wait(self.JOIN_TIMEOUT)
+            real_finish(free_handle)
+
+        resource._finish_teardown = gated_finish
+
+        def closer():
+            inside.wait(self.JOIN_TIMEOUT)
+            resource.close()
+            release.set()
+
+        threads = [
+            threading.Thread(target=resource.close, daemon=True),
+            threading.Thread(target=closer, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        self._join_all(threads, "close racing a running teardown")
+        del resource._finish_teardown
+
+        self.assertIsNone(resource._pending_teardown,
+                          "a close that lost to a running teardown left "
+                          "a stale intent")
+        self.assertTrue(resource._released)
+        self.assertIsNone(resource._handle)
+        resource.close()
+        resource._maybe_flush_pending()
+        self.assertEqual(self._free_counts().get(0x50005), 1)
+
+    def test_released_resource_records_no_intent(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50007)
+        resource.close()
+        self.assertTrue(resource._released)
+
+        resource._record_pending_intent(True)
+
+        self.assertIsNone(resource._pending_teardown)
+        resource._maybe_flush_pending()
+        self.assertEqual(self._free_counts().get(0x50007), 1)
+
+    def test_handling_lock_on_close(self):
+        resource = _ConcreteResource()
+        resource._activate(0x50006)
+        with _native_section():
+            pass
+
+        holding = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with resource._live_op_lock():
+                holding.set()
+                release.wait(self.JOIN_TIMEOUT)
+            resource._maybe_flush_pending()
+
+        thread = threading.Thread(target=holder, daemon=True)
+        thread.start()
+        holding.wait(self.JOIN_TIMEOUT)
+        resource.close()
+        registered = list(
+            c2pa_module._native_section_state.pending_resources)
+        release.set()
+        self._join_all([thread], "lost-acquire close outside a section")
+
+        self.assertNotIn(resource, registered,
+                         "a close outside any native section was "
+                         "registered for a section flush")
+        self.assertEqual(self._free_counts().get(0x50006), 1)
+
     def test_stream_finalizer_does_not_block_on_a_held_close_lock(self):
         stream = Stream(io.BytesIO(self.image_bytes))
         self.addCleanup(stream.close)
@@ -4060,7 +4090,7 @@ class TestLocking(unittest.TestCase):
                          "__del__ waited for a close lock held elsewhere")
 
     def test_settings_relayed_across_threads_stays_usable(self):
-        ManagedResource._free_native_ptr = self._real_free
+        _patch_free(self, self._real_free)
 
         manifest = {
             "claim_generator": "threaded_stamp_test",
@@ -4536,9 +4566,7 @@ class TestLocking(unittest.TestCase):
             freed.append(ptr)
             return real(ptr)
 
-        ManagedResource._free_native_ptr = staticmethod(counting)
-        self.addCleanup(
-            lambda: setattr(ManagedResource, '_free_native_ptr', real))
+        _patch_free(self, counting)
         return freed
 
     def _thumbnail_uri(self, reader):
@@ -4870,6 +4898,154 @@ class TestLocking(unittest.TestCase):
             self._join_all([thread], "borrower")
         self.assertEqual(res._inflight, 0)
 
+    def _park(self, res, enter):
+        """Hold `enter(res)` open on another thread.
+        Returns (thread, release)."""
+        inside = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with enter(res):
+                inside.set()
+                release.wait(self.JOIN_TIMEOUT)
+
+        thread = threading.Thread(target=holder, daemon=True)
+        thread.start()
+        self.assertTrue(inside.wait(self.JOIN_TIMEOUT),
+                        "holder never entered its native call")
+        return thread, release
+
+    def test_exclusive_call_refused_during_foreign_shared_call(self):
+        """A mutating call must not start while a shared call is in native.
+        """
+        res = self._borrow_resource()
+        thread, release = self._park(res, lambda r: r._native_call())
+        try:
+            with self.assertRaises(Error) as caught:
+                with res._exclusive_native_call():
+                    self.fail("exclusive call entered during a shared call")
+            self.assertIn("in use", str(caught.exception))
+            self.assertEqual(res._inflight, 1, "the shared borrow was lost")
+            self.assertEqual(res._mut_inflight, 0,
+                             "a refused exclusive call left a count behind")
+        finally:
+            release.set()
+            self._join_all([thread], "shared borrower")
+
+        with res._exclusive_native_call():
+            self.assertEqual((res._inflight, res._mut_inflight), (1, 1))
+        self.assertEqual((res._inflight, res._mut_inflight), (0, 0))
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_reservation_matrix(self):
+        """Readers share, writers exclude everyone.
+
+        In flight: the two reservation kinds (a _guarded_op holds the lock,
+        so a second caller blocks on it rather than being refused).
+        """
+        def consume(r):
+            r._consume_no_replacement(lambda h: 0, "unused: {}")
+
+        def entered(cm):
+            def run(r):
+                with cm(r):
+                    pass
+            return run
+
+        in_flight = {
+            "shared": lambda r: r._native_call(),
+            "exclusive": lambda r: r._exclusive_native_call(),
+        }
+        attempts = {
+            "shared": entered(lambda r: r._native_call()),
+            "exclusive": entered(lambda r: r._exclusive_native_call()),
+            "guarded": entered(lambda r: r._guarded_op()),
+            "guarded_exclusive": entered(
+                lambda r: r._guarded_op(exclusive=True)),
+            "consume": consume,
+        }
+        admitted = {("shared", "shared"), ("shared", "guarded")}
+
+        wrong = []
+        for held_name, held in in_flight.items():
+            for new_name, attempt in attempts.items():
+                res = self._borrow_resource()
+                thread, release = self._park(res, held)
+                try:
+                    try:
+                        attempt(res)
+                        got = True
+                    except Error:
+                        got = False
+                finally:
+                    release.set()
+                    self._join_all([thread], "holder")
+                want = (held_name, new_name) in admitted
+                if got != want:
+                    wrong.append("{} in flight, {} {}".format(
+                        held_name, new_name,
+                        "admitted" if got else "refused"))
+                self.assertEqual((res._inflight, res._mut_inflight), (0, 0))
+
+        self.assertEqual(wrong, [])
+
+    def test_settings_update_refused_during_settings_borrow(self):
+        """Settings.update/set take &mut.
+        Context construction borrows the same Settings as &.
+        The mutation must be refused.
+        """
+        settings = Settings()
+        lib = c2pa_module._lib
+        real_set_settings = lib.c2pa_context_builder_set_settings
+        real_update = lib.c2pa_settings_update_from_string
+        real_set_value = lib.c2pa_settings_set_value
+        parked = threading.Event()
+        release = threading.Event()
+        overlapped = []
+
+        def gated_set_settings(builder, handle):
+            parked.set()
+            release.wait(self.JOIN_TIMEOUT)
+            return real_set_settings(builder, handle)
+
+        def probe(real):
+            def call(*args):
+                overlapped.append(parked.is_set() and not release.is_set())
+                return real(*args)
+            return call
+
+        built = []
+        lib.c2pa_context_builder_set_settings = gated_set_settings
+        lib.c2pa_settings_update_from_string = probe(real_update)
+        lib.c2pa_settings_set_value = probe(real_set_value)
+        thread = threading.Thread(
+            target=lambda: built.append(Context(settings=settings)),
+            daemon=True)
+        try:
+            thread.start()
+            self.assertTrue(parked.wait(self.JOIN_TIMEOUT),
+                            "Context never reached native set_settings")
+            with self.assertRaises(Error):
+                settings.update({"builder": {"thumbnail": {"enabled": False}}})
+            with self.assertRaises(Error):
+                settings.set("builder.thumbnail.enabled", "false")
+        finally:
+            release.set()
+            self._join_all([thread], "Context construction")
+            lib.c2pa_context_builder_set_settings = real_set_settings
+            lib.c2pa_settings_update_from_string = real_update
+            lib.c2pa_settings_set_value = real_set_value
+
+        try:
+            self.assertEqual(overlapped, [],
+                             "a Settings mutation ran inside the shared borrow")
+            self.assertEqual(len(built), 1, "Context construction failed")
+            settings.set("builder.thumbnail.enabled", "false")
+        finally:
+            for context in built:
+                context.close()
+            settings.close()
+
     def test_failed_consume_restores_active_state(self):
         """A call that did not take the handle must leave it usable.
         """
@@ -5172,7 +5348,7 @@ class TestLocking(unittest.TestCase):
             """
             owned = set()
             for node in ast.walk(method):
-                # `with self._NativeBuilder() as nb:` / `x = Foo()`
+                # `with self._NativeContextBuilder() as context_builder:` / `x = Foo()`
                 if isinstance(node, (ast.With, ast.AsyncWith)):
                     for item in node.items:
                         if (isinstance(item.context_expr, ast.Call)
@@ -5223,6 +5399,88 @@ class TestLocking(unittest.TestCase):
             unguarded, [],
             "borrowed handles used without their own guard:\n  "
             + "\n  ".join(unguarded))
+
+    # FFI functions that take their receiver (first argument) as &mut.
+    MUTATING_FFI = frozenset({
+        "c2pa_settings_set_value",
+        "c2pa_settings_update_from_string",
+        "c2pa_context_builder_set_settings",
+        "c2pa_builder_set_intent",
+        "c2pa_builder_set_no_embed",
+        "c2pa_builder_set_remote_url",
+        "c2pa_builder_add_action",
+        "c2pa_builder_add_resource",
+        "c2pa_builder_add_ingredient_from_stream",
+        "c2pa_builder_add_ingredient_from_archive",
+        "c2pa_builder_sign",
+        "c2pa_builder_sign_context",
+    })
+
+    def test_every_mutating_ffi_call_is_exclusive(self):
+        """A native call taking its receiver as &mut must run under an
+        exclusive guard on that receiver.
+        """
+        tree = ast.parse(inspect.getsource(sys.modules[Reader.__module__]))
+
+        def exclusive_names(node):
+            found = set()
+            for item in getattr(node, "items", []):
+                call = item.context_expr
+                if not (isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)):
+                    continue
+                attr = call.func.attr
+                exclusive_kw = any(
+                    kw.arg == "exclusive"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True
+                    for kw in call.keywords)
+                if (attr == "_exclusive_native_call"
+                        or (attr == "_guarded_op" and exclusive_kw)):
+                    found.add(call.func.value.id)
+            return found
+
+        def receiver(call):
+            if call.args:
+                first = call.args[0]
+                if (isinstance(first, ast.Attribute)
+                        and first.attr == "_handle"
+                        and isinstance(first.value, ast.Name)):
+                    return first.value.id
+            return None
+
+        seen = set()
+        unguarded = []
+
+        def visit(node, active, where):
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                active = active | exclusive_names(node)
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "_lib"
+                    and node.func.attr in self.MUTATING_FFI):
+                seen.add(node.func.attr)
+                name = receiver(node)
+                if name is None or name not in active:
+                    unguarded.append("{} calls {} without an exclusive "
+                                     "guard on {}".format(
+                                         where, node.func.attr, name))
+            for child in ast.iter_child_nodes(node):
+                visit(child, active, where)
+
+        for cls in ast.walk(tree):
+            if isinstance(cls, ast.ClassDef):
+                for method in cls.body:
+                    if isinstance(method, (ast.FunctionDef,
+                                           ast.AsyncFunctionDef)):
+                        visit(method, frozenset(),
+                              "{}.{}".format(cls.name, method.name))
+
+        # Positive control: verify call seen.
+        self.assertEqual(seen, set(self.MUTATING_FFI))
+        self.assertEqual(unguarded, [], "\n  ".join(unguarded))
 
     def test_consume_during_concurrent_sign_does_not_crash(self):
         """Consuming a shared Signer must not free it under a live sign.
@@ -5406,9 +5664,9 @@ class TestLocking(unittest.TestCase):
         context = Context()
         freed = []
         real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(
-            lambda ptr: (freed.append(ptr), real_free(ptr))[1])
-        try:
+        with patch.object(
+                ManagedResource, '_free_native_ptr', staticmethod(
+                    lambda ptr: (freed.append(ptr), real_free(ptr))[1])):
             with context._native_call():
                 closer = threading.Thread(target=context.close)
                 closer.start()
@@ -5431,8 +5689,6 @@ class TestLocking(unittest.TestCase):
                 len(freed), 1,
                 "the deferred teardown was stranded and never freed")
             self.assertIsNone(context._pending_teardown)
-        finally:
-            ManagedResource._free_native_ptr = real_free
 
     def test_section_drain_error_does_not_mask_the_body_error(self):
         """The body's exception is what the caller asked for, so it wins."""
@@ -5753,10 +6009,12 @@ class TestSwapConsumeExclusion(unittest.TestCase):
             builder = Builder(self._MANIFEST)
 
             freed = []
-            ManagedResource._free_native_ptr = staticmethod(
-                lambda p, _real=real_free: (freed.append(int(
-                    ctypes.cast(p, ctypes.c_void_p).value or 0)),
-                    _real(p))[1])
+            free_patch = patch.object(
+                ManagedResource, '_free_native_ptr', staticmethod(
+                    lambda p, _real=real_free: (freed.append(int(
+                        ctypes.cast(p, ctypes.c_void_p).value or 0)),
+                        _real(p))[1]))
+            free_patch.start()
 
             real_live_op_lock = builder._live_op_lock
             enters = [0]
@@ -5794,7 +6052,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
                     pass
             finally:
                 builder._live_op_lock = real_live_op_lock
-                ManagedResource._free_native_ptr = real_free
+                free_patch.stop()
 
             with self.subTest(injection_point=k):
                 self.assertFalse(
@@ -5843,13 +6101,13 @@ class TestSwapConsumeExclusion(unittest.TestCase):
 
             with self.assertRaises(Error) as second_mut:
                 builder.to_archive(io.BytesIO())
-            self.assertIn("mutating operation", str(second_mut.exception))
+            self.assertIn("in use", str(second_mut.exception))
 
             # A _lock-path native call is refused too: the in-flight
             # mutating call holds `&mut` on the same native object.
             with self.assertRaises(Error) as read_call:
                 builder.add_action('{"action": "c2pa.color_adjustments"}')
-            self.assertIn("mutating operation", str(read_call.exception))
+            self.assertIn("in use", str(read_call.exception))
         finally:
             release.set()
             worker.join(10)

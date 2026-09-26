@@ -333,16 +333,15 @@ class ManagedResource:
         return lock
 
     def _ensure_not_borrowed(self):
-        """Raise if a native call is in flight on this handle.
+        """Raise if any native call, shared or mutating, is in flight on
+        this handle, ensuring exclusive mutating calls.
 
         Raises:
             C2paError: If a native call is in flight on this resource.
         """
         if self._inflight > 0:
-            name = type(self).__name__
             raise C2paError(
-                f"{name} is in use by another operation and "
-                f"cannot be consumed")
+                f"{type(self).__name__} is in use by another operation")
 
     def _ensure_no_mutating_call(self):
         """Raise if a mutating native call is in flight on this handle.
@@ -355,7 +354,7 @@ class ManagedResource:
                 f"{type(self).__name__} is running a mutating operation")
 
     @contextlib.contextmanager
-    def _guarded_op(self, *, refuse_mut=True):
+    def _guarded_op(self, *, refuse_mut=True, exclusive=False):
         """Hold this resource's operation lock its duration,
         and mark this thread as inside a native-error section.
 
@@ -370,7 +369,9 @@ class ManagedResource:
         with _native_section():
             try:
                 with self._live_op_lock():
-                    if refuse_mut:
+                    if exclusive:
+                        self._ensure_not_borrowed()
+                    elif refuse_mut:
                         self._ensure_no_mutating_call()
                     yield
             finally:
@@ -429,9 +430,9 @@ class ManagedResource:
     @contextlib.contextmanager
     def _exclusive_native_call(self):
         """Reserve the handle for a mutating call:
-        no other mutating call may run alongside it."""
+        no other call, shared or mutating, may run alongside it."""
         with self._reserve(mutating=True,
-                           refuse=self._ensure_no_mutating_call):
+                           refuse=self._ensure_not_borrowed):
             yield
 
     @staticmethod
@@ -513,7 +514,8 @@ class ManagedResource:
         lock = self._live_op_lock()
         if not lock.acquire(blocking=False):
             self._close_lifecycle()
-            _register_for_section_flush(self)
+            if _in_native_section():
+                _register_for_section_flush(self)
             return
 
         try:
@@ -545,6 +547,8 @@ class ManagedResource:
         free only leaks.
         """
         with self._live_teardown_lock():
+            if self._released:
+                return
             pending = self._pending_teardown
             if pending is None:
                 self._pending_teardown = free_handle
@@ -582,12 +586,12 @@ class ManagedResource:
             self._detach_in_child()
             return
 
-        if self._released:
-            # Already done by another caller (concurrent caller).
-            return
-
-        self._released = True
-        self._lifecycle_state = LifecycleState.CLOSED
+        with self._live_teardown_lock():
+            if self._released:
+                return
+            self._released = True
+            self._pending_teardown = None
+            self._lifecycle_state = LifecycleState.CLOSED
         self._safe_release()
 
         handle, self._handle = self._handle, None
@@ -2101,15 +2105,21 @@ class Settings(ManagedResource):
 
         Args:
             path: Dot-notation path (e.g. "builder.thumbnail.enabled").
-            value: The value to set.
+            value: Value to set, as JSON string.
 
         Returns:
             self, for method chaining.
+
+        Raises:
+            C2paError: If path or value contains a null byte, or native
+                rejects the path or the parsed value.
         """
         path_bytes = _to_utf8_bytes(path, "settings path")
         value_bytes = _to_utf8_bytes(value, "settings value")
+        _check_cstr_arg("settings path", path_bytes)
+        _check_cstr_arg("settings value", value_bytes)
 
-        with self._guarded_op():
+        with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
 
             _check_ffi_operation_result(
@@ -2134,8 +2144,9 @@ class Settings(ManagedResource):
             self, for method chaining.
         """
         data_bytes = _to_utf8_bytes(data, "settings data")
+        _check_cstr_arg("settings data", data_bytes)
 
-        with self._guarded_op():
+        with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
 
             _check_ffi_operation_result(
@@ -2211,10 +2222,11 @@ class Context(ManagedResource, ContextProvider):
     used directly again after that.
     """
 
-    class _NativeBuilder(ManagedResource):
-        """Short-lived wrapper so the native context builder rides the normal
-        lifecycle: any failure inside its `with` block frees it via close()
-        unless a consuming call already took it.
+    class _NativeContextBuilder(ManagedResource):
+        """Wrapper so the context builder gets a lifecycle:
+        a failure inside the `with` block frees via close()
+        unless a consuming call already did.
+        Wrapper should be short-lived.
         """
 
         def __init__(self):
@@ -2250,27 +2262,28 @@ class Context(ManagedResource, ContextProvider):
         else:
             # Any failure inside the with frees the builder via close();
             # a successful build consumes it, so close() is then a no-op.
-            with self._NativeBuilder() as nb:
+            with self._NativeContextBuilder() as context_builder:
                 if settings is not None:
-                    # Count in-progress reads.
-                    with nb._guarded_op(), settings._native_call():
+                    with context_builder._guarded_op(exclusive=True), \
+                            settings._native_call():
                         _check_ffi_operation_result(
                             _lib.c2pa_context_builder_set_settings(
-                                nb._handle, settings._c_settings),
+                                context_builder._handle,
+                                settings._c_settings),
                             "Failed to set settings on Context",
                             check=lambda r: r != 0)
 
                 if signer is not None:
                     # Retain a rejected signer for later teardown.
                     self._signer_callback_cb = signer._callback_cb
-                    _check_handle_arg('builder', nb._handle)
+                    _check_handle_arg('builder', context_builder._handle)
                     signer._consume_no_replacement(
                         lambda h: _lib.c2pa_context_builder_set_signer(
-                            nb._handle, h),
+                            context_builder._handle, h),
                         "Failed to set signer on Context: {}")
                     self._has_signer = True
 
-                context_ptr = nb._consume_into(
+                context_ptr = context_builder._consume_into(
                     lambda h: _lib.c2pa_context_builder_build(h),
                     "Failed to build Context: {}")
 
@@ -2630,6 +2643,7 @@ class Stream:
         even if errors occur during cleanup.
         Errors during cleanup are logged but not raised to ensure cleanup.
         Multiple calls to close() are handled gracefully.
+        Only the Stream's owner closes the stream.
         """
         # Checked before the lock, as _live_op_lock() and __del__ do:
         # a child inherits _close_lock in whatever state it had at fork(),
@@ -3353,8 +3367,8 @@ class Reader(ManagedResource):
                 Reader. The Reader is untouched, and the call can be retried
                 after the other one returns. One thread feeds fragments to a
                 Reader, and the caller serializes those calls.
-            C2paError: "Reader is in use by another operation and cannot be
-                consumed" when another native call is in flight on it.
+            C2paError: "Reader is in use by another operation" when another
+                native call is in flight on it.
 
         While this call runs, read methods on other threads raise
         C2paError("Reader is running a mutating operation") and is_valid is
@@ -4103,7 +4117,7 @@ class Builder(ManagedResource):
         into the asset when signing.
         This is useful when creating cloud or sidecar manifests.
         """
-        with self._guarded_op():
+        with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
             _lib.c2pa_builder_set_no_embed(self._handle)
 
@@ -4121,7 +4135,7 @@ class Builder(ManagedResource):
         """
         url_bytes = _to_utf8_bytes(remote_url, "remote URL")
 
-        with self._guarded_op():
+        with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
 
             result = _lib.c2pa_builder_set_remote_url(self._handle, url_bytes)
@@ -4157,7 +4171,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error setting the intent
         """
-        with self._guarded_op():
+        with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
 
             result = _lib.c2pa_builder_set_intent(
@@ -4273,7 +4287,7 @@ class Builder(ManagedResource):
         """
         action_str = _to_utf8_bytes(action_json, "action JSON")
 
-        with self._guarded_op():
+        with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
 
             result = _lib.c2pa_builder_add_action(self._handle, action_str)
