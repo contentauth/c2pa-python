@@ -4888,6 +4888,154 @@ class TestLocking(unittest.TestCase):
             self._join_all([thread], "borrower")
         self.assertEqual(res._inflight, 0)
 
+    def _park(self, res, enter):
+        """Hold `enter(res)` open on another thread.
+        Returns (thread, release)."""
+        inside = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with enter(res):
+                inside.set()
+                release.wait(self.JOIN_TIMEOUT)
+
+        thread = threading.Thread(target=holder, daemon=True)
+        thread.start()
+        self.assertTrue(inside.wait(self.JOIN_TIMEOUT),
+                        "holder never entered its native call")
+        return thread, release
+
+    def test_exclusive_call_refused_during_foreign_shared_call(self):
+        """A mutating call must not start while a shared call is in native.
+        """
+        res = self._borrow_resource()
+        thread, release = self._park(res, lambda r: r._native_call())
+        try:
+            with self.assertRaises(Error) as caught:
+                with res._exclusive_native_call():
+                    self.fail("exclusive call entered during a shared call")
+            self.assertIn("in use", str(caught.exception))
+            self.assertEqual(res._inflight, 1, "the shared borrow was lost")
+            self.assertEqual(res._mut_inflight, 0,
+                             "a refused exclusive call left a count behind")
+        finally:
+            release.set()
+            self._join_all([thread], "shared borrower")
+
+        with res._exclusive_native_call():
+            self.assertEqual((res._inflight, res._mut_inflight), (1, 1))
+        self.assertEqual((res._inflight, res._mut_inflight), (0, 0))
+        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+
+    def test_reservation_matrix(self):
+        """Readers share, writers exclude everyone.
+
+        In flight: the two reservation kinds (a _guarded_op holds the lock,
+        so a second caller blocks on it rather than being refused).
+        """
+        def consume(r):
+            r._consume_no_replacement(lambda h: 0, "unused: {}")
+
+        def entered(cm):
+            def run(r):
+                with cm(r):
+                    pass
+            return run
+
+        in_flight = {
+            "shared": lambda r: r._native_call(),
+            "exclusive": lambda r: r._exclusive_native_call(),
+        }
+        attempts = {
+            "shared": entered(lambda r: r._native_call()),
+            "exclusive": entered(lambda r: r._exclusive_native_call()),
+            "guarded": entered(lambda r: r._guarded_op()),
+            "guarded_exclusive": entered(
+                lambda r: r._guarded_op(exclusive=True)),
+            "consume": consume,
+        }
+        admitted = {("shared", "shared"), ("shared", "guarded")}
+
+        wrong = []
+        for held_name, held in in_flight.items():
+            for new_name, attempt in attempts.items():
+                res = self._borrow_resource()
+                thread, release = self._park(res, held)
+                try:
+                    try:
+                        attempt(res)
+                        got = True
+                    except Error:
+                        got = False
+                finally:
+                    release.set()
+                    self._join_all([thread], "holder")
+                want = (held_name, new_name) in admitted
+                if got != want:
+                    wrong.append("{} in flight, {} {}".format(
+                        held_name, new_name,
+                        "admitted" if got else "refused"))
+                self.assertEqual((res._inflight, res._mut_inflight), (0, 0))
+
+        self.assertEqual(wrong, [])
+
+    def test_settings_update_refused_while_context_borrows_settings(self):
+        """Settings.update/set take &mut.
+        Context construction borrows the same Settings as &.
+        The mutation must be refused.
+        """
+        settings = Settings()
+        lib = c2pa_module._lib
+        real_set_settings = lib.c2pa_context_builder_set_settings
+        real_update = lib.c2pa_settings_update_from_string
+        real_set_value = lib.c2pa_settings_set_value
+        parked = threading.Event()
+        release = threading.Event()
+        overlapped = []
+
+        def gated_set_settings(builder, handle):
+            parked.set()
+            release.wait(self.JOIN_TIMEOUT)
+            return real_set_settings(builder, handle)
+
+        def probe(real):
+            def call(*args):
+                overlapped.append(parked.is_set() and not release.is_set())
+                return real(*args)
+            return call
+
+        built = []
+        lib.c2pa_context_builder_set_settings = gated_set_settings
+        lib.c2pa_settings_update_from_string = probe(real_update)
+        lib.c2pa_settings_set_value = probe(real_set_value)
+        thread = threading.Thread(
+            target=lambda: built.append(Context(settings=settings)),
+            daemon=True)
+        try:
+            thread.start()
+            self.assertTrue(parked.wait(self.JOIN_TIMEOUT),
+                            "Context never reached native set_settings")
+            with self.assertRaises(Error):
+                settings.update({"builder": {"thumbnail": {"enabled": False}}})
+            with self.assertRaises(Error):
+                settings.set("builder.thumbnail.enabled", "false")
+        finally:
+            release.set()
+            self._join_all([thread], "Context construction")
+            lib.c2pa_context_builder_set_settings = real_set_settings
+            lib.c2pa_settings_update_from_string = real_update
+            lib.c2pa_settings_set_value = real_set_value
+
+        try:
+            self.assertEqual(overlapped, [],
+                             "a Settings mutation ran inside the shared borrow")
+            self.assertEqual(len(built), 1, "Context construction failed")
+            settings.set("builder.thumbnail.enabled", "false")
+        finally:
+            for context in built:
+                context.close()
+            settings.close()
+
     def test_failed_consume_restores_active_state(self):
         """A call that did not take the handle must leave it usable.
         """
@@ -5190,7 +5338,7 @@ class TestLocking(unittest.TestCase):
             """
             owned = set()
             for node in ast.walk(method):
-                # `with self._NativeBuilder() as nb:` / `x = Foo()`
+                # `with self._NativeContextBuilder() as context_builder:` / `x = Foo()`
                 if isinstance(node, (ast.With, ast.AsyncWith)):
                     for item in node.items:
                         if (isinstance(item.context_expr, ast.Call)
@@ -5241,6 +5389,89 @@ class TestLocking(unittest.TestCase):
             unguarded, [],
             "borrowed handles used without their own guard:\n  "
             + "\n  ".join(unguarded))
+
+    # FFI functions that take their receiver (first argument) as &mut in
+    # c2pa_c_ffi/src/c_api.rs (deref_mut_or_return_*).
+    MUTATING_FFI = frozenset({
+        "c2pa_settings_set_value",
+        "c2pa_settings_update_from_string",
+        "c2pa_context_builder_set_settings",
+        "c2pa_builder_set_intent",
+        "c2pa_builder_set_no_embed",
+        "c2pa_builder_set_remote_url",
+        "c2pa_builder_add_action",
+        "c2pa_builder_add_resource",
+        "c2pa_builder_add_ingredient_from_stream",
+        "c2pa_builder_add_ingredient_from_archive",
+        "c2pa_builder_sign",
+        "c2pa_builder_sign_context",
+    })
+
+    def test_every_mutating_ffi_call_is_exclusive(self):
+        """A native call taking its receiver as &mut must run under an
+        exclusive guard on that receiver.
+        """
+        tree = ast.parse(inspect.getsource(sys.modules[Reader.__module__]))
+
+        def exclusive_names(node):
+            found = set()
+            for item in getattr(node, "items", []):
+                call = item.context_expr
+                if not (isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)):
+                    continue
+                attr = call.func.attr
+                exclusive_kw = any(
+                    kw.arg == "exclusive"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True
+                    for kw in call.keywords)
+                if (attr == "_exclusive_native_call"
+                        or (attr == "_guarded_op" and exclusive_kw)):
+                    found.add(call.func.value.id)
+            return found
+
+        def receiver(call):
+            if call.args:
+                first = call.args[0]
+                if (isinstance(first, ast.Attribute)
+                        and first.attr == "_handle"
+                        and isinstance(first.value, ast.Name)):
+                    return first.value.id
+            return None
+
+        seen = set()
+        unguarded = []
+
+        def visit(node, active, where):
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                active = active | exclusive_names(node)
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "_lib"
+                    and node.func.attr in self.MUTATING_FFI):
+                seen.add(node.func.attr)
+                name = receiver(node)
+                if name is None or name not in active:
+                    unguarded.append("{} calls {} without an exclusive "
+                                     "guard on {}".format(
+                                         where, node.func.attr, name))
+            for child in ast.iter_child_nodes(node):
+                visit(child, active, where)
+
+        for cls in ast.walk(tree):
+            if isinstance(cls, ast.ClassDef):
+                for method in cls.body:
+                    if isinstance(method, (ast.FunctionDef,
+                                           ast.AsyncFunctionDef)):
+                        visit(method, frozenset(),
+                              "{}.{}".format(cls.name, method.name))
+
+        # Positive control: verify call seen.
+        self.assertEqual(seen, set(self.MUTATING_FFI))
+        self.assertEqual(unguarded, [], "\n  ".join(unguarded))
 
     def test_consume_during_concurrent_sign_does_not_crash(self):
         """Consuming a shared Signer must not free it under a live sign.
@@ -5861,13 +6092,13 @@ class TestSwapConsumeExclusion(unittest.TestCase):
 
             with self.assertRaises(Error) as second_mut:
                 builder.to_archive(io.BytesIO())
-            self.assertIn("mutating operation", str(second_mut.exception))
+            self.assertIn("in use", str(second_mut.exception))
 
             # A _lock-path native call is refused too: the in-flight
             # mutating call holds `&mut` on the same native object.
             with self.assertRaises(Error) as read_call:
                 builder.add_action('{"action": "c2pa.color_adjustments"}')
-            self.assertIn("mutating operation", str(read_call.exception))
+            self.assertIn("in use", str(read_call.exception))
         finally:
             release.set()
             worker.join(10)
