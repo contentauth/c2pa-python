@@ -42,7 +42,12 @@ PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
-_REAL_FREE = ManagedResource.__dict__['_free_native_ptr']
+def _patch_free(test, fn):
+    """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
+    patcher = patch.object(
+        ManagedResource, '_free_native_ptr', staticmethod(fn))
+    patcher.start()
+    test.addCleanup(patcher.stop)
 
 
 class _ConcreteResource(ManagedResource):
@@ -3661,17 +3666,15 @@ class TestLocking(unittest.TestCase):
     def setUp(self):
         # Flush pending finalizers through the real free first.
         gc.collect()
-        self.addCleanup(self._assert_free_hook_restored)
         self.freed = []
-        self._real_free = _REAL_FREE
-        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
-
-    def tearDown(self):
-        ManagedResource._free_native_ptr = _REAL_FREE
+        self._real_free = ManagedResource._free_native_ptr
+        # Registered first so it runs last, after every patch has unwound.
+        self.addCleanup(self._assert_free_hook_restored)
+        _patch_free(self, self.freed.append)
 
     def _assert_free_hook_restored(self):
         self.assertIs(
-            ManagedResource.__dict__['_free_native_ptr'], _REAL_FREE,
+            ManagedResource._free_native_ptr, self._real_free,
             "{} leaked a _free_native_ptr patch".format(self.id()))
 
     def _join_all(self, threads, what):
@@ -4087,7 +4090,7 @@ class TestLocking(unittest.TestCase):
                          "__del__ waited for a close lock held elsewhere")
 
     def test_settings_relayed_across_threads_stays_usable(self):
-        ManagedResource._free_native_ptr = self._real_free
+        _patch_free(self, self._real_free)
 
         manifest = {
             "claim_generator": "threaded_stamp_test",
@@ -4563,7 +4566,7 @@ class TestLocking(unittest.TestCase):
             freed.append(ptr)
             return real(ptr)
 
-        ManagedResource._free_native_ptr = staticmethod(counting)
+        _patch_free(self, counting)
         return freed
 
     def _thumbnail_uri(self, reader):
@@ -5661,9 +5664,9 @@ class TestLocking(unittest.TestCase):
         context = Context()
         freed = []
         real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(
-            lambda ptr: (freed.append(ptr), real_free(ptr))[1])
-        try:
+        with patch.object(
+                ManagedResource, '_free_native_ptr', staticmethod(
+                    lambda ptr: (freed.append(ptr), real_free(ptr))[1])):
             with context._native_call():
                 closer = threading.Thread(target=context.close)
                 closer.start()
@@ -5686,8 +5689,6 @@ class TestLocking(unittest.TestCase):
                 len(freed), 1,
                 "the deferred teardown was stranded and never freed")
             self.assertIsNone(context._pending_teardown)
-        finally:
-            ManagedResource._free_native_ptr = real_free
 
     def test_section_drain_error_does_not_mask_the_body_error(self):
         """The body's exception is what the caller asked for, so it wins."""
@@ -6008,10 +6009,12 @@ class TestSwapConsumeExclusion(unittest.TestCase):
             builder = Builder(self._MANIFEST)
 
             freed = []
-            ManagedResource._free_native_ptr = staticmethod(
-                lambda p, _real=real_free: (freed.append(int(
-                    ctypes.cast(p, ctypes.c_void_p).value or 0)),
-                    _real(p))[1])
+            free_patch = patch.object(
+                ManagedResource, '_free_native_ptr', staticmethod(
+                    lambda p, _real=real_free: (freed.append(int(
+                        ctypes.cast(p, ctypes.c_void_p).value or 0)),
+                        _real(p))[1]))
+            free_patch.start()
 
             real_live_op_lock = builder._live_op_lock
             enters = [0]
@@ -6049,7 +6052,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
                     pass
             finally:
                 builder._live_op_lock = real_live_op_lock
-                ManagedResource._free_native_ptr = _REAL_FREE
+                free_patch.stop()
 
             with self.subTest(injection_point=k):
                 self.assertFalse(

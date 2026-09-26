@@ -2105,13 +2105,19 @@ class Settings(ManagedResource):
 
         Args:
             path: Dot-notation path (e.g. "builder.thumbnail.enabled").
-            value: The value to set.
+            value: Value to set, as JSON string.
 
         Returns:
             self, for method chaining.
+
+        Raises:
+            C2paError: If path or value contains a null byte, or native
+                rejects the path or the parsed value.
         """
         path_bytes = _to_utf8_bytes(path, "settings path")
         value_bytes = _to_utf8_bytes(value, "settings value")
+        _check_cstr_arg("settings path", path_bytes)
+        _check_cstr_arg("settings value", value_bytes)
 
         with self._guarded_op(exclusive=True):
             self._ensure_valid_state()
@@ -2138,6 +2144,7 @@ class Settings(ManagedResource):
             self, for method chaining.
         """
         data_bytes = _to_utf8_bytes(data, "settings data")
+        _check_cstr_arg("settings data", data_bytes)
 
         with self._guarded_op(exclusive=True):
             self._ensure_valid_state()

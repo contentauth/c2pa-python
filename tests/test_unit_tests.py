@@ -32,6 +32,7 @@ import shutil
 import ctypes
 import threading
 import concurrent.futures
+from unittest.mock import patch
 
 # Suppress deprecation warnings
 warnings.simplefilter("ignore", category=DeprecationWarning)
@@ -40,8 +41,6 @@ from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningA
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
 from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg
 import c2pa.c2pa as c2pa_module
-
-_REAL_FREE = ManagedResource.__dict__['_free_native_ptr']
 from pathlib import Path
 
 
@@ -52,6 +51,14 @@ INGREDIENT_TEST_FILE_NAME = "A.jpg"
 DEFAULT_TEST_FILE = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
 INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
+
+
+def _patch_free(test, fn):
+    """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
+    patcher = patch.object(
+        ManagedResource, '_free_native_ptr', staticmethod(fn))
+    patcher.start()
+    test.addCleanup(patcher.stop)
 
 
 def _fail_with_native_error(tag_bytes):
@@ -6677,6 +6684,53 @@ class TestSettings(TestContextAPIs):
         self.assertIs(result, settings)
         settings.close()
 
+    def test_settings_set_rejects_nul_in_path(self):
+        settings = Settings()
+        try:
+            with self.assertRaises(Error) as caught:
+                settings.set(
+                    "builder.thumbnail.enabled\x00.tail", "false")
+            self.assertIn("null byte", str(caught.exception))
+            # Instance untouched by the refused call.
+            settings.set("builder.thumbnail.enabled", "false")
+        finally:
+            settings.close()
+
+    def test_settings_set_rejects_nul_in_value(self):
+        settings = Settings()
+        try:
+            with self.assertRaises(Error) as caught:
+                settings.set(
+                    "builder.thumbnail.enabled", "false\x00true")
+            self.assertIn("null byte", str(caught.exception))
+            settings.set("builder.thumbnail.enabled", "false")
+        finally:
+            settings.close()
+
+    def test_settings_update_rejects_nul_in_json_string(self):
+        settings = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": True}},
+        })
+        try:
+            with self.assertRaises(Error) as caught:
+                settings.update(
+                    '{"verify": {"verify_after_sign": true}}\x00'
+                    '{"builder": {"thumbnail": {"enabled": false}}}')
+            self.assertIn("null byte", str(caught.exception))
+        finally:
+            settings.close()
+
+    def test_settings_set_string_value_needs_json_quotes(self):
+        settings = Settings()
+        try:
+            with self.assertRaises(Error):
+                settings.set(
+                    "builder.claim_generator_info.name", "MyApp")
+            settings.set(
+                "builder.claim_generator_info.name", '"MyApp"')
+        finally:
+            settings.close()
+
     def test_settings_is_valid_after_close(self):
         settings = Settings()
         settings.close()
@@ -7982,17 +8036,15 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def setUp(self):
         self.data_dir = FIXTURES_DIR
-        self.addCleanup(self._assert_free_hook_restored)
         self.freed = []
-        self._real_free = _REAL_FREE
-        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
-
-    def tearDown(self):
-        ManagedResource._free_native_ptr = _REAL_FREE
+        self._real_free = ManagedResource._free_native_ptr
+        # Registered first so it runs last, after every patch has unwound.
+        self.addCleanup(self._assert_free_hook_restored)
+        _patch_free(self, self.freed.append)
 
     def _assert_free_hook_restored(self):
         self.assertIs(
-            ManagedResource.__dict__['_free_native_ptr'], _REAL_FREE,
+            ManagedResource._free_native_ptr, self._real_free,
             "{} leaked a _free_native_ptr patch".format(self.id()))
 
     def _free_counts(self):
@@ -8003,7 +8055,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def _use_real_frees(self):
         """Undo free recorder, so native handles are really freed."""
-        ManagedResource._free_native_ptr = self._real_free
+        _patch_free(self, self._real_free)
 
     def _make_signer(self):
         with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
@@ -8359,12 +8411,9 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         # Nothing left to free, so close() must be a no-op.
         freed = []
-        real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(freed.append)
-        try:
+        with patch.object(ManagedResource, '_free_native_ptr',
+                          staticmethod(freed.append)):
             signer.close()
-        finally:
-            ManagedResource._free_native_ptr = real_free
         self.assertEqual(freed, [])
 
     def test_context_with_signer_consumes_it_on_success(self):
@@ -8509,7 +8558,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             c2pa_module._lib.c2pa_error_set_last(
                 "Other: UntrackedPointer: {:#x}".format(ptr).encode())
             return -1
-        ManagedResource._free_native_ptr = staticmethod(polluting_free)
+        _patch_free(self, polluting_free)
 
         def ffi_call(handle):
             nonlocal bystander
@@ -8598,7 +8647,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
                 raise RuntimeError("simulated free failure")
             self.freed.append(ptr)
             return 0
-        ManagedResource._free_native_ptr = staticmethod(flaky_free)
+        _patch_free(self, flaky_free)
 
         with self.assertLogs('c2pa', level='ERROR') as captured:
             with c2pa_module._native_section():
@@ -8656,10 +8705,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         """Record frees instead of performing them, and restore on teardown.
         """
         freed = []
-        ManagedResource._free_native_ptr = staticmethod(freed.append)
-        self.addCleanup(
-            lambda: setattr(
-                ManagedResource, '_free_native_ptr', _REAL_FREE))
+        _patch_free(self, freed.append)
         return freed
 
     def _free_count(self, freed, handle):
@@ -10362,16 +10408,13 @@ class TestConsumeOwnership(unittest.TestCase):
 
     def setUp(self):
         self.freed = []
-        self._real_free = _REAL_FREE.__func__
+        self._real_free = ManagedResource._free_native_ptr
 
         def counting_free(ptr):
             self.freed.append(ptr)
             return self._real_free(ptr)
 
-        ManagedResource._free_native_ptr = staticmethod(counting_free)
-
-    def tearDown(self):
-        ManagedResource._free_native_ptr = _REAL_FREE
+        _patch_free(self, counting_free)
 
     def test_generic_exception_frees_the_reserved_handle(self):
         """A reserved consume that raises must free, not drop, the handle.
