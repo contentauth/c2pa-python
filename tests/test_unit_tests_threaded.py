@@ -3978,7 +3978,7 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(self._free_counts().get(0x70001), 1,
                          "a teardown recorded after a flush was orphaned")
 
-    def test_close_racing_a_running_teardown_no_leftovers(self):
+    def test_close_racing_teardowns_no_leftovers(self):
         resource = _ConcreteResource()
         resource._activate(0x50005)
 
@@ -4028,7 +4028,7 @@ class TestLocking(unittest.TestCase):
         resource._maybe_flush_pending()
         self.assertEqual(self._free_counts().get(0x50007), 1)
 
-    def test_close_losing_the_lock_outside_a_section_registers_nothing(self):
+    def test_handling_lock_on_close(self):
         resource = _ConcreteResource()
         resource._activate(0x50006)
         with _native_section():
@@ -4989,7 +4989,7 @@ class TestLocking(unittest.TestCase):
 
         self.assertEqual(wrong, [])
 
-    def test_settings_update_refused_while_context_borrows_settings(self):
+    def test_settings_update_refused_during_settings_borrow(self):
         """Settings.update/set take &mut.
         Context construction borrows the same Settings as &.
         The mutation must be refused.
