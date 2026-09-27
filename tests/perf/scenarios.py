@@ -43,6 +43,13 @@ DASH_FRAGMENT = FIXTURES_DIR / "dash1.m4s"
 
 _DST_COMPOSITE = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
 
+# c2pa-rs >= 0.91 rejects manifests whose first action is not created or opened.
+_CREATED_ACTION = {
+    "action": "c2pa.created",
+    "softwareAgent": {"name": "perf_test"},
+    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+}
+
 _PARENT_ID    = "xmp:iid:aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa"
 _PLACED_ID    = "xmp:iid:bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb"
 _PARENT_ID2   = "xmp:iid:cccccccc-0003-0003-0003-cccccccccccc"
@@ -307,7 +314,7 @@ def scenario_builder_sign_jpeg_component_of(iterations: int = 100) -> None:
         "ingredients": [{"format": "image/jpeg", "relationship": "componentOf", "instance_id": _PLACED_ID}],
         "assertions": [{
             "label": "c2pa.actions.v2",
-            "data": {"actions": [{
+            "data": {"actions": [_CREATED_ACTION, {
                 "action": "c2pa.placed",
                 "softwareAgent": {"name": "perf_test"},
                 "parameters": {"ingredientIds": [_PLACED_ID]},
@@ -411,7 +418,7 @@ def scenario_builder_sign_jpeg_two_components_same_mime(iterations: int = 100) -
         **MANIFEST_BASE,
         "assertions": [{
             "label": "c2pa.actions.v2",
-            "data": {"actions": [{
+            "data": {"actions": [_CREATED_ACTION, {
                 "action": "c2pa.placed",
                 "softwareAgent": {"name": "perf_test"},
                 "parameters": {"ingredientIds": [_PLACED_ID4, _PLACED_ID5]},
@@ -441,7 +448,7 @@ def scenario_builder_sign_jpeg_two_components_mixed_mime(iterations: int = 100) 
         **MANIFEST_BASE,
         "assertions": [{
             "label": "c2pa.actions.v2",
-            "data": {"actions": [{
+            "data": {"actions": [_CREATED_ACTION, {
                 "action": "c2pa.placed",
                 "softwareAgent": {"name": "perf_test"},
                 "parameters": {"ingredientIds": [_PLACED_ID4, _PLACED_ID5]},
@@ -836,7 +843,7 @@ def scenario_builder_sign_jpeg_two_ingredient_archives(iterations: int = 100) ->
         **MANIFEST_BASE,
         "assertions": [{
             "label": "c2pa.actions.v2",
-            "data": {"actions": [{
+            "data": {"actions": [_CREATED_ACTION, {
                 "action": "c2pa.placed",
                 "softwareAgent": {"name": "perf_test"},
                 "parameters": {"ingredientIds": [_ARCH_COMP_ID, _ARCH_COMP_ID2]},
