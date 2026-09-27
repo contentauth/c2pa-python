@@ -437,10 +437,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
         release_gap.set()
         worker.join(5)
         self.assertFalse(worker.is_alive(), "with_fragment hung")
-        self.assertIsInstance(
-            result.get("outcome"), Error,
-            "with_fragment must raise C2paError when it loses the race, "
-            "not hang, crash, or silently succeed")
+        self.assertIsInstance(result.get("outcome"), Error, "must raise, not hang")
 
         self.assertEqual(reader._lifecycle_state, LifecycleState.CLOSED)
         # with_fragment must not resurrect these fields on a reader close() already tore down.
@@ -2766,9 +2763,7 @@ class TestWithFragmentReentrancy(unittest.TestCase):
             state["hung"],
             "a with_fragment call started from a stream callback blocked on "
             "the lock the running call holds")
-        self.assertIsInstance(
-            state["result"], Error,
-            "the re-entrant call must be refused, not interleaved")
+        self.assertIsInstance(state["result"], Error, "must refuse, not interleave")
 
 class TestStreamCloseReentrancy(unittest.TestCase):
     """close() clears the callback references inside _close_lock, which can run
@@ -3044,9 +3039,7 @@ class TestLocking(unittest.TestCase):
         self._join_all([closer, reader_thread], "close and read")
 
         self.assertEqual(len(served), 1)
-        self.assertIsInstance(
-            served[0], Error,
-            "a closed Reader served its cached manifest")
+        self.assertIsInstance(served[0], Error, "closed Reader served cache")
 
     def test_release_may_wait_on_a_thread_that_takes_the_op_lock(self):
         class Polled(_ConcreteResource):
@@ -3172,11 +3165,7 @@ class TestLocking(unittest.TestCase):
             for thread in threads:
                 thread.join(30)
         """)
-        self.assertEqual(
-            result.returncode, 0,
-            "reader churn crashed with {} "
-            "(139=SIGSEGV, 134=SIGABRT): {}".format(
-                result.returncode, result.stderr.decode()[-800:]))
+        self.assertEqual(result.returncode, 0, result.stderr.decode()[-800:])
 
     def test_stream_callback_blocking_on_other_thread_does_not_deadlock(self):
         """A stream callback that blocks on another thread
@@ -3723,11 +3712,7 @@ class TestLocking(unittest.TestCase):
             release_first.set()
             self._join_all([t1], "paused close() resuming")
 
-        self.assertEqual(
-            len(release_calls), 1,
-            "_release() ran {} times for one instance across racing "
-            "close() calls; _teardown() must be idempotent under its "
-            "own lock".format(len(release_calls)))
+        self.assertEqual(len(release_calls), 1, "_release() not idempotent")
 
     def test_sign_raising_native_call_closes_builder(self):
         freed = self._counted_free()
@@ -3915,10 +3900,7 @@ class TestLocking(unittest.TestCase):
         self.assertGreater(
             checked, 0,
             "ownership scan found no borrowed handles: the scan is broken")
-        self.assertEqual(
-            unguarded, [],
-            "borrowed handles used without their own guard:\n  "
-            + "\n  ".join(unguarded))
+        self.assertEqual(unguarded, [], "unguarded: " + ", ".join(unguarded))
 
     # FFI functions that take their receiver (first argument) as &mut.
     MUTATING_FFI = frozenset({
@@ -4115,14 +4097,8 @@ class TestLocking(unittest.TestCase):
             [sys.executable, "-c", source, self.data_dir],
             capture_output=True, text=True, timeout=300)
 
-        self.assertNotEqual(
-            result.returncode, -11,
-            "SIGSEGV: the signer callback was freed while native was "
-            "calling it")
-        self.assertEqual(
-            result.returncode, 0,
-            "context-close-during-sign race failed (rc={}):\n{}".format(
-                result.returncode, result.stderr[-2000:]))
+        self.assertNotEqual(result.returncode, -11, "SIGSEGV: callback freed live")
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertIn("OK", result.stdout)
 
     def test_section_drain_error_does_not_mask_the_body_error(self):
@@ -4184,10 +4160,7 @@ class TestLocking(unittest.TestCase):
             capture_output=True, text=True, timeout=300)
 
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        self.assertIn(
-            "RAISED", result.stdout,
-            "signing through a closed context returned a manifest its "
-            "signer callback never produced: {}".format(result.stdout.strip()))
+        self.assertIn("RAISED", result.stdout, result.stdout.strip())
         self.assertIn("0", result.stdout.split()[-1])
 
     def test_close_during_concurrent_sign_does_not_crash(self):
@@ -4260,13 +4233,8 @@ class TestLocking(unittest.TestCase):
             [sys.executable, "-c", source, self.data_dir],
             capture_output=True, text=True, timeout=300)
 
-        self.assertNotEqual(
-            result.returncode, -11,
-            "SIGSEGV: a signer was freed while a sign was using its handle")
-        self.assertEqual(
-            result.returncode, 0,
-            "shared-signer teardown race failed (rc={}):\n{}".format(
-                result.returncode, result.stderr[-2000:]))
+        self.assertNotEqual(result.returncode, -11, "SIGSEGV: signer freed live")
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertIn("OK", result.stdout)
 
 

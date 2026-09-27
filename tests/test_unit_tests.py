@@ -9740,9 +9740,7 @@ class TestErrorPlumbing(unittest.TestCase):
             t.join()
 
             self.assertEqual(len(captured), 1, "expected a raise on failure")
-            self.assertIsInstance(
-                captured[0], Error,
-                "stream failure must raise C2paError, not bare Exception")
+            self.assertIsInstance(captured[0], Error, "must be typed, not bare")
             self.assertNotIn("None", str(captured[0]))
         finally:
             c2pa_module._lib.c2pa_create_stream = real
@@ -9765,9 +9763,7 @@ class TestErrorPlumbing(unittest.TestCase):
         t.start()
         t.join()
 
-        self.assertIsInstance(
-            captured[0], Error,
-            "a failed MIME lookup returned data instead of raising")
+        self.assertIsInstance(captured[0], Error, "failed lookup returned data")
 
     def test_supported_mime_types_reports_the_native_message(self):
         self._set_native_error("Io: mime lookup failed")
@@ -10204,14 +10200,8 @@ class TestLockOrderStaticAnalysis(unittest.TestCase):
                 "{} nests {} inside {}, but {} nests {} inside {}".format(
                     forward[0], inner, outer, backward[0], outer, inner))
 
-        self.assertGreater(
-            len(pairs_by_method), 0,
-            "lock nesting scan found no nested lock acquisitions: "
-            "the scan is broken")
-        self.assertEqual(
-            conflicts, [],
-            "conflicting lock acquisition order:\n  "
-            + "\n  ".join(sorted(set(conflicts))))
+        self.assertGreater(len(pairs_by_method), 0, "scan found no nesting")
+        self.assertEqual(conflicts, [], ", ".join(sorted(set(conflicts))))
 
 
 if __name__ == '__main__':

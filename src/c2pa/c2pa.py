@@ -237,8 +237,7 @@ class ManagedResource:
         validated, which takes ownership of it and marks the resource active.
         Never assign `self._handle` or `self._lifecycle_state` directly.
       - Call `_consume_and_swap(ffi_call, message)` when an FFI call consumes
-        the current handle and returns a replacement: reserve the handle,
-        run the call, setup the new handle.
+        the current handle and returns a replacement.
       - Call `_teardown(free_handle=False)` when an FFI call took ownership of
         the handle without returning a replacement: the new owner frees it,
         so this does not.
@@ -359,7 +358,7 @@ class ManagedResource:
         """Hold this resource's operation lock its duration,
         and mark this thread as inside a native-error section.
 
-        Note: Ordering is important and as the native section opens first
+        Note: the native section opens first
         for the native call and closes last.
 
         Never hold this across a native call that drives stream callbacks.
@@ -457,14 +456,13 @@ class ManagedResource:
         -1 when the pointer registry rejected an already-consumed address.
         A -1 can be expected on the eager-free path when the candidate released
         native memory has already dropped the value, and is gracefully handled by
-        the native lib too.
+        the native lib.
         """
         result = _lib.c2pa_free(ptr)
         if result != 0:
             logger.debug(
                 "c2pa_free returned %s for an untracked pointer",
                 result)
-            # Reset error slot.
             _write_no_error_marker()
         return result
 
@@ -534,8 +532,6 @@ class ManagedResource:
                 # Checks released as it recorded possible free intents.
                 return
             if self._inflight > 0 or _in_native_section():
-                # Closes the resource so it can't be used anymore.
-                # Records also pending actual frees.
                 self._close_lifecycle()
                 if _in_native_section():
                     _register_for_section_flush(self)
@@ -626,8 +622,7 @@ class ManagedResource:
         return self._pending_teardown is not None
 
     def _flush_pending_pass(self):
-        """Attempt to run pending teardowns.
-        """
+        """Attempt to run pending teardowns."""
         if self._pending_teardown is None:
             return
 
@@ -648,8 +643,7 @@ class ManagedResource:
 
     def _maybe_flush_pending(self):
         """Recheck if a teardown can run after something
-        that blocked it cleared.
-        """
+        that blocked it cleared."""
         if is_foreign_process(self):
             return
 
@@ -839,10 +833,7 @@ class ManagedResource:
         raise C2paError(error_message.format("Unknown error"))
 
     def _begin_consume(self):
-        """Reserve this handle for a consuming call, or raise.
-        This is the initiation of an exclusive borrow, and "counts"
-        as an in-progress call that mutates something.
-        This reservation is exclusive.
+        """Reserve this handle exclusively for a consuming call, or raise.
         The resource stays ACTIVE while being consumed.
         A teardown (deferred while the consume is in flight) closes it.
 
@@ -859,7 +850,7 @@ class ManagedResource:
 
     def _consume_and_swap(self, ffi_call, error_message):
         """Run an FFI call consuming the handle, reserving it.
-        A replacement handle will be swapping in on success
+        A replacement handle swaps in on success
         (a returned null value is a failure).
         """
         def swap(new_ptr):
@@ -960,8 +951,7 @@ class ManagedResource:
     def is_valid(self) -> bool:
         """Is the resource usable now?
         ACTIVE, holding a handle, or a shared borrow,
-        and no mutating (exclusive) or consuming native call in progress now.
-        """
+        and no mutating (exclusive) or consuming native call in progress."""
         return (
             self._lifecycle_state == LifecycleState.ACTIVE
             and self._handle is not None
@@ -1086,8 +1076,7 @@ def _marker_text_for(pid):
 
 
 def _marker_text():
-    """Marker text for this process, or None if it could not be learned.
-    """
+    """Marker text for this process, or None if it could not be learned."""
     return _marker_text_for(os.getpid())
 
 
@@ -2044,8 +2033,8 @@ def _context_guard(context):
     """Hold a caller-supplied context valid across a native call.
 
     ContextProvider requires only is_valid and execution_context.
-    _native_call may also be implemented on other handlers, and
-    will leverage managed resources capabilities accordingly.
+    A context that implements _native_call (a ManagedResource) is
+    guarded through it instead.
     """
     native_call = getattr(context, "_native_call", None)
     if native_call is None:
