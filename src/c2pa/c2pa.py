@@ -4488,16 +4488,14 @@ class Builder(ManagedResource):
                     self.close()
                     raise C2paError(f"Error during signing: {e}") from e
 
-        try:
-            # _native_call already closed, so close() can free.
-            with _native_section():
-                _check_ffi_operation_result(
-                    result,
-                    "Error during signing",
-                    check=lambda r: r < 0)
-        finally:
-            # Single use for a Builder, once signed, close.
-            self.close()
+                try:
+                    _check_ffi_operation_result(
+                        result,
+                        "Error during signing",
+                        check=lambda r: r < 0)
+                finally:
+                    # Single use for a Builder, once signed, close.
+                    self.close()
 
         # Capture the manifest bytes if available
         manifest_bytes = b""

@@ -4003,8 +4003,9 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(unguarded, [], "\n  ".join(unguarded))
 
     def test_no_native_call_under_a_shared_guarded_op(self):
-        """A Reader's shared native call runs under a reservation,
-        so concurrent readers of one Reader do not serialize.
+        """A Reader's direct native calls run under a reservation, so they do
+        not serialize on one Reader. The manifest-field getters still share
+        the op lock through _get_cached_manifest_data.
         """
         tree = ast.parse(inspect.getsource(sys.modules[Reader.__module__]))
 
