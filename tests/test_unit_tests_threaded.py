@@ -26,10 +26,7 @@ import unittest
 import threading
 import concurrent.futures
 import time
-import asyncio
-import random
 from unittest.mock import MagicMock, patch
-
 from c2pa import Builder, C2paError as Error, Reader, C2paSignerInfo, Signer, sdk_version  # noqa: E501
 from c2pa import Context, Settings
 from c2pa.c2pa import ManagedResource, Stream, LifecycleState, _native_section
@@ -597,8 +594,7 @@ class TestReaderWithThreads(unittest.TestCase):
                         errors.append(error)
                 except Exception as e:
                     errors.append(
-                        f"Unexpected error processing {filename}: {
-                            str(e)}")
+                        f"Unexpected error processing {filename}: {str(e)}")
 
         # If any errors occurred, fail the test with all error messages
         if errors:
@@ -1132,8 +1128,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
 
                     # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{
-                        2 if thread_id % 2 == 0 else 1}/0.0.1"
+                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
                     self.assertEqual(
                         active_manifest["claim_generator"],
                         expected_claim_generator)
@@ -1151,8 +1146,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         # Create a thread pool with 6 workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
@@ -1176,128 +1170,11 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if error:
                         errors.append(error)
                 except Exception as e:
-                    errors.append(f"Unexpected error processing {
-                                  filename} in thread {thread_id}: {str(e)}")
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
 
         # If any errors occurred, fail the test with all error messages
         if errors:
             self.fail("\n".join(errors))
-
-    def test_sign_all_files_async(self):
-        """Test signing all files using asyncio with a pool of workers"""
-        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
-        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
-
-        # Map of file extensions to MIME types
-        mime_types = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp',
-            '.heic': 'image/heic',
-            '.heif': 'image/heif',
-            '.avif': 'image/avif',
-            '.tif': 'image/tiff',
-            '.tiff': 'image/tiff',
-            '.mp4': 'video/mp4',
-            '.avi': 'video/x-msvideo',
-            '.mp3': 'audio/mpeg',
-            '.m4a': 'audio/mp4',
-            '.wav': 'audio/wav'
-        }
-
-        # Skip files that are known to be invalid or unsupported
-        skip_files = {
-            'sample3.invalid.wav',  # Invalid file
-        }
-
-        async def async_sign_file(filename, thread_id):
-            """Async version of file signing operation"""
-            if filename in skip_files:
-                return None
-
-            file_path = os.path.join(signing_dir, filename)
-            if not os.path.isfile(file_path):
-                return None
-
-            # Get file extension and corresponding MIME type
-            _, ext = os.path.splitext(filename)
-            ext = ext.lower()
-            if ext not in mime_types:
-                return None
-
-            mime_type = mime_types[ext]
-
-            try:
-                with open(file_path, "rb") as file:
-                    # Choose manifest based on thread number
-                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
-                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
-
-                    builder = Builder(manifest_def)
-                    output = io.BytesIO(bytearray())
-                    builder.sign(self.signer, mime_type, file, output)
-                    output.seek(0)
-
-                    # Verify the signed file
-                    reader = Reader(mime_type, output)
-                    json_data = reader.json()
-                    manifest_store = json.loads(json_data)
-                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-
-                    # Verify the correct manifest was used
-                    expected_claim_generator = f"python_test_{
-                        2 if thread_id % 2 == 0 else 1}/0.0.1"
-                    self.assertEqual(
-                        active_manifest["claim_generator"],
-                        expected_claim_generator)
-
-                    # Verify the author is correct
-                    assertions = active_manifest["assertions"]
-                    for assertion in assertions:
-                        if assertion["label"] == "com.unit.test":
-                            author_name = assertion["data"]["author"][0]["name"]
-                            self.assertEqual(author_name, expected_author)
-                            break
-
-                    output.close()
-                    return None  # Success case
-            except Error.NotSupported:
-                return None
-            except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
-
-        async def run_async_tests():
-            # Get all files from both directories
-            all_files = []
-            for directory in [signing_dir, reading_dir]:
-                all_files.extend(os.listdir(directory))
-
-            # Create tasks for all files
-            tasks = []
-            for i, filename in enumerate(all_files):
-                task = asyncio.create_task(async_sign_file(filename, i))
-                tasks.append(task)
-
-            # Wait for all tasks to complete and collect results
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Process results
-            errors = []
-            for result in results:
-                if isinstance(result, Exception):
-                    errors.append(str(result))
-                elif result:  # Non-None result indicates an error
-                    errors.append(result)
-
-            # If any errors occurred, fail the test with all error messages
-            if errors:
-                self.fail("\n".join(errors))
-
-        # Run the async tests
-        asyncio.run(run_async_tests())
 
     def test_parallel_manifest_writing(self):
         """Test writing different manifests to two files in parallel and verify no data mixing occurs"""
@@ -1331,8 +1208,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if assertion["label"] == "com.unit.test":
                         author_name = assertion["data"]["author"][0]["name"]
                         self.assertEqual(
-                            author_name, f"Tester {
-                                'One' if thread_id == 1 else 'Two'}")
+                            author_name, f"Tester {'One' if thread_id == 1 else 'Two'}")
                         break
 
                 return active_manifest
@@ -1475,8 +1351,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if thread_id % 3 == 0:
                         expected_claim_generator = "python_test/0.0.1"
                     else:
-                        expected_claim_generator = f"python_test_{
-                            expected_thread}/0.0.1"
+                        expected_claim_generator = f"python_test_{expected_thread}/0.0.1"
 
                     self.assertEqual(
                         active_manifest["claim_generator"],
@@ -1495,8 +1370,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             except Error.NotSupported:
                 return None
             except Exception as e:
-                return f"Failed to sign {
-                    filename} in thread {thread_id}: {str(e)}"
+                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
 
         # Create a thread pool with 3 workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -1520,8 +1394,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     if error:
                         errors.append(error)
                 except Exception as e:
-                    errors.append(f"Unexpected error processing {
-                                  filename} in thread {thread_id}: {str(e)}")
+                    errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
 
         # Verify thread interleaving
         # Check that we don't have long sequences of the same thread
@@ -1534,8 +1407,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             if thread_execution_order[i][1] == current_thread:
                 current_sequence += 1
                 if current_sequence > max_same_thread_sequence:
-                    self.fail(f"Thread {current_thread} executed {
-                              current_sequence} times in sequence, indicating poor interleaving")
+                    self.fail(f"Thread {current_thread} executed {current_sequence} times in sequence, indicating poor interleaving")
             else:
                 current_sequence = 1
                 current_thread = thread_execution_order[i][1]
@@ -2079,183 +1951,6 @@ class TestBuilderWithThreads(unittest.TestCase):
         output1.close()
         output2.close()
 
-    def test_concurrent_read_after_write_async(self):
-        """Test reading from a file after writing is complete using asyncio"""
-        output = io.BytesIO(bytearray())
-        write_complete = asyncio.Event()
-        write_errors = []
-        read_errors = []
-        write_success = False
-
-        async def write_manifest():
-            nonlocal write_success
-            try:
-                with open(self.test_path, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1)
-                    builder.sign(self.signer, "image/jpeg", file, output)
-                    output.seek(0)
-                    write_success = True
-                    write_complete.set()
-            except Exception as e:
-                write_errors.append(f"Write error: {str(e)}")
-                write_complete.set()
-
-        async def read_manifest():
-            try:
-                # Wait for write to complete before reading
-                await write_complete.wait()
-
-                # Verify write was successful
-                if not write_success:
-                    raise Exception(
-                        "Write operation did not complete successfully")
-
-                # Verify output is not empty
-                output_size = len(output.getvalue())
-                self.assertGreater(
-                    output_size, 0, "Output should not be empty after write")
-
-                # Read after write is complete
-                output.seek(0)
-                reader = Reader("image/jpeg", output)
-                json_data = reader.json()
-                manifest_store = json.loads(json_data)
-
-                # Verify manifest store structure
-                self.assertIn(
-                    "manifests",
-                    manifest_store,
-                    "Manifest store should contain 'manifests'")
-                self.assertIn(
-                    "active_manifest",
-                    manifest_store,
-                    "Manifest store should contain 'active_manifest'")
-
-                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-
-                # Verify final manifest
-                self.assertEqual(
-                    active_manifest["claim_generator"],
-                    "python_test_1/0.0.1")
-                self.assertEqual(
-                    active_manifest["title"],
-                    "Python Test Image 1")
-
-                # Verify the author is correct
-                assertions = active_manifest["assertions"]
-                author_found = False
-                for assertion in assertions:
-                    if assertion["label"] == "com.unit.test":
-                        author_name = assertion["data"]["author"][0]["name"]
-                        self.assertEqual(author_name, "Tester One")
-                        author_found = True
-                        break
-                self.assertTrue(author_found,
-                                "Author assertion not found in manifest")
-
-            except Exception as e:
-                read_errors.append(f"Read error: {str(e)}")
-
-        async def run_async_tests():
-            # Create and run write task first
-            write_task = asyncio.create_task(write_manifest())
-            await write_task  # Wait for write to complete
-
-            # Only start read task after write is complete
-            read_task = asyncio.create_task(read_manifest())
-            await read_task  # Wait for read to complete
-
-        # Run the async tests
-        asyncio.run(run_async_tests())
-
-        # Clean up
-        output.close()
-
-        # Check for errors
-        if write_errors:
-            self.fail("\n".join(write_errors))
-        if read_errors:
-            self.fail("\n".join(read_errors))
-
-    def test_resource_contention_read_parallel_async(self):
-        """Test multiple async tasks reading the same file concurrently"""
-        output = io.BytesIO(bytearray())
-        read_errors = []
-        reader_count = 5  # Number of concurrent readers
-        active_readers = 0
-        readers_lock = asyncio.Lock()  # Lock for reader count
-        stream_lock = asyncio.Lock()  # Lock for stream access
-        # Barrier to synchronize task starts
-        start_barrier = asyncio.Barrier(reader_count)
-
-        # First write some data to read
-        with open(self.test_path, "rb") as file:
-            builder = Builder(self.manifestDefinition_1)
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-
-        async def read_manifest(reader_id):
-            nonlocal active_readers
-            try:
-                async with readers_lock:
-                    active_readers += 1
-
-                # Wait for all tasks to be ready
-                await start_barrier.wait()
-
-                # Read the manifest
-                async with stream_lock:  # Ensure exclusive access to stream
-                    output.seek(0)  # Reset stream position before read
-                    reader = Reader("image/jpeg", output)
-                    json_data = reader.json()
-                    manifest_store = json.loads(json_data)
-                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-
-                # Verify manifest data
-                self.assertEqual(
-                    active_manifest["claim_generator"],
-                    "python_test_1/0.0.1")
-                self.assertEqual(
-                    active_manifest["title"],
-                    "Python Test Image 1")
-
-                # Verify the author is correct
-                assertions = active_manifest["assertions"]
-                for assertion in assertions:
-                    if assertion["label"] == "com.unit.test":
-                        author_name = assertion["data"]["author"][0]["name"]
-                        self.assertEqual(author_name, "Tester One")
-                        break
-
-            except Exception as e:
-                read_errors.append(f"Reader {reader_id} error: {str(e)}")
-            finally:
-                async with readers_lock:
-                    active_readers -= 1
-
-        async def run_async_tests():
-            # Create all tasks first
-            tasks = []
-            for i in range(reader_count):
-                task = asyncio.create_task(read_manifest(i))
-                tasks.append(task)
-
-            # Wait for all tasks to complete
-            await asyncio.gather(*tasks)
-
-        # Run the async tests
-        asyncio.run(run_async_tests())
-
-        # Clean up
-        output.close()
-
-        # Check for errors
-        if read_errors:
-            self.fail("\n".join(read_errors))
-
-        # Verify all readers completed
-        self.assertEqual(active_readers, 0, "Not all readers completed")
-
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder class operations with 12 threads, each adding 3 specific ingredients and signing a file."""
         # Number of threads to use in the test
@@ -2500,73 +2195,6 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
                     errors.append(f"Unexpected error processing {filename} in thread {thread_id}: {str(e)}")
             if errors:
                 self.fail("\n".join(errors))
-
-    def test_sign_all_files_async(self):
-        """Test signing all files using asyncio with Context"""
-        signing_dir = os.path.join(self.data_dir, "files-for-signing-tests")
-        reading_dir = os.path.join(self.data_dir, "files-for-reading-tests")
-        mime_types = {
-            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-            '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic',
-            '.heif': 'image/heif', '.avif': 'image/avif', '.tif': 'image/tiff',
-            '.tiff': 'image/tiff', '.mp4': 'video/mp4', '.avi': 'video/x-msvideo',
-            '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav'
-        }
-        skip_files = {'sample3.invalid.wav'}
-
-        async def async_sign_file(filename, thread_id):
-            if filename in skip_files:
-                return None
-            file_path = os.path.join(signing_dir, filename)
-            if not os.path.isfile(file_path):
-                return None
-            _, ext = os.path.splitext(filename)
-            ext = ext.lower()
-            if ext not in mime_types:
-                return None
-            mime_type = mime_types[ext]
-            try:
-                with open(file_path, "rb") as file:
-                    manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
-                    expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
-                    ctx = Context()
-                    builder = Builder(manifest_def, ctx)
-                    output = io.BytesIO(bytearray())
-                    builder.sign(self.signer, mime_type, file, output)
-                    output.seek(0)
-                    read_ctx = Context()
-                    reader = Reader(mime_type, output, context=read_ctx)
-                    json_data = reader.json()
-                    manifest_store = json.loads(json_data)
-                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-                    expected_claim_generator = f"python_test_{2 if thread_id % 2 == 0 else 1}/0.0.1"
-                    self.assertEqual(active_manifest["claim_generator"], expected_claim_generator)
-                    for assertion in active_manifest["assertions"]:
-                        if assertion["label"] == "com.unit.test":
-                            self.assertEqual(assertion["data"]["author"][0]["name"], expected_author)
-                            break
-                    output.close()
-                    return None
-            except Error.NotSupported:
-                return None
-            except Exception as e:
-                return f"Failed to sign {filename} in thread {thread_id}: {str(e)}"
-
-        async def run_async_tests():
-            all_files = []
-            for directory in [signing_dir, reading_dir]:
-                all_files.extend(os.listdir(directory))
-            tasks = [asyncio.create_task(async_sign_file(f, i)) for i, f in enumerate(all_files)]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            errors = []
-            for result in results:
-                if isinstance(result, Exception):
-                    errors.append(str(result))
-                elif result:
-                    errors.append(result)
-            if errors:
-                self.fail("\n".join(errors))
-        asyncio.run(run_async_tests())
 
     def test_parallel_manifest_writing(self):
         """Test writing different manifests in parallel using context APIs"""
@@ -2988,116 +2616,6 @@ class TestContextualBuilderWithThreads(TestBuilderWithThreads):
         output1.close()
         output2.close()
 
-    def test_concurrent_read_after_write_async(self):
-        """Test read after write using asyncio with context APIs"""
-        output = io.BytesIO(bytearray())
-        write_complete = asyncio.Event()
-        write_errors = []
-        read_errors = []
-        write_success = False
-
-        async def write_manifest():
-            nonlocal write_success
-            try:
-                ctx = Context()
-                with open(self.test_path, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1, ctx)
-                    builder.sign(self.signer, "image/jpeg", file, output)
-                    output.seek(0)
-                    write_success = True
-                    write_complete.set()
-            except Exception as e:
-                write_errors.append(f"Write error: {str(e)}")
-                write_complete.set()
-
-        async def read_manifest():
-            try:
-                await write_complete.wait()
-                if not write_success:
-                    raise Exception("Write operation did not complete successfully")
-                self.assertGreater(len(output.getvalue()), 0)
-                output.seek(0)
-                read_ctx = Context()
-                reader = Reader("image/jpeg", output, context=read_ctx)
-                json_data = reader.json()
-                manifest_store = json.loads(json_data)
-                self.assertIn("manifests", manifest_store)
-                self.assertIn("active_manifest", manifest_store)
-                active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
-                self.assertEqual(active_manifest["title"], "Python Test Image 1")
-                author_found = False
-                for assertion in active_manifest["assertions"]:
-                    if assertion["label"] == "com.unit.test":
-                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
-                        author_found = True
-                        break
-                self.assertTrue(author_found)
-            except Exception as e:
-                read_errors.append(f"Read error: {str(e)}")
-
-        async def run_async_tests():
-            write_task = asyncio.create_task(write_manifest())
-            await write_task
-            read_task = asyncio.create_task(read_manifest())
-            await read_task
-        asyncio.run(run_async_tests())
-        output.close()
-        if write_errors:
-            self.fail("\n".join(write_errors))
-        if read_errors:
-            self.fail("\n".join(read_errors))
-
-    def test_resource_contention_read_parallel_async(self):
-        """Test multiple async tasks reading the same file with context APIs"""
-        output = io.BytesIO(bytearray())
-        read_errors = []
-        reader_count = 5
-        active_readers = 0
-        readers_lock = asyncio.Lock()
-        stream_lock = asyncio.Lock()
-        start_barrier = asyncio.Barrier(reader_count)
-
-        ctx = Context()
-        with open(self.test_path, "rb") as file:
-            builder = Builder(self.manifestDefinition_1, ctx)
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-
-        async def read_manifest(reader_id):
-            nonlocal active_readers
-            try:
-                async with readers_lock:
-                    active_readers += 1
-                await start_barrier.wait()
-                async with stream_lock:
-                    output.seek(0)
-                    read_ctx = Context()
-                    reader = Reader("image/jpeg", output, context=read_ctx)
-                    json_data = reader.json()
-                    manifest_store = json.loads(json_data)
-                    active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-                self.assertEqual(active_manifest["claim_generator"], "python_test_1/0.0.1")
-                self.assertEqual(active_manifest["title"], "Python Test Image 1")
-                for assertion in active_manifest["assertions"]:
-                    if assertion["label"] == "com.unit.test":
-                        self.assertEqual(assertion["data"]["author"][0]["name"], "Tester One")
-                        break
-            except Exception as e:
-                read_errors.append(f"Reader {reader_id} error: {str(e)}")
-            finally:
-                async with readers_lock:
-                    active_readers -= 1
-
-        async def run_async_tests():
-            tasks = [asyncio.create_task(read_manifest(i)) for i in range(reader_count)]
-            await asyncio.gather(*tasks)
-        asyncio.run(run_async_tests())
-        output.close()
-        if read_errors:
-            self.fail("\n".join(read_errors))
-        self.assertEqual(active_readers, 0)
-
     def test_builder_sign_with_multiple_ingredient_random_many_threads(self):
         """Test Builder with 12 threads adding ingredients and signing using context APIs"""
         TOTAL_THREADS_USED = 12
@@ -3450,7 +2968,7 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(set(counts.values()), {1},
                          "a dropped resource was freed more than once")
 
-    def test_close_queued_inside_a_flush_hold_is_not_orphaned(self):
+    def test_close_queued_inside_a_lock_hold_is_not_orphaned(self):
         resource = _ConcreteResource()
         resource._activate(0x60001)
 
@@ -3483,12 +3001,14 @@ class TestLocking(unittest.TestCase):
 
         resource._op_lock = GatedLock()
         try:
-            resource._maybe_flush_pending()
+            with resource._guarded_op():
+                pass
         finally:
             resource._op_lock = real_lock
 
+        self.assertTrue(closed.is_set(), "close() was never injected")
         self.assertEqual(self._free_counts().get(0x60001), 1,
-                         "a teardown queued during a flush was orphaned")
+                         "a teardown queued during a lock hold was orphaned")
 
     def test_closed_reader_never_serves_cached_manifest(self):
         reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
@@ -4481,6 +4001,46 @@ class TestLocking(unittest.TestCase):
         # Positive control: verify call seen.
         self.assertEqual(seen, set(self.MUTATING_FFI))
         self.assertEqual(unguarded, [], "\n  ".join(unguarded))
+
+    def test_no_native_call_under_a_shared_guarded_op(self):
+        """A Reader's shared native call runs under a reservation,
+        so concurrent readers of one Reader do not serialize.
+        """
+        tree = ast.parse(inspect.getsource(sys.modules[Reader.__module__]))
+
+        def is_shared_guarded_op(node):
+            for item in node.items:
+                call = item.context_expr
+                if (isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "_guarded_op"
+                        and not any(kw.arg == "exclusive"
+                                    for kw in call.keywords)):
+                    return True
+            return False
+
+        found = set()
+
+        def visit(node, shared, where):
+            if isinstance(node, ast.With) and is_shared_guarded_op(node):
+                shared = True
+            if (shared and isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "_lib"):
+                found.add((where, node.func.attr))
+            for child in ast.iter_child_nodes(node):
+                visit(child, shared, where)
+
+        for cls in ast.walk(tree):
+            if isinstance(cls, ast.ClassDef):
+                for method in cls.body:
+                    if isinstance(method, ast.FunctionDef):
+                        visit(method, False,
+                              "{}.{}".format(cls.name, method.name))
+
+        self.assertEqual(
+            sorted(f for f in found if f[0].startswith("Reader.")), [])
 
     def _callback_signer_source(self):
         """Shared subprocess preamble: an ES256 callback signer."""

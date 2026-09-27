@@ -628,6 +628,8 @@ class ManagedResource:
     def _flush_pending_pass(self):
         """Attempt to run pending teardowns.
         """
+        if self._pending_teardown is None:
+            return
 
         with self._live_op_lock():
             if self._pending_teardown is None:
@@ -3497,9 +3499,7 @@ class Reader(ManagedResource):
             C2paError: If there was an error getting the JSON
         """
 
-        with self._guarded_op():
-            self._ensure_valid_state()
-
+        with self._native_call():
             if self._manifest_json_str_cache is not None:
                 return self._manifest_json_str_cache
 
@@ -3526,9 +3526,7 @@ class Reader(ManagedResource):
                       the Reader has been closed.
         """
 
-        with self._guarded_op():
-            self._ensure_valid_state()
-
+        with self._native_call():
             result = _lib.c2pa_reader_detailed_json(self._handle)
             _check_ffi_operation_result(
                 result, "Error during detailed manifest parsing in Reader")
@@ -3549,9 +3547,7 @@ class Reader(ManagedResource):
                       call returns null.
         """
 
-        with self._guarded_op():
-            self._ensure_valid_state()
-
+        with self._native_call():
             result = _lib.c2pa_reader_crjson(self._handle)
             _check_ffi_operation_result(result, "Error parsing crJSON")
 
@@ -3694,9 +3690,7 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error checking the embedded status
         """
-        with self._guarded_op():
-            self._ensure_valid_state()
-
+        with self._native_call():
             result = _lib.c2pa_reader_is_embedded(self._handle)
 
             return bool(result)
@@ -3712,9 +3706,7 @@ class Reader(ManagedResource):
         Raises:
             C2paError: If there was an error getting the remote URL
         """
-        with self._guarded_op():
-            self._ensure_valid_state()
-
+        with self._native_call():
             result = _lib.c2pa_reader_remote_url(self._handle)
 
             if result is None:
