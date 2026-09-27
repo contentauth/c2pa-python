@@ -359,7 +359,7 @@ The child's copy is not just skipped, it is nulled and marked `CLOSED`, so nothi
 The memory a child skips freeing is not lost for good: a child that calls `exec()` replaces its address space, and a child that exits has its memory reclaimed by the operating system. Even a long-lived forked worker retains at most the objects it inherited at fork time, a bounded amount rather than a growing leak, since anything it allocates carries its own process ID and is freed normally.
 
 > [!NOTE]
-> It is recommended to objects in the using process. Objects created before `fork()` report closed in the created child, to avoid memory corruption.
+> It is recommended to instantiate objects in the using process. Objects created before `fork()` report closed in the created child, to avoid memory corruption.
 
 ## Class hierarchy
 
