@@ -16,6 +16,7 @@
 import contextlib
 import ctypes
 import enum
+import functools
 import json
 import logging
 import sys
@@ -371,9 +372,17 @@ class ManagedResource:
                 with self._live_op_lock():
                     if exclusive:
                         self._ensure_not_borrowed()
-                    elif refuse_mut:
-                        self._ensure_no_mutating_call()
-                    yield
+                        self._mut_inflight += 1
+                        self._inflight += 1
+                        try:
+                            yield
+                        finally:
+                            self._mut_inflight -= 1
+                            self._inflight -= 1
+                    else:
+                        if refuse_mut:
+                            self._ensure_no_mutating_call()
+                        yield
             finally:
                 self._maybe_flush_pending()
 
@@ -493,7 +502,8 @@ class ManagedResource:
         """Close the object: run _release, optionally free the handle, null it.
         free_handle=False (consumed) frees nothing, the new owner needs to free.
 
-        The frees run under an operation lock.
+        The state change runs under the operation lock; _release and the
+        free run after the lock is released.
         Deferred when any gate is blocking:
         - this resource's own handle is in flight in a native call
         - this thread is inside a native-error section for some call
@@ -518,6 +528,7 @@ class ManagedResource:
                 _register_for_section_flush(self)
             return
 
+        detached = None
         try:
             if self._released:
                 # Checks released as it recorded possible free intents.
@@ -535,9 +546,11 @@ class ManagedResource:
                 if pending is not None:
                     free_handle = pending and free_handle
                     self._pending_teardown = None
-            self._finish_teardown(free_handle)
+            detached = self._detach_for_teardown(free_handle)
         finally:
             lock.release()
+        if detached is not None:
+            self._finish_teardown(*detached)
 
     def _record_pending_intent(self, free_handle: bool):
         """Queue a teardown intent, leaving the resource usable until
@@ -578,23 +591,29 @@ class ManagedResource:
         if hasattr(self, '_lifecycle_state'):
             self._lifecycle_state = LifecycleState.CLOSED
 
-    def _finish_teardown(self, free_handle: bool):
-        """Once teardown can run, runs the actual release.
-        Steps: release, null the handle, free if requested.
+    def _detach_for_teardown(self, free_handle: bool):
+        """Mark the resource released and closed, and take its handle.
+        Called under the operation lock. Returns (handle, free_handle) for
+        _finish_teardown, or None when there is nothing left to do.
         """
         if is_foreign_process(self):
             self._detach_in_child()
-            return
+            return None
 
         with self._live_teardown_lock():
             if self._released:
-                return
+                return None
             self._released = True
             self._pending_teardown = None
             self._lifecycle_state = LifecycleState.CLOSED
-        self._safe_release()
-
         handle, self._handle = self._handle, None
+        return handle, free_handle
+
+    def _finish_teardown(self, handle, free_handle: bool):
+        """Run _release, then free the detached handle if requested.
+        Called after the operation lock is released.
+        """
+        self._safe_release()
         if free_handle and handle:
             try:
                 ManagedResource._free_native_ptr(handle)
@@ -621,7 +640,9 @@ class ManagedResource:
             with self._live_teardown_lock():
                 free_handle = self._pending_teardown
                 self._pending_teardown = None
-            self._finish_teardown(free_handle)
+            detached = self._detach_for_teardown(free_handle)
+        if detached is not None:
+            self._finish_teardown(*detached)
 
     def _maybe_flush_pending(self):
         """Recheck if a teardown can run after something
@@ -706,6 +727,8 @@ class ManagedResource:
     _PRE_CONSUME_ERROR_TAGS = (
         "UntrackedPointer:",
         "WrongPointerType:",
+        "PointerInUse:",
+        "ForeignProcess:",
     )
 
     # An error tag starts the message or follows this one wrapper.
@@ -717,6 +740,10 @@ class ManagedResource:
 
         Anchored, not a substring search: native quotes caller text verbatim,
         so a tag mid-message describes the caller's input.
+
+        The tags are the errors `untrack` in c2pa-rs
+        c2pa_c_ffi/src/cimpl/utils.rs returns before it removes the handle's
+        registry entry.
         """
         body = error
         if body.startswith(ManagedResource._NATIVE_ERROR_WRAPPER):
@@ -937,6 +964,7 @@ class ManagedResource:
             self._lifecycle_state == LifecycleState.ACTIVE
             and self._handle is not None
             and self._mut_inflight == 0
+            and not is_foreign_process(self)
         )
 
     def close(self) -> None:
@@ -1048,29 +1076,38 @@ class C2paStream(ctypes.Structure):
 # 2 is not an allocatable address.
 _NO_ERROR_MARKER_ADDR = 2
 
-# Exact text the native lib writes for a failed free of _NO_ERROR_MARKER_ADDR.
-_NO_ERROR_MARKER_TEXT = None
+
+@functools.lru_cache(maxsize=1)
+def _marker_text_for(pid):
+    """Learn the marker text once per process ID."""
+    return _learn_no_error_marker_text()
+
+
+def _marker_text():
+    """Marker text for this process, or None if it could not be learned.
+    """
+    return _marker_text_for(os.getpid())
 
 
 def _write_no_error_marker():
     """A c2pa_free of an address the registry does not track writes
-    an expected error message learned at import into the
+    an expected error message learned on first use into the
     thread-local error slot and returns -1.
 
     This marker mechanism exists to distinguish a consuming call that
     failed without setting its own error from a stale message left
     by an earlier call on the same thread.
 
-    No-op when the marker text could not be learned at import.
+    No-op when the marker text could not be learned on first use.
     """
-    if _NO_ERROR_MARKER_TEXT is None:
+    if _marker_text() is None:
         return
     _lib.c2pa_free(_NO_ERROR_MARKER_ADDR)
 
 
 def _is_no_error_marker(message: str) -> bool:
     """True for the marker meaning "no current error of our own"."""
-    return message == _NO_ERROR_MARKER_TEXT
+    return message == _marker_text()
 
 
 def _read_native_error() -> Optional[str]:
@@ -1491,9 +1528,7 @@ _setup_function(_lib.c2pa_free, [ctypes.c_void_p], ctypes.c_int)
 def _learn_no_error_marker_text():
     """Plant the marker once and read back the exact text the native lib
     produces for it, so equality checks match this build of the lib.
-
-    Runs on the importing thread; the text is a format constant, so the
-    learned value holds for every thread.
+    Runs on first use in each process.
 
     No-op/None if the marker couldn't be learned.
     """
@@ -1519,8 +1554,6 @@ def _learn_no_error_marker_text():
         return None
     return text
 
-
-_NO_ERROR_MARKER_TEXT = _learn_no_error_marker_text()
 
 _setup_function(
     _lib.c2pa_context_builder_set_signer,
@@ -3324,6 +3357,7 @@ class Reader(ManagedResource):
         # Locked so the cache fields can't be read and written
         # across concurrent handle swaps.
         with self._guarded_op():
+            self._ensure_valid_state()
             if self._manifest_data_cache is None:
                 if self._manifest_json_str_cache is None:
                     self._manifest_json_str_cache = self.json()
@@ -3373,6 +3407,8 @@ class Reader(ManagedResource):
         While this call runs, read methods on other threads raise
         C2paError("Reader is running a mutating operation") and is_valid is
         False. The Reader is usable again when the call returns successfully.
+        A thread that calls read methods in a loop without yielding keeps
+        this call refused; yield between reads.
         """
         format_arg = _format_ffi_arg(_encode_format(format, "Reader"))
 
@@ -3396,13 +3432,21 @@ class Reader(ManagedResource):
                 _check_cstr_arg('format', format_arg)
                 _check_handle_arg('stream', main_obj._stream)
                 _check_handle_arg('fragment', frag_obj._stream)
-                self._consume_and_swap(
-                    lambda handle: _lib.c2pa_reader_with_fragment(
+
+                def with_fragment_call(handle):
+                    # Cleared here because these describe the replaced handle,
+                    # and a reader must never be served them.
+                    self._manifest_json_str_cache = None
+                    self._manifest_data_cache = None
+                    return _lib.c2pa_reader_with_fragment(
                         handle,
                         format_arg,
                         main_obj._stream,
                         frag_obj._stream,
-                    ),
+                    )
+
+                self._consume_and_swap(
+                    with_fragment_call,
                     Reader._ERROR_MESSAGES['fragment_error'])
             except Exception:
                 main_obj.close()
@@ -3438,11 +3482,6 @@ class Reader(ManagedResource):
                     except Exception:
                         logger.warning(
                             "Failed to close Reader fragment stream")
-
-                # Cleared here because these describe the replaced handle,
-                # and a reader must never be served them.
-                self._manifest_json_str_cache = None
-                self._manifest_data_cache = None
         finally:
             self._fragment_lock.release()
 
@@ -4430,11 +4469,13 @@ class Builder(ManagedResource):
             _encode_format(format, "Builder", allow_autodetect=False))
         manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
 
-        try:
-            # Signing needs short guard sections (a Signer can be used in parallel).
-            with self._exclusive_native_call():
-                if signer is not None:
-                    with signer._native_call():
+        # The Context pins the consumed signer's callback, which
+        # native invokes during this call
+        with self._exclusive_native_call():
+            with (signer._native_call() if signer is not None
+                  else _context_guard(self._context)):
+                try:
+                    if signer is not None:
                         result = _lib.c2pa_builder_sign(
                             self._handle,
                             format_arg,
@@ -4443,10 +4484,7 @@ class Builder(ManagedResource):
                             signer._handle,
                             ctypes.byref(manifest_bytes_ptr)
                         )
-                else:
-                    # The Context pins the consumed signer's callback, which
-                    # native invokes during this call
-                    with _context_guard(self._context):
+                    else:
                         result = _lib.c2pa_builder_sign_context(
                             self._handle,
                             format_arg,
@@ -4454,9 +4492,9 @@ class Builder(ManagedResource):
                             dest_stream._stream,
                             ctypes.byref(manifest_bytes_ptr),
                         )
-        except Exception as e:
-            self.close()
-            raise C2paError(f"Error during signing: {e}") from e
+                except Exception as e:
+                    self.close()
+                    raise C2paError(f"Error during signing: {e}") from e
 
         try:
             # _native_call already closed, so close() can free.
