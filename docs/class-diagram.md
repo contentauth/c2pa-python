@@ -66,6 +66,7 @@ classDiagram
         +from_info(signer_info) Signer$
         +from_callback(callback, alg, certs, tsa_url) Signer$
         +reserve_size() int
+        +with_ocsp_response(ocsp_response) Signer
         +close()
     }
 
