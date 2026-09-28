@@ -1,0 +1,52 @@
+name: Python SDK threading checks
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: read
+
+jobs:
+  threading-benchmark:
+    name: Python SDK threading checks
+    runs-on: ubuntu-24.04-arm
+    # Backstop: In case there is a hang.
+    timeout-minutes: 20
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'check-threading-benchmark') &&
+      (
+        github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'OWNER'
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build perf image
+        run: make perf-image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Make sure crashes would be reported.
+      - name: Check the harness can detect failures
+        run: make threading-bench-self-test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run thread-safety invariants
+        run: make threading-bench
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threading-invariant-logs
+          path: tests/perf/reports/*-threads.log
+          if-no-files-found: ignore

@@ -11,6 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
+import ast
 import gc
 import inspect
 import os
@@ -28,8 +29,11 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 import tempfile
 import shutil
+import subprocess
+import sys
 import ctypes
 import threading
+from unittest.mock import patch
 
 # Suppress deprecation warnings
 warnings.simplefilter("ignore", category=DeprecationWarning)
@@ -48,6 +52,23 @@ INGREDIENT_TEST_FILE_NAME = "A.jpg"
 DEFAULT_TEST_FILE = os.path.join(FIXTURES_DIR, DEFAULT_TEST_FILE_NAME)
 INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
+
+
+def _patch_free(test, fn):
+    """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
+    patcher = patch.object(
+        ManagedResource, '_free_native_ptr', staticmethod(fn))
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
+def _fail_with_native_error(tag_bytes):
+    """Build a mock FFI callable that sets a native error and returns None.
+    """
+    def _mock(*args):
+        c2pa_module._lib.c2pa_error_set_last(tag_bytes)
+        return None
+    return _mock
 
 
 def load_test_settings_json():
@@ -1371,7 +1392,6 @@ class TestReader(unittest.TestCase):
                 builder = Builder(manifest_definition)
                 # Direct the Builder not to embed the manifest into the asset
                 builder.set_no_embed()
-
 
                 with open(temp_file_path, "wb") as temp_file:
                     manifest_data = builder.sign(
@@ -6665,6 +6685,18 @@ class TestSettings(TestContextAPIs):
         self.assertIs(result, settings)
         settings.close()
 
+    def test_settings_update_rejects_nul_in_json_string(self):
+        settings = Settings.from_dict({
+            "builder": {"thumbnail": {"enabled": True}},
+        })
+        try:
+            with self.assertRaises(Error):
+                settings.update(
+                    '{"verify": {"verify_after_sign": true}}\x00'
+                    '{"builder": {"thumbnail": {"enabled": false}}}')
+        finally:
+            settings.close()
+
     def test_settings_is_valid_after_close(self):
         settings = Settings()
         settings.close()
@@ -7919,7 +7951,7 @@ class TestStreamReferences(unittest.TestCase):
 
 
 class TestManagedResourceLifecycle(unittest.TestCase):
-    """Lifecycle primitives (_activate, _swap_handle, _wrap_native_handle),
+    """Lifecycle primitives (_activate, _consume_and_swap, _wrap_native_handle),
     the _owner_pid stamp that governs which process may free a handle, and
     the ownership hand-offs between Python and the native library.
 
@@ -7972,10 +8004,14 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.data_dir = FIXTURES_DIR
         self.freed = []
         self._real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(self.freed.append)
+        # Registered first so it runs last, after every patch has unwound.
+        self.addCleanup(self._assert_free_hook_restored)
+        _patch_free(self, self.freed.append)
 
-    def tearDown(self):
-        ManagedResource._free_native_ptr = self._real_free
+    def _assert_free_hook_restored(self):
+        self.assertIs(
+            ManagedResource._free_native_ptr, self._real_free,
+            "{} leaked a _free_native_ptr patch".format(self.id()))
 
     def _free_counts(self):
         counts = {}
@@ -7985,7 +8021,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
     def _use_real_frees(self):
         """Undo free recorder, so native handles are really freed."""
-        ManagedResource._free_native_ptr = self._real_free
+        _patch_free(self, self._real_free)
 
     def _make_signer(self):
         with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as f:
@@ -8064,41 +8100,18 @@ class TestManagedResourceLifecycle(unittest.TestCase):
                          "rejected activation replaced the handle")
         self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
 
-    def test_swap_handle_does_not_free_consumed_handle(self):
-        res = self._FakeHandleResource()
-        res._activate(0xAAA1)
-
-        res._swap_handle(0xAAA2)
-
-        # The FFI already owns and frees the old pointer.
-        self.assertEqual(self.freed, [])
-        self.assertEqual(res._handle, 0xAAA2)
-
-        res.close()
-        self.assertEqual(self.freed, [0xAAA2])
-
-    def test_swap_handle_requires_active_resource(self):
+    def test_consume_and_swap_requires_active_resource(self):
         uninitialized = self._FakeHandleResource()
-        with self.assertRaises(Error) as ctx:
-            uninitialized._swap_handle(0x1)
-        self.assertIn("not active", str(ctx.exception))
+        with self.assertRaises(Error):
+            uninitialized._consume_and_swap(lambda h: 0x1, "swap: {}")
 
         closed = self._FakeHandleResource()
         closed._activate(0x2)
         closed.close()
+        self.freed.clear()
         with self.assertRaises(Error):
-            closed._swap_handle(0x3)
-
-    def test_swap_handle_rejects_null_replacement(self):
-        res = self._FakeHandleResource()
-        res._activate(0x7777)
-
-        with self.assertRaises(Error) as ctx:
-            res._swap_handle(None)
-
-        self.assertIn("null handle", str(ctx.exception))
-        self.assertEqual(res._handle, 0x7777)
-        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+            closed._consume_and_swap(lambda h: 0x3, "swap: {}")
+        self.assertEqual(self.freed, [])
 
     def test_wrap_native_handle_bypasses_init(self):
         seen = []
@@ -8153,7 +8166,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         # A swap keeps the original stamp:
         # the replacement handle was allocated by the same process
         # that created the object.
-        wrapped._swap_handle(0xA3)
+        wrapped._consume_and_swap(lambda h: 0xA3, "swap: {}")
         self.assertEqual(wrapped._owner_pid, pid)
 
     def test_foreign_child_skips_free_for_wrapped_and_swapped(self):
@@ -8163,7 +8176,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         swapped = self._FakeHandleResource()
         swapped._activate(0xC2)
-        swapped._swap_handle(0xC3)
+        swapped._consume_and_swap(lambda h: 0xC3, "swap: {}")
         swapped._owner_pid = os.getpid() + 1
         swapped.close()
 
@@ -8189,7 +8202,7 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         swapped = self._FakeHandleResource()
         swapped._activate(0xC5)
-        swapped._swap_handle(0xC6)
+        swapped._consume_and_swap(lambda h: 0xC6, "swap: {}")
         swapped.close()
 
         # 0xC5 was consumed by the test FFI swap.
@@ -8335,12 +8348,9 @@ class TestManagedResourceLifecycle(unittest.TestCase):
 
         # Nothing left to free, so close() must be a no-op.
         freed = []
-        real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(freed.append)
-        try:
+        with patch.object(ManagedResource, '_free_native_ptr',
+                          staticmethod(freed.append)):
             signer.close()
-        finally:
-            ManagedResource._free_native_ptr = real_free
         self.assertEqual(freed, [])
 
     def test_context_with_signer_consumes_it_on_success(self):
@@ -8375,12 +8385,11 @@ class TestManagedResourceLifecycle(unittest.TestCase):
             c2pa_module._lib.c2pa_builder_from_json = real_json
 
     def test_context_build_null_return_frees_builder(self):
-        # Set a pre-consume tag in the error slot to mock a pointer rejection.
+        # Mock a pointer rejection.
         settings = Settings()
-        c2pa_module._lib.c2pa_error_set_last(
-            b"UntrackedPointer: mocked pre-consume rejection")
         real_build = c2pa_module._lib.c2pa_context_builder_build
-        c2pa_module._lib.c2pa_context_builder_build = lambda ptr: None
+        c2pa_module._lib.c2pa_context_builder_build = _fail_with_native_error(
+            b"UntrackedPointer: mocked pre-consume rejection")
         try:
             with self.assertRaises(Error):
                 Context(settings=settings)
@@ -8405,22 +8414,28 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
 
     def test_consume_no_replacement_retains_on_pre_consume_tag(self):
-        res = self._FakeHandleResource()
-        res._activate(0xCAFE)
-        real_read = c2pa_module._read_native_error
-        c2pa_module._read_native_error = lambda: "UntrackedPointer: rejected"
-        try:
-            with self.assertRaises(Error):
-                res._consume_no_replacement(lambda h: -1, "set failed: {}")
-        finally:
-            c2pa_module._read_native_error = real_read
+        for message in ("UntrackedPointer: rejected",
+                        "PointerInUse: 0x2a",
+                        "Other: ForeignProcess: 0x2a"):
+            with self.subTest(message=message):
+                self.freed.clear()
+                res = self._FakeHandleResource()
+                res._activate(0xCAFE)
+                real_read = c2pa_module._read_native_error
+                c2pa_module._read_native_error = lambda: message
+                try:
+                    with self.assertRaises(Error):
+                        res._consume_no_replacement(
+                            lambda h: -1, "set failed: {}")
+                finally:
+                    c2pa_module._read_native_error = real_read
 
-        # Rejected before ownership transferred: handle retained.
-        self.assertEqual(res._handle, 0xCAFE)
-        self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertEqual(self.freed, [])
-        res.close()
-        self.assertEqual(self.freed, [0xCAFE])
+                # Rejected before ownership transferred: handle retained.
+                self.assertEqual(res._handle, 0xCAFE)
+                self.assertEqual(res._lifecycle_state, LifecycleState.ACTIVE)
+                self.assertEqual(self.freed, [])
+                res.close()
+                self.assertEqual(self.freed, [0xCAFE])
 
     def test_consume_no_replacement_marks_consumed_on_other_error(self):
         res = self._FakeHandleResource()
@@ -8438,6 +8453,92 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         self.assertEqual(self.freed, [])
         self.assertIsNone(res._handle)
         self.assertEqual(res._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_invoke_consume_success_does_not_consult_error_slot(self):
+        """A successful consuming call must not read the error slot at all:
+        only a failure inspects it."""
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        res._consume_no_replacement(lambda h: 0, "set failed: {}")
+
+        self.assertIsNone(c2pa_module._read_native_error())
+
+    def test_native_section_defers_unrelated_finalizer_free(self):
+        """A finalizer for a completely unrelated resource firing mid
+        native-call must not free immediately.
+        """
+        victim = self._FakeHandleResource()
+        victim._activate(0xCAFE)
+        bystander = self._FakeHandleResource()
+        bystander._activate(0xB00B)
+
+        def polluting_free(ptr):
+            self.freed.append(ptr)
+            # Freeing and untracked/ pointer writes its own error into the
+            # same thread-local slot.
+            c2pa_module._lib.c2pa_error_set_last(
+                "Other: UntrackedPointer: {:#x}".format(ptr).encode())
+            return -1
+        _patch_free(self, polluting_free)
+
+        def ffi_call(handle):
+            nonlocal bystander
+            del bystander  # last reference dropped: __del__ fires right here
+            return None  # the real call failed but set no error of its own
+
+        # A bare section: the consume needs the error section, but not a
+        # borrow on its own handle. _ensure_not_borrowed
+        # refuses a consume nested in a _native_call() on the same resource.
+        with c2pa_module._native_section():
+            with self.assertRaises(Error):
+                victim._consume_no_replacement(ffi_call, "op failed: {}")
+
+        # The bystander's free is deferred to the section close, so it
+        # runs after the consuming call, before the victim's free.
+        self.assertEqual(self.freed, [0xB00B, 0xCAFE])
+
+    def test_nested_native_sections_flush_only_at_outermost_close(self):
+        """A native-error section opened inside another, already-open one
+        on the same thread must not flush anything until the outermost
+        one closes."""
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        outer = c2pa_module._native_section()
+        outer.__enter__()
+        try:
+            inner = c2pa_module._native_section()
+            inner.__enter__()
+            try:
+                res.close()
+            finally:
+                inner.__exit__(None, None, None)
+            # Inner closed, outer is still open: still deferred.
+            self.assertEqual(self.freed, [], "inner section flushed")
+        finally:
+            outer.__exit__(None, None, None)
+        self.assertEqual(self.freed, [0xCAFE])
+
+    def test_stale_error_not_misattributed_after_preset_error(self):
+        """A stale tag left by an earlier, unrelated call on this thread
+        must not be read as this call's own error."""
+        # A stale tag from an earlier, unrelated call.
+        c2pa_module._lib.c2pa_error_set_last(
+            b"Other: UntrackedPointer: 0xdeadbeef")
+
+        res = self._FakeHandleResource()
+        res._activate(0xCAFE)
+
+        # Fails without setting any error of its own.
+        # The marker written inside _invoke_consume must have cleared
+        # the stale tag, so this routes to the "no error of our own" branch.
+        with self.assertRaises(Error):
+            res._consume_no_replacement(lambda h: -1, "op failed: {}")
+
+        # A misattributed stale tag would have matched
+        # _PRE_CONSUME_ERROR_TAGS and left the resource ACTIVE.
+        self.assertEqual(self.freed, [0xCAFE])
 
 
 class TestManagedResourceObjects(TestContextAPIs):
@@ -8459,11 +8560,7 @@ class TestManagedResourceObjects(TestContextAPIs):
         """Record frees instead of performing them, and restore on teardown.
         """
         freed = []
-        real_free = ManagedResource._free_native_ptr
-        ManagedResource._free_native_ptr = staticmethod(freed.append)
-        self.addCleanup(
-            lambda: setattr(
-                ManagedResource, '_free_native_ptr', real_free))
+        _patch_free(self, freed.append)
         return freed
 
     def _free_count(self, freed, handle):
@@ -8704,9 +8801,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         # Mimic a non-tag error: native took ownership then failed and dropped
         # the value itself, so the handle is marked consumed, not freed.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
-        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        c2pa_module._lib.c2pa_builder_with_archive = _fail_with_native_error(
+            b"Other: mocked test error")
 
         # Instrument before the failure...
         freed = self._instrument_frees()
@@ -8740,11 +8837,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         # Mimic a non-tag error: native took ownership then failed and dropped
         # the value itself, so the handle is marked consumed, not freed.
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
-
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
 
         # Instrument before failure so any free would be counted.
         freed = self._instrument_frees()
@@ -8812,11 +8907,11 @@ class TestManagedResourceObjects(TestContextAPIs):
 
     @staticmethod
     def _is_pre_consume_rejection(error_message):
-        """True if this native error means ownership never transferred."""
+        """True if this native error means ownership never transferred.
+        """
         if not error_message:
             return False
-        return any(tag in error_message
-                   for tag in ManagedResource._PRE_CONSUME_ERROR_TAGS)
+        return ManagedResource._is_pre_consume_rejection(error_message)
 
     def _stale_reader_handle(self):
         """A freed, untracked pointer, captured before close() nulls it.
@@ -8842,31 +8937,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         return (ctypes.cast(buf, ctypes.POINTER(c2pa_module.C2paReader)),
                 buf)
 
-    def test_with_fragment_pre_consume_rejection_keeps_handle(self):
-        # Rejected before native lib took ownership,
-        # so nothing was consumed and the handle is still ours.
-        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
-        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
-        with open(init_path, "rb") as init:
-            reader = Reader("video/mp4", init)
-        real_handle = reader._handle
-
-        reader._handle = self._stale_reader_handle()
-        try:
-            with open(init_path, "rb") as init, \
-                    open(fragment_path, "rb") as frag:
-                with self.assertRaises(Error) as caught:
-                    reader.with_fragment("video/mp4", init, frag)
-        finally:
-            reader._handle = real_handle
-
-        self.assertIn("UntrackedPointer", str(caught.exception))
-        # Ownership never transferred, so the resource stays usable.
-        self.assertIsNotNone(reader._handle)
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-        self.assertTrue(reader.json())
-        reader.close()
-
     def test_with_fragment_pre_consume_rejection_does_not_leak(self):
         # A handle dropped on this path leaks one reader per call.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
@@ -8888,6 +8958,84 @@ class TestManagedResourceObjects(TestContextAPIs):
             self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
             self.assertTrue(reader.json())
             reader.close()
+
+    def test_reader_with_empty_manifest_data_never_calls_native(self):
+        """End-to-end: the guard is wired into the public path, not just
+        available as a helper."""
+        context = Context()
+        self.addCleanup(context.close)
+        with open(os.path.join(FIXTURES_DIR,
+                               DEFAULT_TEST_FILE_NAME), "rb") as image:
+            image_bytes = image.read()
+
+        freed = self._instrument_frees()
+
+        with self.assertRaises(Error):
+            Reader("image/jpeg", io.BytesIO(image_bytes),
+                   manifest_data=b"", context=context)
+
+        # The guard raises before the FFI call, so the reader handle is still
+        # the binding's to free: exactly one free, and no abandoned handle.
+        self.assertEqual(len(freed), 1)
+
+    def test_check_cstr_arg_rejects_none_and_embedded_nul(self):
+        """Both cases would reach native as something other than the caller
+        passed: None as a null pointer, an embedded NUL as a short string."""
+        with self.assertRaises(Error):
+            c2pa_module._check_cstr_arg('format', None)
+
+        with self.assertRaises(Error):
+            c2pa_module._check_cstr_arg('format', "image/\x00jpeg")
+
+        c2pa_module._check_cstr_arg('format', "image/jpeg")
+        c2pa_module._check_cstr_arg('format', b"")
+
+    def test_format_embeddable_null_out_pointer_raises_not_crashes(self):
+        real = c2pa_module._lib.c2pa_format_embeddable
+        c2pa_module._lib.c2pa_format_embeddable = (
+            lambda fmt, data, size, out: 128)
+        try:
+            with self.assertRaises(Error):
+                format_embeddable("image/jpeg", b"junk")
+        finally:
+            c2pa_module._lib.c2pa_format_embeddable = real
+
+    def test_check_bytes_arg_rejects_none_and_empty(self):
+        for bad in (None, b""):
+            with self.assertRaises(Error):
+                c2pa_module._check_bytes_arg('manifest_data', bad)
+
+        c2pa_module._check_bytes_arg('manifest_data', b"x")
+
+    def test_check_handle_arg_rejects_null(self):
+        """A null handle is a NullParameter on both native versions."""
+        with self.assertRaises(Error):
+            c2pa_module._check_handle_arg('stream', None)
+
+        c2pa_module._check_handle_arg(
+            'stream', ctypes.cast(1, ctypes.c_void_p))
+
+    def test_repeated_with_fragment_does_not_accumulate_streams(self):
+        """Repeated with_fragment Reader calls should not accumulate streams.
+        """
+        init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
+        fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
+
+        with open(init_path, "rb") as init:
+            reader = Reader("video/mp4", init)
+        self.addCleanup(reader.close)
+
+        superseded = []
+        for _ in range(25):
+            with open(init_path, "rb") as init, \
+                    open(fragment_path, "rb") as frag:
+                reader.with_fragment("video/mp4", init, frag)
+            self.assertLessEqual(len(reader._fragment_streams), 1)
+            superseded.append(reader._fragment_streams[-1])
+
+        # Dropping the reference is not enough: the native stream is only
+        # released by close(), so every superseded wrapper must be closed.
+        self.assertTrue(all(s.closed for s in superseded[:-1]))
 
     def test_with_archive_post_consume_failure_consumes_handle(self):
         # Ownership taken, then the operation failed:
@@ -8946,10 +9094,9 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         consumed_handle = reader._handle
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -8999,9 +9146,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         message = str(caught.exception)
         self.assertTrue(
             self._is_pre_consume_rejection(message),
-            f"the native rejection wording changed and no longer matches "
-            f"_PRE_CONSUME_ERROR_TAGS; ownership will be misjudged: "
-            f"{message!r}")
+            f"rejection wording does not match _PRE_CONSUME_ERROR_TAGS, "
+            f"so ownership will be misjudged: {message!r}")
         reader.close()
 
     def test_stale_handle_is_actually_rejected_every_time(self):
@@ -9052,7 +9198,7 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         self.assertTrue(
             self._is_pre_consume_rejection(str(caught.exception)),
-            "the perf scenarios' bogus handle is no longer rejected, so "
+            "the perf bogus handle was not rejected, so "
             "with_fragment_pre_consume_rejection measures nothing")
         # Handle kept, so the reader still works and frees normally.
         self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
@@ -9060,17 +9206,15 @@ class TestManagedResourceObjects(TestContextAPIs):
         reader.close()
 
     def test_every_null_return_sets_its_own_error(self):
-        # Reading the slot without clearing it is only sound because every
-        # null return sets an error. Check each path reports its own.
+        # Each null-returning path must report the error it set itself, never
+        # one left behind by an earlier call.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
 
-        # Leave a recognisable error behind, so anything stale shows up.
-        try:
-            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
-        except Error:
-            pass
-        self.assertIn("NotSupported", c2pa_module._read_native_error() or "")
+        # Set a recognizable error, so anything stale is caught by the
+        # assertNotIn checks.
+        c2pa_module._lib.c2pa_error_set_last(
+            b"NotSupported: planted by the test")
 
         # Pre-consume rejection: reports UntrackedPointer, not NotSupported.
         with open(init_path, "rb") as init:
@@ -9140,25 +9284,10 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertEqual(problems, [],
                          "ownership was misjudged under concurrency")
 
-    def test_reading_the_native_error_does_not_empty_the_slot(self):
-        # c2pa_error() peeks, so nothing Python can call empties the slot.
-        # _consume_and_swap depends on this.
-        try:
-            Reader("image/jpeg", io.BytesIO(b"not an image")).json()
-        except Error:
-            pass
-
-        first = c2pa_module._read_native_error()
-        self.assertTrue(first, "expected a native error to have been set")
-
-        self.assertEqual(
-            c2pa_module._read_native_error(), first,
-            "reading emptied the native slot; the comments in "
-            "_consume_and_swap about a persistent error are now wrong")
-
     def test_read_native_error_returns_none_for_an_empty_message(self):
         # c2pa_error() returns an owned pointer to "" when no error is set,
         # never NULL, so the pointer cannot be the "is there an error" test.
+        c2pa_module._write_no_error_marker()
         original = c2pa_module._lib.c2pa_error
         empty = ctypes.create_string_buffer(b"")
 
@@ -9172,22 +9301,30 @@ class TestManagedResourceObjects(TestContextAPIs):
         finally:
             c2pa_module._lib.c2pa_error = original
 
-    def test_mocked_null_without_error_is_a_known_limitation(self):
-        # A null with no error of its own is the case that breaks: the slot
-        # still holds whatever came before. No native path does this, so it
-        # is pinned here rather than defended in _consume_and_swap.
+    def test_null_return_with_no_native_error_is_treated_as_consumed(self):
+        # A null with no error of its own is the case that breaks without
+        # the marker:
+        # the slot still held whatever an unrelated, earlier call on this same
+        # (pooled) thread left behind, and a stale UntrackedPointer/
+        # WrongPointerType tag would make this call believe it still owned a
+        # handle the native side already dropped.
         init_path = os.path.join(FIXTURES_DIR, "dashinit.mp4")
         fragment_path = os.path.join(FIXTURES_DIR, "dash1.m4s")
 
+        # A stale, unrelated tag left by a prior call on this thread.
         c2pa_module._lib.c2pa_error_set_last(
             b"UntrackedPointer: 0xdeadbeef")
 
         with open(init_path, "rb") as init:
             reader = Reader("video/mp4", init)
+        consumed_handle = reader._handle
 
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
+        # The fake native call sets no error of its own,
+        # the marker planted by _invoke_consume is left in the slot.
         c2pa_module._lib.c2pa_reader_with_fragment = (
             lambda r, f, s, frag: None)
+        freed = self._instrument_frees()
         try:
             with open(init_path, "rb") as init, \
                     open(fragment_path, "rb") as frag:
@@ -9195,16 +9332,10 @@ class TestManagedResourceObjects(TestContextAPIs):
                     reader.with_fragment("video/mp4", init, frag)
         finally:
             c2pa_module._lib.c2pa_reader_with_fragment = real_call
-            # Nothing clears the slot, so a planted tag would follow other
-            # tests around and change how their failures are classified.
-            c2pa_module._lib.c2pa_error_set_last(
-                b"Other: cleared by test teardown")
 
-        # The stale tag wins, so the handle is kept. Safe here (the mock
-        # consumed nothing), and the reader is still usable.
-        self.assertIsNotNone(reader._handle)
-        self.assertEqual(reader._lifecycle_state, LifecycleState.ACTIVE)
-        reader.close()
+        # Ownership is unknown, so the handle is freed once. c2pa_free
+        # returns -1 if native had already taken the value.
+        self.assertEqual(self._free_count(freed, consumed_handle), 1)
 
     # Backfilling a pointer minted by a direct FFI call. Builder.from_archive
     # is the only production caller of _wrap_native_handle, so these are the
@@ -9353,10 +9484,9 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertFalse(backing_file.closed)
 
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with open(DEFAULT_TEST_FILE, "rb") as main, \
                     open(DEFAULT_TEST_FILE, "rb") as frag:
@@ -9375,9 +9505,9 @@ class TestManagedResourceObjects(TestContextAPIs):
         archive = self._make_archive()
 
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_builder_with_archive
-        c2pa_module._lib.c2pa_builder_with_archive = lambda b, s: None
+        c2pa_module._lib.c2pa_builder_with_archive = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with self.assertRaises(Error):
                 builder.with_archive(archive)
@@ -9424,10 +9554,9 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNotNone(reader._manifest_json_str_cache)
 
         # Simulate an error being set
-        c2pa_module._lib.c2pa_error_set_last(b"Other: mocked test error")
         real_call = c2pa_module._lib.c2pa_reader_with_fragment
-        c2pa_module._lib.c2pa_reader_with_fragment = (
-            lambda r, f, s, frag: None)
+        c2pa_module._lib.c2pa_reader_with_fragment = _fail_with_native_error(
+            b"Other: mocked test error")
         try:
             with open(DEFAULT_TEST_FILE, "rb") as main, \
                     open(DEFAULT_TEST_FILE, "rb") as frag:
@@ -9499,7 +9628,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIs(ctx.exception.__cause__, sentinel,
                       "signing error dropped the original exception")
 
-
 class TestErrorPlumbing(unittest.TestCase):
     """Covers the error helpers themselves, which had no direct tests."""
 
@@ -9526,19 +9654,6 @@ class TestErrorPlumbing(unittest.TestCase):
             c2pa_module._raise_typed_c2pa_error("Nonsense: detail")
         # Base class only: no subclass should claim an unknown tag.
         self.assertIs(type(ctx.exception), Error)
-
-    def test_pre_consume_tag_match_is_substring_not_prefix(self):
-        """The tags arrive mid-string, so the match must stay a substring one.
-
-        Guards the triage in _raise_consume_failure against being "cleaned up"
-        into error.startswith(tag), which would match nothing and silently
-        turn every retained handle into a consumed one.
-        """
-        wire_error = "Other: UntrackedPointer: 0xdeadb000"
-        tags = ManagedResource._PRE_CONSUME_ERROR_TAGS
-
-        self.assertTrue(any(tag in wire_error for tag in tags))
-        self.assertFalse(any(wire_error.startswith(tag) for tag in tags))
 
     def test_check_ffi_operation_result_raises_with_native_message(self):
         self._set_native_error("Io: disk exploded")
@@ -9595,9 +9710,7 @@ class TestErrorPlumbing(unittest.TestCase):
             t.join()
 
             self.assertEqual(len(captured), 1, "expected a raise on failure")
-            self.assertIsInstance(
-                captured[0], Error,
-                "stream failure must raise C2paError, not bare Exception")
+            self.assertIsInstance(captured[0], Error, "must be typed, not bare")
             self.assertNotIn("None", str(captured[0]))
         finally:
             c2pa_module._lib.c2pa_create_stream = real
@@ -9620,15 +9733,181 @@ class TestErrorPlumbing(unittest.TestCase):
         t.start()
         t.join()
 
-        self.assertIsInstance(
-            captured[0], Error,
-            "a failed MIME lookup returned data instead of raising")
+        self.assertIsInstance(captured[0], Error, "failed lookup returned data")
 
     def test_supported_mime_types_reports_the_native_message(self):
         self._set_native_error("Io: mime lookup failed")
         with self.assertRaises(Error) as ctx:
             c2pa_module._get_supported_mime_types(lambda count: None, None)
         self.assertIn("mime lookup failed", str(ctx.exception))
+
+    def test_reading_an_error_does_not_leave_it_readable(self):
+        """An error is reportable once, by the reader that observes it.
+        """
+        self._set_native_error("Io: read me once")
+
+        self.assertEqual(
+            c2pa_module._read_native_error(), "Io: read me once")
+        self.assertIsNone(c2pa_module._read_native_error(), "reported twice")
+
+    def test_import_learns_no_marker_before_first_use(self):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import c2pa.c2pa as m\n"
+             "assert m._marker_text_for.cache_info().currsize == 0, "
+             "'learned at import'\n"
+             "m._read_native_error()\n"
+             "assert m._marker_text(), 'never learned on first use'\n"],
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+
+    def test_the_no_error_marker_never_reaches_a_caller(self):
+        """The marker is internal, not a message for users."""
+        marker = c2pa_module._marker_text()
+
+        c2pa_module._write_no_error_marker()
+        self.assertIsNone(c2pa_module._read_native_error())
+
+        c2pa_module._write_no_error_marker()
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(None, "fallback: {}")
+        self.assertNotIn(marker, str(ctx.exception))
+
+    def test_a_failure_after_a_null_read_does_not_inherit_the_old_message(self):
+        """The message surviving a NULL read must not become someone's error."""
+        c2pa_module._write_no_error_marker()
+        c2pa_module._lib.c2pa_error_set_last(b"Io: belongs to an earlier call")
+
+        original = c2pa_module._lib.c2pa_error
+        try:
+            c2pa_module._lib.c2pa_error = lambda: None
+            c2pa_module._read_native_error()
+        finally:
+            c2pa_module._lib.c2pa_error = original
+
+        with self.assertRaises(Error) as ctx:
+            c2pa_module._check_ffi_operation_result(
+                None, "Later unrelated failure: {}")
+
+        self.assertNotIn("belongs to an earlier call", str(ctx.exception))
+
+    def test_every_real_rejection_wording_is_classified_as_pre_consume(self):
+        """Every tag arrives bare or behind the "Other: " wrapper."""
+        wrapper = c2pa_module.ManagedResource._NATIVE_ERROR_WRAPPER
+        classify = c2pa_module.ManagedResource._is_pre_consume_rejection
+
+        for tag in c2pa_module.ManagedResource._PRE_CONSUME_ERROR_TAGS:
+            bare = f"{tag} some detail"
+            wrapped = f"{wrapper}{tag} some detail"
+            self.assertTrue(classify(bare), bare)
+            self.assertTrue(classify(wrapped), wrapped)
+
+    def test_caller_text_quoting_a_tag_is_not_a_rejection(self):
+        """A tag inside the message body describes the caller's input.
+
+        Native errors quote caller-supplied strings verbatim: a JSON parse
+        failure repeats the offending value, an Io failure names the path.
+        Reading one of those as a pre-consume rejection hands the resource back
+        as usable after native may already own and have dropped its handle.
+        """
+        classify = c2pa_module.ManagedResource._is_pre_consume_rejection
+
+        forged = (
+            'Json: invalid type: string "NullParameter: x", expected a '
+            'sequence at line 1 column 43',
+            'Json: invalid type: string "WrongPointerType: y", expected a '
+            'sequence at line 1 column 46',
+            "Io: cannot open /tmp/UntrackedPointer: 0xdead.jpg",
+            "Other: manifest text mentions InvalidBufferSize: in passing",
+        )
+        for message in forged:
+            self.assertFalse(
+                classify(message),
+                f"caller text was read as a pointer rejection: {message!r}")
+
+    def test_a_failing_flush_does_not_strand_the_rest_of_the_queue(self):
+        """One resource raising must not skip the resources queued behind it.
+        """
+        flushed = []
+
+        class Recorder:
+            def __init__(self, name, raises=None):
+                self.name = name
+                self.raises = raises
+
+            def _maybe_flush_pending(self):
+                if self.raises is not None:
+                    raise self.raises
+                flushed.append(self.name)
+
+        first = Recorder("first")
+        middle = Recorder("middle", raises=KeyboardInterrupt())
+        last = Recorder("last")
+
+        with self.assertLogs("c2pa", level="ERROR"):
+            with c2pa_module._native_section():
+                for resource in (first, middle, last):
+                    c2pa_module._register_for_section_flush(resource)
+
+        self.assertEqual(flushed, ["first", "last"])
+
+    def test_runtime_does_not_call_error_set_last(self):
+        """The marker mechanism must not depend on c2pa_error_set_last,
+        so this module loads against native builds that lack it."""
+        for fn in (c2pa_module.ManagedResource._invoke_consume,
+                  c2pa_module._read_native_error,
+                  c2pa_module._write_no_error_marker):
+            self.assertNotIn(
+                'c2pa_error_set_last', inspect.getsource(fn))
+
+
+class TestMarkerOutlivesPointerConsumptionSemantics(unittest.TestCase):
+    """The marker is needed for reasons independent of pointer ownership.
+
+    The native error slot is sticky and thread-local, so failure paths
+    that carry no still need to tell an error this call set from an
+    earlier, unrelated call left behind.
+    """
+
+    def setUp(self):
+        # Leave no message from an earlier test in this thread's slot.
+        c2pa_module._write_no_error_marker()
+
+    def test_settings_set_failure_reports_its_own_error(self):
+        settings = Settings()
+        self.addCleanup(settings.close)
+
+        c2pa_module._lib.c2pa_error_set_last(b"Signature: earlier task")
+        self.assertEqual(
+            c2pa_module._read_native_error(), "Signature: earlier task")
+
+        with self.assertRaises(Error) as ctx:
+            settings.set("builder.thumbnail.enabled", "not-a-json-value")
+
+        self.assertNotIn("earlier task", str(ctx.exception))
+
+    def test_one_thread_marker_does_not_clear_another_threads_error(self):
+        """Marking on one thread must leave another thread's pending error
+        readable: the slot is per thread, and so is the marker."""
+        set_on_worker = threading.Event()
+        marked_on_main = threading.Event()
+        seen = {}
+
+        def worker():
+            c2pa_module._lib.c2pa_error_set_last(b"Io: worker error")
+            set_on_worker.set()
+            marked_on_main.wait(5)
+            seen["worker"] = c2pa_module._read_native_error()
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        set_on_worker.wait(5)
+
+        c2pa_module._write_no_error_marker()
+        marked_on_main.set()
+        thread.join(5)
+
+        self.assertEqual(seen.get("worker"), "Io: worker error")
 
 
 class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
@@ -9650,6 +9929,227 @@ class TestErrorsStillRaiseAfterCleanup(unittest.TestCase):
     def test_ed25519_sign_with_empty_data_raises(self):
         with self.assertRaises(Error):
             c2pa_module.ed25519_sign(b"", "not a key")
+
+
+class TestConsumeOwnership(unittest.TestCase):
+    """Ownership of the native handle across the consuming call paths."""
+
+    def setUp(self):
+        self.freed = []
+        self._real_free = ManagedResource._free_native_ptr
+
+        def counting_free(ptr):
+            self.freed.append(ptr)
+            return self._real_free(ptr)
+
+        _patch_free(self, counting_free)
+
+    def test_close_called_during_parallel_call(self):
+        """Parallel closes handling.
+        """
+        resource = Settings()
+        spare = Settings()
+        replacement = spare._handle
+        # Only test should be able to free.
+        spare._handle = None
+        spare._lifecycle_state = LifecycleState.CLOSED
+        self.freed.clear()
+
+        def close_then_swap(handle):
+            resource.close()
+            return replacement
+
+        resource._consume_and_swap(close_then_swap, "swap: {}")
+
+        self.assertIn(replacement, self.freed)
+
+
+class TestContextProviderContract(unittest.TestCase):
+    """The published ContextProvider contract is is_valid plus
+    execution_context, and nothing more.
+    """
+
+    class _MinimalProvider(ContextProvider):
+        """Implements exactly what the abstract base class declares."""
+
+        def __init__(self):
+            self._inner = Context(Settings())
+
+        @property
+        def is_valid(self):
+            return self._inner.is_valid
+
+        @property
+        def execution_context(self):
+            return self._inner.execution_context
+
+    def test_built_in_context_still_gets_in_flight_protection(self):
+        """The compatibility shim must not silently drop the guard for the
+        provider that does implement it.
+        """
+        context = Context(Settings())
+        with c2pa_module._context_guard(context):
+            self.assertGreater(context._inflight, 0)
+
+
+class TestLockOrderStaticAnalysis(unittest.TestCase):
+    """Static analysis over the source: no threads are spawned here.
+    """
+
+    def test_no_conflicting_lock_acquisition_order(self):
+        """No two locks may be nested in opposite orders by different methods.
+
+        Two methods nesting the same pair of locks in opposite order is a
+        AB/BA deadlock shape: thread 1 holds A and waits for B while
+        thread 2 holds B and waits for A.
+        """
+        tree = ast.parse(inspect.getsource(c2pa_module))
+
+        # Every self._X = threading.Lock()/RLock()/Condition() assignment,
+        # grouped by the class that owns it.
+        lock_attrs_by_class = {}
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            found = set()
+            for node in ast.walk(cls):
+                if not (isinstance(node, ast.Assign)
+                        and len(node.targets) == 1):
+                    continue
+                target = node.targets[0]
+                if not (isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"):
+                    continue
+                value = node.value
+                if (isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Attribute)
+                        and value.func.attr in
+                        ("Lock", "RLock", "Condition")):
+                    found.add(target.attr)
+            if found:
+                lock_attrs_by_class[cls.name] = found
+
+        def lock_name_for_with(item):
+            """The lock attribute a `with` item enters, or None."""
+            ctx = item.context_expr
+            # with self._fragment_lock:
+            if (isinstance(ctx, ast.Attribute)
+                    and isinstance(ctx.value, ast.Name)
+                    and ctx.value.id == "self"
+                    and any(ctx.attr in attrs
+                            for attrs in lock_attrs_by_class.values())):
+                return ctx.attr
+            # with self._guarded_op(): returns _op_lock itself, and the
+            # accessors return the lock they are named for.
+            lock_by_method = {
+                "_guarded_op": "_op_lock",
+                "_live_op_lock": "_op_lock",
+                "_live_teardown_lock": "_teardown_lock",
+            }
+            if (isinstance(ctx, ast.Call)
+                    and isinstance(ctx.func, ast.Attribute)
+                    and ctx.func.attr in lock_by_method
+                    and isinstance(ctx.func.value, ast.Name)
+                    and ctx.func.value.id == "self"):
+                return lock_by_method[ctx.func.attr]
+            return None
+
+        def lock_name_for_acquire(node):
+            """A lock taken with acquire() and released in a finally nests just
+            as a `with` does, so the scan has to follow it or it silently stops
+            seeing whole regions.
+            """
+            call = node.value if isinstance(node, ast.Expr) else node
+            if isinstance(call, ast.UnaryOp) and isinstance(call.op, ast.Not):
+                call = call.operand
+            if not (isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "acquire"):
+                return None
+            owner = call.func.value
+            if (isinstance(owner, ast.Attribute)
+                    and isinstance(owner.value, ast.Name)
+                    and owner.value.id == "self"
+                    and any(owner.attr in attrs
+                            for attrs in lock_attrs_by_class.values())):
+                return owner.attr
+            return None
+
+        def acquires_in_test(node):
+            """Lock taken by `if not self._X.acquire(...)`-style guards."""
+            if isinstance(node, ast.If):
+                return lock_name_for_acquire(node.test)
+            return None
+
+        def orders_in(node, stack, pairs):
+            """Record (outer, inner) for every nesting this node contains."""
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                names = [n for n in (lock_name_for_with(i)
+                                     for i in node.items) if n]
+                for name in names:
+                    if stack:
+                        pairs.add((stack[-1], name))
+                    stack.append(name)
+                for child in node.body:
+                    orders_in(child, stack, pairs)
+                for _ in names:
+                    stack.pop()
+                return
+            # A statement list can open a lock partway through via acquire();
+            # everything after it in that list is nested inside.
+            for field, value in ast.iter_fields(node):
+                if not isinstance(value, list):
+                    continue
+                held = []
+                for child in value:
+                    if not isinstance(child, ast.stmt):
+                        continue
+                    name = (lock_name_for_acquire(child)
+                            or acquires_in_test(child))
+                    if name:
+                        if stack:
+                            pairs.add((stack[-1], name))
+                        stack.append(name)
+                        held.append(name)
+                        continue
+                    orders_in(child, stack, pairs)
+                for _ in held:
+                    stack.pop()
+            for child in ast.iter_child_nodes(node):
+                if not isinstance(child, ast.stmt):
+                    orders_in(child, stack, pairs)
+
+        pairs_by_method = {}
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for method in cls.body:
+                if not isinstance(method, (ast.FunctionDef,
+                                           ast.AsyncFunctionDef)):
+                    continue
+                pairs = set()
+                orders_in(method, [], pairs)
+                if pairs:
+                    pairs_by_method[(cls.name, method.name)] = pairs
+
+        all_pairs = set().union(*pairs_by_method.values()) \
+            if pairs_by_method else set()
+        conflicts = []
+        for (outer, inner) in all_pairs:
+            # Each conflicting pair appears twice in all_pairs, once per direction.
+            if outer >= inner or (inner, outer) not in all_pairs:
+                continue
+            forward = [k for k, v in pairs_by_method.items()
+                      if (outer, inner) in v]
+            backward = [k for k, v in pairs_by_method.items()
+                       if (inner, outer) in v]
+            conflicts.append(
+                "{} nests {} inside {}, but {} nests {} inside {}".format(
+                    forward[0], inner, outer, backward[0], outer, inner))
+
+        self.assertGreater(len(pairs_by_method), 0, "scan found no nesting")
+        self.assertEqual(conflicts, [], ", ".join(sorted(set(conflicts))))
 
 
 if __name__ == '__main__':

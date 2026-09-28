@@ -1,9 +1,21 @@
-# Memory profiling framework
+# Performance and thread-safety frameworks
+
+Two suites share this directory and one Docker image:
+
+| Suite | Question it answers | Entry point |
+| --- | --- | --- |
+| Memory profiling | Does an operation allocate or leak more than it used to? | `make memory-use-bench` |
+| Thread-safety invariants | Do the concurrency guards still hold? | `make threading-bench` |
+
+The memory suite is documented first; the thread-safety suite has its own section
+at the end.
+
+## Memory profiling
 
 Uses [memray](https://github.com/bloomberg/memray) to track peak memory, allocation patterns,
 and memory leaks across c2pa-python SDK operations.
 
-## Files
+### Files
 
 | File | Purpose |
 | --- | --- |
@@ -13,7 +25,7 @@ and memory leaks across c2pa-python SDK operations.
 | `entrypoint.sh` | Container entrypoint. Downloads the Linux native `libc2pa_c.so` at startup into the volume-mounted workspace so it sticks around even through the `-v` mount. |
 | `reports/` | Generated HTML reports (gitignored). Three files per scenario: `<scenario>-peak.html` (peak/high-water view), `<scenario>-leaks.html` (leak view), and `<scenario>-temporary.html` (temporary-allocations view). |
 
-## Scenarios
+### Scenarios
 
 Each scenario loops multiple times so leaks accumulate and become visible in the leaks flamegraph and the memory use graph (defaults to 100). Change the count of iterations when running by setting the `MEMRAY_ITERATIONS` variable (the Makefile forwards it into the container):
 
@@ -25,7 +37,7 @@ Most scenarios use the Context API: they build a `Context` once and reuse it acr
 
 The `builder_sign_{jpeg,png}_parallel_*` scenarios build one `Context` and share it across 10 threads that sign concurrently, each with its own streams and `Builder`. The name encodes two axes. `split` divides the iteration budget across the threads, so total work matches a single-threaded scenario; `full` runs the full loop on each of the 10 threads, so total work is 10x (use these with `SCENARIO=` rather than the whole suite). `pool` runs the threads through a `ThreadPoolExecutor`; `barrier` starts all 10 at once with a `threading.Barrier`.
 
-## Environments
+### Environments
 
 Select the target environment with `PERF_ENV` (default: `python-3.12-slim`):
 
@@ -38,7 +50,7 @@ Select the target environment with `PERF_ENV` (default: `python-3.12-slim`):
 
 The slim images run a source-built `/usr/local/bin/python` that ships stripped, and Debian's `python3-dbg` targets a different binary (build-id mismatch), so memray cannot resolve the interpreter's native (C) frames there. You will see a "No debug information was found for the Python interpreter" warning, and native traces may lack file names and line numbers. The ubuntu images install `python3-dbg` for the matching apt interpreter, so their native flamegraphs are fully symbolized. Use an `ubuntu-*` `PERF_ENV` when you need resolved native traces.
 
-## Running (via Docker)
+### Running (via Docker)
 
 ```bash
 # First run (if there is no baseline.json): establishes baseline.json
@@ -67,7 +79,7 @@ The trailing `VAR=value` arguments (e.g. `PERF_ENV=ubuntu-24.04`, `PERF_ARGS=--u
 
 Reports are written to `tests/perf/reports/` on the local machine. Three HTML files per scenario, one per suffix (described below). Open any in a browser. After a run, the run also reports if the scenarios were or were not all within baseline threshold (baseline +10% memory use tolerance).
 
-## Running in CI
+### Running in CI
 
 The `.github/workflows/memory-benchmark.yml` workflow runs the  Docker-based benchmarks on a PR, but only when the PR has the `check-memory-benchmark` label. This runs `make memory-use-bench`, so:
 
@@ -77,11 +89,11 @@ The `.github/workflows/memory-benchmark.yml` workflow runs the  Docker-based ben
 
 The gate only acts as regression test once a `tests/perf/baseline.json` is committed on the branch. Without one, `run_profile.py` treats the run as baseline creation (exits 0, no gating).
 
-## Report views
+### Report views
 
 Each scenario produces three [memray flamegraphs](https://bloomberg.github.io/memray/flamegraph.html). All three are flamegraphs of the same run. They differ only in which allocations they count.
 
-### `<scenario>-peak.html`: peak/high-water view
+#### `<scenario>-peak.html`: peak/high-water view
 
 What it shows: allocations that were simultaneously alive at the moment the process used the most memory (the high-water mark).
 
@@ -89,7 +101,7 @@ Why it's useful: tells you what drives the largest memory footprint, the working
 
 How to read it: the widest frames are the biggest contributors to peak. Walk up a wide column to the top frame to find the call site holding that memory at the high-water instant.
 
-### `<scenario>-leaks.html`: leak view
+#### `<scenario>-leaks.html`: leak view
 
 What it shows: memory that was allocated but never freed before tracking stopped (`memray --leaks`).
 
@@ -97,7 +109,7 @@ Why it's useful: finds memory leaks, meaning memory that grows with work done. I
 
 How to read it: a wide frame here is unfreed memory. If its width grows when you raise the iteration count, that top frame is the leaking call site.
 
-### `<scenario>-temporary.html`: temporary-allocations view
+#### `<scenario>-temporary.html`: temporary-allocations view
 
 What it shows: short-lived churn, meaning memory allocated and then freed almost immediately (memray's threshold: freed before more than one other allocation happens).
 
@@ -107,7 +119,7 @@ How to read it: wide frames are the biggest sources of throwaway allocations. Th
 
 The temporary view is the heaviest to render: memray holds every allocation and free to decide which are short-lived. On a very large capture (a long run, a high `MEMRAY_ITERATIONS`, or a churn-heavy scenario) the render can run out of memory and fail. The run does not abort in that case; it records what failed and keeps going. See [Troubleshooting](#troubleshooting).
 
-## Running without Docker (if memray is supported and installed locally)
+### Running without Docker (if memray is supported and installed locally)
 
 ```bash
 pip install memray
@@ -126,7 +138,7 @@ With `--update-baseline`, a single-scenario run only rewrites that scenario's en
 python -m tests.perf.run_profile --scenario builder_sign_gif --update-baseline
 ```
 
-## Configuration
+### Configuration
 
 With `make memory-use-bench VAR=value` you set the **`make` variable** and the Makefile forwards it as shown in the "Forwarded as" column. Running `run_profile.py` without Docker, you set the **env var** (or pass the CLI arg) directly.
 
@@ -146,7 +158,7 @@ Example to override iteration count:
 make memory-use-bench MEMRAY_ITERATIONS=1000
 ```
 
-## Reading baseline.json
+### Reading baseline.json
 
 `baseline.json` is committed to the repo and reports following data for each scenario:
 
@@ -188,7 +200,7 @@ The `_meta` block records which toolchain produced the baseline so the numbers a
 
 `total_allocations` is the total number of individual memory allocation calls made.
 
-### Why is leaked_bytes not zero?
+#### Why is leaked_bytes not zero?
 
 You might expect the baseline to show `leaked_bytes: 0`. In practice it never does. When the c2pa native library (`libc2pa_c.so`) is first loaded, Rust sets up global data structures designed to live for the entire lifetime of the process. They get cleaned up when the process exits, which is after memray stops watching, so memray sees them as "never freed" even though they are not leaking.
 
@@ -198,7 +210,7 @@ The baseline captures this expected static overhead. Future runs compare against
 
 The framework runs `gc.collect()` twice after the scenario finishes, while memray is still tracking. Without that sweep, objects sitting in not-yet-collected reference cycles would be counted in `leaked_bytes` and the number would depend on garbage collector timing rather than on actual leaks. With it, `leaked_bytes` means memory that is still allocated even though nothing in Python can reach it: true leaks plus the one-time static overhead described above.
 
-### How to confirm no leak exists?
+#### How to confirm no leak exists?
 
 Run with a higher iteration count than default (100) and compare:
 
@@ -208,7 +220,7 @@ make memory-use-bench MEMRAY_ITERATIONS=1000 PERF_ARGS=--update-baseline
 
 If `leaked_bytes` stays flat compared to a baseline run or in a larger run (more iterations), there is no leak. If it scales with iterations, open `tests/perf/reports/<scenario>-leaks.html` in a browser to see which function is responsible.
 
-### Reading the "Resident set size over time" graph (why memory looks like it climbs)
+#### Reading the "Resident set size over time" graph (why memory looks like it climbs)
 
 The "Resident set size over time" plot (chart icon, top-right of the report) draws two lines. "Resident size" (RSS) is every page the OS counts as resident: interpreter and pages the allocator holds but has not returned. "Heap size" is only the live tracked allocations.
 
@@ -216,11 +228,11 @@ On the parallel scenarios the RSS line steps up and stays high. The threads each
 
 Judge leaks by the heap line. The heap rises early and then settles or falls, the same shape as the single-threaded baseline. A within-run heap rise is not by itself proof of a leak (the allocator high-water can climb and settle within a bounded run).
 
-### Temporary allocations
+#### Temporary allocations
 
 `<scenario>-temporary.html` shows temporary allocations, meaning memory that is allocated and then freed almost immediately (memray's threshold is one allocation: a block is temporary if it is freed before more than one other allocation happens). The memory is returned, so these are not leaks, but they are churn: high allocation and free turnover that costs CPU and can fragment the heap. A scenario doing lots of short-lived work can show heavy temporary allocations while `leaked_bytes` stays flat.
 
-### When to update the baseline
+#### When to update the baseline
 
 Update `baseline.json` after any intentional change that affects memory use:
 
@@ -230,9 +242,9 @@ make memory-use-bench PERF_ARGS=--update-baseline
 
 Commit the updated `baseline.json` alongside the code change, so it becomes the new reference to compare against.
 
-## Troubleshooting
+### Troubleshooting
 
-### A flamegraph render fails with `exit -9`
+#### A flamegraph render fails with `exit -9`
 
 You may see a message like `flamegraph render failed for reader_mp4-...-temporary.html (killed (likely OOM))`. The `-9` is SIGKILL: the operating system's out-of-memory killer terminated the `memray flamegraph` subprocess. The temporary view is the heaviest to render, and on a large capture (a long run, a high `MEMRAY_ITERATIONS`, or a churn-heavy scenario such as `reader_mp4`) it can exhaust available memory.
 
@@ -263,3 +275,208 @@ python3 -m memray flamegraph reports/reader_mp4-python-3.12-slim.bin \
   -o reports/reader_mp4-python-3.12-slim-temporary.html \
   --temporary-allocations --temporary-allocation-threshold=10 --force
 ```
+
+## Thread-safety invariants
+
+Checks that the binding's concurrency guards still hold. Shares this directory's
+Docker image and fixtures with the memory suite; different question, different
+driver.
+
+### Files
+
+| File | Purpose |
+| --- | --- |
+| `thread_scenarios.py` | The scenarios and the `THREAD_SCENARIOS` registry, which pairs each scenario with the outcome it must produce. Imported by `run_thread_profile.py`. |
+| `run_thread_profile.py` | Runs each scenario in a subprocess, classifies the result, and fails the run unless every round produced the expected outcome. |
+| `reports/<scenario>-<env>-threads.log` | Captured stderr from a failing scenario, holding the all-threads traceback (gitignored). |
+
+### What this measures, and why it is not a crash test
+
+The faults being guarded against are use-after-free of C2PA handles and of ctypes
+trampolines, reached through the GIL-release window that every `ctypes` call opens.
+They do not raise: they corrupt memory, and the crash surfaces somewhere unrelated,
+or as a hang, or as wrong output.
+
+Waiting for that crash is a poor gate. Freeing memory does not unmap it, so reading
+through a freed pointer usually succeeds and returns whatever occupies the address
+now. Under sustained load the per-round crash probability measured **p = 0.00124**,
+needing ~5000 rounds (~4 minutes) to reach 99.8%. Forcing a crash deterministically
+also failed: the corruption needs the allocator to have reused the page, and that is
+not something a scenario can force.
+
+So these scenarios force the dangerous interleaving and then assert the guard state
+instead. That is deterministic: each invariant in the table below separates
+hardened from unhardened code on every round.
+
+### The forcing primitive
+
+A stream or signer callback that blocks on a `threading.Event`. A callback runs on
+the thread that entered the native call, so blocking inside one holds that native
+call open with the GIL released. A teardown issued from another thread then lands
+mid-call by construction rather than by luck.
+
+`ParkingStream` does this for stream callbacks, `parking_sign_callback` for the
+signer trampoline.
+
+### Injection is verified every round
+
+A scenario whose callback is never reached reports `NOT_PARKED` and fails. Without
+that check, a scenario that stopped forcing anything would keep passing while
+testing nothing. A `with_fragment` candidate hit exactly this during
+development: it returned `NO_URI` on both hardened and unhardened code, because an
+MP4 init segment has no thumbnail resource to stream. It was dropped rather than
+kept as an always-green test.
+
+For the same reason, assertions are behavioural and never `hasattr`. Guard symbols
+such as `_native_section`, `_inflight` and `_op_lock` do not exist at all on
+unhardened code, so asserting their presence would test that code exists, not that
+it works.
+
+### Scenarios
+
+| Scenario | Asserts | Hardened | Unhardened |
+| --- | --- | --- | --- |
+| `trampoline_held_during_sign` | the signer trampoline outlives a `Context` closed mid-sign | `HELD` | `DROPPED` |
+| `no_free_during_parked_call` | no `c2pa_free` while a call still holds the handle | `freed=0` | `freed=1` |
+
+`no_free_during_parked_call` is the most direct: it instruments
+`ManagedResource._free_native_ptr`, the single funnel every free passes through, and
+starts counting once the callback confirms the call is still open. Unhardened code
+frees the in-use handle once per round, which is the use-after-free observed rather
+than inferred from a crash.
+
+`trampoline_held_during_sign` covers the worst failure mode. The freed object there
+is an ordinary refcounted Python object whose only reference is one attribute on the
+`Context`. `_release()` dropping that reference leaves native calling through freed
+memory, and a sign that never invoked the signer can still report success.
+
+### Running (via Docker)
+
+```bash
+# Build the image (shared with the memory suite)
+make perf-image
+
+# Check the harness can detect failures, then run the scenarios
+make threading-bench
+
+# Just the harness self-check
+make threading-bench-self-test
+
+# A single scenario
+make threading-bench SCENARIO=no_free_during_parked_call
+
+# More rounds per scenario
+make threading-bench THREAD_ROUNDS=100
+
+# Clear failure logs
+make clean-threading-reports
+```
+
+Takes about 40 seconds at the default 20 rounds.
+
+### Running without Docker
+
+```bash
+PYTHONPATH=src python -m tests.perf.run_thread_profile --list
+PYTHONPATH=src python -m tests.perf.run_thread_profile --self-test
+PYTHONPATH=src python -m tests.perf.run_thread_profile
+```
+
+### Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `THREAD_ROUNDS` | `20` | Rounds per scenario. Each is independent, so a partial violation shows as a mixed count. |
+| `THREAD_HANG_TIMEOUT` | `120` | Seconds before a stuck scenario is dumped and killed. |
+| `PERF_ENV` | `python-3.12-slim` | Image tag, and the suffix on log filenames. |
+
+There is no baseline file. Each scenario asserts a fixed invariant, so there is
+nothing to drift against: the expected value is declared in the registry next to
+the scenario.
+
+### Statuses
+
+| Status | Meaning |
+| --- | --- |
+| `pass` | Every round produced the expected outcome. |
+| `VIOLATED` | A guard did not hold. The counters name what happened instead. |
+| `CRASHED` | Killed by SIGSEGV, SIGABRT or SIGTRAP: native memory corruption. |
+| `HUNG` | No progress within `THREAD_HANG_TIMEOUT`, usually a guard that blocked where it should refuse. |
+| `FAILED` | Any other non-zero exit: a scenario bug, a missing dependency, a failed artifact download. |
+
+`CRASHED` and `FAILED` stay separate. An `ImportError` and a failed native-library
+download both exit 1, and reporting either as a crash would invent a finding that
+does not exist. Only a signalled exit counts as corruption, and a signalled exit is
+reported as `128+N` by a container but `-N` by a direct child, so both encodings are
+recognised.
+
+`--self-test` proves all four classes are distinguished, including that an exception
+is not reported as a crash. It runs before the scenarios in CI, because a harness
+that has never been shown to detect a failure cannot be told apart from one that
+cannot detect anything.
+
+### Reading a failure
+
+`VIOLATED` prints the counter dict, so a partial violation is visible as such:
+
+```text
+VIOLATED: expected freed=0 x20, got {"freed=0": 17, "freed=1": 3}
+```
+
+`CRASHED` and `HUNG` write the child's stderr to
+`reports/<scenario>-<env>-threads.log` and echo it. `faulthandler` dumps a traceback
+for every thread, which is what identifies the blocked lock; its timer is a C
+thread, so it fires even when the main thread is parked inside a native call with
+the GIL released.
+
+### Confirming the gate still detects regressions
+
+These scenarios are only worth their runtime if they fail on unhardened code. Check
+that against a pre-hardening revision, in a scratch worktree so the working tree is
+never touched:
+
+```bash
+git worktree add --detach /tmp/c2pa-prefix <pre-hardening-rev>
+cp -r tests/perf tests/fixtures /tmp/c2pa-prefix/tests/
+mkdir -p /tmp/c2pa-prefix/src/c2pa/libs
+cp src/c2pa/libs/libc2pa_c.* /tmp/c2pa-prefix/src/c2pa/libs/
+
+cd /tmp/c2pa-prefix
+THREAD_ROUNDS=5 PYTHONPATH=/tmp/c2pa-prefix/src \
+  python -m tests.perf.run_thread_profile
+
+cd -                                      # leave the worktree before removing it
+git worktree remove --force /tmp/c2pa-prefix
+```
+
+All four must report `VIOLATED` with the unhardened value from the scenario table. A
+scenario that passes there asserts nothing and should be fixed or removed.
+
+### Running in CI
+
+`.github/workflows/threading-benchmark.yml` runs on pull requests labelled
+`check-threading-benchmark`, from a collaborator, on `ubuntu-24.04-arm`. It builds
+the image, runs the harness self-check, runs the scenarios, and uploads any
+`*-threads.log` as the `threading-invariant-logs` artifact. The job carries a
+`timeout-minutes` backstop in case a guard blocks the interpreter before the
+in-process hang detector is armed.
+
+### Gotchas
+
+- The container re-downloads the native library at start-up. `entrypoint.sh`
+  calls the GitHub API every run and gets `403 rate limit exceeded` after a few dozen
+  unauthenticated runs. Python then never starts, and the container exits 1 with only
+  downloader output, which gives no sign that a whole batch of results is void. The
+  Make targets forward
+  `GITHUB_TOKEN` for this reason. For a long unauthenticated local loop, bypass the
+  entrypoint with `docker run --entrypoint python ...`. The library is already in
+  `src/c2pa/libs/`, so nothing needs to be downloaded.
+- `Signer.from_info` has no Python trampoline (`_callback_cb` is a `str`), so only
+  `Signer.from_callback` exercises trampoline lifetime.
+- The signing algorithm enum is `C2paSigningAlg`, not `SigningAlg`.
+- `Builder.sign()` is `sign(signer, format, source, dest=None)` or
+  `sign(format, source, dest=None)`, and returns manifest bytes. Calling
+  `sign(fmt, source, out)` binds `out` to `source` instead of `dest`, and signs
+  nothing while raising no error, so scenarios assert on the returned manifest length.
+- `Reader.with_fragment(format, stream, fragment_stream)` takes three arguments.
+- `_handle` is a ctypes pointer object, not an int. Use `repr()`, never `int()`.

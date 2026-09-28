@@ -126,3 +126,6 @@ src/c2pa/libs/
 # Memory profiling reports
 tests/perf/reports/*.html
 tests/perf/reports/*.bin
+
+# Threading failure logs
+tests/perf/reports/*.log
