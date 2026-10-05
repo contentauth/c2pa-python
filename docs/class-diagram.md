@@ -50,6 +50,8 @@ classDiagram
         +get_supported_mime_types() list~str~$
         +set_no_embed()
         +set_remote_url(url)
+        +get_label() str | None
+        +set_label(label)
         +set_intent(intent, digital_source_type)
         +add_resource(uri, stream)
         +add_ingredient(json, format, source)

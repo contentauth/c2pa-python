@@ -11,7 +11,7 @@
 # specific language governing permissions and limitations under
 # each license.
 
-# Version: 0.38.0
+# Version: 0.39.0
 
 import contextlib
 import ctypes
@@ -66,6 +66,8 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_from_archive',
     'c2pa_builder_set_no_embed',
     'c2pa_builder_set_remote_url',
+    'c2pa_builder_label',
+    'c2pa_builder_set_label',
     'c2pa_builder_set_intent',
     'c2pa_builder_add_resource',
     'c2pa_builder_add_ingredient_from_stream',
@@ -1372,6 +1374,14 @@ _setup_function(_lib.c2pa_builder_set_no_embed, [
 _setup_function(
     _lib.c2pa_builder_set_remote_url, [
         ctypes.POINTER(C2paBuilder), ctypes.c_char_p], ctypes.c_int)
+_setup_function(
+    _lib.c2pa_builder_label,
+    [ctypes.POINTER(C2paBuilder), ctypes.POINTER(ctypes.c_void_p)],
+    ctypes.c_int)
+_setup_function(
+    _lib.c2pa_builder_set_label,
+    [ctypes.POINTER(C2paBuilder), ctypes.c_char_p],
+    ctypes.c_int)
 _setup_function(
     _lib.c2pa_builder_set_intent,
     [ctypes.POINTER(C2paBuilder), ctypes.c_uint, ctypes.c_uint],
@@ -3947,6 +3957,8 @@ class Builder(ManagedResource):
         'builder_error': "Failed to create builder: {}",
         'cleanup_error': "Error during cleanup: {}",
         'url_error': "Error setting remote URL: {}",
+        'label_read_error': "Error reading manifest label: {}",
+        'label_error': "Error setting manifest label: {}",
         'intent_error': "Error setting intent for Builder: {}",
         'resource_error': "Error adding resource: {}",
         'ingredient_error': "Error adding ingredient: {}",
@@ -4163,6 +4175,49 @@ class Builder(ManagedResource):
             _check_ffi_operation_result(
                 result,
                 Builder._ERROR_MESSAGES['url_error'],
+                check=lambda r: r != 0)
+
+    def get_label(self) -> Optional[str]:
+        """Manifest label the Builder or None if not set yet.
+
+        Raises:
+            C2paError: If the label can't be read or the Builder is closed.
+        """
+        with self._native_call():
+            label_ptr = ctypes.c_void_p()
+            result = _lib.c2pa_builder_label(
+                self._handle, ctypes.byref(label_ptr))
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['label_read_error'],
+                check=lambda r: r < 0)
+
+            if result == 0 or not label_ptr.value:
+                return None
+            return _convert_to_py_string(label_ptr)
+
+    def set_label(self, label: str):
+        """Set the manifest label used when this Builder signs.
+        Must be a valid label (or will fail on signing).
+
+        Raises:
+            C2paError.Encoding: If label is not a str.
+            C2paError: If the label can't be set or the Builder is closed.
+        """
+        if not isinstance(label, str):
+            raise C2paError.Encoding(
+                f"Expected label as str, got {type(label).__name__}")
+        label_bytes = _to_utf8_bytes(label, "manifest label")
+        _check_cstr_arg('label', label_bytes)
+
+        with self._guarded_op(exclusive=True):
+            self._ensure_valid_state()
+
+            result = _lib.c2pa_builder_set_label(self._handle, label_bytes)
+
+            _check_ffi_operation_result(
+                result,
+                Builder._ERROR_MESSAGES['label_error'],
                 check=lambda r: r != 0)
 
     def set_intent(

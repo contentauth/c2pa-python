@@ -3775,6 +3775,7 @@ class TestLocking(unittest.TestCase):
         "c2pa_builder_set_intent",
         "c2pa_builder_set_no_embed",
         "c2pa_builder_set_remote_url",
+        "c2pa_builder_set_label",
         "c2pa_builder_add_action",
         "c2pa_builder_add_resource",
         "c2pa_builder_add_ingredient_from_stream",

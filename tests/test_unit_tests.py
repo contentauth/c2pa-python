@@ -4123,6 +4123,20 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
+    def test_builder_uses_configured_label(self):
+        label = "urn:c2pa:00000000-0000-4000-8000-000000000000"
+        builder = Builder.from_json(self.manifestDefinitionV2)
+        builder.set_label(label)
+        self.assertEqual(builder.get_label(), label)
+
+        with open(self.testPath2, "rb") as file:
+            output = io.BytesIO(bytearray())
+            builder.sign(self.signer, "image/jpeg", file, output)
+        output.seek(0)
+        with Reader("image/jpeg", output) as reader:
+            manifest_data = json.loads(reader.json())
+        self.assertEqual(manifest_data["active_manifest"], label)
+
     def test_builder_set_remote_url(self):
         """Test setting the remote url of a builder."""
         builder = Builder.from_json(self.manifestDefinition)
