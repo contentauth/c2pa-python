@@ -172,3 +172,25 @@ memory-use-bench:
 clean-memory-perf-reports:
 	rm -f tests/perf/reports/*.html tests/perf/reports/*.bin
 	@echo "Cleared tests/perf/reports/"
+
+# Thread-safety invariants (runs in Docker, same image as the memory benchmark)
+# More details for usage are in tests/perf/README.md
+THREAD_ROUNDS ?= 20
+
+# Checks that the harness itself reports crashes, hangs and plain exceptions
+# correctly. A harness that cannot see a failure is indistinguishable from a
+# passing run, so this gates the real suite rather than documenting it.
+.PHONY: threading-bench-self-test
+threading-bench-self-test: perf-image
+	docker run --rm -v $(PWD):/workspace -e PYTHONPATH=/workspace/src -e GITHUB_TOKEN c2pa-memray-$(PERF_ENV) python -m tests.perf.run_thread_profile --self-test
+
+# Runs the thread-safety invariant scenarios. Pre-requisite: Docker image built
+# using `make perf-image` (or `perf-image-rebuild`).
+.PHONY: threading-bench
+threading-bench: threading-bench-self-test
+	docker run --rm -v $(PWD):/workspace $(GH_SUMMARY_MOUNT) -e PYTHONPATH=/workspace/src -e PERF_ENV=$(PERF_ENV) -e THREAD_ROUNDS=$(THREAD_ROUNDS) -e THREAD_HANG_TIMEOUT -e GITHUB_TOKEN -e GITHUB_STEP_SUMMARY c2pa-memray-$(PERF_ENV) python -m tests.perf.run_thread_profile $(SCENARIO_ARG) $(PERF_ARGS)
+
+.PHONY: clean-threading-reports
+clean-threading-reports:
+	rm -f tests/perf/reports/*-threads.log
+	@echo "Cleared tests/perf/reports/*-threads.log"
