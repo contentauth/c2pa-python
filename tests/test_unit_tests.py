@@ -24,6 +24,8 @@ import re
 import unittest
 import ctypes
 import warnings
+import weakref
+from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
@@ -6101,6 +6103,207 @@ class TestBuilderWithSigner(unittest.TestCase):
         reader.close()
         archive.close()
 
+
+class TestDirectCoseSigner(unittest.TestCase):
+    """Direct COSE callback contract and native signing integration tests."""
+
+    @staticmethod
+    def _invoke_callback(signer, claim=b"claim bytes", capacity=4):
+        data = (ctypes.c_ubyte * len(claim)).from_buffer_copy(claim)
+        # A sentinel after the advertised capacity detects out-of-bounds writes.
+        output = (ctypes.c_ubyte * (capacity + 1))(*([0xaa] * (capacity + 1)))
+        written = signer._callback_cb(None, data, len(claim), output, capacity)
+        return written, bytes(output)
+
+    @staticmethod
+    def _cbor_bytes(value):
+        """Encode a CBOR byte string for the test's detached COSE object."""
+        length = len(value)
+        if length < 24:
+            header = bytes([0x40 + length])
+        elif length <= 0xff:
+            header = b"\x58" + bytes([length])
+        elif length <= 0xffff:
+            header = b"\x59" + length.to_bytes(2, "big")
+        else:
+            header = b"\x5a" + length.to_bytes(4, "big")
+        return header + value
+
+    @classmethod
+    def _make_cose_callback(cls, reserve_size, claims):
+        """Use fixture credentials to simulate a service constructing COSE."""
+        key = serialization.load_pem_private_key(
+            (Path(FIXTURES_DIR) / "ed25519.pem").read_bytes(), password=None)
+        pem_certs = re.findall(
+            rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+            (Path(FIXTURES_DIR) / "ed25519.pub").read_bytes(), re.DOTALL)
+        certs = [x509.load_pem_x509_certificate(cert).public_bytes(
+            serialization.Encoding.DER) for cert in pem_certs]
+        assert 0 < len(certs) < 24
+        chain = (cls._cbor_bytes(certs[0]) if len(certs) == 1 else
+                 bytes([0x80 + len(certs)]) + b"".join(map(cls._cbor_bytes, certs)))
+        # Protected map: algorithm = EdDSA (-8), x5chain = fixture certificates.
+        protected = b"\xa2\x01\x27\x18\x21" + chain
+
+        def callback(claim):
+            claims.append(claim)
+            # Sign the detached claim as the COSE Sig_structure payload.
+            to_sign = (b"\x84\x6aSignature1" + cls._cbor_bytes(protected)
+                       + b"\x40" + cls._cbor_bytes(claim))
+            signature = key.sign(to_sign)
+            prefix = b"\xd2\x84" + cls._cbor_bytes(protected) + b"\xa1\x63pad"
+            suffix = b"\xf6" + cls._cbor_bytes(signature)
+            # This reservation puts pad's length in the CBOR uint16 range.
+            padding = reserve_size - len(prefix) - len(suffix) - 3
+            assert 0xff < padding <= 0xffff
+            cose = prefix + cls._cbor_bytes(bytes(padding)) + suffix
+            assert len(cose) == reserve_size
+            return cose
+
+        return callback
+
+    def test_creation_and_reserve_size(self):
+        with Signer.from_cose_callback(lambda claim: b"1234", 4) as signer:
+            self.assertEqual(signer.reserve_size(), 4)
+
+    def test_invalid_reserve_size_rejected_before_native_call(self):
+        with patch.object(c2pa_module._lib, "c2pa_signer_create_direct_cose") as create:
+            for size in (True, False, 1.5, "4", None):
+                with self.subTest(size=size), self.assertRaises(TypeError):
+                    Signer.from_cose_callback(lambda claim: b"1234", size)
+            for size in (0, -1, sys.maxsize + 1):
+                with self.subTest(size=size), self.assertRaises(ValueError):
+                    Signer.from_cose_callback(lambda claim: b"1234", size)
+            create.assert_not_called()
+
+    def test_callback_must_be_callable(self):
+        with self.assertRaises(TypeError):
+            Signer.from_cose_callback(None, 4)
+
+    def test_claim_and_cose_bytes_are_preserved(self):
+        claims = []
+
+        def callback(claim):
+            claims.append(claim)
+            return b"\xd2\x84\x00\x00"
+
+        with Signer.from_cose_callback(callback, 4) as signer:
+            written, output = self._invoke_callback(signer)
+            self.assertEqual(claims, [b"claim bytes"])
+            self.assertEqual(written, 4)
+            self.assertEqual(output, b"\xd2\x84\x00\x00\xaa")
+
+    def test_invalid_results_do_not_write_or_truncate(self):
+        for result in (b"", b"123", b"12345", None, "1234",
+                       bytearray(b"1234"), memoryview(b"1234")):
+            with self.subTest(result=result):
+                with Signer.from_cose_callback(lambda claim: result, 4) as signer:
+                    written, output = self._invoke_callback(signer)
+                    self.assertEqual(written, -1)
+                    self.assertEqual(output, b"\xaa" * 5)
+
+    def test_native_capacity_must_match_reservation(self):
+        with Signer.from_cose_callback(lambda claim: b"1234", 4) as signer:
+            for capacity in (3, 5):
+                written, output = self._invoke_callback(signer, capacity=capacity)
+                self.assertEqual(written, -1)
+                self.assertEqual(output, b"\xaa" * (capacity + 1))
+
+    def test_callback_exception_returns_failure(self):
+        def fail(claim):
+            raise RuntimeError("remote signing failed")
+
+        with Signer.from_cose_callback(fail, 4) as signer:
+            with self.assertLogs(c2pa_module.logger, level="ERROR"):
+                written, output = self._invoke_callback(signer)
+            self.assertEqual(written, -1)
+            self.assertEqual(output, b"\xaa" * 5)
+
+    def test_callback_is_retained_until_signer_closes(self):
+        class Callback:
+            def __call__(self, claim):
+                return b"1234"
+
+        callback = Callback()
+        ref = weakref.ref(callback)
+        with Signer.from_cose_callback(callback, 4) as signer:
+            del callback
+            gc.collect()
+            self.assertIsNotNone(ref())
+            self.assertEqual(self._invoke_callback(signer)[0], 4)
+        gc.collect()
+        self.assertIsNone(ref())
+        self.assertIsNone(signer._callback_cb)
+
+    def test_context_retains_consumed_signer_callback(self):
+        signer = Signer.from_cose_callback(lambda claim: b"1234", 4)
+        callback = signer._callback_cb
+        with Context(signer=signer) as context:
+            self.assertIsNone(signer._callback_cb)
+            self.assertIs(context._signer_callback_cb, callback)
+            del signer
+            gc.collect()
+            self.assertIs(context._signer_callback_cb, callback)
+        self.assertIsNone(context._signer_callback_cb)
+
+    def test_native_pointer_freed_if_wrapping_fails(self):
+        class BrokenSigner(Signer):
+            def __init__(self, pointer):
+                raise RuntimeError("wrapping failed")
+
+        with patch.object(ManagedResource, "_free_native_ptr",
+                          wraps=ManagedResource._free_native_ptr) as free:
+            with self.assertRaisesRegex(RuntimeError, "wrapping failed"):
+                BrokenSigner.from_cose_callback(lambda claim: b"1234", 4)
+            free.assert_called_once()
+
+    def test_callback_failure_reaches_native_signing_error(self):
+        claims = []
+
+        def callback(claim):
+            claims.append(claim)
+            return b"too short"
+
+        with Signer.from_cose_callback(callback, 16384) as signer:
+            with Builder({"title": "Direct COSE failure"}) as builder:
+                with (Path(FIXTURES_DIR) / "C.jpg").open("rb") as source:
+                    with self.assertRaisesRegex(Error, "COSE signature invalid"):
+                        builder.sign(signer, "image/jpeg", source, io.BytesIO())
+        self.assertEqual(len(claims), 1)
+
+    def test_sign_and_read_valid_cose_after_context_transfer(self):
+        claims = []
+        signer = Signer.from_cose_callback(self._make_cose_callback(16384, claims), 16384)
+        settings_json = json.loads((Path(__file__).parent /
+                                    "trust_config_test_settings.json").read_text())
+        manifest = {
+            "title": "Direct COSE integration",
+            "claim_generator": "direct_cose_test/1.0",
+            "assertions": [{"label": "c2pa.actions", "data": {"actions": [{
+                "action": "c2pa.created",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+            }]}}],
+        }
+        with Settings.from_json(json.dumps(settings_json)) as settings:
+            with Context(settings=settings, signer=signer) as context:
+                del signer
+                gc.collect()
+                # Repeated signing also exercises callback lifetime after transfer.
+                for _ in range(2):
+                    output = io.BytesIO()
+                    with Builder(manifest, context=context) as builder:
+                        with (Path(FIXTURES_DIR) / "C.jpg").open("rb") as source:
+                            builder.sign("image/jpeg", source, output)
+                    output.seek(0)
+                    with Reader("image/jpeg", output, context=context) as reader:
+                        report = json.loads(reader.json())
+                        active = report["manifests"][report["active_manifest"]]
+                        self.assertEqual(active["title"], manifest["title"])
+                        self.assertEqual(active["signature_info"]["alg"], "Ed25519")
+                        self.assertIn(report["validation_state"], ("Valid", "Trusted"))
+        self.assertEqual(len(claims), 2)
+        # CBOR maps identify full serialized claims, unlike COSE Sig_structure arrays.
+        self.assertTrue(all(claim and claim[0] >> 5 == 5 for claim in claims))
 
 class TestStream(unittest.TestCase):
     def setUp(self):
