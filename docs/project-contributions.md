@@ -141,14 +141,52 @@ cd c2pa-python
 python3 -m pip install -r requirements-dev.txt
 ```
 
-Build docs by entering `make -C docs` or:
+Build docs for your working tree by entering `make docs` or:
 
 ```
 python3 scripts/generate_api_docs.py
 ```
 
-View the output by loading `api-docs/build/html/index.html` in a web browser.
+View the output by loading `api-docs/_build/html/index.html` in a web browser.
 
 This uses `sphinx-autoapi` to parse `src/c2pa` directly, avoiding imports of native libs.
 - Entry script: `scripts/generate_api_docs.py`
 - Config: `api-docs/conf.py`; index: `api-docs/index.rst`
+
+### Versioned release documentation
+
+Edit [api-docs/versions.json](../api-docs/versions.json) to choose the exact
+GitHub release tags shown in the sidebar dropdown. Entries must be unique
+tags such as `v0.38.0`. The first entry is the default served at the existing
+documentation URL; new releases are not automatically added to the list.
+
+Fetch the release tags and build the complete site:
+
+```sh
+git fetch origin --tags
+make docs-versioned
+```
+
+The builder verifies that every tag has a published release in
+`contentauth/c2pa-python` and fails if a release or local tag is missing.
+It needs network access to the GitHub API; optionally set `GITHUB_TOKEN`
+to avoid unauthenticated rate limits.
+
+Each version uses the Python sources from its exact tag with the current
+documentation configuration, templates, and build dependencies. It parses
+sources without importing the package or executing scripts from old releases.
+Builds run in temporary directories and leave the working tree's generated
+API pages untouched.
+
+The complete site is written to `api-docs/_build/versioned/`:
+
+- The default version is also served at the root, preserving existing API URLs.
+- Each selected release has a stable URL under `versions/<tag>/`.
+- Switching versions opens that release's documentation home page.
+- A regular `make docs` build remains an unversioned working-tree preview.
+
+The publishing workflow always checks out `main` for the release list and
+build tooling, including when triggered by a release. It rebuilds all selected
+versions when a release is published, when relevant documentation files change
+on `main`, or when manually dispatched. Publish changes to the list on `main`
+to add, remove, or reorder dropdown entries.

@@ -1,4 +1,6 @@
 import os
+import json
+import posixpath
 from pathlib import Path
 
 # -- Project information -----------------------------------------------------
@@ -54,6 +56,24 @@ autoapi_options = [
 html_theme = "furo"
 html_static_path = ["_static"]
 
+docs_versions = json.loads(os.environ.get("C2PA_DOCS_VERSIONS", "[]"))
+docs_tag = os.environ.get("C2PA_DOCS_TAG", "")
+docs_prefix = os.environ.get("C2PA_DOCS_PREFIX", "")
+if docs_versions:
+    release = docs_tag
+    version = docs_tag
+    html_sidebars = {
+        "**": [
+            "sidebar/brand.html",
+            "version-selector.html",
+            "sidebar/search.html",
+            "sidebar/scroll-start.html",
+            "sidebar/navigation.html",
+            "sidebar/scroll-end.html",
+            "sidebar/variant-selector.html",
+        ]
+    }
+
 # Avoid executing package imports during docs build
 autodoc_typehints = "description"
 
@@ -80,8 +100,23 @@ def _add_html_meta_tags(app, pagename, templatename, context, doctree):
     context["metatags"] = context.get("metatags", "") + rendered
 
 
+def _add_version_selector(app, pagename, templatename, context, doctree):
+    current_directory = posixpath.dirname(
+        posixpath.join(docs_prefix, pagename + ".html")
+    ) or "."
+    context["docs_tag"] = docs_tag
+    context["docs_versions"] = [
+        {
+            "tag": tag,
+            "url": posixpath.relpath(f"versions/{tag}/index.html", current_directory),
+        }
+        for tag in docs_versions
+    ]
+
+
 def setup(app):
     app.connect("html-page-context", _add_html_meta_tags)
+    if docs_versions:
+        app.connect("html-page-context", _add_version_selector)
+        app.add_js_file("version-selector.js")
     return {"parallel_read_safe": True, "parallel_write_safe": True}
-
-
