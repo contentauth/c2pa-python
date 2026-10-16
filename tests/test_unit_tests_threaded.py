@@ -3587,13 +3587,13 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(len(release_calls), 1, "_release() not idempotent")
 
     def test_sign_raising_native_call_closes_builder(self):
-        freed = self._counted_free()
         signer = Signer.from_info(C2paSignerInfo(
             alg=b"es256", sign_cert=self.certs,
             private_key=self.private_key, ta_url=None))
         self.addCleanup(signer.close)
         builder = Builder({"claim_generator": "python_test",
                            "format": "image/jpeg", "assertions": []})
+        freed = self._counted_free()
         real_sign = c2pa_module._lib.c2pa_builder_sign
 
         def raising(*args):

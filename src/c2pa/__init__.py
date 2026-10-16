@@ -31,8 +31,7 @@ from .c2pa import (
     Context,
     ContextBuilder,
     ContextProvider,
-    sdk_version,
-    load_settings
+    sdk_version
 )  # NOQA
 
 # Re-export C2paError and its subclasses
@@ -50,6 +49,5 @@ __all__ = [
     'Context',
     'ContextBuilder',
     'ContextProvider',
-    'sdk_version',
-    'load_settings'
+    'sdk_version'
 ]

@@ -1,5 +1,26 @@
 # Release notes
 
+## Unreleased: c2pa-rs 0.92 preflight (DO NOT MERGE)
+
+This branch tests the upcoming native SDK, not a published Python release.
+The normal native release pin is unchanged.
+
+### Breaking changes
+
+Removed `load_settings()`: c2pa-rs 0.92 removes thread-local settings.
+Create a `Context` with `Settings` (or `Context.from_dict` / `from_json`)
+and pass it explicitly to every `Reader` and `Builder` that needs that
+configuration. Constructors without a context continue to use SDK defaults.
+See [Migrating from load_settings](context-settings.md#migrating-from-load_settings).
+
+Reader and Builder constructors now use the current context-based C APIs.
+Native strings, manifests, and signatures are released through `c2pa_free`.
+`format_embeddable()` retains its `(size, bytes)` result using a temporary
+default-context builder. For custom settings or format-specific builder state,
+use `Builder.compose_manifest(format, manifest_bytes)` on a live builder.
+Signing closes the builder, so use a separate builder for composition after
+`sign()`.
+
 ## Version 0.33.0
 
 ### Breaking changes

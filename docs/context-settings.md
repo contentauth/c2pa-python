@@ -10,7 +10,7 @@ The `Context` class encapsulates configuration for:
 - **Signer configuration**: Optional signer credentials stored in the `Context` for reuse.
 - **State isolation**: Each `Context` is independent, allowing different configurations to coexist in the same application.
 
-`Context` replaces the deprecated global `load_settings()` function with explicit, isolated configuration:
+`Context` replaces the removed thread-local `load_settings()` function with explicit, isolated configuration:
 
 - **Makes dependencies explicit**: Configuration is passed directly to `Reader` and `Builder`, not hidden in global state.
 - **Enables multiple configurations**: Run different configurations simultaneously (for example, one for development with test certificates, another for production with strict validation).
@@ -18,7 +18,7 @@ The `Context` class encapsulates configuration for:
 - **Simplifies testing**: Create isolated configurations for tests without worrying about cleanup or interference.
 
 > [!NOTE]
-> The deprecated `load_settings()` function still works for backward compatibility, but you are encouraged to migrate your code to use `Context`. See [Migrating from load_settings](#migrating-from-load_settings).
+> c2pa-rs 0.92 no longer supports thread-local settings, and `load_settings()` has been removed from these bindings. See [Migrating from load_settings](#migrating-from-load_settings).
 
 ## Quick start
 
@@ -754,7 +754,7 @@ assert isinstance(ctx, ContextProvider)  # True
 
 ## Migrating from load_settings
 
-The `load_settings()` function is deprecated. Replace it with `Settings` and `Context` APIs:
+The `load_settings()` function has been removed. Replace it with `Settings` and `Context` APIs, passing the context to every operation that needs the configuration:
 
 | Aspect | `load_settings` (legacy) | `Context` |
 |--------|--------------------------|-----------|
@@ -762,7 +762,7 @@ The `load_settings()` function is deprecated. Replace it with `Settings` and `Co
 | Multiple configs | Not supported | One context per configuration |
 | Testing | Shared global state | Isolated contexts per test |
 
-**Deprecated:**
+**Old approach (no longer supported):**
 
 ```py
 from c2pa import load_settings, Reader
@@ -774,10 +774,11 @@ reader = Reader("image.jpg")  # uses global settings
 **Current approach:**
 
 ```py
-from c2pa import Settings, Context, Reader
+from c2pa import Context, Reader
 
-ctx = Context.from_dict({"builder": {"thumbnail": {"enabled": False}}})
-reader = Reader("image.jpg", context=ctx)
+with Context.from_dict({"builder": {"thumbnail": {"enabled": False}}}) as ctx:
+    with Reader("image.jpg", context=ctx) as reader:
+        print(reader.json())
 ```
 
 ## See also
