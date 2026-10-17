@@ -123,7 +123,7 @@ To run tests while developing bindings, enter this command:
 make test
 ```
 
-To rebuild and test, enter these commands:
+To rebuild and test, enter the following commands:
 
 ```sh
 make build-python
