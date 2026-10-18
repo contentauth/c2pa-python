@@ -28,10 +28,10 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-Download [c2pa-rs library artifacts](https://github.com/contentauth/c2pa-rs/tags) for the current version you want (for example, as shown below for v0.73.1):
+Download [c2pa-rs library artifacts](https://github.com/contentauth/c2pa-rs/tags) for the current version you want (for example, as shown below for v0.91.3):
 
 ```bash
-python scripts/download_artifacts.py c2pa-v0.73.1
+python scripts/download_artifacts.py c2pa-v0.91.3
 ```
 
 Install the package in development mode:
