@@ -140,7 +140,7 @@ def _read_file(path: Path, mime: str, iterations: int) -> None:
 # Context-API helpers: the Context is built once before the loop and reused on
 # every iteration, so its settings are parsed a single time. Most scenarios use
 # these. The `_legacy` jpeg/png scenarios build the Reader/Builder without a
-# Context, which re-reads thread-local settings on each construction; running a
+# Context, which creates a fresh default context on each construction; running a
 # legacy scenario against its `_with_context` pair isolates the settings cost.
 
 def _sign_file_context(path: Path, mime: str, iterations: int) -> None:
