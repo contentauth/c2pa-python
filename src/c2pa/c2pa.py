@@ -42,14 +42,17 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_version',
     # Error retriever and parser
     'c2pa_error',
-    # Legacy APIs, deprecated
+    # Legacy APIs, deprecated.
     'c2pa_load_settings',
+    'c2pa_reader_from_stream',
+    'c2pa_reader_from_manifest_data_and_stream',
+    'c2pa_builder_from_json',
+    'c2pa_builder_from_archive',
+    'c2pa_format_embeddable',
     # Stream
     'c2pa_create_stream',
     'c2pa_release_stream',
     # Reader bindings
-    'c2pa_reader_from_stream',
-    'c2pa_reader_from_manifest_data_and_stream',
     'c2pa_reader_json',
     'c2pa_reader_detailed_json',
     'c2pa_reader_crjson',
@@ -62,8 +65,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_reader_remote_url',
     'c2pa_reader_supported_mime_types',
     # Builder bindings
-    'c2pa_builder_from_json',
-    'c2pa_builder_from_archive',
     'c2pa_builder_set_no_embed',
     'c2pa_builder_set_remote_url',
     'c2pa_builder_set_intent',
@@ -79,13 +80,11 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_with_definition',
     'c2pa_builder_with_archive',
     'c2pa_builder_supported_mime_types',
-    'c2pa_format_embeddable',
     # Signer bindings
     'c2pa_signer_create',
     'c2pa_signer_from_info',
     'c2pa_signer_reserve_size',
     'c2pa_ed25519_sign',
-    'c2pa_signature_free',
     # Settings bindings
     'c2pa_settings_new',
     'c2pa_settings_set_value',
@@ -97,9 +96,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_context_builder_set_signer',
     'c2pa_context_new',
     # Free bindings
-    'c2pa_string_free',
     'c2pa_free_string_array',
-    'c2pa_manifest_bytes_free',
     'c2pa_free',
 ]
 
@@ -1120,7 +1117,7 @@ def _read_native_error() -> Optional[str]:
     try:
         message = ctypes.string_at(error).decode('utf-8')
     finally:
-        _lib.c2pa_string_free(error)
+        _lib.c2pa_free(error)
 
     _write_no_error_marker()
     if not message or _is_no_error_marker(message):
@@ -1311,7 +1308,6 @@ _setup_function(
 # Set up function prototypes not attached to an API object
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
-_setup_function(_lib.c2pa_string_free, [ctypes.c_void_p], None)
 _setup_function(
     _lib.c2pa_load_settings, [
         ctypes.c_char_p, ctypes.c_char_p], ctypes.c_int)
@@ -1408,10 +1404,6 @@ _setup_function(_lib.c2pa_builder_sign,
                  ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
                 ctypes.c_int64)
 _setup_function(
-    _lib.c2pa_manifest_bytes_free, [
-        ctypes.POINTER(
-            ctypes.c_ubyte)], None)
-_setup_function(
     _lib.c2pa_format_embeddable, [
         ctypes.c_char_p, ctypes.POINTER(
             ctypes.c_ubyte), ctypes.c_size_t, ctypes.POINTER(
@@ -1437,10 +1429,6 @@ _setup_function(
         ctypes.POINTER(
             ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_char_p], ctypes.POINTER(
                 ctypes.c_ubyte))
-_setup_function(
-    _lib.c2pa_signature_free, [
-        ctypes.POINTER(
-            ctypes.c_ubyte)], None)
 _setup_function(
     _lib.c2pa_builder_supported_mime_types,
     [ctypes.POINTER(ctypes.c_size_t)],
@@ -1532,7 +1520,7 @@ def _learn_no_error_marker_text():
     try:
         text = ctypes.string_at(raw).decode('utf-8')
     finally:
-        _lib.c2pa_string_free(raw)
+        _lib.c2pa_free(raw)
     if not text:
         logger.warning(
             "c2pa: error-slot marker not set, some errors may be stale")
@@ -1754,14 +1742,14 @@ def _convert_to_py_string(value) -> str:
         finally:
             # Only free if we have a valid pointer
             try:
-                _lib.c2pa_string_free(value)
+                _lib.c2pa_free(value)
             except Exception:
                 # Ignore clean up issues
                 pass
     except (ctypes.ArgumentError, TypeError, ValueError, OSError):
         # Invalid pointer type or value, gracefully handled by native lib.
         try:
-            _lib.c2pa_string_free(value)
+            _lib.c2pa_free(value)
         except Exception:
             pass
         return ""
@@ -1967,6 +1955,20 @@ def version() -> str:
     return _convert_to_py_string(result)
 
 
+def _warn_deprecated_api(message: str, stacklevel: int) -> None:
+    """Deprecation warning flag.
+
+    Args:
+        message: Deprecation details.
+        stacklevel: warnings.warn.
+    """
+    warnings.warn(
+        f"{message} This API will be removed in a future version",
+        DeprecationWarning,
+        stacklevel=stacklevel + 1,
+    )
+
+
 @overload
 def load_settings(settings: str, format: str = "json") -> None:
     ...
@@ -1986,6 +1988,8 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
         Context will propagate configurations through object instances,
         no thread-local configurations. Avoid mixing Context APIs
         and legacy load_settings usage.
+        c2pa-rs 0.92.0 removes c2pa_load_settings, so this function
+        will be removed when c2pa-python moves to that release.
 
     Args:
         settings: The settings string or dict to load
@@ -1995,10 +1999,9 @@ def load_settings(settings: Union[str, dict], format: str = "json") -> None:
     Raises:
         C2paError: If there was an error loading the settings
     """
-    warnings.warn(
+    _warn_deprecated_api(
         "load_settings() is deprecated. Use Settings"
         " and Context for per-instance configuration.",
-        DeprecationWarning,
         stacklevel=2,
     )
 
@@ -3020,6 +3023,7 @@ class Reader(ManagedResource):
             return cls(
                 format_or_path, stream, manifest_data,
                 context=context,
+                _warn_stacklevel=3,
             )
         except C2paError.ManifestNotFound:
             return None
@@ -3055,6 +3059,8 @@ class Reader(ManagedResource):
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
+        *,
+        _warn_stacklevel: int = 2,
     ):
         """Create a new Reader.
 
@@ -3080,7 +3086,11 @@ class Reader(ManagedResource):
                 string requests detection from the bytes.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Optional context implementing ContextProvider with settings
+            context: Context implementing ContextProvider with settings.
+                Omitting it is deprecated: c2pa-rs 0.92.0 removes the
+                native functions a Reader without a context calls.
+            _warn_stacklevel: Internal. Stack level for the deprecation
+                warning, raised by factory methods that call this one.
 
         Raises:
             C2paError: If there was an error creating the reader, including
@@ -3108,6 +3118,12 @@ class Reader(ManagedResource):
                 manifest_data,
             )
             return
+
+        _warn_deprecated_api(
+            "Creating a Reader without a context is deprecated."
+            " Pass context=Context(), or a Context built from Settings.",
+            stacklevel=_warn_stacklevel,
+        )
 
         format_bytes = self._resolve_format_bytes(format_or_path, stream)
 
@@ -4004,7 +4020,7 @@ class Builder(ManagedResource):
         Raises:
             C2paError: If there was an error creating the builder
         """
-        return cls(manifest_json, context=context)
+        return cls(manifest_json, context=context, _warn_stacklevel=3)
 
     @classmethod
     def from_archive(
@@ -4015,6 +4031,11 @@ class Builder(ManagedResource):
 
         This creates builder without a context. To use a context,
         create a Builder with a context first, then call with_archive() on it.
+
+        .. deprecated::
+            Use ``Builder({}, context=Context()).with_archive(stream)``.
+            c2pa-rs 0.92.0 removes c2pa_builder_from_archive, so this method
+            will be removed when c2pa-python moves to that release.
 
         Args:
             stream: The stream containing the archive
@@ -4027,6 +4048,12 @@ class Builder(ManagedResource):
             C2paError: If there was an error creating the builder
                 from archive
         """
+        _warn_deprecated_api(
+            "Builder.from_archive() is deprecated. Use"
+            " Builder({}, context=Context()).with_archive(stream).",
+            stacklevel=2,
+        )
+
         stream_obj = Stream(stream)
 
         try:
@@ -4063,12 +4090,18 @@ class Builder(ManagedResource):
         self,
         manifest_json: Any,
         context: Optional['ContextProvider'] = None,
+        *,
+        _warn_stacklevel: int = 2,
     ):
         """Initialize a new Builder instance.
 
         Args:
             manifest_json: The manifest JSON definition (string or dict)
-            context: Optional Context (ContextProvider) for settings
+            context: Context (ContextProvider) for settings. Omitting it is
+                deprecated: c2pa-rs 0.92.0 removes c2pa_builder_from_json,
+                which a Builder without a context calls.
+            _warn_stacklevel: Internal. Stack level for the deprecation
+                warning, raised by factory methods that call this one.
 
         Raises:
             C2paError: If there was an error creating the builder
@@ -4090,6 +4123,11 @@ class Builder(ManagedResource):
         if context is not None:
             self._init_from_context(context, json_str)
         else:
+            _warn_deprecated_api(
+                "Creating a Builder without a context is deprecated."
+                " Pass context=Context(), or a Context built from Settings.",
+                stacklevel=_warn_stacklevel,
+            )
             self._create_and_activate(
                 lambda: _lib.c2pa_builder_from_json(json_str),
                 Builder._ERROR_MESSAGES['builder_error'])
@@ -4497,7 +4535,7 @@ class Builder(ManagedResource):
                 # Always free the C-allocated memory,
                 # even if we failed to copy manifest bytes
                 try:
-                    _lib.c2pa_manifest_bytes_free(manifest_bytes_ptr)
+                    _lib.c2pa_free(manifest_bytes_ptr)
                 except Exception:
                     logger.error(
                         "Failed to release native manifest bytes memory"
@@ -4700,6 +4738,10 @@ class Builder(ManagedResource):
 def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     """Convert a binary C2PA manifest into an embeddable version.
 
+    .. deprecated::
+        c2pa-rs 0.92.0 removes c2pa_format_embeddable, so this function
+        will be removed when c2pa-python moves to that release.
+
     Args:
         format: The MIME type or extension of the target format
         manifest_bytes: The raw manifest bytes
@@ -4710,6 +4752,9 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
     Raises:
         C2paError: If there was an error converting the manifest
     """
+    _warn_deprecated_api(
+        "format_embeddable() is deprecated.", stacklevel=2)
+
     _check_cstr_arg("format", format)
     format_str = format.encode('utf-8')
     manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
@@ -4741,7 +4786,7 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
             f"Failed to convert embeddable manifest bytes: {e}"
         ) from e
     finally:
-        _lib.c2pa_manifest_bytes_free(result_bytes_ptr)
+        _lib.c2pa_free(result_bytes_ptr)
 
     return size, result_bytes
 
@@ -4868,7 +4913,7 @@ def ed25519_sign(data: bytes, private_key: str) -> bytes:
             # Ed25519 signatures are always 64 bytes
             signature = bytes(signature_ptr[:64])
         finally:
-            _lib.c2pa_signature_free(signature_ptr)
+            _lib.c2pa_free(signature_ptr)
 
         return signature
 

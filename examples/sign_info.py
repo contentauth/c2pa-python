@@ -25,8 +25,11 @@ import c2pa
 fixtures_dir = os.path.join(os.path.dirname(__file__), "../tests/fixtures/")
 output_dir = os.path.join(os.path.dirname(__file__), "../output/")
 
-# Note: Builder, Reader, and Signer support being used as context managers
-# (with 'with' statements) for proper resource management.
+# Note: Builder, Reader, Signer, and Context support being used as context
+# managers (with 'with' statements) for proper resource management.
+
+# Use default Context and Settings.
+context = c2pa.Context()
 
 # Ensure the output directory exists
 if not os.path.exists(output_dir):
@@ -39,7 +42,7 @@ print(version)
 # Read existing C2PA metadata from the file
 print("\nReading existing C2PA metadata:")
 with open(fixtures_dir + "C.jpg", "rb") as file:
-    with c2pa.Reader("image/jpeg", file) as reader:
+    with c2pa.Reader("image/jpeg", file, context=context) as reader:
         print(reader.json())
 
 # Create a signer from certificate and key files
@@ -89,7 +92,7 @@ manifest_definition = {
 # Sign the image
 print("\nSigning the image...")
 with c2pa.Signer.from_info(signer_info) as signer:
-    with c2pa.Builder(manifest_definition) as builder:
+    with c2pa.Builder(manifest_definition, context) as builder:
         with open(fixtures_dir + "C.jpg", "rb") as source:
             # File needs to be opened in write+read mode to be signed
             # and verified properly.
@@ -99,11 +102,13 @@ with c2pa.Signer.from_info(signer_info) as signer:
 # Read the signed image to verify
 print("\nReading signed image metadata:")
 with open(output_dir + "C_signed.jpg", "rb") as file:
-    with c2pa.Reader("image/jpeg", file) as reader:
+    with c2pa.Reader("image/jpeg", file, context=context) as reader:
         # The validation state will depend on loaded trust settings.
         # Without loaded trust settings,
         # the manifest validation_state will be "Invalid".
         print(reader.json())
+
+context.close()
 
 print("\nExample completed successfully!")
 

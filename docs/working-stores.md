@@ -104,7 +104,7 @@ For full details on `Context` and `Settings`, see [Context and settings](context
 ### Checking if the manifest store is embedded
 
 ```py
-reader = Reader("signed_image.jpg")
+reader = Reader("signed_image.jpg", context=ctx)
 
 if reader.is_embedded():
     print("Manifest store is embedded in the asset")
@@ -515,7 +515,7 @@ import io, json
 archive_builder = Builder.from_json({
     "claim_generator_info": [{"name": "an-application", "version": "0.1.0"}],
     "assertions": [],
-})
+}, context=ctx)
 with open("photo.jpg", "rb") as f:
     archive_builder.add_ingredient(
         {"title": "photo.jpg", "relationship": "componentOf"},
@@ -842,7 +842,7 @@ manifest = {
     "claim_generator_info": [{"name": "c2pa-test", "version": "0.1.0"}],
     "assertions": [],
 }
-builder = Builder.from_json(manifest)
+builder = Builder.from_json(manifest, context=ctx)
 
 # Register three ingredients. The `label` becomes each ingredient's id.
 with open("first.jpg", "rb") as f:
@@ -865,7 +865,7 @@ The archive contains exactly one ingredient.
 import io
 from c2pa import Builder
 
-consumer = Builder.from_json(manifest)
+consumer = Builder.from_json(manifest, context=ctx)
 
 # `archive` is a stream produced by write_ingredient_archive on another builder.
 archive.seek(0)
@@ -888,7 +888,7 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 - The id does not match any registered ingredient's `label` or `instance_id`.
 
 ```py
-builder = Builder.from_json(manifest)
+builder = Builder.from_json(manifest, context=ctx)
 with open("photo.jpg", "rb") as f:
     builder.add_ingredient({"title": "photo.jpg", "relationship": "componentOf", "label": "real-id"}, "image/jpeg", f)
 
@@ -900,7 +900,7 @@ builder.write_ingredient_archive("wrong-id", archive)
 To correct, pass the same string used in the ingredient's `label` or `instance_id` field:
 
 ```py
-builder = Builder.from_json(manifest)
+builder = Builder.from_json(manifest, context=ctx)
 with open("photo.jpg", "rb") as f:
     builder.add_ingredient({"title": "photo.jpg", "relationship": "componentOf", "label": "ingredient-id"}, "image/jpeg", f)
 
@@ -917,7 +917,7 @@ The legacy approach wrapped one ingredient in a full builder archive, then resto
 
 ```py
 # Legacy: one ingredient archived as a full builder, restored with with_archive
-builder = Builder.from_json(manifest)
+builder = Builder.from_json(manifest, context=ctx)
 with open("photo.jpg", "rb") as f:
     builder.add_ingredient({"title": "photo.jpg", "relationship": "componentOf"}, "image/jpeg", f)
 archive = io.BytesIO()
@@ -925,7 +925,7 @@ builder.to_archive(archive)
 
 # Consumer:
 archive.seek(0)
-restored = Builder({})
+restored = Builder({}, context=ctx)
 restored.with_archive(archive)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     restored.sign(signer, "image/jpeg", src, dst)
@@ -935,7 +935,7 @@ With the dedicated ingredient archive APIs, the producer writes a single-ingredi
 
 ```py
 # Current API: one archive per ingredient via write_ingredient_archive
-builder = Builder.from_json(manifest)
+builder = Builder.from_json(manifest, context=ctx)
 with open("photo.jpg", "rb") as f:
     builder.add_ingredient({"title": "photo.jpg", "relationship": "componentOf", "instance_id": "my-photo"}, "image/jpeg", f)
 
@@ -943,7 +943,7 @@ archive = io.BytesIO()
 builder.write_ingredient_archive("my-photo", archive)
 
 # Consumer:
-consumer = Builder.from_json(manifest)
+consumer = Builder.from_json(manifest, context=ctx)
 archive.seek(0)
 consumer.add_ingredient_from_archive(archive)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
@@ -1003,7 +1003,7 @@ Producer:
 import io
 from c2pa import Builder
 
-producer = Builder.from_json(manifest_str)
+producer = Builder.from_json(manifest_str, context=ctx)
 with open(source_path, "rb") as f:
     producer.add_ingredient(
         {"title": "photo.jpg", "relationship": "componentOf", "instance_id": "catalog:photo-A"},
@@ -1026,7 +1026,7 @@ signing_manifest = {
     }]
 }
 
-consumer = Builder.from_json(signing_manifest)
+consumer = Builder.from_json(signing_manifest, context=ctx)
 archive.seek(0)
 consumer.add_ingredient_from_archive(archive)
 with open(source_path, "rb") as src, open(output_path, "w+b") as dst:
@@ -1042,7 +1042,7 @@ This works even though signing does not preserve `label` as an ingredient field.
 Producer:
 
 ```py
-producer = Builder.from_json(manifest_str)
+producer = Builder.from_json(manifest_str, context=ctx)
 with open(source_path, "rb") as f:
     producer.add_ingredient(
         {"title": "photo.jpg", "relationship": "componentOf", "label": "my-photo"},
@@ -1065,7 +1065,7 @@ signing_manifest = {
     }]
 }
 
-consumer = Builder.from_json(signing_manifest)
+consumer = Builder.from_json(signing_manifest, context=ctx)
 archive.seek(0)
 consumer.add_ingredient_from_archive(archive)
 with open(source_path, "rb") as src, open(output_path, "w+b") as dst:
@@ -1079,7 +1079,7 @@ If both `label` and `instance_id` are set on an ingredient, pass whichever value
 Producer (passing `label` as the key):
 
 ```py
-producer = Builder.from_json(manifest_str)
+producer = Builder.from_json(manifest_str, context=ctx)
 with open(source_path, "rb") as f:
     producer.add_ingredient(
         {"title": "photo.jpg", "relationship": "componentOf", "label": "my-photo", "instance_id": "iid:abc123"},
@@ -1106,7 +1106,7 @@ signing_manifest = {
     }]
 }
 
-consumer = Builder.from_json(signing_manifest)
+consumer = Builder.from_json(signing_manifest, context=ctx)
 archive.seek(0)
 consumer.add_ingredient_from_archive(archive)
 with open(source_path, "rb") as src, open(output_path, "w+b") as dst:
@@ -1121,7 +1121,7 @@ With the legacy `to_archive` + `Reader` pattern, `instance_id` survives into the
 import json
 from c2pa import Reader
 
-reader = Reader("archive.c2pa")
+reader = Reader("archive.c2pa", context=ctx)
 parsed = json.loads(reader.json())
 active = parsed["active_manifest"]
 ingredients = parsed["manifests"][active].get("ingredients", [])
@@ -1194,7 +1194,7 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 ### Checking manifest store location
 
 ```py
-reader = Reader("asset.jpg")
+reader = Reader("asset.jpg", context=ctx)
 
 if reader.is_embedded():
     print("Manifest store is embedded in the asset")
