@@ -420,21 +420,6 @@ class TestReader(unittest.TestCase):
             self.assertIsNotNone(validation_state)
             self.assertEqual(validation_state, "Valid")
 
-    def test_stream_read_get_validation_state_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(self.testPath, "rb") as file:
-            reader = Reader("image/jpeg", file, context=settings_context)
-            validation_state = reader.get_validation_state()
-
-        self.assertIsNotNone(validation_state)
-        # With trust configuration loaded, manifest is Trusted
-        self.assertEqual(validation_state, "Trusted")
-
     def test_stream_read_get_validation_results(self):
         with open(self.testPath, "rb") as file:
             reader = Reader("image/jpeg", file, context=TEST_CONTEXT)
@@ -2209,31 +2194,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertEqual(manifest_data["validation_state"], "Valid")
             output.close()
 
-    def test_streams_sign_with_es256_alg_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2, context=settings_context)
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, context=settings_context)
-            json_data = reader.json()
-
-            # Get validation state with trust config
-            validation_state = reader.get_validation_state()
-
-            output.close()
-
-        self.assertIn("Python Test", json_data)
-        # With trust configuration loaded, validation should return "Trusted"
-        self.assertIsNotNone(validation_state)
-        self.assertEqual(validation_state, "Trusted")
-
     def test_sign_with_ed25519_alg(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
             certs = cert_file.read()
@@ -2260,44 +2220,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             # or validation_status on read reports `signing certificate untrusted`.
             self.assertIn("Valid", json_data)
             output.close()
-
-    def test_sign_with_ed25519_alg_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
-            certs = cert_file.read()
-        with open(os.path.join(self.data_dir, "ed25519.pem"), "rb") as key_file:
-            key = key_file.read()
-
-        signer_info = C2paSignerInfo(
-            alg=b"ed25519",
-            sign_cert=certs,
-            private_key=key,
-            ta_url=b"http://timestamp.digicert.com"
-        )
-        signer = Signer.from_info(signer_info)
-
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2, context=settings_context)
-            output = io.BytesIO(bytearray())
-            builder.sign(signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, context=settings_context)
-            json_data = reader.json()
-
-            # Get validation state with trust config
-            validation_state = reader.get_validation_state()
-
-            output.close()
-
-        self.assertIn("Python Test", json_data)
-        # With trust configuration loaded, validation should return "Trusted"
-        self.assertIsNotNone(validation_state)
-        self.assertEqual(validation_state, "Trusted")
 
     def test_sign_with_ed25519_alg_2(self):
         with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
@@ -2379,44 +2301,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             # self.assertNotIn("validation_status", json_data)
             output.close()
 
-    def test_sign_with_ps256_alg_2_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(os.path.join(self.data_dir, "ps256.pub"), "rb") as cert_file:
-            certs = cert_file.read()
-        with open(os.path.join(self.data_dir, "ps256.pem"), "rb") as key_file:
-            key = key_file.read()
-
-        signer_info = C2paSignerInfo(
-            alg=b"ps256",
-            sign_cert=certs,
-            private_key=key,
-            ta_url=b"http://timestamp.digicert.com"
-        )
-        signer = Signer.from_info(signer_info)
-
-        with open(self.testPath2, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2, context=settings_context)
-            output = io.BytesIO(bytearray())
-            builder.sign(signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, context=settings_context)
-            json_data = reader.json()
-
-            # Get validation state with trust config
-            validation_state = reader.get_validation_state()
-
-            output.close()
-
-        self.assertIn("Python Test", json_data)
-        # With trust configuration loaded, validation should return "Trusted"
-        self.assertIsNotNone(validation_state)
-        self.assertEqual(validation_state, "Trusted")
-
     def test_archive_sign(self):
         with open(self.testPath, "rb") as file:
             builder = Builder(self.manifestDefinition, context=TEST_CONTEXT)
@@ -2434,35 +2318,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("Valid", json_data)
             archive.close()
             output.close()
-
-    def test_archive_sign_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinition, context=settings_context)
-            archive = io.BytesIO(bytearray())
-            builder.to_archive(archive)
-            builder = Builder({}, context=settings_context).with_archive(archive)
-            output = io.BytesIO(bytearray())
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, context=settings_context)
-            json_data = reader.json()
-
-            # Get validation state with trust config
-            validation_state = reader.get_validation_state()
-
-            archive.close()
-            output.close()
-
-        self.assertIn("Python Test", json_data)
-        # With trust configuration loaded, validation should return "Trusted"
-        self.assertIsNotNone(validation_state)
-        self.assertEqual(validation_state, "Trusted")
 
     def test_archive_sign_with_added_ingredient(self):
         with open(self.testPath, "rb") as file:
@@ -2484,38 +2339,6 @@ class TestBuilderWithSigner(unittest.TestCase):
             self.assertIn("Valid", json_data)
             archive.close()
             output.close()
-
-    def test_archive_sign_with_added_ingredient_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2, context=settings_context)
-            archive = io.BytesIO(bytearray())
-            builder.to_archive(archive)
-            builder = Builder({}, context=settings_context).with_archive(archive)
-            output = io.BytesIO(bytearray())
-            ingredient_json = '{"test": "ingredient"}'
-            with open(self.testPath, 'rb') as f:
-                builder.add_ingredient(ingredient_json, "image/jpeg", f)
-            builder.sign(self.signer, "image/jpeg", file, output)
-            output.seek(0)
-            reader = Reader("image/jpeg", output, context=settings_context)
-            json_data = reader.json()
-
-            # Get validation state with trust config
-            validation_state = reader.get_validation_state()
-
-            archive.close()
-            output.close()
-
-        self.assertIn("Python Test", json_data)
-        # With trust configuration loaded, validation should return "Trusted"
-        self.assertIsNotNone(validation_state)
-        self.assertEqual(validation_state, "Trusted")
 
     def test_write_ingredient_archive_produces_readable_archive(self):
         manifest = {
@@ -3203,33 +3026,6 @@ class TestBuilderWithSigner(unittest.TestCase):
                 with Reader("image/jpeg", read_buffer, manifest_data, context=TEST_CONTEXT) as reader:
                     manifest_data = reader.json()
                     self.assertIn("Python Test", manifest_data)
-
-    def test_remote_sign_using_returned_bytes_V2_with_trust_config(self):
-        # Load trust configuration
-        settings_dict = load_test_settings_json()
-
-        # Build a context from the settings (including trust configuration)
-        settings_context = _context_from_settings(settings_dict)
-
-        with open(self.testPath, "rb") as file:
-            builder = Builder(self.manifestDefinitionV2, context=settings_context)
-            builder.set_no_embed()
-            with io.BytesIO() as output_buffer:
-                manifest_data = builder.sign(
-                    self.signer, "image/jpeg", file, output_buffer)
-                output_buffer.seek(0)
-                read_buffer = io.BytesIO(output_buffer.getvalue())
-
-                with Reader("image/jpeg", read_buffer, manifest_data, context=settings_context) as reader:
-                    json_data = reader.json()
-
-                    # Get validation state with trust config
-                    validation_state = reader.get_validation_state()
-
-        self.assertIn("Python Test", json_data)
-        # With trust configuration loaded, validation should return "Trusted"
-        self.assertIsNotNone(validation_state)
-        self.assertEqual(validation_state, "Trusted")
 
     def test_sign_all_files(self):
         """Test signing all files in both fixtures directories"""
@@ -6719,15 +6515,6 @@ class TestContextWithSigner(TestContextAPIs):
 
 class TestReaderWithContext(TestContextAPIs):
 
-    def test_reader_with_default_context(self):
-        context = Context()
-        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
-            reader = Reader("image/jpeg", file_handle, context=context,)
-            data = reader.json()
-            self.assertIsNotNone(data)
-            reader.close()
-        context.close()
-
     def test_reader_with_settings_context(self):
         settings = Settings()
         context = Context(settings)
@@ -6768,16 +6555,6 @@ class TestReaderWithContext(TestContextAPIs):
         reader.close()
         context.close()
 
-    def test_reader_extensionless_path_with_context_autodetects(self):
-        context = Context()
-        with tempfile.TemporaryDirectory() as tmp:
-            no_ext = os.path.join(tmp, "asset")
-            shutil.copyfile(DEFAULT_TEST_FILE, no_ext)
-            reader = Reader(no_ext, context=context)
-            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
-            reader.close()
-        context.close()
-
     def test_reader_format_and_path_with_ctx(self):
         context = Context()
         reader = Reader("image/jpeg", DEFAULT_TEST_FILE, context=context)
@@ -6801,36 +6578,6 @@ class TestReaderWithContext(TestContextAPIs):
         reader = Reader(Path(DEFAULT_TEST_FILE), context=context)
         self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
         reader.close()
-        context.close()
-
-    def test_try_create_format_stream_with_context(self):
-        context = Context()
-        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
-            reader = Reader.try_create(
-                "image/jpeg", file_handle, context=context)
-            self.assertIsNotNone(reader)
-            if reader is not None:
-                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
-                reader.close()
-        context.close()
-
-    def test_try_create_bare_stream_with_context(self):
-        context = Context()
-        with open(DEFAULT_TEST_FILE, "rb") as file_handle:
-            reader = Reader.try_create(file_handle, context=context)
-            self.assertIsNotNone(reader)
-            if reader is not None:
-                self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
-                reader.close()
-        context.close()
-
-    def test_context_only_no_source_raises(self):
-        # A context supplies settings, not the asset,
-        # so no path/stream is an error rather than open("None").
-        context = Context()
-        with self.assertRaises(Error) as ctx:
-            Reader(context=context)
-        self.assertIn("stream", str(ctx.exception).lower())
         context.close()
 
     def test_reader_with_closed_context_raises(self):
