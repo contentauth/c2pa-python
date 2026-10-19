@@ -5950,56 +5950,6 @@ class TestLegacyAPI(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_sign_file_callback_signer(self):
-        """Test signing a file using the sign_file method."""
-
-        temp_dir = tempfile.mkdtemp()
-
-        try:
-            output_path = os.path.join(temp_dir, "signed_output.jpg")
-
-            # Use the sign_file method
-            builder = Builder(self.manifestDefinition, context=TEST_CONTEXT)
-
-            # Create signer with callback using create_signer function
-            signer = Signer.from_callback(
-                callback=self.callback_signer_es256,
-                alg=SigningAlg.ES256,
-                certs=self.certs.decode('utf-8'),
-                tsa_url="http://timestamp.digicert.com"
-            )
-
-            manifest_bytes = builder.sign_file(
-                source_path=self.testPath,
-                dest_path=output_path,
-                signer=signer
-            )
-
-            # Verify the output file was created
-            self.assertTrue(os.path.exists(output_path))
-
-            # Verify results
-            self.assertIsInstance(manifest_bytes, bytes)
-            self.assertGreater(len(manifest_bytes), 0)
-
-            # Read the signed file and verify the manifest
-            with open(output_path, "rb") as file, Reader("image/jpeg", file, context=TEST_CONTEXT) as reader:
-                json_data = reader.json()
-                # Needs trust configuration to be set up to validate as Trusted
-                # self.assertNotIn("validation_status", json_data)
-
-                # Parse the JSON and verify the signature algorithm
-                manifest_data = json.loads(json_data)
-                active_manifest_id = manifest_data["active_manifest"]
-                active_manifest = manifest_data["manifests"][active_manifest_id]
-
-                self.assertIn("signature_info", active_manifest)
-                signature_info = active_manifest["signature_info"]
-                self.assertEqual(signature_info["alg"], self.callback_signer_alg)
-
-        finally:
-            shutil.rmtree(temp_dir)
-
     def test_sign_file_callback_signer_managed_single(self):
         """Test signing a file using the sign_file method with context managers."""
 
