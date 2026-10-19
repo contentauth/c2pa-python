@@ -21,7 +21,7 @@ consensus around project direction and issue solutions within issue threads
 Some broad categories of work (and thus things you might expect to change) are:
 
 * We'll be reviewing and refining our APIs for ease of use and comprehension. We'd appreciate feedback on areas that you find confusing or unnecessarily difficult.
-* We'll also be reviewing our APIs for compliance with best practices. 
+* We'll also be reviewing our APIs for compliance with best practices.
 * Our documentation is incomplete. We'll be working on refining the documentation.
 * Our testing infrastructure is incomplete. We'll be working on improving test coverage, memory efficiency, and performance benchmarks.
 
@@ -56,6 +56,8 @@ These include such things as Rust code format, Clippy/lint checks, and unit test
 
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
+
+AI assistants working with or on this library follow [AI_WORKFLOW.md](AI_WORKFLOW.md).
 
 ### Pull request titles
 
@@ -100,5 +102,5 @@ feel free to reach out to existing committers to have a conversation about that.
 
 ## Security issues
 
-Do not create a public GitHub issue for any suspected security vulnerabilities. Instead, please file an issue through [Adobe's HackerOne page](https://hackerone.com/adobe?type=team). 
+Do not create a public GitHub issue for any suspected security vulnerabilities. Instead, please file an issue through [Adobe's HackerOne page](https://hackerone.com/adobe?type=team).
 For more information on reporting security issues, see [SECURITY.md](SECURITY.md).

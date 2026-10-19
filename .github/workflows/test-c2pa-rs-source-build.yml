@@ -123,7 +123,7 @@ jobs:
         working-directory: c2pa-python
         env:
           C2PA_PREFLIGHT_RUN: "1"
-        run: python ./tests/test_unit_tests.py
+        run: python -W ignore -m unittest discover -s tests/unit -t .
 
   tests-windows:
     name: Unit tests (Windows, ${{ matrix.runs-on }})
@@ -205,4 +205,4 @@ jobs:
         working-directory: c2pa-python
         env:
           C2PA_PREFLIGHT_RUN: "1"
-        run: python .\tests\test_unit_tests.py
+        run: python -W ignore -m unittest discover -s tests\unit -t .
