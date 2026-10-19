@@ -137,6 +137,9 @@ build-from-source:
 docs:
 	$(PYTHON) scripts/generate_api_docs.py
 
+docs-versioned:
+	$(PYTHON) scripts/generate_versioned_api_docs.py
+
 # Memory profiling with memray (runs in Docker, reports go to tests/perf/reports/)
 # More details for usage are in tests/perf/README.md
 PERF_ENV ?= python-3.12-slim
