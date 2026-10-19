@@ -51,7 +51,7 @@ You can set the intent on a `Builder` instance by:
 - [Using Context](#using-context)
 - [Using `set_intent` on the `Builder`](#using-set_intent-on-the-builder)
 
-Don't set the intent using the deprecated `load_settings()` function. For existing code, see [Context and settings - Migrating from load_settings](context-settings.md#migrating-from-load_settings).
+The `load_settings()` function has been removed. To migrate code that set the intent with it, see [Context and settings - Migrating from load_settings](context-settings.md#migrating-from-load_settings).
 
 ### Using Context
 
@@ -114,11 +114,7 @@ flowchart TD
     Check --> |No| CheckCtx{Was a Context with
     builder.intent provided?}
     CheckCtx --> |Yes| UseCtx["Use Context intent"]
-    CheckCtx --> |No| CheckGlobal{Was load_settings called
-    with builder.intent?}
-    CheckGlobal --> |Yes| UseGlobal["Use global intent
-    (deprecated)"]
-    CheckGlobal --> |No| NoIntent["No intent set.
+    CheckCtx --> |No| NoIntent["No intent set.
     Caller must define actions
     manually in manifest JSON."]
 ```
@@ -173,8 +169,7 @@ The `Builder` intent controls what the `Builder` does with the source stream (so
 ```mermaid
 flowchart TD
     Intent["Intent
-    (via Context, set_intent,
-    or load_settings)"] --> Q{Intent type?}
+    (via Context or set_intent)"] --> Q{Intent type?}
     Q --> |CREATE| CreateFlow["No parent allowed
     Source stream is new content"]
     Q --> |EDIT or UPDATE| EditFlow{Was a parentOf ingredient

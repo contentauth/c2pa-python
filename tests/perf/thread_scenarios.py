@@ -41,6 +41,7 @@ from c2pa import (
 import c2pa.c2pa as c2pa_module
 
 from tests.perf.scenarios import (
+    DEFAULT_CONTEXT,
     FIXTURES_DIR,
     MANIFEST_BASE,
     SIGNED_JPEG,
@@ -294,7 +295,7 @@ def scenario_no_free_during_parked_call(rounds: int = 20) -> dict:
     signed = SIGNED_JPEG.read_bytes()
 
     def one_round():
-        reader = Reader("image/jpeg", io.BytesIO(signed))
+        reader = Reader("image/jpeg", io.BytesIO(signed), context=DEFAULT_CONTEXT)
         reader.json()
         uri = _first_resource_uri(reader)
         if uri is None:

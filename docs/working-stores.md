@@ -675,7 +675,7 @@ Two archive API families share the same binary format but serve different purpos
 
 | | Full-builder APIs | Single-ingredient APIs |
 | --- | --- | --- |
-| APIs | `to_archive`, `with_archive`, `Builder.from_archive` | `write_ingredient_archive`, `add_ingredient_from_archive` |
+| APIs | `to_archive`, `with_archive` | `write_ingredient_archive`, `add_ingredient_from_archive` |
 | What is archived | Entire builder: manifest definition + all ingredients + all resources | One ingredient only (other builder state is omitted) |
 | Typical use | Checkpoint or transfer a manifest-in-progress between sessions or machines | Ingredient catalog; selectively load individual ingredients at sign time |
 | Linking key | N/A (full builder is restored as-is) | Archive key (`label` or `instance_id`) flows through automatically as `ingredientIds` value |

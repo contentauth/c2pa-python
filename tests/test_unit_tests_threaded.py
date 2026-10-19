@@ -36,6 +36,10 @@ from c2pa.lib import is_foreign_process, record_owner_pid
 PROJECT_PATH = os.getcwd()
 FIXTURES_FOLDER = os.path.join(os.path.dirname(__file__), "fixtures")
 
+# Reader and Builder require a context. Tests that need no particular
+# settings share this one; a Context is safe to share across threads.
+TEST_CONTEXT = Context()
+
 
 def _patch_free(test, fn):
     """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
@@ -210,7 +214,7 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         lock held by another thread, and stamped with a PID other than this process's.
         """
         with open(DEFAULT_TEST_FILE, "rb") as asset:
-            reader = Reader("image/jpeg", asset)
+            reader = Reader("image/jpeg", asset, context=TEST_CONTEXT)
         holding = threading.Event()
         release = threading.Event()
 
@@ -326,12 +330,12 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         """
         source = textwrap.dedent("""
             import os, sys
-            from c2pa import Reader
+            from c2pa import Context, Reader
             from c2pa.c2pa import LifecycleState
 
             asset_path = sys.argv[1]
             with open(asset_path, "rb") as asset:
-                reader = Reader("image/jpeg", asset)
+                reader = Reader("image/jpeg", asset, context=Context())
             before = reader.json()
 
             pid = os.fork()
@@ -378,7 +382,7 @@ class TestReaderWithFragmentConcurrency(unittest.TestCase):
 
     def test_close_during_with_fragment_does_not_double_close_stream(self):
         with open(self.init_path, "rb") as init:
-            reader = Reader("video/mp4", init)
+            reader = Reader("video/mp4", init, context=TEST_CONTEXT)
 
         entered_gap = threading.Event()
         release_gap = threading.Event()
@@ -453,7 +457,7 @@ class TestReaderWithThreads(unittest.TestCase):
     def test_stream_read(self):
         def read_metadata():
             with open(self.test_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
+                reader = Reader("image/jpeg", file, context=TEST_CONTEXT)
                 json_data = reader.json()
                 self.assertIn("C.jpg", json_data)
                 return json_data
@@ -473,7 +477,7 @@ class TestReaderWithThreads(unittest.TestCase):
     def test_stream_read_and_parse(self):
         def read_and_parse():
             with open(self.test_path, "rb") as file:
-                reader = Reader("image/jpeg", file)
+                reader = Reader("image/jpeg", file, context=TEST_CONTEXT)
                 manifest_store = json.loads(reader.json())
                 title = manifest_store["manifests"][manifest_store["active_manifest"]]["title"]
                 self.assertEqual(title, "C.jpg")
@@ -538,7 +542,7 @@ class TestReaderWithThreads(unittest.TestCase):
 
             try:
                 with open(file_path, "rb") as file:
-                    reader = Reader(mime_type, file)
+                    reader = Reader(mime_type, file, context=TEST_CONTEXT)
                     json_data = reader.json()
                     # Verify the manifest contains expected fields
                     manifest = json.loads(json_data)
@@ -619,7 +623,7 @@ class TestReaderWithThreads(unittest.TestCase):
 
             try:
                 with open(file_path, "rb") as file:
-                    reader = Reader(mime_type, file)
+                    reader = Reader(mime_type, file, context=TEST_CONTEXT)
 
                     # Test 1: Verify cache variables are initially None
                     if reader._manifest_json_str_cache is not None:
@@ -1088,13 +1092,13 @@ class TestBuilderWithThreads(unittest.TestCase):
                     manifest_def = self.manifestDefinition_2 if thread_id % 2 == 0 else self.manifestDefinition_1
                     expected_author = "Tester Two" if thread_id % 2 == 0 else "Tester One"
 
-                    builder = Builder(manifest_def)
+                    builder = Builder(manifest_def, context=TEST_CONTEXT)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, mime_type, file, output)
                     output.seek(0)
 
                     # Verify the signed file
-                    reader = Reader(mime_type, output)
+                    reader = Reader(mime_type, output, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1155,10 +1159,10 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         def write_manifest(manifest_def, output_stream, thread_id):
             with open(self.test_path, "rb") as file:
-                builder = Builder(manifest_def)
+                builder = Builder(manifest_def, context=TEST_CONTEXT)
                 builder.sign(self.signer, "image/jpeg", file, output_stream)
                 output_stream.seek(0)
-                reader = Reader("image/jpeg", output_stream)
+                reader = Reader("image/jpeg", output_stream, context=TEST_CONTEXT)
                 json_data = reader.json()
                 manifest_store = json.loads(json_data)
 
@@ -1206,8 +1210,8 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Verify the outputs are different
         output1.seek(0)
         output2.seek(0)
-        reader1 = Reader("image/jpeg", output1)
-        reader2 = Reader("image/jpeg", output2)
+        reader1 = Reader("image/jpeg", output1, context=TEST_CONTEXT)
+        reader2 = Reader("image/jpeg", output2, context=TEST_CONTEXT)
 
         manifest_store1 = json.loads(reader1.json())
         manifest_store2 = json.loads(reader2.json())
@@ -1308,13 +1312,13 @@ class TestBuilderWithThreads(unittest.TestCase):
                     # Add a small delay to encourage interleaving
                     time.sleep(0.01)
 
-                    builder = Builder(manifest_def)
+                    builder = Builder(manifest_def, context=TEST_CONTEXT)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, mime_type, file, output)
                     output.seek(0)
 
                     # Verify the signed file
-                    reader = Reader(mime_type, output)
+                    reader = Reader(mime_type, output, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1398,7 +1402,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         def write_manifest():
             try:
                 with open(self.test_path, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1)
+                    builder = Builder(self.manifestDefinition_1, context=TEST_CONTEXT)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
                     write_complete.set()
@@ -1413,7 +1417,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
                 # Read after write is complete
                 output.seek(0)
-                reader = Reader("image/jpeg", output)
+                reader = Reader("image/jpeg", output, context=TEST_CONTEXT)
                 json_data = reader.json()
                 manifest_store = json.loads(json_data)
                 active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1471,7 +1475,7 @@ class TestBuilderWithThreads(unittest.TestCase):
         def write_manifest():
             try:
                 with open(self.test_path, "rb") as file:
-                    builder = Builder(self.manifestDefinition_1)
+                    builder = Builder(self.manifestDefinition_1, context=TEST_CONTEXT)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)  # Reset stream position after write
                     write_complete.set()
@@ -1491,7 +1495,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Read after write is complete
                 with stream_lock:  # Ensure exclusive access to stream
                     output.seek(0)  # Reset stream position before read
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1560,7 +1564,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         # First write some data to read
         with open(self.test_path, "rb") as file:
-            builder = Builder(self.manifestDefinition_1)
+            builder = Builder(self.manifestDefinition_1, context=TEST_CONTEXT)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
 
@@ -1573,7 +1577,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Read the manifest
                 with stream_lock:  # Ensure exclusive access to stream
                     output.seek(0)  # Reset stream position before read
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1641,7 +1645,7 @@ class TestBuilderWithThreads(unittest.TestCase):
 
         # First write some data to read
         with open(self.test_path, "rb") as file:
-            builder = Builder(self.manifestDefinition_1)
+            builder = Builder(self.manifestDefinition_1, context=TEST_CONTEXT)
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
 
@@ -1661,7 +1665,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                 # Read the manifest
                 with stream_lock:  # Ensure exclusive access to stream
                     output.seek(0)  # Reset stream position before read
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1729,18 +1733,18 @@ class TestBuilderWithThreads(unittest.TestCase):
             try:
                 with open(self.test_path, "rb") as file:
                     # Create and save archive
-                    builder = Builder(manifest_def)
+                    builder = Builder(manifest_def, context=TEST_CONTEXT)
                     builder.to_archive(archive_stream)
                     archive_stream.seek(0)
 
                     # Load from archive and sign
-                    builder = Builder.from_archive(archive_stream)
+                    builder = Builder({}, context=TEST_CONTEXT).with_archive(archive_stream)
                     builder.sign(
                         self.signer, "image/jpeg", file, output_stream)
                     output_stream.seek(0)
 
                     # Verify the signed file
-                    reader = Reader("image/jpeg", output_stream)
+                    reader = Reader("image/jpeg", output_stream, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1795,8 +1799,8 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Verify the outputs are different before closing
         output1.seek(0)
         output2.seek(0)
-        reader1 = Reader("image/jpeg", output1)
-        reader2 = Reader("image/jpeg", output2)
+        reader1 = Reader("image/jpeg", output1, context=TEST_CONTEXT)
+        reader2 = Reader("image/jpeg", output2, context=TEST_CONTEXT)
 
         manifest_store1 = json.loads(reader1.json())
         manifest_store2 = json.loads(reader2.json())
@@ -1831,13 +1835,13 @@ class TestBuilderWithThreads(unittest.TestCase):
             try:
                 with open(self.test_path, "rb") as file:
                     # Sign the file
-                    builder = Builder(manifest_def)
+                    builder = Builder(manifest_def, context=TEST_CONTEXT)
                     builder.sign(
                         self.signer, "image/jpeg", file, output_stream)
                     output_stream.seek(0)
 
                     # Verify the signed file
-                    reader = Reader("image/jpeg", output_stream)
+                    reader = Reader("image/jpeg", output_stream, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_store = json.loads(json_data)
                     active_manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
@@ -1901,8 +1905,8 @@ class TestBuilderWithThreads(unittest.TestCase):
         # Verify the outputs are different
         output1.seek(0)
         output2.seek(0)
-        reader1 = Reader("image/jpeg", output1)
-        reader2 = Reader("image/jpeg", output2)
+        reader1 = Reader("image/jpeg", output1, context=TEST_CONTEXT)
+        reader2 = Reader("image/jpeg", output2, context=TEST_CONTEXT)
 
         manifest_store1 = json.loads(reader1.json())
         manifest_store2 = json.loads(reader2.json())
@@ -1945,7 +1949,7 @@ class TestBuilderWithThreads(unittest.TestCase):
             nonlocal completed_threads
             try:
                 # Create a new builder for this thread
-                builder = Builder.from_json(self.manifestDefinition)
+                builder = Builder.from_json(self.manifestDefinition, context=TEST_CONTEXT)
 
                 # Add each ingredient
                 for i, file_path in enumerate(ingredient_files, 1):
@@ -1974,7 +1978,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     input_stream = io.BytesIO(output_data)
 
                     # Now read and verify the signed manifest
-                    reader = Reader("image/jpeg", input_stream)
+                    reader = Reader("image/jpeg", input_stream, context=TEST_CONTEXT)
                     json_data = reader.json()
                     manifest_data = json.loads(json_data)
 
@@ -2692,7 +2696,7 @@ class TestWithFragmentReentrancy(unittest.TestCase):
         with open(fragment_path, "rb") as handle:
             fragment_bytes = handle.read()
 
-        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        reader = Reader("video/mp4", io.BytesIO(init_bytes), context=TEST_CONTEXT)
         state = {"fired": False, "result": None, "hung": None}
 
         class ReentrantStream(io.BytesIO):
@@ -2962,7 +2966,7 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(self._free_counts().get(0x60001), 1, "orphaned")
 
     def test_closed_reader_never_serves_cached_manifest(self):
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         reader.get_active_manifest()
 
         parked = threading.Event()
@@ -3065,9 +3069,10 @@ class TestLocking(unittest.TestCase):
         result = self._run_isolated("""
             import sys, io, gc, random, threading, time
             sys.path.insert(0, "src")
-            from c2pa import Reader
+            from c2pa import Context, Reader
 
             data = open("tests/fixtures/C.jpg", "rb").read()
+            context = Context()
             stop = threading.Event()
             pool, lock = [], threading.Lock()
 
@@ -3076,7 +3081,8 @@ class TestLocking(unittest.TestCase):
                     choice = random.random()
                     try:
                         if choice < 0.40:
-                            reader = Reader("image/jpeg", io.BytesIO(data))
+                            reader = Reader("image/jpeg", io.BytesIO(data),
+                                            context=context)
                             with lock:
                                 pool.append(reader)
                         elif choice < 0.75:
@@ -3119,7 +3125,7 @@ class TestLocking(unittest.TestCase):
         or per-object.
         """
         data = self.image_bytes
-        target = Reader("image/jpeg", io.BytesIO(data))
+        target = Reader("image/jpeg", io.BytesIO(data), context=TEST_CONTEXT)
         errors = []
 
         class BlockingStream(io.BytesIO):
@@ -3141,7 +3147,7 @@ class TestLocking(unittest.TestCase):
         def body():
             try:
                 for _ in range(5):
-                    Reader("image/jpeg", BlockingStream(data))
+                    Reader("image/jpeg", BlockingStream(data), context=TEST_CONTEXT)
             except Exception as exc:
                 errors.append(repr(exc))
 
@@ -3189,7 +3195,7 @@ class TestLocking(unittest.TestCase):
         ManagedResource._guarded_op = make_tracking(real_lock)
         ManagedResource._live_op_lock = make_tracking(real_live_op_lock)
         try:
-            reader = Reader("image/jpeg", io.BytesIO(data))
+            reader = Reader("image/jpeg", io.BytesIO(data), context=TEST_CONTEXT)
             reader.json()
             reader.detailed_json()
             reader.is_embedded()
@@ -3262,7 +3268,7 @@ class TestLocking(unittest.TestCase):
         """A close() from inside a stream callback must not free the handle
         the native call is still using."""
         freed = self._counted_free()
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         uri = self._thumbnail_uri(reader)
         during = []
 
@@ -3291,7 +3297,7 @@ class TestLocking(unittest.TestCase):
             real_init(wrapper, source)
             opened.append(wrapper)
 
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         self.addCleanup(reader.close)
 
         with patch.object(Stream, '__init__', tracking_init):
@@ -3306,7 +3312,7 @@ class TestLocking(unittest.TestCase):
     def test_use_after_deferred_close_is_rejected(self):
         """Deferring must not leave the resource usable:
         the free is pending, so the handle is about to go away."""
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         uri = self._thumbnail_uri(reader)
         states = []
 
@@ -3332,7 +3338,7 @@ class TestLocking(unittest.TestCase):
         """The deferred free survives a failing _release:
         the handle must still be freed."""
         freed = self._counted_free()
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         uri = self._thumbnail_uri(reader)
 
         def boom(self):
@@ -3356,7 +3362,7 @@ class TestLocking(unittest.TestCase):
         must produce exactly one free (avoid double-frees,
         or freeing something the object wouldn't own)."""
         freed = self._counted_free()
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         uri = self._thumbnail_uri(reader)
         started = threading.Event()
         closers = []
@@ -3517,7 +3523,7 @@ class TestLocking(unittest.TestCase):
         consumes it.
         """
         freed = self._counted_free()
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
 
         with reader._native_call():
             # The consuming call: native took ownership, so nothing here frees.
@@ -3546,7 +3552,7 @@ class TestLocking(unittest.TestCase):
         join_timeout = self.JOIN_TIMEOUT
         orig_teardown = ManagedResource._teardown
 
-        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes))
+        reader = Reader("image/jpeg", io.BytesIO(self.image_bytes), context=TEST_CONTEXT)
         release_calls = []
         orig_release = reader._release
 
@@ -3593,7 +3599,7 @@ class TestLocking(unittest.TestCase):
             private_key=self.private_key, ta_url=None))
         self.addCleanup(signer.close)
         builder = Builder({"claim_generator": "python_test",
-                           "format": "image/jpeg", "assertions": []})
+                           "format": "image/jpeg", "assertions": []}, context=TEST_CONTEXT)
         real_sign = c2pa_module._lib.c2pa_builder_sign
 
         def raising(*args):
@@ -3615,9 +3621,7 @@ class TestLocking(unittest.TestCase):
         source = inspect.getsource(sys.modules[Reader.__module__])
         lines = source.split("\n")
         class_a = {
-            ("Reader", "_create_reader"),
             ("Reader", "_init_from_context"),
-            ("Builder", "from_archive"),
         }
         stream_use = re.compile(
             r"(_stream|stream_obj|source_stream|dest_stream|main_obj"
@@ -4037,10 +4041,11 @@ class TestLocking(unittest.TestCase):
         """
         source = textwrap.dedent("""
             import io, os, sys, threading
-            from c2pa import (Builder, Signer, C2paSignerInfo,
+            from c2pa import (Builder, Context, Signer, C2paSignerInfo,
                               C2paSigningAlg as SigningAlg)
 
             data_dir = sys.argv[1]
+            context = Context()
             certs = open(os.path.join(data_dir, "es256_certs.pem"), "rb").read()
             key = open(os.path.join(data_dir, "es256_private.key"), "rb").read()
             img = open(os.path.join(data_dir, "C.jpg"), "rb").read()
@@ -4068,7 +4073,7 @@ class TestLocking(unittest.TestCase):
                     if box["stop"]:
                         return
                     try:
-                        b = Builder(manifest)
+                        b = Builder(manifest, context=context)
                         b.sign(box["signer"], "image/jpeg",
                                io.BytesIO(img), io.BytesIO())
                         b.close()
@@ -4114,7 +4119,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
     }
 
     def _archive_bytes(self):
-        builder = Builder(self._MANIFEST)
+        builder = Builder(self._MANIFEST, context=TEST_CONTEXT)
         try:
             archive = io.BytesIO()
             builder.to_archive(archive)
@@ -4140,7 +4145,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
                                      "digitalsourcetype/digitalCreation",
             }]},
         }])
-        builder = Builder(manifest)
+        builder = Builder(manifest, context=TEST_CONTEXT)
         self.addCleanup(builder.close)
         inside = threading.Event()
         release = threading.Event()
@@ -4175,7 +4180,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
         with open(fragment_path, "rb") as f:
             fragment_bytes = f.read()
 
-        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        reader = Reader("video/mp4", io.BytesIO(init_bytes), context=TEST_CONTEXT)
         try:
             with reader._native_call():
                 with self.assertRaises(Error) as raised:
@@ -4197,7 +4202,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
 
     def test_close_during_with_archive_defers_and_frees(self):
         archive_bytes = self._archive_bytes().getvalue()
-        builder = Builder(self._MANIFEST)
+        builder = Builder(self._MANIFEST, context=TEST_CONTEXT)
 
         inside = threading.Event()
         release = threading.Event()

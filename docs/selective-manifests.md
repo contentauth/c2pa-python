@@ -483,7 +483,7 @@ There are two distinct types of archives, sharing the same binary format but bei
 
 ### Builder archives vs. ingredient archives
 
-A **builder archive** (also called a working store archive) is a serialized snapshot of a `Builder`. It contains the manifest definition, all resources, and any ingredients that were added. It is created by `builder.to_archive()` and restored with `builder.with_archive()`, which loads a working store from a builder archive into an existing builder instance. `Builder.from_archive()` also creates a new builder instance from an archive, but it is deprecated.
+A **builder archive** (also called a working store archive) is a serialized snapshot of a `Builder`. It contains the manifest definition, all resources, and any ingredients that were added. It is created by `builder.to_archive()` and restored with `builder.with_archive()`, which loads a working store from a builder archive into an existing builder instance.
 
 An **ingredient archive** contains the manifest store from an asset that was added as an ingredient.
 
@@ -860,7 +860,7 @@ with Builder({
 ```
 
 > [!NOTE]
-> When restoring from an archive, `with_archive()` preserves context settings. The deprecated `from_archive()` creates a builder with SDK default settings. See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
+> When restoring from an archive, `with_archive()` preserves context settings. See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
 
 **Step 2:** Read the archive and extract ingredients:
 

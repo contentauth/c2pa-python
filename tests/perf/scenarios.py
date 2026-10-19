@@ -30,6 +30,10 @@ from c2pa import (
 )
 import c2pa.c2pa as c2pa_module
 
+# Reader and Builder require a context. Scenarios that need no signer or
+# particular settings share this one, built once at import.
+DEFAULT_CONTEXT = Context()
+
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 READING_FIXTURES_DIR = FIXTURES_DIR / "files-for-reading-tests"
 SIGNING_FIXTURES_DIR = FIXTURES_DIR / "files-for-signing-tests"
@@ -118,30 +122,8 @@ def _make_signer() -> Signer:
     return Signer.from_info(info)
 
 
-def _sign_file(path: Path, mime: str, iterations: int) -> None:
-    signer = _make_signer()
-    source_bytes = path.read_bytes()
-    manifest = {**MANIFEST_BASE, "format": mime}
-    for _ in _iterate(iterations):
-        source = io.BytesIO(source_bytes)
-        output = io.BytesIO()
-        builder = Builder(manifest)
-        builder.sign(signer, mime, source, output)
-
-
-def _read_file(path: Path, mime: str, iterations: int) -> None:
-    for _ in _iterate(iterations):
-        with open(path, "rb") as f:
-            reader = Reader(mime, f)
-            reader.json()
-            reader.close()
-
-
 # Context-API helpers: the Context is built once before the loop and reused on
-# every iteration, so its settings are parsed a single time. Most scenarios use
-# these. The `_legacy` jpeg/png scenarios build the Reader/Builder without a
-# Context, which re-reads thread-local settings on each construction; running a
-# legacy scenario against its `_with_context` pair isolates the settings cost.
+# every iteration, so its settings are parsed a single time.
 
 def _sign_file_context(path: Path, mime: str, iterations: int) -> None:
     signer = _make_signer()
@@ -225,10 +207,6 @@ def _sign_parallel(path: Path, mime: str, iterations: int, *,
 
 # Reader scenarios: read manifests from files with manifests
 
-def scenario_reader_jpeg_legacy(iterations: int = 100) -> None:
-    _read_file(SIGNED_JPEG, "image/jpeg", iterations)
-
-
 def scenario_reader_mp4(iterations: int = 100) -> None:
     _read_file_context(READING_FIXTURES_DIR / "video1.mp4", "video/mp4", iterations)
 
@@ -238,10 +216,6 @@ def scenario_reader_wav(iterations: int = 100) -> None:
 
 
 # Builder.sign (without ingredients))
-
-def scenario_builder_sign_jpeg_legacy(iterations: int = 100) -> None:
-    _sign_file(SOURCE_JPEG, "image/jpeg", iterations)
-
 
 def scenario_builder_sign_gif(iterations: int = 100) -> None:
     _sign_file_context(SIGNING_FIXTURES_DIR / "sample1.gif", "image/gif", iterations)
@@ -253,10 +227,6 @@ def scenario_builder_sign_heic(iterations: int = 100) -> None:
 
 def scenario_builder_sign_m4a(iterations: int = 100) -> None:
     _sign_file_context(SIGNING_FIXTURES_DIR / "sample1.m4a", "audio/mp4", iterations)
-
-
-def scenario_builder_sign_png_legacy(iterations: int = 100) -> None:
-    _sign_file(SIGNING_FIXTURES_DIR / "sample1.png", "image/png", iterations)
 
 
 def scenario_builder_sign_webp(iterations: int = 100) -> None:
@@ -475,10 +445,10 @@ def scenario_builder_sign_jpeg_archive_roundtrip(iterations: int = 100) -> None:
     ingredient_bytes = SIGNED_JPEG.read_bytes()
     for _ in _iterate(iterations):
         archive = io.BytesIO()
-        Builder(MANIFEST_BASE).to_archive(archive)
+        Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT).to_archive(archive)
         archive.seek(0)
-        # from_archive() yields a context-less Builder. To keep the Context
-        # (and its signer), build with the context first, then load the archive.
+        # Build with the context first, then load the archive, so the Builder
+        # keeps the Context and its signer.
         builder = Builder(MANIFEST_BASE, context=context).with_archive(archive)
         with io.BytesIO(ingredient_bytes) as ing:
             builder.add_ingredient(
@@ -499,7 +469,7 @@ def scenario_builder_with_archive_swap(iterations: int = 100) -> None:
     """
     context = Context(signer=_make_signer())
     archive = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive)
+    Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT).to_archive(archive)
     archive_bytes = archive.getvalue()
     for _ in _iterate(iterations):
         builder = Builder(MANIFEST_BASE, context=context)
@@ -516,7 +486,7 @@ def scenario_reader_with_fragment_swap(iterations: int = 100) -> None:
     init_bytes = DASH_INIT_MP4.read_bytes()
     fragment_bytes = DASH_FRAGMENT.read_bytes()
     for _ in _iterate(iterations):
-        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        reader = Reader("video/mp4", io.BytesIO(init_bytes), context=DEFAULT_CONTEXT)
         try:
             reader.with_fragment(
                 "video/mp4",
@@ -529,28 +499,6 @@ def scenario_reader_with_fragment_swap(iterations: int = 100) -> None:
             pass
         finally:
             reader.close()
-
-
-def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
-    """Loop Builder.from_archive() itself (context-less alternate constructor),
-    then sign. Regression guard for the classmethod's native-handle wrapping.
-    """
-    signer = _make_signer()
-    source_bytes = SOURCE_JPEG.read_bytes()
-    ingredient_bytes = SIGNED_JPEG.read_bytes()
-    archive_bytes = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive_bytes)
-    archive_bytes = archive_bytes.getvalue()
-    for _ in _iterate(iterations):
-        # from_archive() yields a context-less Builder, so sign() needs an
-        # explicit signer (no Context to pull one from).
-        builder = Builder.from_archive(io.BytesIO(archive_bytes))
-        with io.BytesIO(ingredient_bytes) as ing:
-            builder.add_ingredient(
-                {"relationship": "parentOf", "instance_id": _PARENT_ID},
-                "image/jpeg", ing,
-            )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
 
 
 # Consume-and-return failure paths.
@@ -580,7 +528,7 @@ def scenario_reader_with_fragment_pre_consume_rejection(
     init_bytes = DASH_INIT_MP4.read_bytes()
     fragment_bytes = DASH_FRAGMENT.read_bytes()
     for _ in _iterate(iterations):
-        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        reader = Reader("video/mp4", io.BytesIO(init_bytes), context=DEFAULT_CONTEXT)
         real_handle = reader._handle
         # Keep the buffer alive: the cast pointer does not own it, and an
         # early collection would hand the FFI a dangling address.
@@ -616,7 +564,7 @@ def scenario_builder_with_archive_post_consume_failure(
     side already dropped, this scenario double-frees or leaks.
     """
     for _ in _iterate(iterations):
-        builder = Builder(MANIFEST_BASE)
+        builder = Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT)
         try:
             builder.with_archive(io.BytesIO(b"not a valid archive"))
             raise AssertionError("post-consume failure did not raise")
@@ -634,7 +582,7 @@ def scenario_with_fragment_marshalling_error(iterations: int = 100) -> None:
     """
     init_bytes = DASH_INIT_MP4.read_bytes()
     for _ in _iterate(iterations):
-        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        reader = Reader("video/mp4", io.BytesIO(init_bytes), context=DEFAULT_CONTEXT)
         try:
             reader.with_fragment("video/mp4", object(), object())
             raise AssertionError("marshalling error did not raise")
@@ -656,7 +604,7 @@ def scenario_with_fragment_mixed_outcomes(iterations: int = 100) -> None:
     fragment_bytes = DASH_FRAGMENT.read_bytes()
     for i in _iterate(iterations):
         phase = i % 3
-        reader = Reader("video/mp4", io.BytesIO(init_bytes))
+        reader = Reader("video/mp4", io.BytesIO(init_bytes), context=DEFAULT_CONTEXT)
         try:
             if phase == 0:
                 reader.with_fragment("video/mp4", io.BytesIO(init_bytes),
@@ -700,7 +648,7 @@ def scenario_with_fragment_mixed_outcomes(iterations: int = 100) -> None:
 
 def _ingredient_archive_bytes(ingredient_json: dict, mime: str, asset_bytes: bytes) -> bytes:
     """Build a per-ingredient archive once, for reuse inside scenario loops."""
-    builder = Builder(MANIFEST_BASE)
+    builder = Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT)
     with io.BytesIO(asset_bytes) as ing:
         builder.add_ingredient(ingredient_json, mime, ing)
     archive = io.BytesIO()
@@ -712,7 +660,7 @@ def scenario_builder_to_archive_with_ingredient(iterations: int = 100) -> None:
     """Serialize a builder holding one ingredient to an archive (no signing)."""
     ingredient_bytes = SIGNED_JPEG.read_bytes()
     for _ in _iterate(iterations):
-        builder = Builder(MANIFEST_BASE)
+        builder = Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT)
         with io.BytesIO(ingredient_bytes) as ing:
             builder.add_ingredient(
                 {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
@@ -744,7 +692,7 @@ def scenario_builder_sign_jpeg_archive_roundtrip_ingredient_in_archive(iteration
     }
     for _ in _iterate(iterations):
         archive = io.BytesIO()
-        src_builder = Builder(manifest)
+        src_builder = Builder(manifest, context=DEFAULT_CONTEXT)
         with io.BytesIO(ingredient_bytes) as ing:
             src_builder.add_ingredient(
                 {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
@@ -760,7 +708,7 @@ def scenario_builder_write_ingredient_archive(iterations: int = 100) -> None:
     """Add one ingredient and write it out as a per-ingredient archive."""
     ingredient_bytes = SIGNED_JPEG.read_bytes()
     for _ in _iterate(iterations):
-        builder = Builder(MANIFEST_BASE)
+        builder = Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT)
         with io.BytesIO(ingredient_bytes) as ing:
             builder.add_ingredient(
                 {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
@@ -814,7 +762,7 @@ def scenario_builder_ingredient_archive_roundtrip(iterations: int = 100) -> None
     }
     for _ in _iterate(iterations):
         archive = io.BytesIO()
-        src_builder = Builder(MANIFEST_BASE)
+        src_builder = Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT)
         with io.BytesIO(ingredient_bytes) as ing:
             src_builder.add_ingredient(
                 {"relationship": "parentOf", "instance_id": _ARCH_PARENT_ID},
@@ -861,7 +809,7 @@ def scenario_reader_error_no_manifest(iterations: int = 100) -> None:
     source_bytes = SOURCE_JPEG.read_bytes()  # A.jpg carries no manifest
     for _ in _iterate(iterations):
         try:
-            Reader("image/jpeg", io.BytesIO(source_bytes)).json()
+            Reader("image/jpeg", io.BytesIO(source_bytes), context=DEFAULT_CONTEXT).json()
         except C2paError:
             pass
 
@@ -870,7 +818,7 @@ def scenario_builder_error_invalid_manifest(iterations: int = 100) -> None:
     """Error case: Builder with malformed manifest JSON."""
     for _ in _iterate(iterations):
         try:
-            Builder('{"not valid json')
+            Builder('{"not valid json', context=DEFAULT_CONTEXT)
         except C2paError:
             pass
 
@@ -927,8 +875,7 @@ def scenario_signer_construction(iterations: int = 100) -> None:
         signer.close()
 
 
-# jpeg + png context variants, paired with the `_legacy` scenarios above for
-# side-by-side comparison.
+# jpeg + png context variants.
 
 def scenario_builder_sign_jpeg_with_context(iterations: int = 100) -> None:
     _sign_file_context(SOURCE_JPEG, "image/jpeg", iterations)
@@ -953,7 +900,7 @@ def scenario_reader_manifest_data_context(iterations: int = 100) -> None:
     """
     source_bytes = SOURCE_JPEG.read_bytes()
     signer = _make_signer()
-    builder = Builder({**MANIFEST_BASE, "format": "image/jpeg"})
+    builder = Builder({**MANIFEST_BASE, "format": "image/jpeg"}, context=DEFAULT_CONTEXT)
     builder.set_no_embed()
     manifest_bytes = builder.sign(
         signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
@@ -1020,7 +967,7 @@ def scenario_fork_reader_collect(iterations: int = 100) -> None:
         return
     for _ in _iterate(iterations):
         with open(SIGNED_JPEG, "rb") as f:
-            reader = Reader("image/jpeg", f)
+            reader = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
         _fork_wait(lambda: gc.collect())
         reader.close()
 
@@ -1047,7 +994,7 @@ def scenario_fork_contended_mutex(iterations: int = 100) -> None:
     def _worker():
         while not stop.is_set():
             with open(SIGNED_JPEG, "rb") as f:
-                r = Reader("image/jpeg", f)
+                r = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
             r.close()
 
     threads = [threading.Thread(target=_worker, daemon=True)
@@ -1058,7 +1005,7 @@ def scenario_fork_contended_mutex(iterations: int = 100) -> None:
         for _ in _iterate(iterations):
             for _ in range(5):
                 with open(SIGNED_JPEG, "rb") as f:
-                    reader = Reader("image/jpeg", f)
+                    reader = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
 
                 def _child(r=reader):
                     r.close()
@@ -1083,7 +1030,7 @@ def scenario_fork_thread_local_orphan(iterations: int = 100) -> None:
 
         def _create():
             with open(SIGNED_JPEG, "rb") as f:
-                tl.reader = Reader("image/jpeg", f)
+                tl.reader = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
 
         t = threading.Thread(target=_create)
         t.start()
@@ -1100,7 +1047,7 @@ def scenario_fork_gc_cycle(iterations: int = 100) -> None:
         return
     for _ in _iterate(iterations):
         with open(SIGNED_JPEG, "rb") as f:
-            reader = Reader("image/jpeg", f)
+            reader = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
         container = SimpleNamespace(reader=reader)
         reader.container = container   # cycle: reader ↔ container
         del reader, container          # refcount > 0; cycle survives until GC
@@ -1121,7 +1068,7 @@ def scenario_fork_parent_frees_after_fork(iterations: int = 100) -> None:
         readers = []
         for _ in range(20):
             with open(SIGNED_JPEG, "rb") as f:
-                readers.append(Reader("image/jpeg", f))
+                readers.append(Reader("image/jpeg", f, context=DEFAULT_CONTEXT))
         _fork_wait(lambda: None)       # child does nothing, exits 0
         for r in readers:
             r.close()
@@ -1146,7 +1093,7 @@ def scenario_fork_child_closes_then_parent_frees(iterations: int = 100) -> None:
         readers = []
         for _ in range(20):
             with open(SIGNED_JPEG, "rb") as f:
-                readers.append(Reader("image/jpeg", f))
+                readers.append(Reader("image/jpeg", f, context=DEFAULT_CONTEXT))
 
         def _child():
             for r in readers:
@@ -1168,7 +1115,7 @@ def scenario_fork_child_sys_exit(iterations: int = 100) -> None:
         return
     for _ in _iterate(iterations):
         with open(SIGNED_JPEG, "rb") as f:
-            reader = Reader("image/jpeg", f)
+            reader = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
         context = Context()
 
         def _child():
@@ -1196,7 +1143,7 @@ def _fork_contended_over(make_object, iterations):
     def _worker():
         while not stop.is_set():
             with open(SIGNED_JPEG, "rb") as f:
-                r = Reader("image/jpeg", f)
+                r = Reader("image/jpeg", f, context=DEFAULT_CONTEXT)
             r.close()
 
     threads = [threading.Thread(target=_worker, daemon=True)
@@ -1231,7 +1178,7 @@ def scenario_fork_contended_mutex_swap(iterations: int = 100) -> None:
         return
     context = Context(signer=_make_signer())
     archive = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive)
+    Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT).to_archive(archive)
     archive_bytes = archive.getvalue()
 
     def _make():
@@ -1240,22 +1187,6 @@ def scenario_fork_contended_mutex_swap(iterations: int = 100) -> None:
         return builder
 
     _fork_contended_over(_make, iterations)
-
-
-def scenario_fork_contended_mutex_wrap(iterations: int = 100) -> None:
-    """Fork safety benchmark scenario:
-    fork over a Builder built by from_archive(), under thread contention.
-    from_archive is the only path that bypasses __init__, so it is the one
-    most likely to be missing the PID stamp the child's close() depends on.
-    """
-    if not hasattr(os, "fork"):
-        return
-    archive = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive)
-    archive_bytes = archive.getvalue()
-
-    _fork_contended_over(
-        lambda: Builder.from_archive(io.BytesIO(archive_bytes)), iterations)
 
 
 def scenario_fork_consumed_signer(iterations: int = 100) -> None:
@@ -1295,7 +1226,7 @@ def scenario_swap_chain_churn(iterations: int = 100) -> None:
     """
     context = Context(signer=_make_signer())
     archive = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive)
+    Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT).to_archive(archive)
     archive_bytes = archive.getvalue()
     builder = Builder(MANIFEST_BASE, context=context)
     for _ in _iterate(iterations):
@@ -1315,8 +1246,8 @@ def scenario_deferred_teardown_flush_queue(iterations: int = 100) -> None:
     signed_bytes = SIGNED_JPEG.read_bytes()
     real_free = c2pa_module.ManagedResource._free_native_ptr
     for _ in _iterate(iterations):
-        first = Reader("image/jpeg", io.BytesIO(signed_bytes))
-        second = Reader("image/jpeg", io.BytesIO(signed_bytes))
+        first = Reader("image/jpeg", io.BytesIO(signed_bytes), context=DEFAULT_CONTEXT)
+        second = Reader("image/jpeg", io.BytesIO(signed_bytes), context=DEFAULT_CONTEXT)
 
         freed = []
         c2pa_module.ManagedResource._free_native_ptr = staticmethod(
@@ -1351,7 +1282,7 @@ def scenario_fork_swap_cleanup(iterations: int = 100) -> None:
         return
     context = Context(signer=_make_signer())
     archive = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive)
+    Builder(MANIFEST_BASE, context=DEFAULT_CONTEXT).to_archive(archive)
     archive_bytes = archive.getvalue()
     for _ in _iterate(iterations):
         builder = Builder(MANIFEST_BASE, context=context)
@@ -1381,14 +1312,11 @@ def scenario_fork_stream_cleanup(iterations: int = 100) -> None:
 
 
 SCENARIOS = {
-    "reader_jpeg_legacy": scenario_reader_jpeg_legacy,
     "reader_jpeg_with_context": scenario_reader_jpeg_with_context,
     "reader_manifest_data_context": scenario_reader_manifest_data_context,
     "reader_mp4": scenario_reader_mp4,
     "reader_wav": scenario_reader_wav,
-    "builder_sign_jpeg_legacy": scenario_builder_sign_jpeg_legacy,
     "builder_sign_jpeg_with_context": scenario_builder_sign_jpeg_with_context,
-    "builder_sign_png_legacy": scenario_builder_sign_png_legacy,
     "builder_sign_png_with_context": scenario_builder_sign_png_with_context,
     "builder_sign_jpeg_parallel_split_pool": scenario_builder_sign_jpeg_parallel_split_pool,
     "builder_sign_jpeg_parallel_split_barrier": scenario_builder_sign_jpeg_parallel_split_barrier,
@@ -1408,7 +1336,6 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
-    "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
     "builder_with_archive_swap": scenario_builder_with_archive_swap,
     "reader_with_fragment_swap": scenario_reader_with_fragment_swap,
     "with_fragment_pre_consume_rejection":
@@ -1441,7 +1368,6 @@ SCENARIOS = {
     "fork_stream_cleanup": scenario_fork_stream_cleanup,
     "fork_swap_cleanup": scenario_fork_swap_cleanup,
     "fork_contended_mutex_swap": scenario_fork_contended_mutex_swap,
-    "fork_contended_mutex_wrap": scenario_fork_contended_mutex_wrap,
     "fork_consumed_signer": scenario_fork_consumed_signer,
     "swap_chain_churn": scenario_swap_chain_churn,
     "deferred_teardown_flush_queue": scenario_deferred_teardown_flush_queue,

@@ -22,7 +22,6 @@ import logging
 import sys
 import os
 import threading
-import warnings
 import weakref
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -42,13 +41,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_version',
     # Error retriever and parser
     'c2pa_error',
-    # Legacy APIs, deprecated.
-    'c2pa_load_settings',
-    'c2pa_reader_from_stream',
-    'c2pa_reader_from_manifest_data_and_stream',
-    'c2pa_builder_from_json',
-    'c2pa_builder_from_archive',
-    'c2pa_format_embeddable',
     # Stream
     'c2pa_create_stream',
     'c2pa_release_stream',
@@ -1309,22 +1301,12 @@ _setup_function(
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
 _setup_function(
-    _lib.c2pa_load_settings, [
-        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_int)
-_setup_function(
     _lib.c2pa_free_string_array,
     [ctypes.POINTER(ctypes.c_char_p), ctypes.c_size_t],
     None
 )
 
 # Set up Reader function prototypes
-_setup_function(_lib.c2pa_reader_from_stream,
-                [ctypes.c_char_p, ctypes.POINTER(C2paStream)],
-                ctypes.POINTER(C2paReader))
-_setup_function(
-    _lib.c2pa_reader_from_manifest_data_and_stream, [
-        ctypes.c_char_p, ctypes.POINTER(C2paStream), ctypes.POINTER(
-            ctypes.c_ubyte), ctypes.c_size_t], ctypes.POINTER(C2paReader))
 _setup_function(
     _lib.c2pa_reader_json, [
         ctypes.POINTER(C2paReader)], ctypes.c_void_p)
@@ -1353,12 +1335,6 @@ _setup_function(
 )
 
 # Set up Builder function prototypes
-_setup_function(
-    _lib.c2pa_builder_from_json, [
-        ctypes.c_char_p], ctypes.POINTER(C2paBuilder))
-_setup_function(_lib.c2pa_builder_from_archive,
-                [ctypes.POINTER(C2paStream)],
-                ctypes.POINTER(C2paBuilder))
 _setup_function(
     _lib.c2pa_builder_with_archive,
     [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
@@ -1403,12 +1379,6 @@ _setup_function(_lib.c2pa_builder_sign,
                  ctypes.POINTER(C2paSigner),
                  ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
                 ctypes.c_int64)
-_setup_function(
-    _lib.c2pa_format_embeddable, [
-        ctypes.c_char_p, ctypes.POINTER(
-            ctypes.c_ubyte), ctypes.c_size_t, ctypes.POINTER(
-                ctypes.POINTER(
-                    ctypes.c_ubyte))], ctypes.c_int64)
 _setup_function(_lib.c2pa_signer_create,
                 [ctypes.c_void_p,
                  SignerCallback,
@@ -1953,82 +1923,6 @@ def version() -> str:
     """
     result = _lib.c2pa_version()
     return _convert_to_py_string(result)
-
-
-def _warn_deprecated_api(message: str, stacklevel: int) -> None:
-    """Deprecation warning flag.
-
-    Args:
-        message: Deprecation details.
-        stacklevel: warnings.warn.
-    """
-    warnings.warn(
-        f"{message} This API will be removed in a future version",
-        DeprecationWarning,
-        stacklevel=stacklevel + 1,
-    )
-
-
-@overload
-def load_settings(settings: str, format: str = "json") -> None:
-    ...
-
-
-@overload
-def load_settings(settings: dict) -> None:
-    ...
-
-
-def load_settings(settings: Union[str, dict], format: str = "json") -> None:
-    """Load C2PA settings into thread-local storage from a string or dict.
-
-    .. deprecated::
-        Use :class:`Settings` and :class:`Context` for
-        per-instance configuration instead. Settings and
-        Context will propagate configurations through object instances,
-        no thread-local configurations. Avoid mixing Context APIs
-        and legacy load_settings usage.
-        c2pa-rs 0.92.0 removes c2pa_load_settings, so this function
-        will be removed when c2pa-python moves to that release.
-
-    Args:
-        settings: The settings string or dict to load
-        format: The format of the settings string (default: "json").
-                Ignored when settings is a dict.
-
-    Raises:
-        C2paError: If there was an error loading the settings
-    """
-    _warn_deprecated_api(
-        "load_settings() is deprecated. Use Settings"
-        " and Context for per-instance configuration.",
-        stacklevel=2,
-    )
-
-    # Convert to JSON string as necessary
-    try:
-        if isinstance(settings, dict):
-            settings_str = json.dumps(settings)
-            format = "json"
-        else:
-            settings_str = settings
-    except (TypeError, ValueError) as e:
-        raise C2paError(f"Failed to serialize settings to JSON: {e}")
-
-    try:
-        _check_cstr_arg("settings", settings_str)
-        _check_cstr_arg("format", format)
-        settings_bytes = settings_str.encode('utf-8')
-        format_bytes = format.encode('utf-8')
-    except (AttributeError, UnicodeEncodeError) as e:
-        raise C2paError(f"Failed to encode settings to UTF-8: {e}")
-
-    with _native_section():
-        result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
-        _check_ffi_operation_result(
-            result,
-            "Error loading settings",
-            check=lambda r: r != 0)
 
 
 @contextlib.contextmanager
@@ -2969,15 +2863,6 @@ class Reader(ManagedResource):
     @overload
     def try_create(
         cls,
-        format_or_path: Union[str, Path, None] = None,
-        stream: Optional[Any] = None,
-        manifest_data: Optional[Any] = None,
-    ) -> Optional["Reader"]: ...
-
-    @classmethod
-    @overload
-    def try_create(
-        cls,
         format_or_path: Union[str, Path, None],
         stream: Optional[Any],
         manifest_data: Optional[Any],
@@ -3010,7 +2895,7 @@ class Reader(ManagedResource):
                 requests auto-detection (best effort).
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Optional ContextProvider for settings
+            context: ContextProvider for settings (required)
 
         Returns:
             Reader instance if the asset contains C2PA data,
@@ -3023,7 +2908,6 @@ class Reader(ManagedResource):
             return cls(
                 format_or_path, stream, manifest_data,
                 context=context,
-                _warn_stacklevel=3,
             )
         except C2paError.ManifestNotFound:
             return None
@@ -3034,14 +2918,6 @@ class Reader(ManagedResource):
         stream: Any,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        format_or_path: Union[str, Path, None] = None,
-        stream: Optional[Any] = None,
-        manifest_data: Optional[Any] = None,
     ) -> None: ...
 
     @overload
@@ -3059,8 +2935,6 @@ class Reader(ManagedResource):
         stream: Optional[Any] = None,
         manifest_data: Optional[Any] = None,
         context: Optional['ContextProvider'] = None,
-        *,
-        _warn_stacklevel: int = 2,
     ):
         """Create a new Reader.
 
@@ -3086,15 +2960,13 @@ class Reader(ManagedResource):
                 string requests detection from the bytes.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Context implementing ContextProvider with settings.
-                Omitting it is deprecated: c2pa-rs 0.92.0 removes the
-                native functions a Reader without a context calls.
-            _warn_stacklevel: Internal. Stack level for the deprecation
-                warning, raised by factory methods that call this one.
+            context: Context implementing ContextProvider with settings
+                (required)
 
         Raises:
-            C2paError: If there was an error creating the reader, including
-              when the format cannot be detected from an unrecognized asset
+            C2paError: If context is missing, or if there was an error
+              creating the reader, including when the format cannot be
+              detected from an unrecognized asset
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
@@ -3111,35 +2983,15 @@ class Reader(ManagedResource):
         # still required to read from.
         if format_or_path is None and stream is None:
             raise C2paError("Reader requires a path or a stream")
+        if context is None:
+            raise C2paError(
+                "Reader requires a context. Pass context=Context(),"
+                " or a Context built from Settings.")
 
-        if context is not None:
-            self._init_from_context(
-                context, format_or_path, stream,
-                manifest_data,
-            )
-            return
-
-        _warn_deprecated_api(
-            "Creating a Reader without a context is deprecated."
-            " Pass context=Context(), or a Context built from Settings.",
-            stacklevel=_warn_stacklevel,
+        self._init_from_context(
+            context, format_or_path, stream,
+            manifest_data,
         )
-
-        format_bytes = self._resolve_format_bytes(format_or_path, stream)
-
-        if stream is None:
-            # Create a stream from the file path in format_or_path.
-            # A None format lets the native lib guess from the bytes.
-            self._init_from_file(str(format_or_path), format_bytes)
-
-        elif isinstance(stream, str):
-            # stream is a file path, format_or_path is the format
-            self._init_from_file(
-                stream, format_bytes, manifest_data)
-
-        else:
-            # format_or_path is a format string, stream is a stream object
-            self._init_from_stream(stream, format_bytes, manifest_data)
 
     @staticmethod
     def _resolve_format_bytes(format_or_path, stream) -> Optional[bytes]:
@@ -3156,78 +3008,6 @@ class Reader(ManagedResource):
         return _encode_format(
             None if format_or_path is None else str(format_or_path), "Reader")
 
-    def _create_reader(self, format_bytes, stream_obj,
-                       manifest_data=None):
-        """Create a native reader from a Stream
-        and activate this Reader around it.
-
-        Args:
-            format_bytes: Encoded format/MIME type, or None for auto-detection
-            stream_obj: A Stream instance
-            manifest_data: Optional manifest bytes
-        """
-        format_arg = _format_ffi_arg(format_bytes)
-        if manifest_data is None:
-            def create():
-                return _lib.c2pa_reader_from_stream(
-                    format_arg, stream_obj._stream)
-        else:
-            if not isinstance(manifest_data, bytes):
-                raise TypeError(Reader._ERROR_MESSAGES['manifest_error'])
-            manifest_array = (
-                ctypes.c_ubyte *
-                len(manifest_data)).from_buffer_copy(manifest_data)
-
-            def create():
-                return _lib.c2pa_reader_from_manifest_data_and_stream(
-                    format_arg,
-                    stream_obj._stream,
-                    manifest_array,
-                    len(manifest_data),
-                )
-
-        self._create_and_activate(
-            create, Reader._ERROR_MESSAGES['reader_error'])
-
-    def _init_from_file(self, path, format_bytes,
-                        manifest_data=None):
-        """Open a file and create a reader from it.
-
-        Args:
-            path: File path to open
-            format_bytes: UTF-8 encoded format/MIME type
-            manifest_data: Optional manifest bytes
-        """
-        try:
-            self._backing_file = open(path, 'rb')
-            self._own_stream = Stream(self._backing_file)
-            self._create_reader(format_bytes, self._own_stream, manifest_data)
-        except C2paError:
-            self._close_streams()
-            raise
-        except Exception as e:
-            self._close_streams()
-            raise C2paError.Io(
-                Reader._ERROR_MESSAGES['io_error'].format(str(e)))
-
-    def _init_from_stream(self, stream, format_bytes,
-                          manifest_data=None):
-        """Create a reader from a caller-supplied stream object.
-        The native reader reads through this stream as long as it's alive,
-        so the wrapper is stored on the instance and released by _release().
-
-        Args:
-            stream: A stream-like object owned by the caller
-            format_bytes: UTF-8 encoded format/MIME type
-            manifest_data: Optional manifest bytes
-        """
-        try:
-            self._own_stream = Stream(stream)
-            self._create_reader(format_bytes, self._own_stream, manifest_data)
-        except Exception:
-            self._close_streams()
-            raise
-
     def _init_from_context(self, context, format_or_path,
                            stream, manifest_data=None):
         """Initialize Reader from a Context object implementing
@@ -3242,15 +3022,20 @@ class Reader(ManagedResource):
         # Determine format and open stream
         format_bytes = self._resolve_format_bytes(format_or_path, stream)
         format_arg = _format_ffi_arg(format_bytes)
-        if stream is None:
-            # A None format lets the native lib guess from the bytes.
-            self._backing_file = open(str(format_or_path), 'rb')
-            self._own_stream = Stream(self._backing_file)
-        elif isinstance(stream, str):
-            self._backing_file = open(stream, 'rb')
-            self._own_stream = Stream(self._backing_file)
-        else:
-            self._own_stream = Stream(stream)
+        try:
+            if stream is None:
+                # A None format lets the native lib guess from the bytes.
+                self._backing_file = open(str(format_or_path), 'rb')
+                self._own_stream = Stream(self._backing_file)
+            elif isinstance(stream, str):
+                self._backing_file = open(stream, 'rb')
+                self._own_stream = Stream(self._backing_file)
+            else:
+                self._own_stream = Stream(stream)
+        except OSError as e:
+            self._close_streams()
+            raise C2paError.Io(
+                Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
         try:
             # The Context is caller-supplied and may be shared, so its handle
@@ -3988,21 +3773,6 @@ class Builder(ManagedResource):
         return result
 
     @classmethod
-    @overload
-    def from_json(
-        cls,
-        manifest_json: Any,
-    ) -> 'Builder': ...
-
-    @classmethod
-    @overload
-    def from_json(
-        cls,
-        manifest_json: Any,
-        context: 'ContextProvider',
-    ) -> 'Builder': ...
-
-    @classmethod
     def from_json(
         cls,
         manifest_json: Any,
@@ -4012,125 +3782,51 @@ class Builder(ManagedResource):
 
         Args:
             manifest_json: The JSON manifest definition
-            context: Optional ContextProvider for settings
+            context: ContextProvider for settings (required)
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If there was an error creating the builder
+            C2paError: If context is missing, or if there was an error
+                creating the builder
         """
-        return cls(manifest_json, context=context, _warn_stacklevel=3)
-
-    @classmethod
-    def from_archive(
-        cls,
-        stream: Any,
-    ) -> 'Builder':
-        """Create a new Builder from an archive stream.
-
-        This creates builder without a context. To use a context,
-        create a Builder with a context first, then call with_archive() on it.
-
-        .. deprecated::
-            Use ``Builder({}, context=Context()).with_archive(stream)``.
-            c2pa-rs 0.92.0 removes c2pa_builder_from_archive, so this method
-            will be removed when c2pa-python moves to that release.
-
-        Args:
-            stream: The stream containing the archive
-                (any Python stream-like object)
-
-        Returns:
-            A new Builder instance (without any context)
-
-        Raises:
-            C2paError: If there was an error creating the builder
-                from archive
-        """
-        _warn_deprecated_api(
-            "Builder.from_archive() is deprecated. Use"
-            " Builder({}, context=Context()).with_archive(stream).",
-            stacklevel=2,
-        )
-
-        stream_obj = Stream(stream)
-
-        try:
-            with _native_section():
-                handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
-
-                _check_ffi_operation_result(
-                    handle, "Failed to create builder from archive")
-
-            try:
-                # A builder from an archive here carries no context.
-                return cls._wrap_native_handle(handle)
-            except Exception:
-                # No instance took ownership, so the handle is still ours.
-                ManagedResource._free_native_ptr(handle)
-                raise
-        finally:
-            stream_obj.close()
-
-    @overload
-    def __init__(
-        self,
-        manifest_json: Any,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        manifest_json: Any,
-        context: 'ContextProvider',
-    ) -> None: ...
+        return cls(manifest_json, context=context)
 
     def __init__(
         self,
         manifest_json: Any,
         context: Optional['ContextProvider'] = None,
-        *,
-        _warn_stacklevel: int = 2,
     ):
         """Initialize a new Builder instance.
 
         Args:
             manifest_json: The manifest JSON definition (string or dict)
-            context: Context (ContextProvider) for settings. Omitting it is
-                deprecated: c2pa-rs 0.92.0 removes c2pa_builder_from_json,
-                which a Builder without a context calls.
-            _warn_stacklevel: Internal. Stack level for the deprecation
-                warning, raised by factory methods that call this one.
+            context: Context (ContextProvider) for settings (required)
 
         Raises:
-            C2paError: If there was an error creating the builder
+            C2paError: If context is missing, or if there was an error
+                creating the builder
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
         super().__init__()
         self._init_attrs()
 
+        if context is None:
+            raise C2paError(
+                "Builder requires a context. Pass context=Context(),"
+                " or a Context built from Settings.")
+
         self._context = context
         self._has_context_signer = (
-            context is not None
-            and hasattr(context, 'has_signer')
+            hasattr(context, 'has_signer')
             and context.has_signer
         )
 
         json_str = _to_utf8_bytes(manifest_json, "manifest JSON")
 
-        if context is not None:
-            self._init_from_context(context, json_str)
-        else:
-            _warn_deprecated_api(
-                "Creating a Builder without a context is deprecated."
-                " Pass context=Context(), or a Context built from Settings.",
-                stacklevel=_warn_stacklevel,
-            )
-            self._create_and_activate(
-                lambda: _lib.c2pa_builder_from_json(json_str),
-                Builder._ERROR_MESSAGES['builder_error'])
+        self._init_from_context(context, json_str)
 
     def _init_from_context(self, context, json_str):
         """Initialize Builder from a ContextProvider.
@@ -4735,132 +4431,6 @@ class Builder(ManagedResource):
             raise C2paError(f"Error signing file: {str(e)}") from e
 
 
-def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
-    """Convert a binary C2PA manifest into an embeddable version.
-
-    .. deprecated::
-        c2pa-rs 0.92.0 removes c2pa_format_embeddable, so this function
-        will be removed when c2pa-python moves to that release.
-
-    Args:
-        format: The MIME type or extension of the target format
-        manifest_bytes: The raw manifest bytes
-
-    Returns:
-        A tuple of (size of result bytes, embeddable manifest bytes)
-
-    Raises:
-        C2paError: If there was an error converting the manifest
-    """
-    _warn_deprecated_api(
-        "format_embeddable() is deprecated.", stacklevel=2)
-
-    _check_cstr_arg("format", format)
-    format_str = format.encode('utf-8')
-    manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
-        manifest_bytes
-    )
-    result_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
-
-    with _native_section():
-        result = _lib.c2pa_format_embeddable(
-            format_str,
-            manifest_array,
-            len(manifest_bytes),
-            ctypes.byref(result_bytes_ptr)
-        )
-
-        _check_ffi_operation_result(
-            result,
-            "Failed to format embeddable manifest",
-            check=lambda r: r < 0)
-
-    size = result
-    if not result_bytes_ptr:
-        raise C2paError(
-            "Failed to format embeddable manifest: no data returned")
-    try:
-        result_bytes = ctypes.string_at(result_bytes_ptr, size)
-    except Exception as e:
-        raise C2paError(
-            f"Failed to convert embeddable manifest bytes: {e}"
-        ) from e
-    finally:
-        _lib.c2pa_free(result_bytes_ptr)
-
-    return size, result_bytes
-
-
-def create_signer(
-    callback: Callable[[bytes], bytes],
-    alg: C2paSigningAlg,
-    certs: str,
-    tsa_url: Optional[str] = None
-) -> Signer:
-    """Create a signer from a callback function (deprecated).
-
-    .. deprecated:: 0.11.0
-        This function is deprecated and will be removed in a future version.
-        Please use the Signer class method instead.
-        Example:
-            ```
-            signer = Signer.from_callback(callback, alg, certs, tsa_url)
-            ```
-
-    Args:
-        callback: Function that signs data and returns the signature
-        alg: The signing algorithm to use
-        certs: Certificate chain in PEM format
-        tsa_url: Optional RFC 3161 timestamp authority URL
-
-    Returns:
-        A new Signer instance
-
-    Raises:
-        C2paError: If there was an error creating the signer
-        C2paError.Encoding: If the certificate data or TSA URL
-          contains invalid UTF-8 characters
-    """
-    warnings.warn(
-        "The create_signer function is deprecated and will be removed in a "
-        "future version. Please use Signer.from_callback() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    return Signer.from_callback(callback, alg, certs, tsa_url)
-
-
-def create_signer_from_info(signer_info: C2paSignerInfo) -> Signer:
-    """Create a signer from signer information (deprecated).
-
-    .. deprecated:: 0.11.0
-        This function is deprecated and will be removed in a future version.
-        Please use the Signer class method instead.
-        Example:
-            ```
-            signer = Signer.from_info(signer_info)
-            ```
-
-    Args:
-        signer_info: The signer configuration
-
-    Returns:
-        A new Signer instance
-
-    Raises:
-        C2paError: If there was an error creating the signer
-    """
-    warnings.warn(
-        "The create_signer_from_info function is deprecated and will be "
-        "removed in a future version. Please use Signer.from_info() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    return Signer.from_info(signer_info)
-
-
 def ed25519_sign(data: bytes, private_key: str) -> bytes:
     """Sign data using the Ed25519 algorithm.
 
@@ -4938,8 +4508,6 @@ __all__ = [
     'Reader',
     'Builder',
     'Signer',
-    'load_settings',
-    'format_embeddable',
     'version',
     'sdk_version'
 ]

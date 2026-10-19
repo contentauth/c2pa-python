@@ -52,7 +52,7 @@ manifest_json = json.dumps({
 
 ## Settings, Context, and ContextProvider
 
-The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated.
+The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations. `Reader` and `Builder` require a `Context`.
 
 See [Context and settings](context-settings.md) for details.
 
@@ -144,7 +144,7 @@ The built-in `Context` class is the standard `ContextProvider` implementation. C
 
 ### Migrating from load_settings
 
-The `load_settings()` function is deprecated. Replace it with `Settings` and `Context`. See [Migrating from load_settings](context-settings.md#migrating-from-load_settings) for details.
+The `load_settings()` function has been removed. Replace it with `Settings` and `Context`. See [Migrating from load_settings](context-settings.md#migrating-from-load_settings) for details.
 
 ## File-based operation
 

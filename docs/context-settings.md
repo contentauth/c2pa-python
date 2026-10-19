@@ -10,7 +10,7 @@ The `Context` class encapsulates configuration for:
 - **Signer configuration**: Optional signer credentials stored in the `Context` for reuse.
 - **State isolation**: Each `Context` is independent, allowing different configurations to coexist in the same application.
 
-`Context` replaces the deprecated global `load_settings()` function with explicit, isolated configuration:
+`Context` provides explicit, isolated configuration:
 
 - **Makes dependencies explicit**: Configuration is passed directly to `Reader` and `Builder`, not hidden in global state.
 - **Enables multiple configurations**: Run different configurations simultaneously (for example, one for development with test certificates, another for production with strict validation).
@@ -18,7 +18,7 @@ The `Context` class encapsulates configuration for:
 - **Simplifies testing**: Create isolated configurations for tests without worrying about cleanup or interference.
 
 > [!NOTE]
-> The deprecated `load_settings()` function still works for backward compatibility, but you are encouraged to migrate your code to use `Context`. See [Migrating from load_settings](#migrating-from-load_settings).
+> `Reader` and `Builder` require a `Context`. The global `load_settings()` function has been removed. See [Migrating from load_settings](#migrating-from-load_settings).
 
 ## Quick start
 
@@ -230,12 +230,9 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 
 #### Context and archives
 
-Archives (`.c2pa` files) store only the manifest definition. They do **not** store settings or context:
+Archives (`.c2pa` files) store only the manifest definition. They do **not** store settings or context.
 
-- **`Builder.from_archive(stream)`** creates a context-free builder. All settings revert to SDK defaults regardless of what context the original builder had.
-- **`Builder({}, ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved.
-
-Use `with_archive()`. `from_archive()` is deprecated and will be removed when c2pa-python moves to c2pa-rs 0.92.0.
+To restore an archive, create a builder with a context first, then load the archived manifest definition into it with `Builder({}, ctx).with_archive(stream)`. The builder keeps the context's settings.
 
 ```py
 ctx = Context.from_dict({
@@ -754,7 +751,7 @@ assert isinstance(ctx, ContextProvider)  # True
 
 ## Migrating from load_settings
 
-The `load_settings()` function is deprecated and will be removed when c2pa-python moves to c2pa-rs 0.92.0. Replace it with `Settings` and `Context` APIs:
+The `load_settings()` function has been removed. Replace it with `Settings` and `Context` APIs:
 
 | Aspect | `load_settings` (legacy) | `Context` |
 |--------|--------------------------|-----------|
@@ -762,7 +759,7 @@ The `load_settings()` function is deprecated and will be removed when c2pa-pytho
 | Multiple configs | Not supported | One context per configuration |
 | Testing | Shared global state | Isolated contexts per test |
 
-**Deprecated:**
+**Removed API:**
 
 ```py
 from c2pa import load_settings, Reader
