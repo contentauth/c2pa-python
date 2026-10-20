@@ -6,6 +6,15 @@ on:
 
   workflow_dispatch:
 
+  push:
+    branches: [main]
+    paths:
+      - 'api-docs/**'
+      - 'scripts/generate_api_docs.py'
+      - 'scripts/generate_versioned_api_docs.py'
+      - 'requirements-dev.txt'
+      - '.github/workflows/publish-docs.yml'
+
 permissions:
   contents: read
   pages: write
@@ -26,6 +35,7 @@ jobs:
         with:
           filter: tree:0
           fetch-depth: 0
+          ref: main
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -40,12 +50,14 @@ jobs:
         run: python3 -m pip install -r requirements-dev.txt
 
       - name: Build docs
-        run: python3 scripts/generate_api_docs.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/generate_versioned_api_docs.py
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'api-docs/_build/html/'
+          path: 'api-docs/_build/versioned/'
 
       - name: Deploy to GitHub Pages
         id: deployment
