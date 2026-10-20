@@ -54,6 +54,13 @@ INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 
+def _context_from_settings(settings):
+    """Build a Context from a settings dict or JSON string."""
+    if isinstance(settings, dict):
+        return Context.from_dict(settings)
+    return Context.from_json(settings)
+
+
 def _patch_free(test, fn):
     """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
     patcher = patch.object(
@@ -423,10 +430,10 @@ class TestReader(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(self.testPath, "rb") as file:
-                    reader = Reader("image/jpeg", file)
+                    reader = Reader("image/jpeg", file, context=settings_context)
                     validation_state = reader.get_validation_state()
                     result['validation_state'] = validation_state
             except Exception as e:
@@ -2233,14 +2240,14 @@ class TestBuilderWithSigner(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinitionV2)
+                    builder = Builder(self.manifestDefinitionV2, context=settings_context)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=settings_context)
                     json_data = reader.json()
 
                     # Get validation state with trust config
@@ -2307,7 +2314,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(os.path.join(self.data_dir, "ed25519.pub"), "rb") as cert_file:
                     certs = cert_file.read()
@@ -2323,11 +2330,11 @@ class TestBuilderWithSigner(unittest.TestCase):
                 signer = Signer.from_info(signer_info)
 
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinitionV2)
+                    builder = Builder(self.manifestDefinitionV2, context=settings_context)
                     output = io.BytesIO(bytearray())
                     builder.sign(signer, "image/jpeg", file, output)
                     output.seek(0)
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=settings_context)
                     json_data = reader.json()
 
                     # Get validation state with trust config
@@ -2447,7 +2454,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(os.path.join(self.data_dir, "ps256.pub"), "rb") as cert_file:
                     certs = cert_file.read()
@@ -2463,11 +2470,11 @@ class TestBuilderWithSigner(unittest.TestCase):
                 signer = Signer.from_info(signer_info)
 
                 with open(self.testPath2, "rb") as file:
-                    builder = Builder(self.manifestDefinitionV2)
+                    builder = Builder(self.manifestDefinitionV2, context=settings_context)
                     output = io.BytesIO(bytearray())
                     builder.sign(signer, "image/jpeg", file, output)
                     output.seek(0)
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=settings_context)
                     json_data = reader.json()
 
                     # Get validation state with trust config
@@ -2525,17 +2532,17 @@ class TestBuilderWithSigner(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinition)
+                    builder = Builder(self.manifestDefinition, context=settings_context)
                     archive = io.BytesIO(bytearray())
                     builder.to_archive(archive)
                     builder = Builder.from_archive(archive)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=settings_context)
                     json_data = reader.json()
 
                     # Get validation state with trust config
@@ -2597,10 +2604,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinitionV2)
+                    builder = Builder(self.manifestDefinitionV2, context=settings_context)
                     archive = io.BytesIO(bytearray())
                     builder.to_archive(archive)
                     builder = Builder.from_archive(archive)
@@ -2610,7 +2617,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                         builder.add_ingredient(ingredient_json, "image/jpeg", f)
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
-                    reader = Reader("image/jpeg", output)
+                    reader = Reader("image/jpeg", output, context=settings_context)
                     json_data = reader.json()
 
                     # Get validation state with trust config
@@ -2964,6 +2971,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         output.close()
 
     def test_ingredient_from_archive_linked_to_placed_action(self):
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
         ingredient_id = "xmp:iid:archive-component-001"
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
@@ -2981,7 +2989,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ],
         }
-        archive_builder = Builder.from_json(manifest)
+        archive_builder = Builder.from_json(manifest, context=settings_context)
         with open(self.testPath, "rb") as f:
             archive_builder.add_ingredient(
                 {"title": "photo.jpg", "relationship": "componentOf", "instance_id": ingredient_id},
@@ -2991,7 +2999,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive_builder.close()
 
         archive.seek(0)
-        signing_builder = Builder.from_json(manifest)
+        signing_builder = Builder.from_json(manifest, context=settings_context)
         signing_builder.add_ingredient_from_archive(archive)
         archive.close()
 
@@ -3001,13 +3009,14 @@ class TestBuilderWithSigner(unittest.TestCase):
         signing_builder.close()
 
         output.seek(0)
-        reader = Reader("image/jpeg", output)
+        reader = Reader("image/jpeg", output, context=settings_context)
         json_data = reader.json()
         self.assertIn("c2pa.placed", json_data)
         self.assertIn(ingredient_id, json_data)
         output.close()
 
     def test_ingredient_from_archive_linked_to_edited_action(self):
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
         ingredient_id = "xmp:iid:archive-input-001"
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
@@ -3025,7 +3034,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ],
         }
-        archive_builder = Builder.from_json(manifest)
+        archive_builder = Builder.from_json(manifest, context=settings_context)
         with open(self.testPath, "rb") as f:
             archive_builder.add_ingredient(
                 {"title": "photo.jpg", "relationship": "inputTo", "instance_id": ingredient_id},
@@ -3035,7 +3044,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive_builder.close()
 
         archive.seek(0)
-        signing_builder = Builder.from_json(manifest)
+        signing_builder = Builder.from_json(manifest, context=settings_context)
         signing_builder.add_ingredient_from_archive(archive)
         archive.close()
 
@@ -3045,7 +3054,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         signing_builder.close()
 
         output.seek(0)
-        reader = Reader("image/jpeg", output)
+        reader = Reader("image/jpeg", output, context=settings_context)
         json_data = reader.json()
         self.assertIn("c2pa.edited", json_data)
         self.assertIn(ingredient_id, json_data)
@@ -3336,10 +3345,10 @@ class TestBuilderWithSigner(unittest.TestCase):
                 # Apply the settings (including trust configuration)
                 # Settings are thread-local, so they won't affect other tests
                 # And that is why we also run the test in its own thread, so tests are isolated
-                load_settings(settings_dict)
+                settings_context = _context_from_settings(settings_dict)
 
                 with open(self.testPath, "rb") as file:
-                    builder = Builder(self.manifestDefinitionV2)
+                    builder = Builder(self.manifestDefinitionV2, context=settings_context)
                     builder.set_no_embed()
                     with io.BytesIO() as output_buffer:
                         manifest_data = builder.sign(
@@ -3347,7 +3356,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                         output_buffer.seek(0)
                         read_buffer = io.BytesIO(output_buffer.getvalue())
 
-                        with Reader("image/jpeg", read_buffer, manifest_data) as reader:
+                        with Reader("image/jpeg", read_buffer, manifest_data, context=settings_context) as reader:
                             json_data = reader.json()
 
                             # Get validation state with trust config
@@ -3813,9 +3822,9 @@ class TestBuilderWithSigner(unittest.TestCase):
     def test_builder_sign_with_setting_no_thumbnail_and_ingredient(self):
         # The following removes the manifest's thumbnail
         # Settings should be loaded before the builder is created
-        load_settings('{"builder": { "thumbnail": {"enabled": false}}}')
+        settings_context = _context_from_settings('{"builder": { "thumbnail": {"enabled": false}}}')
 
-        builder = Builder.from_json(self.manifestDefinition)
+        builder = Builder.from_json(self.manifestDefinition, context=settings_context)
         assert builder._handle is not None
 
         # Test adding ingredient
@@ -3827,7 +3836,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -3855,14 +3864,12 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Settings are thread-local, so we reset to the default "true" here
-        load_settings('{"builder": { "thumbnail": {"enabled": true}}}')
 
     def test_builder_sign_with_settingdict_no_thumbnail_and_ingredient(self):
         # The following removes the manifest's thumbnail - using dict instead of string
-        load_settings({"builder": {"thumbnail": {"enabled": False}}})
+        settings_context = _context_from_settings({"builder": {"thumbnail": {"enabled": False}}})
 
-        builder = Builder.from_json(self.manifestDefinition)
+        builder = Builder.from_json(self.manifestDefinition, context=settings_context)
         assert builder._handle is not None
 
         # Test adding ingredient
@@ -3874,7 +3881,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -3902,8 +3909,6 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Settings are thread-local, so we reset to the default "true" here - using dict instead of string
-        load_settings({"builder": {"thumbnail": {"enabled": True}}})
 
     def test_builder_sign_with_duplicate_ingredient(self):
         builder = Builder.from_json(self.manifestDefinition)
@@ -4139,9 +4144,9 @@ class TestBuilderWithSigner(unittest.TestCase):
         """Test setting the remote url of a builder with no embed flag."""
 
         # Settings need to be loaded before the builder is created
-        load_settings(r'{"verify": { "remote_manifest_fetch": false} }')
+        settings_context = _context_from_settings(r'{"verify": { "remote_manifest_fetch": false} }')
 
-        builder = Builder.from_json(self.manifestDefinition)
+        builder = Builder.from_json(self.manifestDefinition, context=settings_context)
         builder.set_no_embed()
         builder.set_remote_url("http://this_does_not_exist/foo.jpg")
 
@@ -4150,12 +4155,10 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
             with self.assertRaises(Error) as e:
-                Reader("image/jpeg", output)
+                Reader("image/jpeg", output, context=settings_context)
 
         self.assertIn("http://this_does_not_exist/foo.jpg", e.exception.message)
 
-        # Return back to default settings
-        load_settings(r'{"verify": { "remote_manifest_fetch": true} }')
 
     def test_sign_single(self):
         """Test signing a file using the sign_file method."""
@@ -4868,7 +4871,7 @@ class TestBuilderWithSigner(unittest.TestCase):
 
     def test_builder_add_action_to_manifest_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -4893,7 +4896,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ]
         }
-        builder = Builder.from_json(initial_manifest_definition)
+        builder = Builder.from_json(initial_manifest_definition, context=settings_context)
 
         action_json = '{"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}'
         builder.add_action(action_json)
@@ -4902,7 +4905,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -4943,12 +4946,10 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_add_action_to_manifest_from_dict_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -4973,7 +4974,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ]
         }
-        builder = Builder.from_json(initial_manifest_definition)
+        builder = Builder.from_json(initial_manifest_definition, context=settings_context)
 
         # Using a dictionary instead of a JSON string
         action_dict = {"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}
@@ -4983,7 +4984,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5024,12 +5025,10 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_add_action_to_manifest_with_auto_add(self):
         # For testing, force settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -5055,7 +5054,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ]
         }
-        builder = Builder.from_json(initial_manifest_definition)
+        builder = Builder.from_json(initial_manifest_definition, context=settings_context)
 
         action_json = '{"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}'
         builder.add_action(action_json)
@@ -5064,7 +5063,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5113,12 +5112,10 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Reset settings to default
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
             "claim_generator": "python_test",
@@ -5130,14 +5127,14 @@ class TestBuilderWithSigner(unittest.TestCase):
             "title": "Python Test Image V2",
         }
 
-        builder = Builder.from_json(initial_manifest_definition)
+        builder = Builder.from_json(initial_manifest_definition, context=settings_context)
         builder.add_action('{ "action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}')
 
         with open(self.testPath2, "rb") as file:
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5178,12 +5175,10 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_minimal_manifest_add_actions_and_sign_with_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -5194,7 +5189,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             "title": "Python Test Image V2",
         }
 
-        builder = Builder.from_json(initial_manifest_definition)
+        builder = Builder.from_json(initial_manifest_definition, context=settings_context)
         action_json = '{"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}'
         builder.add_action(action_json)
 
@@ -5202,7 +5197,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5252,12 +5247,10 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_sign_dicts_no_auto_add(self):
         # For testing, remove auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         initial_manifest_definition = {
             "claim_generator_info": [{
@@ -5282,7 +5275,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ]
         }
-        builder = Builder.from_json(initial_manifest_definition)
+        builder = Builder.from_json(initial_manifest_definition, context=settings_context)
 
         # Using a dictionary instead of a JSON string
         action_dict = {"action": "c2pa.color_adjustments", "parameters": {"name": "brightnesscontrast"}}
@@ -5292,7 +5285,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5333,13 +5326,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Reset settings
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
 
     def test_builder_opened_action_one_ingredient_no_auto_add(self):
         """Test Builder with c2pa.opened action and one ingredient, following Adobe provenance patterns"""
         # Disable auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         # Instance IDs for linking ingredients and actions
         # This can be any unique id so the ingredient can be uniquely identified and linked to the action
@@ -5390,7 +5381,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath2, "rb") as test_file:
             file_content = test_file.read()
 
-        builder = Builder.from_json(manifestDefinition)
+        builder = Builder.from_json(manifestDefinition, context=settings_context)
 
         # Add C.jpg as the parent "opened" ingredient
         with open(self.testPath, 'rb') as f:
@@ -5405,7 +5396,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output_buffer.seek(0)
 
             # Read and verify the manifest
-            reader = Reader("image/jpeg", output_buffer)
+            reader = Reader("image/jpeg", output_buffer, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5417,13 +5408,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Make sure settings are put back to the common test defaults
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_builder_one_opened_one_placed_action_no_auto_add(self):
         """Test Builder with c2pa.opened action where asset is its own parent ingredient"""
         # Disable auto-added actions
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         # Instance IDs for linking ingredients and actions,
         # need to be unique even if the same binary file is used, so ingredients link properly to actions
@@ -5493,7 +5482,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath2, "rb") as test_file:
             file_content = test_file.read()
 
-        builder = Builder.from_json(manifestDefinition)
+        builder = Builder.from_json(manifestDefinition, context=settings_context)
 
         # An asset can be its own parent ingredient!
         # We add A.jpg as its own parent ingredient
@@ -5509,7 +5498,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             output_buffer.seek(0)
 
             # Read and verify the manifest
-            reader = Reader("image/jpeg", output_buffer)
+            reader = Reader("image/jpeg", output_buffer, context=settings_context)
             json_data = reader.json()
             manifest_data = json.loads(json_data)
 
@@ -5523,13 +5512,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Make sure settings are put back to the common test defaults
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_builder_opened_action_multiple_ingredient_no_auto_add(self):
         """Test Builder with c2pa.opened and c2pa.placed actions with multiple ingredients"""
         # Disable auto-added actions, as what we are doing here can confuse auto-placements
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         # Instance IDs for linking ingredients and actions
         # With multiple ingredients, we need multiple different unique ids so they each link properly
@@ -5606,7 +5593,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         with open(self.testPath2, "rb") as test_file:
             file_content = test_file.read()
 
-        builder = Builder.from_json(manifestDefinition)
+        builder = Builder.from_json(manifestDefinition, context=settings_context)
 
         # Add C.jpg as the parent ingredient (for c2pa.opened, it's the opened asset)
         with open(self.testPath, 'rb') as f1:
@@ -5625,7 +5612,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 output_buffer.seek(0)
 
                 # Read and verify the manifest
-                reader = Reader("image/jpeg", output_buffer)
+                reader = Reader("image/jpeg", output_buffer, context=settings_context)
                 json_data = reader.json()
                 manifest_data = json.loads(json_data)
 
@@ -5640,13 +5627,11 @@ class TestBuilderWithSigner(unittest.TestCase):
 
         builder.close()
 
-        # Make sure settings are put back to the common test defaults
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_link_archive_label_on_signing_builder_placed(self):
         """Label set on the signing builder's add_ingredient links an
         ingredient archive to a c2pa.placed action."""
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         archive = self._create_ingredient_archive()
 
@@ -5673,7 +5658,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             ],
         }
 
-        builder = Builder.from_json(manifest)
+        builder = Builder.from_json(manifest, context=settings_context)
         builder.add_ingredient(
             {"title": "photo.jpg", "relationship": "componentOf", "label": "my-ingredient"},
             "application/c2pa",
@@ -5685,7 +5670,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.sign(self.signer, "image/jpeg", src, output)
             output.seek(0)
 
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             manifest_data = json.loads(reader.json())
             active = manifest_data["active_manifest"]
             assertions = manifest_data["manifests"][active]["assertions"]
@@ -5712,12 +5697,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive.close()
         builder.close()
 
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_link_archive_label_on_signing_builder_opened(self):
         """Label set on the signing builder's add_ingredient links an
         ingredient archive to a c2pa.opened action."""
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         archive = self._create_ingredient_archive(
             {"title": "photo.jpg", "relationship": "parentOf"}
@@ -5743,7 +5727,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             ],
         }
 
-        builder = Builder.from_json(manifest)
+        builder = Builder.from_json(manifest, context=settings_context)
         builder.add_ingredient(
             {"title": "photo.jpg", "relationship": "parentOf", "label": "my-ingredient"},
             "application/c2pa",
@@ -5755,7 +5739,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.sign(self.signer, "image/jpeg", src, output)
             output.seek(0)
 
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             manifest_data = json.loads(reader.json())
             active = manifest_data["active_manifest"]
             assertions = manifest_data["manifests"][active]["assertions"]
@@ -5782,12 +5766,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive.close()
         builder.close()
 
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_link_archive_two_ingredients_labels(self):
         """Two ingredient archives linked to two different actions via
         distinct labels. Verifies no cross-linking."""
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         archive1 = self._create_ingredient_archive(
             {"title": "photo-placed.jpg", "relationship": "componentOf"}
@@ -5822,7 +5805,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             ],
         }
 
-        builder = Builder.from_json(manifest)
+        builder = Builder.from_json(manifest, context=settings_context)
         builder.add_ingredient(
             {"title": "photo-placed.jpg", "relationship": "componentOf", "label": "ingredient-for-placed"},
             "application/c2pa",
@@ -5839,7 +5822,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.sign(self.signer, "image/jpeg", src, output)
             output.seek(0)
 
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             manifest_data = json.loads(reader.json())
             active = manifest_data["active_manifest"]
             assertions = manifest_data["manifests"][active]["assertions"]
@@ -5875,12 +5858,11 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive2.close()
         builder.close()
 
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_link_archive_multiple_ingredients_in_one_placed_action(self):
         """A single c2pa.placed action references two componentOf ingredients
         via ingredientIds with two labels."""
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
         archive1 = self._create_ingredient_archive(
             {"title": "base-layer.jpg", "relationship": "componentOf"}
@@ -5912,7 +5894,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             ],
         }
 
-        builder = Builder.from_json(manifest)
+        builder = Builder.from_json(manifest, context=settings_context)
         builder.add_ingredient(
             {"title": "base-layer.jpg", "relationship": "componentOf", "label": "base-layer"},
             "application/c2pa",
@@ -5929,7 +5911,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder.sign(self.signer, "image/jpeg", src, output)
             output.seek(0)
 
-            reader = Reader("image/jpeg", output)
+            reader = Reader("image/jpeg", output, context=settings_context)
             manifest_data = json.loads(reader.json())
             active = manifest_data["active_manifest"]
             assertions = manifest_data["manifests"][active]["assertions"]
@@ -5960,7 +5942,6 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive2.close()
         builder.close()
 
-        load_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":false},"auto_opened_action":{"enabled":false},"auto_created_action":{"enabled":false}}}}')
 
     def test_ingredient_fields_survive_archive(self):
         archive = self._create_ingredient_archive({
@@ -8376,13 +8357,13 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         finally:
             c2pa_module._lib.c2pa_context_new = real_new
 
-        real_json = c2pa_module._lib.c2pa_builder_from_json
-        c2pa_module._lib.c2pa_builder_from_json = lambda j: None
+        real_from_context = c2pa_module._lib.c2pa_builder_from_context
+        c2pa_module._lib.c2pa_builder_from_context = lambda c: None
         try:
             with self.assertRaises(Error):
                 Builder({"claim_generator": "test"})
         finally:
-            c2pa_module._lib.c2pa_builder_from_json = real_json
+            c2pa_module._lib.c2pa_builder_from_context = real_from_context
 
     def test_context_build_null_return_frees_builder(self):
         # Mock a pointer rejection.
@@ -9345,7 +9326,11 @@ class TestManagedResourceObjects(TestContextAPIs):
         manifest = json.dumps(
             {"claim_generator": "raw_ffi_test", "format": "image/jpeg"}
         ).encode("utf-8")
-        handle = c2pa_module._lib.c2pa_builder_from_json(manifest)
+        handle = c2pa_module._lib.c2pa_builder_from_context(
+            c2pa_module._get_default_context().execution_context)
+        self.assertTrue(handle, "the FFI did not return a builder pointer")
+        handle = c2pa_module._lib.c2pa_builder_with_definition(
+            handle, manifest)
         self.assertTrue(handle, "the FFI did not return a builder pointer")
         return handle
 

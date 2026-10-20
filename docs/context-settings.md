@@ -18,7 +18,7 @@ The `Context` class encapsulates configuration for:
 - **Simplifies testing**: Create isolated configurations for tests without worrying about cleanup or interference.
 
 > [!NOTE]
-> The deprecated `load_settings()` function still works for backward compatibility, but you are encouraged to migrate your code to use `Context`. See [Migrating from load_settings](#migrating-from-load_settings).
+> Without a `Context`, `Reader` and `Builder` use one with SDK default settings. Pass a `Context` for custom settings or a context signer. The deprecated `load_settings()` function no longer affects `Reader` or `Builder`. See [Migrating from load_settings](#migrating-from-load_settings).
 
 ## Quick start
 
@@ -768,7 +768,7 @@ The `load_settings()` function is deprecated and will be removed when c2pa-pytho
 from c2pa import load_settings, Reader
 
 load_settings({"builder": {"thumbnail": {"enabled": False}}})
-reader = Reader("image.jpg")  # uses global settings
+reader = Reader("image.jpg")  # no longer sees thread local settings
 ```
 
 **Current approach:**

@@ -11,7 +11,7 @@ With intents, the caller declares *what is being done* and `Builder` handles the
 For example, without intents you have to manually wire up actions and make sure ingredients are properly linked to actions. This is especially important for `parentOf` ingredient relationships with the `c2pa.opened` action.
 
 ```py
-with Context() as ctx, Builder({
+with Builder({
     "assertions": [
         {
             "label": "c2pa.actions",
@@ -25,7 +25,7 @@ with Context() as ctx, Builder({
             },
         }
     ],
-}, context=ctx) as builder:
+}) as builder:
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
         builder.sign(signer, "image/jpeg", source, dest)
 ```
@@ -33,7 +33,7 @@ with Context() as ctx, Builder({
 But with intents, `Builder` generates the actions automatically; for example:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(
         C2paBuilderIntent.CREATE,
         C2paDigitalSourceType.TRAINED_ALGORITHMIC_MEDIA,
@@ -51,7 +51,7 @@ You can set the intent on a `Builder` instance by:
 - [Using Context](#using-context)
 - [Using `set_intent` on the `Builder`](#using-set_intent-on-the-builder)
 
-Don't set the intent using the deprecated `load_settings()` function. For existing code, see [Context and settings - Migrating from load_settings](context-settings.md#migrating-from-load_settings).
+The deprecated `load_settings()` function no longer sets the intent for a `Builder`. To migrate existing code, see [Context and settings - Migrating from load_settings](context-settings.md#migrating-from-load_settings).
 
 ### Using Context
 
@@ -92,7 +92,7 @@ for path in image_paths:
 Call `set_intent` directly on a `Builder` instance for one-off operations or when the intent is determined at runtime. For example:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(
         C2paBuilderIntent.CREATE,
         C2paDigitalSourceType.TRAINED_ALGORITHMIC_MEDIA,
@@ -114,11 +114,7 @@ flowchart TD
     Check --> |No| CheckCtx{Was a Context with
     builder.intent provided?}
     CheckCtx --> |Yes| UseCtx["Use Context intent"]
-    CheckCtx --> |No| CheckGlobal{Was load_settings called
-    with builder.intent?}
-    CheckGlobal --> |Yes| UseGlobal["Use global intent
-    (deprecated)"]
-    CheckGlobal --> |No| NoIntent["No intent set.
+    CheckCtx --> |No| NoIntent["No intent set.
     Caller must define actions
     manually in manifest JSON."]
 ```
@@ -173,8 +169,7 @@ The `Builder` intent controls what the `Builder` does with the source stream (so
 ```mermaid
 flowchart TD
     Intent["Intent
-    (via Context, set_intent,
-    or load_settings)"] --> Q{Intent type?}
+    (via Context or set_intent)"] --> Q{Intent type?}
     Q --> |CREATE| CreateFlow["No parent allowed
     Source stream is new content"]
     Q --> |EDIT or UPDATE| EditFlow{Was a parentOf ingredient
@@ -300,7 +295,7 @@ with Builder({}, context=ctx) as builder:
 Using `set_intent`:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(
         C2paBuilderIntent.CREATE,
         C2paDigitalSourceType.DIGITAL_CREATION,
@@ -379,7 +374,7 @@ with Builder({}, context=ctx) as builder:
 Using `set_intent`:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(C2paBuilderIntent.EDIT)
     with open("original.jpg", "rb") as source, open("edited.jpg", "wb") as dest:
         builder.sign(signer, "image/jpeg", source, dest)
@@ -473,7 +468,7 @@ with Builder({}, context=ctx) as builder:
 Using `set_intent`:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(C2paBuilderIntent.UPDATE)
 
     with open("signed_asset.jpg", "rb") as source, open("updated_asset.jpg", "wb") as dest:
