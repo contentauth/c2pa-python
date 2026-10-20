@@ -18,7 +18,7 @@ The `Context` class encapsulates configuration for:
 - **Simplifies testing**: Create isolated configurations for tests without worrying about cleanup or interference.
 
 > [!NOTE]
-> `Reader` and `Builder` require a `Context`. The global `load_settings()` function has been removed. See [Migrating from load_settings](#migrating-from-load_settings).
+> Without a `Context`, `Reader` and `Builder` use one with SDK default settings. Pass a `Context` for custom settings or a context signer. The global `load_settings()` function has been removed. See [Migrating from load_settings](#migrating-from-load_settings).
 
 ## Quick start
 

@@ -360,6 +360,44 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
 
+    def test_forked_child_gets_own_default(self):
+        """Runs in a subprocess so the fork happens in a single-threaded
+        process, as test_parent_copy_unaffected does.
+        """
+        source = textwrap.dedent("""
+            import os, sys
+            from c2pa import Reader
+            import c2pa.c2pa as c2pa_module
+
+            asset_path = sys.argv[1]
+            reader = Reader(asset_path)
+            parent_default = reader._context
+
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    child = Reader(asset_path)
+                    child.json()
+                    own = (child._context is not parent_default
+                           and child._context._owner_pid == os.getpid())
+                    os._exit(0 if own else 2)
+                except BaseException:
+                    os._exit(1)
+            _, status = os.waitpid(pid, 0)
+
+            assert status >> 8 == 0, "child exit %d" % (status >> 8)
+            assert c2pa_module._get_default_context() is parent_default
+            reader.close()
+            print("OK")
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", source, DEFAULT_TEST_FILE],
+            capture_output=True, text=True, timeout=120)
+
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        self.assertIn("OK", result.stdout)
+
 
 class TestReaderWithFragmentConcurrency(unittest.TestCase):
     """with_fragment's native call and its stream-ownership transfer
@@ -726,6 +764,42 @@ class TestReaderWithThreads(unittest.TestCase):
         # If any errors occurred, fail the test with all error messages
         if errors:
             self.fail("\n".join(errors))
+
+    def test_concurrent_first_use_creates_one_default(self):
+        saved = c2pa_module._default_context
+
+        def restore():
+            c2pa_module._default_context = saved
+        self.addCleanup(restore)
+        c2pa_module._default_context = None
+
+        threads_count = 10
+        barrier = threading.Barrier(threads_count)
+        contexts = []
+        errors = []
+        lock = threading.Lock()
+
+        def work():
+            try:
+                barrier.wait()
+                reader = Reader(DEFAULT_TEST_FILE)
+                with lock:
+                    contexts.append(reader._context)
+                reader.close()
+            except Exception as e:
+                with lock:
+                    errors.append(e)
+
+        workers = [threading.Thread(target=work)
+                   for _ in range(threads_count)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(60)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(contexts), threads_count)
+        self.assertEqual(len({id(c) for c in contexts}), 1)
 
 
 class TestBuilderWithThreads(unittest.TestCase):
@@ -3310,6 +3384,66 @@ class TestLocking(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertIn("OK", result.stdout)
 
+    def test_shared_reservations_overlap(self):
+        default = c2pa_module._get_default_context()
+        inside = threading.Event()
+        release = threading.Event()
+        second_done = threading.Event()
+        seen_inflight = []
+        errors = []
+
+        def first():
+            with c2pa_module._context_guard(default):
+                inside.set()
+                release.wait(10)
+
+        def second():
+            try:
+                with c2pa_module._context_guard(default):
+                    seen_inflight.append(default._inflight)
+                second_done.set()
+            except Exception as e:
+                errors.append(e)
+
+        holder = threading.Thread(target=first)
+        holder.start()
+        try:
+            self.assertTrue(inside.wait(10), "first guard never entered")
+            other = threading.Thread(target=second)
+            other.start()
+            self.assertTrue(second_done.wait(10),
+                            "second guard blocked or failed: %r" % errors)
+            other.join(10)
+        finally:
+            release.set()
+            holder.join(10)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(seen_inflight, [2])
+        self.assertEqual(default._inflight, 0)
+
+    def test_mutating_reservation_reaches_default_path(self):
+        default = c2pa_module._get_default_context()
+        inside = threading.Event()
+        release = threading.Event()
+
+        def hold_exclusive():
+            with default._exclusive_native_call():
+                inside.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=hold_exclusive)
+        holder.start()
+        try:
+            self.assertTrue(inside.wait(10), "exclusive call never entered")
+            with self.assertRaises(Error):
+                Reader(DEFAULT_TEST_FILE)
+            self.assertIs(c2pa_module._get_default_context(), default)
+        finally:
+            release.set()
+            holder.join(10)
+        self.assertEqual(default._inflight, 0)
+
 
 class TestSwapConsumeExclusion(unittest.TestCase):
     """with_archive, with_fragment must be rejected during other in-flight calls.
@@ -3449,6 +3583,7 @@ class TestSwapConsumeExclusion(unittest.TestCase):
         # The deferred teardown freed the replacement handle: closed for
         # good, nothing left to free, exactly one release.
         self.assertTrue(builder._released)
+
 
 if __name__ == '__main__':
     unittest.main()

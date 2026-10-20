@@ -6476,11 +6476,14 @@ class TestReaderWithContext(TestContextAPIs):
         context.close()
         settings.close()
 
-    def test_reader_without_context_raises(self):
+    def test_reader_without_context_uses_default(self):
+        default = c2pa_module._get_default_context()
         with open(DEFAULT_TEST_FILE, "rb") as file_handle:
-            with self.assertRaises(Error) as raised:
-                Reader("image/jpeg", file_handle)
-            self.assertIn("requires a context", str(raised.exception))
+            reader = Reader("image/jpeg", file_handle)
+            self.assertIn(DEFAULT_TEST_FILE_NAME, reader.json())
+            self.assertIs(reader._context, default)
+            reader.close()
+        self.assertTrue(default.is_valid)
 
     def test_reader_try_create_with_context(self):
         context = Context()
@@ -6695,12 +6698,21 @@ class TestBuilderWithContext(TestContextAPIs):
         builder.close()
         context.close()
 
-    def test_builder_without_context_raises(self):
-        with self.assertRaises(Error) as raised:
-            Builder(self.test_manifest)
-        self.assertIn("requires a context", str(raised.exception))
-        with self.assertRaises(Error):
-            Builder.from_json(self.test_manifest)
+    def test_builder_without_context_signs_with_explicit_signer(self):
+        signer = self._ctx_make_signer()
+        for builder in (Builder(self.test_manifest),
+                        Builder.from_json(self.test_manifest)):
+            self.assertIs(builder._context, c2pa_module._get_default_context())
+            self.assertFalse(builder._has_context_signer)
+            with open(DEFAULT_TEST_FILE, "rb") as source:
+                output = io.BytesIO()
+                builder.sign(signer, "image/jpeg", source, output)
+            output.seek(0)
+            reader = Reader("image/jpeg", output)
+            self.assertIsNotNone(reader.get_active_manifest())
+            reader.close()
+            builder.close()
+        signer.close()
 
     def test_contextual_builder_with_settings_context(self):
         settings = Settings.from_dict({

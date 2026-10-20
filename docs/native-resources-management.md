@@ -26,12 +26,10 @@ Python's garbage collector works by reference counting: each object counts how m
 
 `ManagedResource` gives every object three ways to release its native pointer: a `with` statement, an explicit `close()`, or, as a fallback, the destructor.
 
-The examples on this page use a `Context` named `ctx`, created with `ctx = Context()`. A `Context` is a `ManagedResource` too, and is released the same ways.
-
 ### `with` statement
 
 ```python
-with Reader("image.jpg", context=ctx) as reader:
+with Reader("image.jpg") as reader:
     print(reader.json())
 # reader is automatically closed here.
 ```
@@ -41,7 +39,7 @@ On exit, `__exit__` calls `close()`, freeing the native pointer even if the bloc
 ### Explicit close
 
 ```python
-reader = Reader("image.jpg", context=ctx)
+reader = Reader("image.jpg")
 try:
     print(reader.json())
 finally:
@@ -59,7 +57,7 @@ Without `with` or `.close()`, `__del__` attempts the free when Python garbage-co
 Multiple resources can share one `with` statement or nest in separate `with` blocks. They are cleaned up in reverse order: right to left (when sharing one statement), or inner to outer (when statements are nested).
 
 ```python
-with open("photo.jpg", "rb") as file, Reader("image/jpeg", file, context=ctx) as reader:
+with open("photo.jpg", "rb") as file, Reader("image/jpeg", file) as reader:
     manifest = reader.json()
 # reader is closed first, then file
 ```
@@ -97,7 +95,7 @@ A native call checks the object is usable, then hands the pointer to native code
 A thread pool with a timeout can hit this too:
 
 ```python
-with Reader("image.jpg", context=ctx) as reader:
+with Reader("image.jpg") as reader:
     future = thread_pool.submit(reader.json)
     try:
         future.result(timeout=2.0)
@@ -216,7 +214,7 @@ Two shapes:
 `Builder.sign()` is a consume-and-close call:
 
 ```python
-builder = Builder(manifest_json, context=ctx)
+builder = Builder(manifest_json)
 builder.sign(signer, "image/jpeg", source, dest)
 # builder is now CLOSED: sign() consumed its handle
 ```

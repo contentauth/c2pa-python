@@ -1941,6 +1941,42 @@ def _context_guard(context):
         yield
 
 
+_default_context = None
+_default_context_lock = threading.Lock()
+
+
+def _is_reusable_default(ctx) -> bool:
+    """Checks if default context is reusable.
+    """
+    return (ctx is not None
+            and ctx._lifecycle_state != LifecycleState.CLOSED
+            and not is_foreign_process(ctx))
+
+
+def _get_default_context() -> 'Context':
+    """Get a placeholder default context to use
+    when Builder or Reader are called without one.
+    """
+    global _default_context
+    ctx = _default_context
+    if _is_reusable_default(ctx):
+        return ctx
+    with _default_context_lock:
+        if not _is_reusable_default(_default_context):
+            _default_context = Context()
+        return _default_context
+
+
+def _reset_default_context_in_child():
+    global _default_context, _default_context_lock
+    _default_context = None
+    _default_context_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_default_context_in_child)
+
+
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
 
@@ -2895,7 +2931,8 @@ class Reader(ManagedResource):
                 requests auto-detection (best effort).
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: ContextProvider for settings (required)
+            context: Optional ContextProvider for settings. Without one,
+                a shared Context with default settings is used.
 
         Returns:
             Reader instance if the asset contains C2PA data,
@@ -2960,20 +2997,18 @@ class Reader(ManagedResource):
                 string requests detection from the bytes.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Context implementing ContextProvider with settings
-                (required)
+            context: Optional context implementing ContextProvider with
+                settings. Without one, a shared Context with default
+                settings is used.
 
         Raises:
-            C2paError: If context is missing, or if there was an error
-              creating the reader, including when the format cannot be
-              detected from an unrecognized asset
+            C2paError: If there was an error creating the reader, including
+              when the format cannot be detected from an unrecognized asset
             C2paError.Encoding: If any of the string inputs
               contain invalid UTF-8 characters
         """
         super().__init__()
         self._init_attrs()
-
-        self._context = context
 
         # Only stream, no format: Reader(fh) must auto-detect on the stream.
         if stream is None and Stream.is_read_stream(format_or_path):
@@ -2984,9 +3019,8 @@ class Reader(ManagedResource):
         if format_or_path is None and stream is None:
             raise C2paError("Reader requires a path or a stream")
         if context is None:
-            raise C2paError(
-                "Reader requires a context. Pass context=Context(),"
-                " or a Context built from Settings.")
+            context = _get_default_context()
+        self._context = context
 
         self._init_from_context(
             context, format_or_path, stream,
@@ -3782,14 +3816,14 @@ class Builder(ManagedResource):
 
         Args:
             manifest_json: The JSON manifest definition
-            context: ContextProvider for settings (required)
+            context: Optional ContextProvider for settings. Without one,
+                a shared Context with default settings is used.
 
         Returns:
             A new Builder instance
 
         Raises:
-            C2paError: If context is missing, or if there was an error
-                creating the builder
+            C2paError: If there was an error creating the builder
         """
         return cls(manifest_json, context=context)
 
@@ -3802,11 +3836,12 @@ class Builder(ManagedResource):
 
         Args:
             manifest_json: The manifest JSON definition (string or dict)
-            context: Context (ContextProvider) for settings (required)
+            context: Optional Context (ContextProvider) for settings.
+                Without one, a shared Context with default settings and no
+                signer is used.
 
         Raises:
-            C2paError: If context is missing, or if there was an error
-                creating the builder
+            C2paError: If there was an error creating the builder
             C2paError.Encoding: If manifest JSON contains invalid UTF-8 chars
             C2paError.Json: If the manifest JSON cannot be serialized
         """
@@ -3814,9 +3849,7 @@ class Builder(ManagedResource):
         self._init_attrs()
 
         if context is None:
-            raise C2paError(
-                "Builder requires a context. Pass context=Context(),"
-                " or a Context built from Settings.")
+            context = _get_default_context()
 
         self._context = context
         self._has_context_signer = (

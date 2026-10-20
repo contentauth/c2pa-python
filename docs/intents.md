@@ -11,7 +11,7 @@ With intents, the caller declares *what is being done* and `Builder` handles the
 For example, without intents you have to manually wire up actions and make sure ingredients are properly linked to actions. This is especially important for `parentOf` ingredient relationships with the `c2pa.opened` action.
 
 ```py
-with Context() as ctx, Builder({
+with Builder({
     "assertions": [
         {
             "label": "c2pa.actions",
@@ -25,7 +25,7 @@ with Context() as ctx, Builder({
             },
         }
     ],
-}, context=ctx) as builder:
+}) as builder:
     with open("source.jpg", "rb") as source, open("output.jpg", "wb") as dest:
         builder.sign(signer, "image/jpeg", source, dest)
 ```
@@ -33,7 +33,7 @@ with Context() as ctx, Builder({
 But with intents, `Builder` generates the actions automatically; for example:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(
         C2paBuilderIntent.CREATE,
         C2paDigitalSourceType.TRAINED_ALGORITHMIC_MEDIA,
@@ -92,7 +92,7 @@ for path in image_paths:
 Call `set_intent` directly on a `Builder` instance for one-off operations or when the intent is determined at runtime. For example:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(
         C2paBuilderIntent.CREATE,
         C2paDigitalSourceType.TRAINED_ALGORITHMIC_MEDIA,
@@ -295,7 +295,7 @@ with Builder({}, context=ctx) as builder:
 Using `set_intent`:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(
         C2paBuilderIntent.CREATE,
         C2paDigitalSourceType.DIGITAL_CREATION,
@@ -374,7 +374,7 @@ with Builder({}, context=ctx) as builder:
 Using `set_intent`:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(C2paBuilderIntent.EDIT)
     with open("original.jpg", "rb") as source, open("edited.jpg", "wb") as dest:
         builder.sign(signer, "image/jpeg", source, dest)
@@ -468,7 +468,7 @@ with Builder({}, context=ctx) as builder:
 Using `set_intent`:
 
 ```py
-with Context() as ctx, Builder({}, context=ctx) as builder:
+with Builder({}) as builder:
     builder.set_intent(C2paBuilderIntent.UPDATE)
 
     with open("signed_asset.jpg", "rb") as source, open("updated_asset.jpg", "wb") as dest:
