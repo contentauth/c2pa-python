@@ -315,6 +315,7 @@ class TestForkedChildDoesNotDeadlock(unittest.TestCase):
         reader = self._foreign_reader_with_lock_held()
         self.assertFalse(reader.is_valid)
 
+    @unittest.skipUnless(hasattr(os, "fork"), "requires os.fork()")
     def test_parent_copy_unaffected(self):
         """The child closing its copy must leave the parent's usable.
 
