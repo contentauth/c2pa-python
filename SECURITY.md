@@ -17,6 +17,6 @@ Once we receive an actionable vulnerability (meaning there is an available patch
 Any vulnerability with a score below 6.9 will be resolved when possible.
 
 
-## C2PA Vulnerabilities
+## C2PA vulnerabilities
 
 This library is not meant to address any potential vulnerabilities within the C2PA specification itself. It is only an implementation of the spec as written. Report suspected vulnerabilities within the spec in the [C2PA specification repository](https://github.com/c2pa-org/specifications/issues).
