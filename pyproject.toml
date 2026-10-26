@@ -24,6 +24,7 @@ urls = {homepage = "https://contentauthenticity.org", repository = "https://gith
 dependencies = [
     "toml>=0.10.2",
     "cryptography>=41.0.0",
+    "certifi>=2026.10.19",
     "requests>=2.0.0"
 ]
 
