@@ -79,6 +79,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_supported_mime_types',
     # Signer bindings
     'c2pa_signer_create',
+    'c2pa_signer_create_direct_cose',
     'c2pa_signer_from_info',
     'c2pa_signer_reserve_size',
     'c2pa_ed25519_sign',
@@ -1402,6 +1403,9 @@ _setup_function(_lib.c2pa_signer_create,
                  ctypes.c_int,
                  ctypes.c_char_p,
                  ctypes.c_char_p],
+                ctypes.POINTER(C2paSigner))
+_setup_function(_lib.c2pa_signer_create_direct_cose,
+                [ctypes.c_void_p, SignerCallback, ctypes.c_size_t],
                 ctypes.POINTER(C2paSigner))
 _setup_function(_lib.c2pa_signer_from_info,
                 [ctypes.POINTER(C2paSignerInfo)],
@@ -3838,9 +3842,84 @@ class Signer(ManagedResource):
 
         return signer_instance
 
+    @classmethod
+    def from_cose_callback(
+        cls,
+        callback: Callable[[bytes], bytes],
+        reserve_size: int,
+    ) -> 'Signer':
+        """Create a signer whose callback returns a complete tagged COSE_Sign1.
+
+        The callback receives the serialized C2PA claim bytes and must return
+        exactly reserve_size bytes, including any required COSE padding. It
+        supplies the signing algorithm, certificate chain, and any timestamps.
+        The SDK bypasses normal COSE construction and post-signing verification
+        for this signer. Callback failures are reported by the signing operation
+        as a native C2PA error.
+
+        Callbacks must be safe for concurrent calls and remote callbacks must
+        enforce their own timeout. The callback is kept alive for the lifetime
+        of the native signer, including when transferred to a Context.
+
+        Args:
+            callback: Function receiving claim bytes and returning COSE bytes.
+            reserve_size: Positive size of both the signature box and output
+                buffer, representable by the native callback's signed size type.
+
+        Returns:
+            A new Signer instance.
+
+        Raises:
+            TypeError: If callback is not callable or reserve_size is not an int.
+            ValueError: If reserve_size is outside the supported range.
+            C2paError: If native signer creation fails.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        if isinstance(reserve_size, bool) or not isinstance(reserve_size, int):
+            raise TypeError("reserve_size must be an integer")
+        if not 0 < reserve_size <= sys.maxsize:
+            raise ValueError(
+                "reserve_size must be positive and fit in a native signed size")
+
+        def wrapped_callback(context, data_ptr, data_len, output_ptr, capacity):
+            try:
+                if (
+                    not data_ptr
+                    or data_len <= 0
+                    or not output_ptr
+                    or capacity != reserve_size
+                ):
+                    return -1
+                claim = ctypes.string_at(data_ptr, data_len)
+                cose = callback(claim)
+                if not isinstance(cose, bytes) or len(cose) != capacity:
+                    return -1
+                ctypes.memmove(output_ptr, cose, capacity)
+                return len(cose)
+            except Exception as e:
+                logger.error(cls._ERROR_MESSAGES['callback_error'].format(str(e)))
+                return -1
+
+        callback_cb = SignerCallback(wrapped_callback)
+        with _native_section():
+            signer_ptr = _lib.c2pa_signer_create_direct_cose(
+                None, callback_cb, reserve_size)
+            _check_ffi_operation_result(
+                signer_ptr, "Failed to create direct COSE signer")
+
+        try:
+            signer_instance = cls(signer_ptr)
+            signer_instance._callback_cb = callback_cb
+        except Exception:
+            ManagedResource._free_native_ptr(signer_ptr)
+            raise
+        return signer_instance
+
     def __init__(self, signer_ptr: ctypes.POINTER(C2paSigner)):
         """Initialize a new Signer instance. This constructor is not meant
-        to be called directly. Use from_info() or from_callback() instead.
+        to be called directly. Use from_info(), from_callback(), or
+        from_cose_callback() instead.
 
         Args:
             signer_ptr: Pointer to the native C2PA signer
@@ -3858,7 +3937,7 @@ class Signer(ManagedResource):
 
     def _init_attrs(self):
         super()._init_attrs()
-        # from_callback() replaces this with the real callback, which has to
+        # Callback constructors replace this with the real callback, which has to
         # outlive the signer that calls it.
         self._callback_cb = None
 
