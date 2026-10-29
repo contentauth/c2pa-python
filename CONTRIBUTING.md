@@ -100,5 +100,4 @@ feel free to reach out to existing committers to have a conversation about that.
 
 ## Security issues
 
-Do not create a public GitHub issue for any suspected security vulnerabilities. Instead, please file an issue through [Adobe's HackerOne page](https://hackerone.com/adobe?type=team). 
-For more information on reporting security issues, see [SECURITY.md](SECURITY.md).
+For information on reporting security issues, see [SECURITY.md](SECURITY.md).
