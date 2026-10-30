@@ -21,6 +21,7 @@ import json
 import logging
 import sys
 import os
+import stat
 import threading
 import warnings
 import weakref
@@ -1005,6 +1006,31 @@ WriteCallback = ctypes.CFUNCTYPE(
         ctypes.c_uint8),
     ctypes.c_ssize_t)
 FlushCallback = ctypes.CFUNCTYPE(ctypes.c_ssize_t, ctypes.c_void_p)
+
+
+def _load_native_file_callbacks():
+    """libc read/lseek/write as stream callbacks over a file descriptor.
+
+    With the descriptor as the stream context, the native library reads and
+    writes the file without calling back into Python: the GIL stays released
+    for the whole native call. Their C signatures match the callback types on
+    64-bit POSIX ABIs only; elsewhere this returns None and every stream keeps
+    the Python callbacks.
+    """
+    if os.name != "posix" or sys.maxsize <= 2**32:
+        return None
+    try:
+        libc = ctypes.CDLL(None)
+        return (
+            ctypes.cast(libc.read, ReadCallback),
+            ctypes.cast(libc.lseek, SeekCallback),
+            ctypes.cast(libc.write, WriteCallback),
+        )
+    except (AttributeError, OSError):  # pragma: no cover
+        return None
+
+
+_NATIVE_FILE_CALLBACKS = _load_native_file_callbacks()
 SignerCallback = ctypes.CFUNCTYPE(
     ctypes.c_ssize_t, ctypes.c_void_p, ctypes.POINTER(
         ctypes.c_ubyte), ctypes.c_size_t, ctypes.POINTER(
@@ -2422,6 +2448,11 @@ class Stream:
     # Methods an object must expose to be wrapped as Stream.
     _REQUIRED_STREAM_METHODS = ("read", "write", "seek", "tell", "flush")
 
+    # Regular files are read and written by the native library directly
+    # (see _native_file_descriptor). Set to False to always go through
+    # Python callbacks.
+    native_file_io = True
+
     # Class-level error messages to avoid multiple creation
     _ERROR_MESSAGES = {
         'stream_error': "Error cleaning up stream: {}",
@@ -2446,6 +2477,7 @@ class Stream:
         self._closed = False
         self._initialized = False
         self._stream = None
+        self._native_fd = None
         # Serializes close() and __del__ against a concurrent double-free.
         self._close_lock = threading.RLock()
 
@@ -2474,6 +2506,7 @@ class Stream:
             )
 
         self._file_like_stream = file_like_stream
+        self._native_fd = self._native_file_descriptor(file_like_stream)
 
         # Weakref breaks avoids references cycles:
         # Stream -> ctypes_cb -> closure -> Stream.
@@ -2629,20 +2662,33 @@ class Stream:
                 return -1
 
         # Create callbacks that will be kept alive by being instance attributes
-        self._read_cb = ReadCallback(read_callback)
-        self._seek_cb = SeekCallback(seek_callback)
-        self._write_cb = WriteCallback(write_callback)
-        self._flush_cb = FlushCallback(flush_callback)
+        if self._native_fd is not None:
+            # libc on the stream's own descriptor: no Python callback, no GIL.
+            # Flushing a descriptor is a no-op (the Python buffer was flushed
+            # when the stream was created and is not used meanwhile).
+            self._read_cb, self._seek_cb, self._write_cb = (
+                _NATIVE_FILE_CALLBACKS)
+            self._flush_cb = FlushCallback(lambda ctx: 0)
+            context = ctypes.cast(
+                ctypes.c_void_p(self._native_fd),
+                ctypes.POINTER(StreamContext))
+        else:
+            self._read_cb = ReadCallback(read_callback)
+            self._seek_cb = SeekCallback(seek_callback)
+            self._write_cb = WriteCallback(write_callback)
+            self._flush_cb = FlushCallback(flush_callback)
+            context = None
 
         # Create the stream
         self._stream = _lib.c2pa_create_stream(
-            None,
+            context,
             self._read_cb,
             self._seek_cb,
             self._write_cb,
             self._flush_cb
         )
         if not self._stream:
+            self._close_native_fd()
             error = _read_native_error()
             raise C2paError(
                 "Failed to create stream: {}".format(error or "Unknown error"))
@@ -2687,6 +2733,7 @@ class Stream:
                             pass
                         finally:
                             self._stream = None
+                self._close_native_fd()
             finally:
                 if lock is not None:
                     lock.release()
@@ -2732,6 +2779,8 @@ class Stream:
                                 str(e)))
                     finally:
                         self._stream = None
+                    self._sync_native_position()
+                self._close_native_fd()
 
                 # Clean up callbacks
                 for attr in [
@@ -2751,6 +2800,63 @@ class Stream:
             finally:
                 self._closed = True
                 self._initialized = False
+
+    @classmethod
+    def _native_file_descriptor(cls, file_like_stream):
+        """A private descriptor for native I/O on a regular file, or None.
+
+        The descriptor is a duplicate, owned by this Stream: closing the
+        Python file meanwhile cannot hand its number to another file. It
+        shares the file's offset, which is first aligned with the Python
+        object's position (its buffer flushed), and given back on close().
+        Streams that are not regular files (in-memory, pipes, sockets),
+        files opened for appending, and platforms without native callbacks
+        keep the Python callbacks.
+        """
+        if not cls.native_file_io or _NATIVE_FILE_CALLBACKS is None:
+            return None
+        try:
+            fd = file_like_stream.fileno()
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            if "a" in str(getattr(file_like_stream, "mode", "")):
+                return None
+            file_like_stream.flush()
+            position = file_like_stream.tell()
+            native_fd = os.dup(fd)
+            os.lseek(native_fd, position, os.SEEK_SET)
+            return native_fd
+        except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
+            return None
+
+    def _sync_native_position(self):
+        """Move the Python file to where the native library left the file."""
+        if self._native_fd is None:
+            return
+        try:
+            self._file_like_stream.seek(
+                os.lseek(self._native_fd, 0, os.SEEK_CUR))
+        except (OSError, ValueError) as e:
+            logger.error(
+                Stream._ERROR_MESSAGES['stream_error'].format(str(e)))
+
+    def _close_native_fd(self):
+        """Close the descriptor the native library used, if any."""
+        fd, self._native_fd = self._native_fd, None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:  # pragma: no cover
+                pass
+
+    @property
+    def uses_native_file_io(self) -> bool:
+        """Whether the native library reads and writes the file directly.
+
+        Returns:
+            bool: True for a regular file served without Python callbacks
+        """
+        return self._native_fd is not None
 
     def write_to_target(self, dest_stream):
         self._file_like_stream.seek(0)
