@@ -28,11 +28,14 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-Download [c2pa-rs library artifacts](https://github.com/contentauth/c2pa-rs/tags) for the current version you want (for example, as shown below for v0.91.3):
+Download [c2pa-rs library artifacts](https://github.com/contentauth/c2pa-rs/tags) for the release selected in `c2pa-native-version.txt`:
 
 ```bash
-python scripts/download_artifacts.py c2pa-v0.91.3
+make download-native-artifacts
 ```
+
+Without `make`, pass the tag from `c2pa-native-version.txt` directly to
+`python scripts/download_artifacts.py` (currently `c2pa-v0.91.7`).
 
 Install the package in development mode:
 

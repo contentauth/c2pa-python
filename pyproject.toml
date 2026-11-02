@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "c2pa-python"
-version = "0.38.2"
+version = "0.38.3"
 requires-python = ">=3.10"
 description = "Python bindings for the C2PA Content Authenticity Initiative (CAI) library"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -24,6 +24,7 @@ urls = {homepage = "https://contentauthenticity.org", repository = "https://gith
 dependencies = [
     "toml>=0.10.2",
     "cryptography>=41.0.0",
+    "certifi>=2026.10.19",
     "requests>=2.0.0"
 ]
 
