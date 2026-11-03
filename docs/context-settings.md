@@ -18,7 +18,7 @@ The `Context` class encapsulates configuration for:
 - **Simplifies testing**: Create isolated configurations for tests without worrying about cleanup or interference.
 
 > [!NOTE]
-> c2pa-rs 0.92 no longer supports thread-local settings, and `load_settings()` has been removed from these bindings. See [Migrating from load_settings](#migrating-from-load_settings).
+> Without an explicit `Context`, `Reader` and `Builder` use the shared default context. Pass a `Context` for custom settings or a context signer. c2pa-rs 0.92 no longer supports thread-local settings, and `load_settings()` has been removed from these bindings. See [Migrating from load_settings](#migrating-from-load_settings).
 
 ## Quick start
 
@@ -235,7 +235,7 @@ Archives (`.c2pa` files) store only the manifest definition. They do **not** sto
 - **`Builder.from_archive(stream)`** creates a context-free builder. All settings revert to SDK defaults regardless of what context the original builder had.
 - **`Builder({}, ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved.
 
-Use `with_archive()` when your workflow depends on specific settings (thumbnails, claim generator, intent, and so on). Use `from_archive()` only for quick prototyping where SDK defaults are acceptable.
+Use `with_archive()`. `from_archive()` is deprecated and will be removed when c2pa-python moves to c2pa-rs 0.92.0.
 
 ```py
 ctx = Context.from_dict({
@@ -754,7 +754,7 @@ assert isinstance(ctx, ContextProvider)  # True
 
 ## Migrating from load_settings
 
-The `load_settings()` function has been removed. Replace it with `Settings` and `Context` APIs, passing the context to every operation that needs the configuration:
+The `load_settings()` function has been removed. Replace it with `Settings` and `Context` APIs, passing the context to every operation that needs the configuration. Operations without an explicit context use SDK default settings:
 
 | Aspect | `load_settings` (legacy) | `Context` |
 |--------|--------------------------|-----------|
@@ -768,7 +768,7 @@ The `load_settings()` function has been removed. Replace it with `Settings` and 
 from c2pa import load_settings, Reader
 
 load_settings({"builder": {"thumbnail": {"enabled": False}}})
-reader = Reader("image.jpg")  # uses global settings
+reader = Reader("image.jpg")  # no longer sees thread local settings
 ```
 
 **Current approach:**

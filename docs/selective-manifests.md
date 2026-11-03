@@ -483,7 +483,7 @@ There are two distinct types of archives, sharing the same binary format but bei
 
 ### Builder archives vs. ingredient archives
 
-A **builder archive** (also called a working store archive) is a serialized snapshot of a `Builder`. It contains the manifest definition, all resources, and any ingredients that were added. It is created by `builder.to_archive()` and restored with `Builder.from_archive()` to create a new builder instance from an archive, or `builder.with_archive()` to load a working store from a builder archive into an existing builder instance.
+A **builder archive** (also called a working store archive) is a serialized snapshot of a `Builder`. It contains the manifest definition, all resources, and any ingredients that were added. It is created by `builder.to_archive()` and restored with `builder.with_archive()`, which loads a working store from a builder archive into an existing builder instance. `Builder.from_archive()` also creates a new builder instance from an archive, but it is deprecated.
 
 An **ingredient archive** contains the manifest store from an asset that was added as an ingredient.
 
@@ -576,7 +576,7 @@ Producer side, build the catalog:
 import io
 from c2pa import Builder
 
-catalog_builder = Builder.from_json(manifest_json)
+catalog_builder = Builder.from_json(manifest_json, context=ctx)
 with open("photo-A.jpg", "rb") as f:
     catalog_builder.add_ingredient(
         {"title": "photo-A.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-A"},
@@ -603,7 +603,7 @@ catalog_builder.write_ingredient_archive("catalog:ingredient-C", archive_c)
 Consumer side, pick one archive and load it:
 
 ```py
-final_builder = Builder.from_json(manifest_json)
+final_builder = Builder.from_json(manifest_json, context=ctx)
 archive_b.seek(0)
 final_builder.add_ingredient_from_archive(archive_b)
 
@@ -631,7 +631,7 @@ signing_manifest = {
     }]
 }
 
-signing_builder = Builder.from_json(signing_manifest)
+signing_builder = Builder.from_json(signing_manifest, context=ctx)
 for archive in (archive_a, archive_b, archive_c):
     archive.seek(0)
     signing_builder.add_ingredient_from_archive(archive)
@@ -654,7 +654,7 @@ Switch to the dedicated ingredient archive APIs: set `instance_id` per ingredien
 Producer side:
 
 ```py
-catalog_builder = Builder.from_json(manifest_json)
+catalog_builder = Builder.from_json(manifest_json, context=ctx)
 with open("photo-A.jpg", "rb") as f:
     catalog_builder.add_ingredient(
         {"title": "photo-A.jpg", "relationship": "componentOf", "instance_id": "catalog:ingredient-A"},
@@ -674,7 +674,7 @@ catalog_builder.write_ingredient_archive("catalog:ingredient-B", archive_b)
 Consumer side:
 
 ```py
-final_builder = Builder.from_json(manifest_json)
+final_builder = Builder.from_json(manifest_json, context=ctx)
 archive_b.seek(0)
 final_builder.add_ingredient_from_archive(archive_b)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
@@ -695,7 +695,7 @@ When building an ingredient archive, you can set `instance_id` on the ingredient
 
 ```py
 # Set instance_id when adding the ingredient to the archive builder.
-builder = Builder.from_json(manifest_json)
+builder = Builder.from_json(manifest_json, context=ctx)
 with open("photo-A.jpg", "rb") as f:
     builder.add_ingredient(
         {
@@ -715,7 +715,7 @@ Later, when reading the archive, select ingredients by their `instance_id`:
 
 ```py
 archive.seek(0)
-reader = Reader("application/c2pa", archive)
+reader = Reader("application/c2pa", archive, context=ctx)
 manifest_data = json.loads(reader.json())
 active = manifest_data["active_manifest"]
 ingredients = manifest_data["manifests"][active]["ingredients"]
@@ -860,7 +860,7 @@ with Builder({
 ```
 
 > [!NOTE]
-> When restoring from an archive, `with_archive()` preserves context settings while `from_archive()` does not. See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
+> When restoring from an archive, `with_archive()` preserves context settings. The deprecated `from_archive()` creates a builder with SDK default settings. See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
 
 **Step 2:** Read the archive and extract ingredients:
 
@@ -1129,7 +1129,7 @@ Use the same approach with format `"application/c2pa"` and an archive stream:
 
 ```py
 with open("builder_archive.c2pa", "rb") as archive_file:
-    reader = Reader("application/c2pa", archive_file)
+    reader = Reader("application/c2pa", archive_file, context=ctx)
     # Then parse and iterate assertions as in the example above
 ```
 
@@ -1232,7 +1232,7 @@ new_manifest = {"claim_generator_info": [{"name": "an-application", "version": "
 if kept_actions:
     new_manifest["assertions"] = [{"label": "c2pa.actions", "data": {"actions": kept_actions}}]
 
-builder = Builder.from_json(new_manifest)
+builder = Builder.from_json(new_manifest, context=ctx)
 with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
     builder.sign(signer, "image/jpeg", src, dst)
 ```
@@ -1300,7 +1300,7 @@ with open("source.jpg", "rb") as f:
     if kept_actions:
         new_manifest["assertions"] = [{"label": "c2pa.actions", "data": {"actions": kept_actions}}]
 
-    builder = Builder.from_json(new_manifest)
+    builder = Builder.from_json(new_manifest, context=ctx)
 
     # Transfer binary resources for kept ingredients
     for ingredient in kept_ingredients:

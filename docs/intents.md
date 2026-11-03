@@ -51,7 +51,7 @@ You can set the intent on a `Builder` instance by:
 - [Using Context](#using-context)
 - [Using `set_intent` on the `Builder`](#using-set_intent-on-the-builder)
 
-The thread-local `load_settings()` function has been removed. For existing code, see [Context and settings - Migrating from load_settings](context-settings.md#migrating-from-load_settings).
+The thread-local `load_settings()` function has been removed. Set intent through an explicit `Context` or `Builder.set_intent()`. For existing code, see [Context and settings - Migrating from load_settings](context-settings.md#migrating-from-load_settings).
 
 ### Using Context
 

@@ -44,7 +44,8 @@ wheels/
 # Sphinx docs
 api-docs/api
 api-docs/_build
-api-docs/_static
+api-docs/_static/*
+!api-docs/_static/version-selector.js
 api-docs/_preprocessed
 
 # PyInstaller

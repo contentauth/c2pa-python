@@ -9,6 +9,7 @@ pytest>=8.1.0
 
 # for downloading the library artifacts
 requests>=2.0.0
+certifi>=2026.10.19
 
 # Code formatting
 autopep8>=2.3.0

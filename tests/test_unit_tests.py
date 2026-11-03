@@ -54,6 +54,13 @@ INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, INGREDIENT_TEST_FILE_NAME)
 ALTERNATIVE_INGREDIENT_TEST_FILE = os.path.join(FIXTURES_DIR, "cloud.jpg")
 
 
+def _context_from_settings(settings):
+    """Build a Context from a settings dict or JSON string."""
+    if isinstance(settings, dict):
+        return Context.from_dict(settings)
+    return Context.from_json(settings)
+
+
 def _patch_free(test, fn):
     """Route ManagedResource._free_native_ptr to `fn` until `test` ends."""
     patcher = patch.object(
@@ -2989,6 +2996,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         output.close()
 
     def test_ingredient_from_archive_linked_to_placed_action(self):
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
         ingredient_id = "xmp:iid:archive-component-001"
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
@@ -3010,7 +3018,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ],
         }
-        archive_builder = Builder.from_json(manifest)
+        archive_builder = Builder.from_json(manifest, context=settings_context)
         with open(self.testPath, "rb") as f:
             archive_builder.add_ingredient(
                 {"title": "photo.jpg", "relationship": "componentOf", "instance_id": ingredient_id},
@@ -3020,7 +3028,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive_builder.close()
 
         archive.seek(0)
-        signing_builder = Builder.from_json(manifest)
+        signing_builder = Builder.from_json(manifest, context=settings_context)
         signing_builder.add_ingredient_from_archive(archive)
         archive.close()
 
@@ -3030,13 +3038,14 @@ class TestBuilderWithSigner(unittest.TestCase):
         signing_builder.close()
 
         output.seek(0)
-        reader = Reader("image/jpeg", output)
+        reader = Reader("image/jpeg", output, context=settings_context)
         json_data = reader.json()
         self.assertIn("c2pa.placed", json_data)
         self.assertIn(ingredient_id, json_data)
         output.close()
 
     def test_ingredient_from_archive_linked_to_edited_action(self):
+        settings_context = _context_from_settings('{"builder":{"actions":{"auto_placed_action":{"enabled":true},"auto_opened_action":{"enabled":true},"auto_created_action":{"enabled":true,"source_type":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}}}}')
         ingredient_id = "xmp:iid:archive-input-001"
         manifest = {
             "claim_generator_info": [{"name": "c2pa-test", "version": "1.0"}],
@@ -3058,7 +3067,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                 }
             ],
         }
-        archive_builder = Builder.from_json(manifest)
+        archive_builder = Builder.from_json(manifest, context=settings_context)
         with open(self.testPath, "rb") as f:
             archive_builder.add_ingredient(
                 {"title": "photo.jpg", "relationship": "inputTo", "instance_id": ingredient_id},
@@ -3068,7 +3077,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         archive_builder.close()
 
         archive.seek(0)
-        signing_builder = Builder.from_json(manifest)
+        signing_builder = Builder.from_json(manifest, context=settings_context)
         signing_builder.add_ingredient_from_archive(archive)
         archive.close()
 
@@ -3078,7 +3087,7 @@ class TestBuilderWithSigner(unittest.TestCase):
         signing_builder.close()
 
         output.seek(0)
-        reader = Reader("image/jpeg", output)
+        reader = Reader("image/jpeg", output, context=settings_context)
         json_data = reader.json()
         self.assertIn("c2pa.edited", json_data)
         self.assertIn(ingredient_id, json_data)

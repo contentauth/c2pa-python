@@ -1951,6 +1951,46 @@ def _context_guard(context):
         yield
 
 
+_default_context = None
+_default_context_lock = threading.Lock()
+
+
+def _is_reusable_default(ctx) -> bool:
+    # Checks only for a closed or foreign-process context. is_valid also
+    # turns False during an in-flight mutating call, and a busy default
+    # must report that error to its caller.
+    return (ctx is not None
+            and ctx._lifecycle_state != LifecycleState.CLOSED
+            and not is_foreign_process(ctx))
+
+
+def _get_default_context() -> 'Context':
+    """Return the process-wide Context that Reader and Builder use when
+    no context is passed. It has default settings and no signer.
+    """
+    global _default_context
+    ctx = _default_context
+    if _is_reusable_default(ctx):
+        return ctx
+    with _default_context_lock:
+        if not _is_reusable_default(_default_context):
+            _default_context = Context()
+        return _default_context
+
+
+def _reset_default_context_in_child():
+    # Native locks inherited across fork() may be held by threads that do
+    # not exist in the child, so the child builds its own default. The
+    # parent's Context keeps the parent's PID, so it is never freed here.
+    global _default_context, _default_context_lock
+    _default_context = None
+    _default_context_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_default_context_in_child)
+
+
 class ContextProvider(ABC):
     """Abstract base class for types that provide a C2PA context.
 
@@ -2914,7 +2954,8 @@ class Reader(ManagedResource):
                 requests auto-detection (best effort).
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Optional ContextProvider for settings
+            context: Optional ContextProvider for settings. Without one,
+                a shared Context with default settings is used.
 
         Returns:
             Reader instance if the asset contains C2PA data,
@@ -2987,7 +3028,9 @@ class Reader(ManagedResource):
                 string requests detection from the bytes.
             stream: Optional stream to read from (Python stream-like object)
             manifest_data: Optional manifest data in bytes
-            context: Optional context implementing ContextProvider with settings
+            context: Optional context implementing ContextProvider with
+                settings. Without one, a shared Context with default
+                settings is used.
 
         Raises:
             C2paError: If there was an error creating the reader, including
@@ -2998,8 +3041,6 @@ class Reader(ManagedResource):
         super().__init__()
         self._init_attrs()
 
-        self._context = context
-
         # Only stream, no format: Reader(fh) must auto-detect on the stream.
         if stream is None and Stream.is_read_stream(format_or_path):
             stream = format_or_path
@@ -3008,29 +3049,14 @@ class Reader(ManagedResource):
         # still required to read from.
         if format_or_path is None and stream is None:
             raise C2paError("Reader requires a path or a stream")
+        if context is None:
+            context = _get_default_context()
+        self._context = context
 
-        if context is not None:
-            self._init_from_context(
-                context, format_or_path, stream,
-                manifest_data,
-            )
-            return
-
-        format_bytes = self._resolve_format_bytes(format_or_path, stream)
-
-        if stream is None:
-            # Create a stream from the file path in format_or_path.
-            # A None format lets the native lib guess from the bytes.
-            self._init_from_file(str(format_or_path), format_bytes)
-
-        elif isinstance(stream, str):
-            # stream is a file path, format_or_path is the format
-            self._init_from_file(
-                stream, format_bytes, manifest_data)
-
-        else:
-            # format_or_path is a format string, stream is a stream object
-            self._init_from_stream(stream, format_bytes, manifest_data)
+        self._init_from_context(
+            context, format_or_path, stream,
+            manifest_data,
+        )
 
     @staticmethod
     def _resolve_format_bytes(format_or_path, stream) -> Optional[bytes]:
@@ -3140,15 +3166,20 @@ class Reader(ManagedResource):
         # Determine format and open stream
         format_bytes = self._resolve_format_bytes(format_or_path, stream)
         format_arg = _format_ffi_arg(format_bytes)
-        if stream is None:
-            # A None format lets the native lib guess from the bytes.
-            self._backing_file = open(str(format_or_path), 'rb')
-            self._own_stream = Stream(self._backing_file)
-        elif isinstance(stream, str):
-            self._backing_file = open(stream, 'rb')
-            self._own_stream = Stream(self._backing_file)
-        else:
-            self._own_stream = Stream(stream)
+        try:
+            if stream is None:
+                # A None format lets the native lib guess from the bytes.
+                self._backing_file = open(str(format_or_path), 'rb')
+                self._own_stream = Stream(self._backing_file)
+            elif isinstance(stream, str):
+                self._backing_file = open(stream, 'rb')
+                self._own_stream = Stream(self._backing_file)
+            else:
+                self._own_stream = Stream(stream)
+        except OSError as e:
+            self._close_streams()
+            raise C2paError.Io(
+                Reader._ERROR_MESSAGES['io_error'].format(str(e)))
 
         try:
             # The Context is caller-supplied and may be shared, so its handle
@@ -3910,7 +3941,8 @@ class Builder(ManagedResource):
 
         Args:
             manifest_json: The JSON manifest definition
-            context: Optional ContextProvider for settings
+            context: Optional ContextProvider for settings. Without one,
+                a shared Context with default settings is used.
 
         Returns:
             A new Builder instance
@@ -3929,6 +3961,11 @@ class Builder(ManagedResource):
 
         This creates builder without a context. To use a context,
         create a Builder with a context first, then call with_archive() on it.
+
+        .. deprecated::
+            Use ``Builder({}, context=Context()).with_archive(stream)``.
+            c2pa-rs 0.92.0 removes c2pa_builder_from_archive, so this method
+            will be removed when c2pa-python moves to that release.
 
         Args:
             stream: The stream containing the archive
@@ -3980,7 +4017,9 @@ class Builder(ManagedResource):
 
         Args:
             manifest_json: The manifest JSON definition (string or dict)
-            context: Optional Context (ContextProvider) for settings
+            context: Optional Context (ContextProvider) for settings.
+                Without one, a shared Context with default settings and no
+                signer is used.
 
         Raises:
             C2paError: If there was an error creating the builder
@@ -3990,10 +4029,12 @@ class Builder(ManagedResource):
         super().__init__()
         self._init_attrs()
 
+        if context is None:
+            context = _get_default_context()
+
         self._context = context
         self._has_context_signer = (
-            context is not None
-            and hasattr(context, 'has_signer')
+            hasattr(context, 'has_signer')
             and context.has_signer
         )
 
@@ -4650,6 +4691,10 @@ def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
 
     For a builder with custom settings or format-specific state, use
     :meth:`Builder.compose_manifest` on that builder instead.
+
+    .. deprecated::
+        c2pa-rs 0.92.0 removes c2pa_format_embeddable, so this function
+        will be removed when c2pa-python moves to that release.
 
     Args:
         format: The MIME type or extension of the target format

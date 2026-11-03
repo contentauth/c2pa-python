@@ -52,7 +52,7 @@ manifest_json = json.dumps({
 
 ## Settings, Context, and ContextProvider
 
-The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the removed thread-local `load_settings()` function.
+The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the removed thread-local `load_settings()` function. Without a `Context`, `Reader` and `Builder` use the shared default context.
 
 See [Context and settings](context-settings.md) for details.
 
