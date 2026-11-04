@@ -20,8 +20,12 @@ read [Part 1: Using the library](#part-1-using-the-library).
 
 ## Read first: when developing c2pa-python
 
-Changing this repository: read [Part 2: Developing c2pa-python](#part-2-developing-c2pa-python),
-and Part 1 for the API the repository exposes.
+When changing library behavior or implementation, read all of
+[Part 1: Using the library](#part-1-using-the-library) and
+[Part 2: Developing c2pa-python](#part-2-developing-c2pa-python) first. Part 1 explains
+the library's public behavior and resource contracts; Part 2 explains repository and
+binding implementation practices. For changes limited to documentation, tests, or
+tooling, read Part 2 and the relevant Part 1 sections.
 
 | Topic | Document |
 | --- | --- |
@@ -34,10 +38,12 @@ and Part 1 for the API the repository exposes.
 
 ### Lifetimes and consumption
 
-#### ALWAYS USE `with`
+#### Close every native resource
 
-**Every `Reader`, `Builder`, `Signer`, `Context` and `Settings` goes in a `with` block.
-No exceptions in new code.**
+Every `Reader`, `Builder`, `Signer`, `Context` and `Settings` must be closed
+deterministically. Prefer a `with` block. Use explicit `close()` only for long-lived
+objects that cannot reasonably be scoped to a `with` block, and close them in `finally`
+or from their owner's `close()` / `__exit__`.
 
 Each of these objects holds memory allocated by the native library. Python's garbage
 collector does not know that memory exists. The `with` block is what frees it, at a
@@ -80,9 +86,9 @@ Rules for `with`:
 - **Never let an object escape its block.** Returning or storing a `Reader` created in a
   `with` block hands out a closed object; every method on it raises `C2paError`. Return
   the data instead (`reader.json()`, `reader.get_active_manifest()`).
-- **Long-lived objects** that cannot sit in one block (a `Context` stored on a service
-  object) use `try`/`finally` with `close()`, or close from the owner's own `close()` /
-  `__exit__`. `close()` can be called more than once safely.
+- **Long-lived objects** that cannot reasonably sit in one block (a `Context` stored on
+  a service object) use explicit `close()` in `try`/`finally`, or close from the owner's
+  own `close()` / `__exit__`. `close()` can be called more than once safely.
 - `close()` and `with` are equivalent. `__del__` is a fallback for mistakes, never the
   plan.
 
@@ -487,8 +493,14 @@ make test-one T=tests.unit.test_reader.TestReader.<test_name>   # one module, cl
 pytest tests/unit -v                         # as CI runs them
 ```
 
-Run new tests by name and read their own result lines; a passing suite does not show a new
-test ran.
+During development, run new tests by name and read their own result lines; this confirms
+the tests ran while iterating. These targeted commands are development checks, not a
+replacement for final validation. Before finishing a code change, run both `make test`
+and `make check-format`.
+
+If a required check cannot run because a prerequisite is unavailable, do not report it as
+passing. State what blocked it, run the checks that are available, and report which checks
+ran and their results.
 
 `TestC2paSdk.test_sdk_version` fails with an assertion like `'0.91.0' not found in
 '0.91.1'` when the installed native library's version does not match
@@ -530,8 +542,10 @@ A public API change also updates the topic document in `docs/` and
 
 #### Versioning
 
-- Python package version: bump `version` in `pyproject.toml` and the `# Version:` header
-  in `src/c2pa/c2pa.py` together, on every change that ships.
+- Python package version: bump only for release-ready changes. When bumping, update
+  `version` in `pyproject.toml` and the `# Version:` header in `src/c2pa/c2pa.py`
+  together. Before making either change, ask the user for confirmation and wait for
+  approval.
 - `c2pa-native-version.txt`: bump only when pinning a new c2pa-rs release. Not tied to
   the Python package version; bump it alone, then `make download-native-artifacts` and
   run the tests.
@@ -1039,12 +1053,13 @@ Native errors are strings of the form `"VariantName: details"`, the cimpl conven
 
 ### Any change
 
-- [ ] Every `Reader`, `Builder`, `Signer`, `Context` and `Settings` used in `with`, or
-  explicitly `close()`d
-- [ ] New tests run by name, their own result lines read
+- [ ] Every `Reader`, `Builder`, `Signer`, `Context` and `Settings` is closed
+      deterministically: use `with`, except for long-lived objects that cannot reasonably
+      be scoped that way, which must be explicitly closed
 - [ ] `make test` passes
 - [ ] `make check-format` passes
-- [ ] All other existing unit tests still pass
+- [ ] If a required check is blocked by an unavailable prerequisite, report the reason and
+      the checks that were run instead; do not claim the blocked check passed
 
 ### Public API change
 
