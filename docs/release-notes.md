@@ -1,5 +1,25 @@
 # Release notes
 
+## Version 0.38.3
+
+### TLS trust stores
+
+Release builds select c2pa-rs `c2pa-v0.91.7` through
+`c2pa-native-version.txt`. Rebuild or upgrade installed wheels to update the
+bundled native library; updating Python dependencies alone does not update it.
+Local source builds and externally supplied libraries must also use patched
+c2pa-rs dependencies.
+
+Python artifact downloads use Requests and require `certifi>=2026.10.19`, whose
+CA bundle removes the affected emSign ECC Root CA - G3. This is separate from
+the native SDK's TLS verification. Custom bundles (including `REQUESTS_CA_BUNDLE`
+or `CURL_CA_BUNDLE` overrides), Python/OpenSSL default stores used by
+`urllib.request` in `examples/read.py`, and installer/build tools need their own
+updates. Keep the operating system, Python runtime, and packaging tools current,
+and verify custom stores against the
+[eMudhra incident's affected chains](https://emudhra.we-have-a-problem.com/);
+updating certifi does not patch these other stores.
+
 ## Version 0.33.0
 
 ### Breaking changes

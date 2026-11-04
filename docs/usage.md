@@ -52,7 +52,7 @@ manifest_json = json.dumps({
 
 ## Settings, Context, and ContextProvider
 
-The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated.
+The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated. Without a `Context`, `Reader` and `Builder` use one with SDK default settings.
 
 See [Context and settings](context-settings.md) for details.
 
