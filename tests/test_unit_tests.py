@@ -6208,6 +6208,132 @@ class TestStream(unittest.TestCase):
         self.assertEqual(flush_cb(None), -1)
 
 
+
+class _CountingFile(io.FileIO):
+    """A regular file that counts the reads and writes done through Python."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.python_calls = 0
+
+    def readinto(self, b):
+        self.python_calls += 1
+        return super().readinto(b)
+
+    def read(self, *args):
+        self.python_calls += 1
+        return super().read(*args)
+
+    def write(self, b):
+        self.python_calls += 1
+        return super().write(b)
+
+
+class TestNativeFileStreams(unittest.TestCase):
+    """Regular files are read and written by the native library, not Python."""
+
+    def setUp(self):
+        with open(os.path.join(FIXTURES_DIR, "es256_certs.pem"), "rb") as f:
+            certs = f.read()
+        with open(os.path.join(FIXTURES_DIR, "es256_private.key"), "rb") as f:
+            key = f.read()
+        # No timestamp authority: the test stays offline.
+        self.signer = Signer.from_info(
+            C2paSignerInfo(alg=b"es256", sign_cert=certs, private_key=key,
+                           ta_url=None))
+        self.manifest = {
+            "claim_generator_info": [{"name": "python_test", "version": "0.0.1"}],
+            "title": "Native streams",
+            "format": "image/jpeg",
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {"actions": [{
+                    "action": "c2pa.created",
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/"
+                                         "digitalsourcetype/digitalCapture",
+                }]},
+            }],
+        }
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        self.signer.close()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_only_regular_files_use_native_io(self):
+        with open(DEFAULT_TEST_FILE, "rb") as f, Stream(f) as stream:
+            self.assertTrue(stream.uses_native_file_io)
+        with Stream(io.BytesIO(b"data")) as stream:
+            self.assertFalse(stream.uses_native_file_io)
+        append_path = os.path.join(self.temp_dir, "append.bin")
+        with open(append_path, "ab") as f, Stream(f) as stream:
+            self.assertFalse(stream.uses_native_file_io)
+
+    def test_native_io_can_be_turned_off(self):
+        Stream.native_file_io = False
+        try:
+            with open(DEFAULT_TEST_FILE, "rb") as f, Stream(f) as stream:
+                self.assertFalse(stream.uses_native_file_io)
+        finally:
+            Stream.native_file_io = True
+
+    def test_signing_files_never_calls_back_into_python(self):
+        dest_path = os.path.join(self.temp_dir, "signed.jpg")
+        with _CountingFile(DEFAULT_TEST_FILE, "rb") as source, \
+                _CountingFile(dest_path, "w+b") as dest:
+            Builder(self.manifest).sign(self.signer, "image/jpeg", source, dest)
+            self.assertEqual(source.python_calls, 0)
+            self.assertEqual(dest.python_calls, 0)
+            # The Python file continues where the native library stopped.
+            self.assertEqual(source.tell(), os.path.getsize(DEFAULT_TEST_FILE))
+
+        with Reader(dest_path) as reader:
+            manifest = json.loads(reader.json())
+        active = manifest["manifests"][manifest["active_manifest"]]
+        self.assertEqual(active["title"], "Native streams")
+
+    def test_native_and_python_streams_sign_alike(self):
+        signed = []
+        for native in (True, False):
+            Stream.native_file_io = native
+            try:
+                dest_path = os.path.join(self.temp_dir, f"signed-{native}.jpg")
+                with open(DEFAULT_TEST_FILE, "rb") as source, \
+                        open(dest_path, "w+b") as dest:
+                    Builder(self.manifest).sign(
+                        self.signer, "image/jpeg", source, dest)
+                with Reader(dest_path) as reader:
+                    manifest = json.loads(reader.json())
+                signed.append((os.path.getsize(dest_path),
+                               manifest.get("validation_state")))
+            finally:
+                Stream.native_file_io = True
+        self.assertEqual(signed[0], signed[1])
+
+    def test_starts_at_the_python_position(self):
+        with open(DEFAULT_TEST_FILE, "rb") as f:
+            expected = f.read()[100:116]
+            f.seek(100)
+            with Stream(f) as stream:
+                buffer = (ctypes.c_ubyte * 16)()
+                read = stream._read_cb(
+                    ctypes.c_void_p(stream._native_fd), buffer, 16)
+                self.assertEqual(bytes(buffer[:read]), expected)
+            self.assertEqual(f.tell(), 116)
+
+    def test_survives_the_python_file_closing_first(self):
+        f = open(DEFAULT_TEST_FILE, "rb")
+        stream = Stream(f)
+        f.close()
+        try:
+            buffer = (ctypes.c_ubyte * 4)()
+            read = stream._read_cb(
+                ctypes.c_void_p(stream._native_fd), buffer, 4)
+            self.assertEqual(read, 4)
+        finally:
+            stream._close_native_fd()
+            stream.close()
+
 class TestLegacyAPI(unittest.TestCase):
     def setUp(self):
         # Filter specific deprecation warnings for legacy API tests
