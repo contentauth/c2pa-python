@@ -26,24 +26,16 @@ def get_version():
 VERSION = get_version()
 PACKAGE_NAME = "c2pa-python"  # Define package name as a constant
 
-# Define platform to library extension mapping (for reference only)
-PLATFORM_EXTENSIONS = {
-    'win_amd64': 'dll',
-    'win_arm64': 'dll',
-    'apple-darwin': 'dylib', # universal
-    'linux_x86_64': 'so',
-    'linux_aarch64': 'so',
-}
-
-# Based on what c2pa-rs repo publishes
+# Based on what c2pa-rs repo publishes: each platform folder and the
+# native library in it that src/c2pa/lib.py loads
 PLATFORM_FOLDERS = {
-    'universal-apple-darwin': 'dylib',
-    'aarch64-apple-darwin': 'dylib',
-    'x86_64-apple-darwin': 'dylib',
-    'x86_64-pc-windows-msvc': 'dll',
-    'aarch64-pc-windows-msvc': 'dll',
-    'x86_64-unknown-linux-gnu': 'so',
-    'aarch64-unknown-linux-gnu': 'so',
+    'universal-apple-darwin': 'libc2pa_c.dylib',
+    'aarch64-apple-darwin': 'libc2pa_c.dylib',
+    'x86_64-apple-darwin': 'libc2pa_c.dylib',
+    'x86_64-pc-windows-msvc': 'c2pa_c.dll',
+    'aarch64-pc-windows-msvc': 'c2pa_c.dll',
+    'x86_64-unknown-linux-gnu': 'libc2pa_c.so',
+    'aarch64-unknown-linux-gnu': 'libc2pa_c.so',
 }
 
 # Directory structure
@@ -117,21 +109,10 @@ def get_current_platform():
             return "linux_aarch64"
         return "linux_x86_64"
 
-def get_native_library_name(platform_name):
-    """Get the file name of the native library that src/c2pa/lib.py loads."""
-    if platform_name.endswith('windows-msvc'):
-        return "c2pa_c.dll"
-    elif platform_name.endswith('apple-darwin'):
-        return "libc2pa_c.dylib"
-    elif platform_name.endswith('linux-gnu'):
-        return "libc2pa_c.so"
-    else:
-        raise ValueError(f"Unknown platform: {platform_name}")
-
 def copy_platform_libraries(platform_name, clean_first=False):
     """Copy the native library for a specific platform to the package libs directory.
 
-    Only the library loaded at runtime is copied. The c2pa-rs release archives
+    Only the library loaded at runtime is copied. The native Rust lib release archives
     also contain static libraries, debug symbols and build metadata
     (.lib, .rlib, .pdb, .dSYM, .d), which are not needed and would otherwise
     end up in the wheel.
@@ -146,7 +127,11 @@ def copy_platform_libraries(platform_name, clean_first=False):
     if not platform_dir.exists():
         raise ValueError(f"Platform directory not found: {platform_dir}")
 
-    library_file = platform_dir / get_native_library_name(platform_name)
+    library_name = PLATFORM_FOLDERS.get(platform_name)
+    if library_name is None:
+        raise ValueError(f"Unknown platform: {platform_name}")
+
+    library_file = platform_dir / library_name
     if not library_file.is_file():
         raise ValueError(f"Native library not found: {library_file}")
 
