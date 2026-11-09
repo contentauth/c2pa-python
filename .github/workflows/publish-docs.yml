@@ -46,8 +46,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Stable release tags must use the format vX.Y.Z"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "::error::Release tags must use the format vX.Y.Z with an optional prerelease suffix (e.g. v1.2.3-alpha)"
             exit 1
           fi
           jq --arg tag "$RELEASE_TAG" '.versions = [$tag] + (.versions - [$tag])' \
