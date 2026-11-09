@@ -1,1 +1,1 @@
-c3d09903426d90f55f0abcaaabdc6646f55b1578
+c2pa-rc-v0.92.0-rc.1
