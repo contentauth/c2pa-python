@@ -531,28 +531,6 @@ def scenario_reader_with_fragment_swap(iterations: int = 100) -> None:
             reader.close()
 
 
-def scenario_builder_from_archive_roundtrip(iterations: int = 100) -> None:
-    """Loop Builder.from_archive() itself (context-less alternate constructor),
-    then sign. Regression guard for the classmethod's native-handle wrapping.
-    """
-    signer = _make_signer()
-    source_bytes = SOURCE_JPEG.read_bytes()
-    ingredient_bytes = SIGNED_JPEG.read_bytes()
-    archive_bytes = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive_bytes)
-    archive_bytes = archive_bytes.getvalue()
-    for _ in _iterate(iterations):
-        # from_archive() yields a context-less Builder, so sign() needs an
-        # explicit signer (no Context to pull one from).
-        builder = Builder.from_archive(io.BytesIO(archive_bytes))
-        with io.BytesIO(ingredient_bytes) as ing:
-            builder.add_ingredient(
-                {"relationship": "parentOf", "instance_id": _PARENT_ID},
-                "image/jpeg", ing,
-            )
-        builder.sign(signer, "image/jpeg", io.BytesIO(source_bytes), io.BytesIO())
-
-
 # Consume-and-return failure paths.
 #
 # These calls take ownership partway through their body, so a null return is
@@ -1242,22 +1220,6 @@ def scenario_fork_contended_mutex_swap(iterations: int = 100) -> None:
     _fork_contended_over(_make, iterations)
 
 
-def scenario_fork_contended_mutex_wrap(iterations: int = 100) -> None:
-    """Fork safety benchmark scenario:
-    fork over a Builder built by from_archive(), under thread contention.
-    from_archive is the only path that bypasses __init__, so it is the one
-    most likely to be missing the PID stamp the child's close() depends on.
-    """
-    if not hasattr(os, "fork"):
-        return
-    archive = io.BytesIO()
-    Builder(MANIFEST_BASE).to_archive(archive)
-    archive_bytes = archive.getvalue()
-
-    _fork_contended_over(
-        lambda: Builder.from_archive(io.BytesIO(archive_bytes)), iterations)
-
-
 def scenario_fork_consumed_signer(iterations: int = 100) -> None:
     """Fork safety benchmark scenario:
     the parent builds a Context that consumed a Signer, then forks. The child
@@ -1408,7 +1370,6 @@ SCENARIOS = {
     "builder_sign_jpeg_two_components_same_mime": scenario_builder_sign_jpeg_two_components_same_mime,
     "builder_sign_jpeg_two_components_mixed_mime": scenario_builder_sign_jpeg_two_components_mixed_mime,
     "builder_sign_jpeg_archive_roundtrip": scenario_builder_sign_jpeg_archive_roundtrip,
-    "builder_from_archive_roundtrip": scenario_builder_from_archive_roundtrip,
     "builder_with_archive_swap": scenario_builder_with_archive_swap,
     "reader_with_fragment_swap": scenario_reader_with_fragment_swap,
     "with_fragment_pre_consume_rejection":
@@ -1441,7 +1402,6 @@ SCENARIOS = {
     "fork_stream_cleanup": scenario_fork_stream_cleanup,
     "fork_swap_cleanup": scenario_fork_swap_cleanup,
     "fork_contended_mutex_swap": scenario_fork_contended_mutex_swap,
-    "fork_contended_mutex_wrap": scenario_fork_contended_mutex_wrap,
     "fork_consumed_signer": scenario_fork_consumed_signer,
     "swap_chain_churn": scenario_swap_chain_churn,
     "deferred_teardown_flush_queue": scenario_deferred_teardown_flush_queue,

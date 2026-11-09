@@ -1734,7 +1734,7 @@ class TestBuilderWithThreads(unittest.TestCase):
                     archive_stream.seek(0)
 
                     # Load from archive and sign
-                    builder = Builder.from_archive(archive_stream)
+                    builder = Builder({}).with_archive(archive_stream)
                     builder.sign(
                         self.signer, "image/jpeg", file, output_stream)
                     output_stream.seek(0)
@@ -3617,7 +3617,6 @@ class TestLocking(unittest.TestCase):
         class_a = {
             ("Reader", "_create_reader"),
             ("Reader", "_init_from_context"),
-            ("Builder", "from_archive"),
         }
         stream_use = re.compile(
             r"(_stream|stream_obj|source_stream|dest_stream|main_obj"

@@ -2,7 +2,7 @@
   "_meta": {
     "memray_version": "1.19.3",
     "python_version": "3.12.13",
-    "c2pa_native_version": "c2pa-v0.90.16",
+    "c2pa_native_version": "c2pa-v0.92.0-rc.1",
     "iterations": 200,
     "perf_env": "python-3.12-slim",
     "arch": "aarch64"
@@ -142,11 +142,6 @@
     "leaked_bytes": 3545507,
     "total_allocations": 3432412
   },
-  "builder_from_archive_roundtrip": {
-    "peak_bytes": 14353258,
-    "leaked_bytes": 3542427,
-    "total_allocations": 3024501
-  },
   "builder_with_archive_swap": {
     "peak_bytes": 3753525,
     "leaked_bytes": 3421374,
@@ -281,11 +276,6 @@
     "peak_bytes": 7360409,
     "leaked_bytes": 3525035,
     "total_allocations": 37359891
-  },
-  "fork_contended_mutex_wrap": {
-    "peak_bytes": 7140341,
-    "leaked_bytes": 3522965,
-    "total_allocations": 34204380
   },
   "fork_consumed_signer": {
     "peak_bytes": 3421645,

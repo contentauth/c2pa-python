@@ -42,10 +42,6 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_version',
     # Error retriever and parser
     'c2pa_error',
-    # Legacy APIs, deprecated.
-    'c2pa_load_settings',
-    'c2pa_builder_from_archive',
-    'c2pa_format_embeddable',
     # Stream
     'c2pa_create_stream',
     'c2pa_release_stream',
@@ -1306,9 +1302,6 @@ _setup_function(
 _setup_function(_lib.c2pa_version, [], ctypes.c_void_p)
 _setup_function(_lib.c2pa_error, [], ctypes.c_void_p)
 _setup_function(
-    _lib.c2pa_load_settings, [
-        ctypes.c_char_p, ctypes.c_char_p], ctypes.c_int)
-_setup_function(
     _lib.c2pa_free_string_array,
     [ctypes.POINTER(ctypes.c_char_p), ctypes.c_size_t],
     None
@@ -1343,9 +1336,6 @@ _setup_function(
 )
 
 # Set up Builder function prototypes
-_setup_function(_lib.c2pa_builder_from_archive,
-                [ctypes.POINTER(C2paStream)],
-                ctypes.POINTER(C2paBuilder))
 _setup_function(
     _lib.c2pa_builder_with_archive,
     [ctypes.POINTER(C2paBuilder), ctypes.POINTER(C2paStream)],
@@ -1390,12 +1380,6 @@ _setup_function(_lib.c2pa_builder_sign,
                  ctypes.POINTER(C2paSigner),
                  ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))],
                 ctypes.c_int64)
-_setup_function(
-    _lib.c2pa_format_embeddable, [
-        ctypes.c_char_p, ctypes.POINTER(
-            ctypes.c_ubyte), ctypes.c_size_t, ctypes.POINTER(
-                ctypes.POINTER(
-                    ctypes.c_ubyte))], ctypes.c_int64)
 _setup_function(_lib.c2pa_signer_create,
                 [ctypes.c_void_p,
                  SignerCallback,
@@ -1954,72 +1938,6 @@ def _warn_deprecated_api(message: str, stacklevel: int) -> None:
         DeprecationWarning,
         stacklevel=stacklevel + 1,
     )
-
-
-@overload
-def load_settings(settings: str, format: str = "json") -> None:
-    ...
-
-
-@overload
-def load_settings(settings: dict) -> None:
-    ...
-
-
-def load_settings(settings: Union[str, dict], format: str = "json") -> None:
-    """Load C2PA settings into thread-local storage from a string or dict.
-
-    .. deprecated::
-        Use :class:`Settings` and :class:`Context` for
-        per-instance configuration instead. Settings and
-        Context will propagate configurations through object instances,
-        no thread-local configurations. Avoid mixing Context APIs
-        and legacy load_settings usage.
-        c2pa-rs 0.92.0 removes c2pa_load_settings, so this function
-        will be removed when c2pa-python moves to that release.
-        Reader and Builder no longer read these settings: without a
-        Context they use one with default settings. Only the deprecated
-        Builder.from_archive() still reads them.
-
-    Args:
-        settings: The settings string or dict to load
-        format: The format of the settings string (default: "json").
-                Ignored when settings is a dict.
-
-    Raises:
-        C2paError: If there was an error loading the settings
-    """
-    _warn_deprecated_api(
-        "load_settings() is deprecated. Reader and Builder no longer read"
-        " these settings. Use Settings and Context for per-instance"
-        " configuration.",
-        stacklevel=2,
-    )
-
-    # Convert to JSON string as necessary
-    try:
-        if isinstance(settings, dict):
-            settings_str = json.dumps(settings)
-            format = "json"
-        else:
-            settings_str = settings
-    except (TypeError, ValueError) as e:
-        raise C2paError(f"Failed to serialize settings to JSON: {e}")
-
-    try:
-        _check_cstr_arg("settings", settings_str)
-        _check_cstr_arg("format", format)
-        settings_bytes = settings_str.encode('utf-8')
-        format_bytes = format.encode('utf-8')
-    except (AttributeError, UnicodeEncodeError) as e:
-        raise C2paError(f"Failed to encode settings to UTF-8: {e}")
-
-    with _native_section():
-        result = _lib.c2pa_load_settings(settings_bytes, format_bytes)
-        _check_ffi_operation_result(
-            result,
-            "Error loading settings",
-            check=lambda r: r != 0)
 
 
 @contextlib.contextmanager
@@ -3960,57 +3878,6 @@ class Builder(ManagedResource):
         """
         return cls(manifest_json, context=context)
 
-    @classmethod
-    def from_archive(
-        cls,
-        stream: Any,
-    ) -> 'Builder':
-        """Create a new Builder from an archive stream.
-
-        This creates builder without a context. To use a context,
-        create a Builder with a context first, then call with_archive() on it.
-
-        .. deprecated::
-            Use ``Builder({}, context=Context()).with_archive(stream)``.
-            c2pa-rs 0.92.0 removes c2pa_builder_from_archive, so this method
-            will be removed when c2pa-python moves to that release.
-
-        Args:
-            stream: The stream containing the archive
-                (any Python stream-like object)
-
-        Returns:
-            A new Builder instance (without any context)
-
-        Raises:
-            C2paError: If there was an error creating the builder
-                from archive
-        """
-        _warn_deprecated_api(
-            "Builder.from_archive() is deprecated. Use"
-            " Builder({}, context=Context()).with_archive(stream).",
-            stacklevel=2,
-        )
-
-        stream_obj = Stream(stream)
-
-        try:
-            with _native_section():
-                handle = _lib.c2pa_builder_from_archive(stream_obj._stream)
-
-                _check_ffi_operation_result(
-                    handle, "Failed to create builder from archive")
-
-            try:
-                # A builder from an archive here carries no context.
-                return cls._wrap_native_handle(handle)
-            except Exception:
-                # No instance took ownership, so the handle is still ours.
-                ManagedResource._free_native_ptr(handle)
-                raise
-        finally:
-            stream_obj.close()
-
     @overload
     def __init__(
         self,
@@ -4661,62 +4528,6 @@ class Builder(ManagedResource):
             raise C2paError(f"Error signing file: {str(e)}") from e
 
 
-def format_embeddable(format: str, manifest_bytes: bytes) -> tuple[int, bytes]:
-    """Convert a binary C2PA manifest into an embeddable version.
-
-    .. deprecated::
-        c2pa-rs 0.92.0 removes c2pa_format_embeddable, so this function
-        will be removed when c2pa-python moves to that release.
-
-    Args:
-        format: The MIME type or extension of the target format
-        manifest_bytes: The raw manifest bytes
-
-    Returns:
-        A tuple of (size of result bytes, embeddable manifest bytes)
-
-    Raises:
-        C2paError: If there was an error converting the manifest
-    """
-    _warn_deprecated_api(
-        "format_embeddable() is deprecated.", stacklevel=2)
-
-    _check_cstr_arg("format", format)
-    format_str = format.encode('utf-8')
-    manifest_array = (ctypes.c_ubyte * len(manifest_bytes)).from_buffer_copy(
-        manifest_bytes
-    )
-    result_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
-
-    with _native_section():
-        result = _lib.c2pa_format_embeddable(
-            format_str,
-            manifest_array,
-            len(manifest_bytes),
-            ctypes.byref(result_bytes_ptr)
-        )
-
-        _check_ffi_operation_result(
-            result,
-            "Failed to format embeddable manifest",
-            check=lambda r: r < 0)
-
-    size = result
-    if not result_bytes_ptr:
-        raise C2paError(
-            "Failed to format embeddable manifest: no data returned")
-    try:
-        result_bytes = ctypes.string_at(result_bytes_ptr, size)
-    except Exception as e:
-        raise C2paError(
-            f"Failed to convert embeddable manifest bytes: {e}"
-        ) from e
-    finally:
-        _lib.c2pa_free(result_bytes_ptr)
-
-    return size, result_bytes
-
-
 def create_signer(
     callback: Callable[[bytes], bytes],
     alg: C2paSigningAlg,
@@ -4864,8 +4675,6 @@ __all__ = [
     'Reader',
     'Builder',
     'Signer',
-    'load_settings',
-    'format_embeddable',
     'version',
     'sdk_version'
 ]

@@ -40,7 +40,7 @@ warnings.simplefilter("ignore", category=DeprecationWarning)
 
 from c2pa import Builder, C2paError as Error, Reader, C2paSigningAlg as SigningAlg, C2paSignerInfo, Signer, sdk_version, C2paBuilderIntent, C2paDigitalSourceType
 from c2pa import Settings, Context, ContextBuilder, ContextProvider
-from c2pa.c2pa import Stream, LifecycleState, ManagedResource, load_settings, create_signer, create_signer_from_info, ed25519_sign, format_embeddable, _get_mime_type_from_path, _encode_format, _format_ffi_arg
+from c2pa.c2pa import Stream, LifecycleState, ManagedResource, create_signer, create_signer_from_info, ed25519_sign, _get_mime_type_from_path, _encode_format, _format_ffi_arg
 import c2pa.c2pa as c2pa_module
 from pathlib import Path
 
@@ -303,7 +303,6 @@ class TestFormatValidation(unittest.TestCase):
 
 class TestReader(unittest.TestCase):
     def setUp(self):
-        warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
 
@@ -2506,7 +2505,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder = Builder(self.manifestDefinition)
             archive = io.BytesIO(bytearray())
             builder.to_archive(archive)
-            builder = Builder.from_archive(archive)
+            builder = Builder({}).with_archive(archive)
             output = io.BytesIO(bytearray())
             builder.sign(self.signer, "image/jpeg", file, output)
             output.seek(0)
@@ -2538,7 +2537,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                     builder = Builder(self.manifestDefinition, context=settings_context)
                     archive = io.BytesIO(bytearray())
                     builder.to_archive(archive)
-                    builder = Builder.from_archive(archive)
+                    builder = Builder({}, context=settings_context).with_archive(archive)
                     output = io.BytesIO(bytearray())
                     builder.sign(self.signer, "image/jpeg", file, output)
                     output.seek(0)
@@ -2575,7 +2574,7 @@ class TestBuilderWithSigner(unittest.TestCase):
             builder = Builder(self.manifestDefinitionV2)
             archive = io.BytesIO(bytearray())
             builder.to_archive(archive)
-            builder = Builder.from_archive(archive)
+            builder = Builder({}).with_archive(archive)
             output = io.BytesIO(bytearray())
             ingredient_json = '{"test": "ingredient"}'
             with open(self.testPath, 'rb') as f:
@@ -2610,7 +2609,7 @@ class TestBuilderWithSigner(unittest.TestCase):
                     builder = Builder(self.manifestDefinitionV2, context=settings_context)
                     archive = io.BytesIO(bytearray())
                     builder.to_archive(archive)
-                    builder = Builder.from_archive(archive)
+                    builder = Builder({}, context=settings_context).with_archive(archive)
                     output = io.BytesIO(bytearray())
                     ingredient_json = '{"test": "ingredient"}'
                     with open(self.testPath, 'rb') as f:
@@ -4279,16 +4278,6 @@ class TestBuilderWithSigner(unittest.TestCase):
         finally:
             # Clean up the temporary directory
             shutil.rmtree(temp_dir)
-
-    def test_sign_file_format_manifest_bytes_embeddable(self):
-        builder = Builder(self.manifestDefinition)
-        output = io.BytesIO(bytearray())
-
-        with open(self.testPath, "rb") as file:
-            manifest_bytes = builder.sign(self.signer, "image/jpeg", file, output)
-            res = format_embeddable("image/jpeg", manifest_bytes)
-            output.seek(0)
-            output.close()
 
     def test_builder_sign_file_callback_signer_from_callback(self):
         """Test signing a file using the sign_file method with Signer.from_callback."""
@@ -6213,7 +6202,6 @@ class TestLegacyAPI(unittest.TestCase):
         # Filter specific deprecation warnings for legacy API tests
         warnings.filterwarnings("ignore", message="The create_signer function is deprecated")
         warnings.filterwarnings("ignore", message="The create_signer_from_info function is deprecated")
-        warnings.filterwarnings("ignore", message="load_settings\\(\\) is deprecated")
 
         self.data_dir = FIXTURES_DIR
         self.testPath = DEFAULT_TEST_FILE
@@ -7406,47 +7394,6 @@ class TestBuilderWithContext(TestContextAPIs):
             builder.with_archive(archive)
         context.close()
 
-    def test_from_archive_roundtrip(self):
-        """from_archive() can't propagate contexts."""
-        settings = Settings.from_dict({
-            "builder": {
-                "thumbnail": {"enabled": False}
-            }
-        })
-        context = Context(settings)
-        signer = self._ctx_make_signer()
-        builder = Builder(
-            self.test_manifest, context=context,
-        )
-        archive = io.BytesIO(bytearray())
-        builder.to_archive(archive)
-
-        # from_archive creates a context-free builder
-        builder2 = Builder.from_archive(archive)
-        with (
-            open(DEFAULT_TEST_FILE, "rb") as source,
-            io.BytesIO(bytearray()) as output,
-        ):
-            builder2.sign(
-                signer, "image/jpeg", source, output,
-            )
-            output.seek(0)
-            reader = Reader(
-                "image/jpeg", output, context=Context(),
-            )
-            manifest = reader.get_active_manifest()
-            # from_archive can't propagate contexts
-            self.assertIsNotNone(
-                manifest.get("thumbnail"),
-                "from_archive should lose settings and generate thumbnail",
-            )
-            reader.close()
-        archive.close()
-        builder2.close()
-        signer.close()
-        context.close()
-        settings.close()
-
 
 class TestContextIntegration(TestContextAPIs):
 
@@ -8298,20 +8245,6 @@ class TestManagedResourceLifecycle(unittest.TestCase):
         with self.assertRaises(Error):
             Signer(None)
 
-    def test_builder_from_archive_wraps_handle(self):
-        self._use_real_frees()
-        archive = io.BytesIO()
-        Builder({"claim_generator": "test", "format": "image/jpeg"}).to_archive(
-            archive)
-
-        builder = Builder.from_archive(io.BytesIO(archive.getvalue()))
-
-        self.assertTrue(builder.is_valid)
-        self.assertIsNone(builder._context)
-        self.assertFalse(builder._has_context_signer)
-        builder.close()
-        self.assertEqual(builder._lifecycle_state, LifecycleState.CLOSED)
-
     def test_context_build_failure_consumes_signer(self):
         self._use_real_frees()
         signer = self._make_signer()
@@ -8639,13 +8572,6 @@ class TestManagedResourceObjects(TestContextAPIs):
             self.addCleanup(with_context.close)
             self.assertEqual(with_context._owner_pid, pid)
 
-            # from_archive is the only caller of _wrap_native_handle,
-            # which bypasses __init__ entirely
-            wrapped = Builder.from_archive(self._make_archive())
-            self.addCleanup(wrapped.close)
-            self.assertEqual(wrapped._owner_pid, pid)
-            self.assertIsNone(wrapped._context)
-            self.assertFalse(wrapped._has_context_signer)
         finally:
             context.close()
 
@@ -8970,16 +8896,6 @@ class TestManagedResourceObjects(TestContextAPIs):
 
         c2pa_module._check_cstr_arg('format', "image/jpeg")
         c2pa_module._check_cstr_arg('format', b"")
-
-    def test_format_embeddable_null_out_pointer_raises_not_crashes(self):
-        real = c2pa_module._lib.c2pa_format_embeddable
-        c2pa_module._lib.c2pa_format_embeddable = (
-            lambda fmt, data, size, out: 128)
-        try:
-            with self.assertRaises(Error):
-                format_embeddable("image/jpeg", b"junk")
-        finally:
-            c2pa_module._lib.c2pa_format_embeddable = real
 
     def test_check_bytes_arg_rejects_none_and_empty(self):
         for bad in (None, b""):
@@ -9318,9 +9234,8 @@ class TestManagedResourceObjects(TestContextAPIs):
         # returns -1 if native had already taken the value.
         self.assertEqual(self._free_count(freed, consumed_handle), 1)
 
-    # Backfilling a pointer minted by a direct FFI call. Builder.from_archive
-    # is the only production caller of _wrap_native_handle, so these are the
-    # only tests that drive the primitive as the generic entry point it is.
+    # Backfilling a pointer minted by a direct FFI call. These tests drive
+    # _wrap_native_handle as the generic entry point it is.
 
     def _raw_builder_handle(self):
         manifest = json.dumps(
@@ -9568,26 +9483,6 @@ class TestManagedResourceObjects(TestContextAPIs):
         self.assertIsNone(reader._manifest_json_str_cache,
                           "cleanup left the manifest cache alive")
         self.assertIsNone(reader._manifest_data_cache)
-
-    def test_from_archive_frees_handle_when_wrap_fails(self):
-        # The wrap raising means no Python object took ownership, so
-        # from_archive still holds the handle and has to free it.
-        archive = self._make_archive()  # closes a Builder; keep it off the count
-        freed = self._instrument_frees()
-        real_wrap = Builder._wrap_native_handle
-
-        def _boom(*args, **kwargs):
-            raise Error("wrap failed")
-
-        Builder._wrap_native_handle = _boom
-        try:
-            with self.assertRaises(Error):
-                Builder.from_archive(archive)
-        finally:
-            Builder._wrap_native_handle = real_wrap
-
-        self.assertEqual(len(freed), 1,
-                         "from_archive leaked the handle when the wrap failed")
 
     def test_sign_failure_chains_the_original_exception(self):
         # The wrapper re-raises as C2paError; losing __cause__ hides which
