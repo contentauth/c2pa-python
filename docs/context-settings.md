@@ -232,10 +232,9 @@ with open("source.jpg", "rb") as src, open("output.jpg", "w+b") as dst:
 
 Archives (`.c2pa` files) store only the manifest definition. They do **not** store settings or context:
 
-- **`Builder.from_archive(stream)`** creates a context-free builder. All settings revert to SDK defaults regardless of what context the original builder had.
 - **`Builder({}, ctx).with_archive(stream)`** creates a builder with a context first, then loads the archived manifest definition into it. The context settings are preserved.
 
-Use `with_archive()`. `from_archive()` is deprecated and will be removed when c2pa-python moves to c2pa-rs 0.92.0.
+Use `with_archive()`. `Builder.from_archive()` was removed in c2pa-rs 0.92.0.
 
 ```py
 ctx = Context.from_dict({
@@ -754,7 +753,7 @@ assert isinstance(ctx, ContextProvider)  # True
 
 ## Migrating from load_settings
 
-The `load_settings()` function is deprecated and will be removed when c2pa-python moves to c2pa-rs 0.92.0. Replace it with `Settings` and `Context` APIs:
+The `load_settings()` function was removed in c2pa-rs 0.92.0. Replace it with `Settings` and `Context` APIs:
 
 | Aspect | `load_settings` (legacy) | `Context` |
 |--------|--------------------------|-----------|

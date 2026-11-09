@@ -860,7 +860,7 @@ with Builder({
 ```
 
 > [!NOTE]
-> When restoring from an archive, `with_archive()` preserves context settings. The deprecated `from_archive()` creates a builder with SDK default settings. See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
+> When restoring from an archive, `with_archive()` preserves context settings (`from_archive()` was removed in c2pa-rs 0.92.0). See [Working with archives](working-stores.md#working-with-archives) for the full comparison.
 
 **Step 2:** Read the archive and extract ingredients:
 

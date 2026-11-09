@@ -4,7 +4,7 @@
 
 ### TLS trust stores
 
-Release builds select c2pa-rs `c2pa-v0.91.7` through
+Release builds select c2pa-rs `c2pa-v0.92.0-rc.1` through
 `c2pa-native-version.txt`. Rebuild or upgrade installed wheels to update the
 bundled native library; updating Python dependencies alone does not update it.
 Local source builds and externally supplied libraries must also use patched
@@ -39,7 +39,7 @@ Migration:
 - Instead of `Builder.add_ingredient_from_file_path(json, format, filepath)`, open the
   file and call `Builder.add_ingredient_from_stream(json, format, stream)`.
 
-The `Builder.sign_file` method and `load_settings` are unaffected and remain available.
+The `Builder.sign_file` method is unaffected and remains available. (`load_settings`, `Builder.from_archive` and `format_embeddable` were later removed with c2pa-rs 0.92.0.)
 
 ## Version 0.6.0
 

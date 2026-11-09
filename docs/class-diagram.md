@@ -46,7 +46,6 @@ classDiagram
 
     class Builder {
         +from_json(manifest_json, context) Builder$
-        +from_archive(stream) Builder$
         +get_supported_mime_types() list~str~$
         +set_no_embed()
         +set_remote_url(url)

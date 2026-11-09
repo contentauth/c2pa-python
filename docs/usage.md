@@ -144,7 +144,7 @@ The built-in `Context` class is the standard `ContextProvider` implementation. C
 
 ### Migrating from load_settings
 
-The `load_settings()` function is deprecated. Replace it with `Settings` and `Context`. See [Migrating from load_settings](context-settings.md#migrating-from-load_settings) for details.
+The `load_settings()` function was removed in c2pa-rs 0.92.0. Replace it with `Settings` and `Context`. See [Migrating from load_settings](context-settings.md#migrating-from-load_settings) for details.
 
 ## File-based operation
 

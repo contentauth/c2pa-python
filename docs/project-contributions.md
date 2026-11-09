@@ -35,7 +35,7 @@ make download-native-artifacts
 ```
 
 Without `make`, pass the tag from `c2pa-native-version.txt` directly to
-`python scripts/download_artifacts.py` (currently `c2pa-v0.91.7`).
+`python scripts/download_artifacts.py` (currently `c2pa-v0.92.0-rc.1`).
 
 Install the package in development mode:
 
