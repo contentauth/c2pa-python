@@ -88,6 +88,7 @@ coverage.xml
 *.swo
 *.sublime-project
 *.sublime-workspace
+.scout/
 
 # macOS
 .DS_Store
