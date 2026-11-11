@@ -29,6 +29,7 @@ Pass --debug to build the debug profile instead of the default release profile.
 
 import os
 import sys
+import runpy
 import shutil
 import argparse
 import platform
@@ -43,12 +44,11 @@ ROOT_ARTIFACTS_DIR = Path("artifacts")
 # Where the package loads the library from at runtime for an editable install.
 PACKAGE_LIBS_DIR = Path("src/c2pa/libs")
 
-# Library file name per OS (matches what setup.py/lib.py load at runtime).
-LIB_NAMES = {
-    "darwin": "libc2pa_c.dylib",
-    "linux": "libc2pa_c.so",
-    "windows": "c2pa_c.dll",
-}
+# Library file name per sys.platform, loaded by path: importing the c2pa
+# package would load the native library.
+LIB_NAMES = runpy.run_path(
+    str(Path(__file__).resolve().parents[1] / "src/c2pa/_library_names.py")
+)["LIBRARY_NAMES"]
 
 
 def get_platform_identifier():
@@ -180,7 +180,7 @@ def build_native(c2pa_rs_path, debug=False):
     """Build the FFI crate for the host arch. Returns the built library path."""
     profile = "debug" if debug else "release"
     run_cargo(c2pa_rs_path, debug=debug)
-    lib_name = LIB_NAMES[platform.system().lower()]
+    lib_name = LIB_NAMES[sys.platform]
     lib = c2pa_rs_path / "target" / profile / lib_name
     if not lib.is_file():
         print(f"Error: expected built library not found: {lib}")

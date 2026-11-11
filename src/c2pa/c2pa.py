@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Optional, Union, Callable, Any, overload
 import io
 from .lib import dynamically_load_library, record_owner_pid, is_foreign_process
+from ._library_names import get_library_name
 import mimetypes
 from itertools import count
 
@@ -144,12 +145,7 @@ def _validate_library_exports(lib):
 
 
 # Determine the library name based on the platform
-if sys.platform == "win32":  # pragma: no cover
-    _lib_name_default = "c2pa_c.dll"
-elif sys.platform == "darwin":  # pragma: no cover
-    _lib_name_default = "libc2pa_c.dylib"
-else:  # pragma: no cover
-    _lib_name_default = "libc2pa_c.so"
+_lib_name_default = get_library_name()
 
 # Check for C2PA_LIBRARY_NAME environment variable
 env_lib_name = os.environ.get("C2PA_LIBRARY_NAME")

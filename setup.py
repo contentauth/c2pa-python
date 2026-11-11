@@ -14,6 +14,7 @@
 from setuptools import setup, find_namespace_packages
 import sys
 import platform
+import runpy
 import shutil
 from pathlib import Path
 import toml
@@ -26,16 +27,19 @@ def get_version():
 VERSION = get_version()
 PACKAGE_NAME = "c2pa-python"  # Define package name as a constant
 
+# Loaded by path: importing the c2pa package would load the native library
+LIBRARY_NAMES = runpy.run_path("src/c2pa/_library_names.py")["LIBRARY_NAMES"]
+
 # Based on what c2pa-rs repo publishes: each platform folder and the
 # native library in it that src/c2pa/lib.py loads
 PLATFORM_FOLDERS = {
-    'universal-apple-darwin': 'libc2pa_c.dylib',
-    'aarch64-apple-darwin': 'libc2pa_c.dylib',
-    'x86_64-apple-darwin': 'libc2pa_c.dylib',
-    'x86_64-pc-windows-msvc': 'c2pa_c.dll',
-    'aarch64-pc-windows-msvc': 'c2pa_c.dll',
-    'x86_64-unknown-linux-gnu': 'libc2pa_c.so',
-    'aarch64-unknown-linux-gnu': 'libc2pa_c.so',
+    'universal-apple-darwin': LIBRARY_NAMES['darwin'],
+    'aarch64-apple-darwin': LIBRARY_NAMES['darwin'],
+    'x86_64-apple-darwin': LIBRARY_NAMES['darwin'],
+    'x86_64-pc-windows-msvc': LIBRARY_NAMES['win32'],
+    'aarch64-pc-windows-msvc': LIBRARY_NAMES['win32'],
+    'x86_64-unknown-linux-gnu': LIBRARY_NAMES['linux'],
+    'aarch64-unknown-linux-gnu': LIBRARY_NAMES['linux'],
 }
 
 # Directory structure
