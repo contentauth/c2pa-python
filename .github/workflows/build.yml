@@ -506,7 +506,7 @@ jobs:
     needs: [test-built-linux-wheel, test-built-macos-wheel, test-built-windows-wheel, sdist]
     permissions:
       id-token: write
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Create dist directory
@@ -530,3 +530,9 @@ jobs:
           verbose: true
           # Uncomment below for test runs, otherwise fails on existing packages being reuploaded
           skip-existing: true
+      - name: Upload wheels to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" dist/*.whl dist/*.tar.gz --clobber
