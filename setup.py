@@ -26,24 +26,16 @@ def get_version():
 VERSION = get_version()
 PACKAGE_NAME = "c2pa-python"  # Define package name as a constant
 
-# Define platform to library extension mapping (for reference only)
-PLATFORM_EXTENSIONS = {
-    'win_amd64': 'dll',
-    'win_arm64': 'dll',
-    'apple-darwin': 'dylib', # universal
-    'linux_x86_64': 'so',
-    'linux_aarch64': 'so',
-}
-
-# Based on what c2pa-rs repo publishes
+# Based on what c2pa-rs repo publishes: each platform folder and the
+# native library in it that src/c2pa/lib.py loads
 PLATFORM_FOLDERS = {
-    'universal-apple-darwin': 'dylib',
-    'aarch64-apple-darwin': 'dylib',
-    'x86_64-apple-darwin': 'dylib',
-    'x86_64-pc-windows-msvc': 'dll',
-    'aarch64-pc-windows-msvc': 'dll',
-    'x86_64-unknown-linux-gnu': 'so',
-    'aarch64-unknown-linux-gnu': 'so',
+    'universal-apple-darwin': 'libc2pa_c.dylib',
+    'aarch64-apple-darwin': 'libc2pa_c.dylib',
+    'x86_64-apple-darwin': 'libc2pa_c.dylib',
+    'x86_64-pc-windows-msvc': 'c2pa_c.dll',
+    'aarch64-pc-windows-msvc': 'c2pa_c.dll',
+    'x86_64-unknown-linux-gnu': 'libc2pa_c.so',
+    'aarch64-unknown-linux-gnu': 'libc2pa_c.so',
 }
 
 # Directory structure
@@ -118,7 +110,12 @@ def get_current_platform():
         return "linux_x86_64"
 
 def copy_platform_libraries(platform_name, clean_first=False):
-    """Copy libraries for a specific platform to the package libs directory.
+    """Copy the native library for a specific platform to the package libs directory.
+
+    Only the library loaded at runtime is copied. The native Rust lib release archives
+    also contain static libraries, debug symbols and build metadata
+    (.lib, .rlib, .pdb, .dSYM, .d), which are not needed and would otherwise
+    end up in the wheel.
 
     Args:
         platform_name: The platform to copy libraries for
@@ -126,14 +123,17 @@ def copy_platform_libraries(platform_name, clean_first=False):
     """
     platform_dir = ARTIFACTS_DIR / platform_name
 
-    # Ensure the platform directory exists and contains files
+    # Ensure the platform directory exists and contains the library
     if not platform_dir.exists():
         raise ValueError(f"Platform directory not found: {platform_dir}")
 
-    # Get list of all files in the platform directory
-    platform_files = list(platform_dir.glob('*'))
-    if not platform_files:
-        raise ValueError(f"No files found in platform directory: {platform_dir}")
+    library_name = PLATFORM_FOLDERS.get(platform_name)
+    if library_name is None:
+        raise ValueError(f"Unknown platform: {platform_name}")
+
+    library_file = platform_dir / library_name
+    if not library_file.is_file():
+        raise ValueError(f"Native library not found: {library_file}")
 
     # Clean and recreate the package libs directory if requested
     if clean_first and PACKAGE_LIBS_DIR.exists():
@@ -142,10 +142,7 @@ def copy_platform_libraries(platform_name, clean_first=False):
     # Ensure the package libs directory exists
     PACKAGE_LIBS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Copy files from platform-specific directory to the package libs directory
-    for file in platform_files:
-        if file.is_file():
-            shutil.copy2(file, PACKAGE_LIBS_DIR / file.name)
+    shutil.copy2(library_file, PACKAGE_LIBS_DIR / library_file.name)
 
 def find_available_platforms():
     """Scan the artifacts directory for available platform-specific libraries."""
