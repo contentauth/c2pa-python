@@ -9,18 +9,18 @@ The [`examples/sign.py`](https://github.com/contentauth/c2pa-python/blob/main/ex
 
 The `examples/sign_info.py` script shows how to sign an asset with a C2PA manifest and verify it using a "default" signer created with the needed signer information.
 
-These statements create a `builder` object with the specified manifest JSON (omitted in the snippet below), call `builder.sign()` to sign and attach the manifest to the source file, `tests/fixtures/C.jpg`, and save the signed asset to the output file, `output/C_signed.jpg`:
+These statements create a `signer` and a `builder` with the specified manifest JSON (omitted in the snippet below), call `builder.sign()` to sign and attach the manifest to the source file, `tests/fixtures/C.jpg`, and save the signed asset to the output file, `output/C_signed.jpg`. Signing needs the output file open for both writing and reading, so it is opened in `w+b` mode:
 
 ```py
 manifest_definition = {
   // ... JSON omitted here
 }
 
-builder = c2pa.Builder(manifest_definition)
-
-with open(fixtures_dir + "C.jpg", "rb") as source:
-    with open(output_dir + "C_signed.jpg", "wb") as dest:
-        result = builder.sign(signer, "image/jpeg", source, dest)
+with c2pa.Signer.from_info(signer_info) as signer:
+    with c2pa.Builder(manifest_definition) as builder:
+        with open(fixtures_dir + "C.jpg", "rb") as source:
+            with open(output_dir + "C_signed.jpg", "w+b") as dest:
+                result = builder.sign(signer, "image/jpeg", source, dest)
 ```
 
 Then these statements read and verify the signed asset:
@@ -28,8 +28,8 @@ Then these statements read and verify the signed asset:
 ```py
 print("\nReading signed image metadata:")
 with open(output_dir + "C_signed.jpg", "rb") as file:
-    reader = c2pa.Reader("image/jpeg", file)
-    print(reader.json())
+    with c2pa.Reader("image/jpeg", file) as reader:
+        print(reader.json())
 ```
 
 ## Adding a "do not train" assertion
@@ -40,7 +40,7 @@ These statements sign the asset using a stream:
 
 ```py
     with open(testFile, "rb") as source_file:
-        with open(testOutputFile, "wb") as dest_file:
+        with open(testOutputFile, "w+b") as dest_file:
             result = builder.sign(signer, "image/jpeg", source_file, dest_file)
 ```
 
@@ -49,20 +49,22 @@ These statements verify the asset and check its attached manifest for a "do not 
 ```py
 allowed = True # opt out model, assume training is ok if the assertion doesn't exist
 try:
-    # Create reader using the current API
-    reader = c2pa.Reader(testOutputFile)
-    manifest_store = json.loads(reader.json())
+    with (
+        c2pa.Context() as context,
+        c2pa.Reader(testOutputFile, context=context) as reader,
+    ):
+        manifest_store = json.loads(reader.json())
 
-    manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
-    for assertion in manifest["assertions"]:
-        if assertion["label"] == "c2pa.training-mining":
-            if getitem(assertion, ("data","entries","c2pa.ai_training","use")) == "notAllowed":
-                allowed = False
+        manifest = manifest_store["manifests"][manifest_store["active_manifest"]]
+        for assertion in manifest["assertions"]:
+            if assertion["label"] == "cawg.training-mining":
+                if getitem(assertion, ("data","entries","cawg.ai_generative_training","use")) == "notAllowed":
+                    allowed = False
 
-    # get the ingredient thumbnail and save it to a file using resource_to_stream
-    uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
-    with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
-        reader.resource_to_stream(uri, thumbnail_output)
+        # get the ingredient thumbnail and save it to a file using resource_to_stream
+        uri = getitem(manifest,("ingredients", 0, "thumbnail", "identifier"))
+        with open(output_dir + "thumbnail_v2.jpg", "wb") as thumbnail_output:
+            reader.resource_to_stream(uri, thumbnail_output)
 
 except Exception as err:
     sys.exit(err)

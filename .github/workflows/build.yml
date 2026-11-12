@@ -52,11 +52,7 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
 
       - name: Check Python syntax
-        run: python3 -m py_compile src/c2pa/c2pa.py
-        continue-on-error: true
-
-      - name: Check code style with flake8
-        run: flake8 src/c2pa/c2pa.py
+        run: make check-format
         continue-on-error: true
 
   tests-unix:
@@ -116,7 +112,7 @@ jobs:
           python3 -c "from c2pa import C2paError; print('C2paError imported successfully')"
 
       - name: Run tests
-        run: python3 ./tests/test_unit_tests.py
+        run: python3 -W ignore -m unittest discover -s tests/unit -t .
 
   tests-windows:
     name: Unit tests for developer setup (Windows)
@@ -202,7 +198,7 @@ jobs:
           python -c "from c2pa import C2paError; print('C2paError imported successfully')"
 
       - name: Run tests
-        run: python .\tests\test_unit_tests.py
+        run: python -W ignore -m unittest discover -s tests\unit -t .
 
   build-linux-wheel:
     name: Build Linux wheel
@@ -277,7 +273,7 @@ jobs:
       - name: Run unittest tests on installed wheel
         run: |
           source venv/bin/activate
-          python ./tests/test_unit_tests.py
+          python -W ignore -m unittest discover -s tests/unit -t .
 
       - name: Install pytest (in venv)
         run: |
@@ -287,7 +283,7 @@ jobs:
       - name: Run tests with pytest (venv)
         run: |
           source venv/bin/activate
-          venv/bin/pytest tests/test_unit_tests.py -v
+          venv/bin/pytest tests/unit -v
 
   build-windows-wheel:
     name: Build Windows wheel
@@ -379,7 +375,7 @@ jobs:
       - name: Run tests with pytest (venv)
         run: |
           .\venv\Scripts\activate
-          .\venv\Scripts\pytest .\tests\test_unit_tests.py -v
+          .\venv\Scripts\pytest .\tests\unit -v
 
   build-macos-wheel:
     name: Build macOS wheels
@@ -458,7 +454,7 @@ jobs:
       - name: Run unittest tests on installed wheel
         run: |
           source venv/bin/activate
-          python ./tests/test_unit_tests.py
+          python -W ignore -m unittest discover -s tests/unit -t .
 
       - name: Install pytest (in venv)
         run: |
@@ -468,7 +464,7 @@ jobs:
       - name: Run tests with pytest (venv)
         run: |
           source venv/bin/activate
-          venv/bin/pytest tests/test_unit_tests.py -v
+          venv/bin/pytest tests/unit -v
 
   sdist:
     runs-on: ubuntu-latest

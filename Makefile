@@ -18,7 +18,7 @@ endif
 
 # Start from clean env: Delete `.venv`, then `python3 -m venv .venv`
 # Pre-requisite: Python virtual environment is active (source .venv/bin/activate)
-# Run Pytest tests in virtualenv: .venv/bin/pytest tests/test_unit_tests.py -v
+# Run Pytest tests in virtualenv: .venv/bin/pytest tests/unit -v
 
 # Creates the local virtualenv at the canonical ./.venv path if it does not exist.
 # Activation must happen in shell independently:
@@ -56,11 +56,27 @@ run-examples:
 	$(PYTHON) ./examples/training.py
 	rm -rf output/
 
-# Runs the examples, then the unit tests
+# Runs the examples, then the unit tests, then the threaded tests
+.PHONY: test
 test:
-	make run-examples
-	$(PYTHON) ./tests/test_unit_tests.py
+	$(MAKE) run-examples
+	$(MAKE) test-unit
+	$(MAKE) test-threaded
+
+# Runs the unit tests in tests/unit
+.PHONY: test-unit
+test-unit:
+	$(PYTHON) -W ignore -m unittest discover -s tests/unit -t .
+
+# Runs the concurrency tests
+.PHONY: test-threaded
+test-threaded:
 	$(PYTHON) ./tests/test_unit_tests_threaded.py
+
+# Runs one test module, class or method: make test-one T=tests.unit.test_reader.TestReader.test_stream_read
+.PHONY: test-one
+test-one:
+	$(PYTHON) -W ignore -m unittest $(T)
 
 # Tests building and installing a local wheel package
 # Downloads required artifacts, builds the wheel, installs it, and verifies the installation

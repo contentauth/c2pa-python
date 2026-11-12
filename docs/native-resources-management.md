@@ -269,7 +269,7 @@ Every subclass gets these guarantees from `ManagedResource`, and must not break 
 | Cleanup is idempotent | Calling `close()`, or exiting a `with` block, more than once does nothing after the first time. |
 | Cleanup never raises | An ordinary exception during cleanup is caught and logged, never re-raised, so it cannot mask an exception the `with` block itself raised. An interpreter shutdown signal is the one exception to this: it is allowed to interrupt cleanup, since the process is already going away. |
 | State transitions are one-way | Lifecycle only ever moves `UNINITIALIZED` to `ACTIVE` to `CLOSED`. Nothing reactivates a closed resource. |
-| Public methods check state first | Every method that uses the handle validates it before the native call, raising `C2paError` on anything but a usable `ACTIVE` resource rather than risking undefined behavior. |
+| Public methods check state first | Every method that uses the handle validates it inside the same guard or reservation as the native call, and raises `C2paError` on anything but a usable `ACTIVE` resource. A native call on a freed handle is undefined behavior. |
 
 ## Keeping references alive
 
@@ -468,10 +468,12 @@ class NativeResource(ManagedResource):
                 self._my_stream = None
 
     def do_something(self):
-        # 4. Check state at the start of every public method.
-        #    This raises C2paError if the resource is closed.
-        self._ensure_valid_state()
-        return _lib.c2pa_my_resource_do_something(self._handle)
+        # 4. Run every native call inside a guard or reservation.
+        #    _native_call() raises C2paError if the resource is closed,
+        #    and keeps the handle from being freed until the call returns.
+        #    Use _exclusive_native_call() when the call changes native state.
+        with self._native_call():
+            return _lib.c2pa_my_resource_do_something(self._handle)
 ```
 
 ### Troubleshooting
@@ -479,6 +481,7 @@ class NativeResource(ManagedResource):
 - An attribute set only in `__init__` is missing on an instance `_wrap_native_handle()` built, since that path skips `__init__`. Put attributes in `_init_attrs()` instead.
 - `_init_attrs()` called after an FFI call that can raise leaves `_release()` reading attributes that don't exist yet on failure. Call it right after `super().__init__()`.
 - Assigning `self._handle` or `self._lifecycle_state` directly skips `_activate()`'s and `_consume_and_swap()`'s checks, so bugs surface far from their cause.
+- A bare `_ensure_valid_state()` followed by a native call leaves a gap: another thread's `close()` can free the handle between the check and the call. Do both inside one `with self._native_call():` block.
 - A raising `_release()` has its exception swallowed, visible only in logs.
 - `_release()` runs more than once (`close()` then `__del__`, or repeated `close()`), so it must handle an already-cleaned-up object. Set attributes to `None` after closing them.
 - Free through `ManagedResource`, not `c2pa_free` directly, so lifecycle checks stay in effect.
