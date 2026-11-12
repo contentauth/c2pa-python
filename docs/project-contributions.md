@@ -161,9 +161,16 @@ This uses `sphinx-autoapi` to parse `src/c2pa` directly, avoiding imports of nat
 Edit [api-docs/versions.json](../api-docs/versions.json) to choose the exact
 GitHub release tags shown in the sidebar dropdown. Entries must be unique
 tags such as `v0.38.0`. The first entry is the default served at the existing
-documentation URL. When a stable GitHub release is published, the publishing
-workflow prepends its tag and commits the updated list to `main` before building
-the site. Older entries are retained; pre-releases are not automatically added.
+documentation URL.
+
+For a stable release introducing a new major/minor version line, include the
+version-list update in the release PR alongside the package version bump.
+For example, add `v0.39.0` after `v0.38.0`, or `v1.0.0` after `v0.39.0`;
+patch releases such as `v0.38.1` and prereleases do not add entries.
+Prepend a newer line to make it the default and retain older entries.
+If adding an older maintenance line, place it after the newer default.
+Merge the release PR through normal review and required checks, then tag the
+merged release commit and publish the GitHub release.
 
 Fetch the release tags and build the complete site:
 
@@ -192,9 +199,13 @@ The complete site is written to `api-docs/_build/versioned/`:
 
 The publishing workflow always checks out `main` for the release list and
 build tooling, including when triggered by a release. It rebuilds all selected
-versions when a release is published, when relevant documentation files change
-on `main`, or when manually dispatched. The workflow needs permission to push
-the version-list commit to `main`, including under any branch protection rules.
-The same release-triggered run builds and deploys the updated list; it does not
-rely on the bot's push triggering another workflow. Publish manual changes to
-the list on `main` to add, remove, or reorder dropdown entries.
+versions when a GitHub release is published or when manually dispatched.
+It reads the committed version list without changing it and requires only
+read access to repository contents, plus GitHub Pages deployment permissions.
+It does not run on pushes to `main`: a merged release PR can list a tag before
+its GitHub release exists, and the builder intentionally rejects unpublished
+releases. Do not manually dispatch a build while a listed release is unpublished.
+Patch releases and prereleases rebuild the existing selection without adding
+entries. For documentation-only changes or changes to existing dropdown entries,
+merge a PR into `main`, then manually run **Build and publish docs** from the
+Actions tab to deploy without waiting for another release.

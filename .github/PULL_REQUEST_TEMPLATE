@@ -4,4 +4,5 @@ _Give a narrative description of what has been changed._
 ## Checklist
 - [ ] This PR represents a single feature, fix, or change.
 - [ ] All applicable changes have been documented.
+- [ ] If this is a stable release introducing a new major/minor version line, its tag has been added to `api-docs/versions.json` (patch releases and prereleases do not add entries).
 - [ ] Any `TO DO` items (or similar) have been entered as GitHub issues and the link to that issue has been included in a comment.
