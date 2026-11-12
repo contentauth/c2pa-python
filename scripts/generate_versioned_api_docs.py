@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a GitHub Pages site from the explicitly selected GitHub releases."""
+"""Build a GitHub Pages site from published GitHub releases at or above MIN_VERSION."""
 
 import io
 import json
@@ -17,42 +17,53 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASES_URL = "https://api.github.com/repos/contentauth/c2pa-python/releases/tags"
+RELEASES_URL = "https://api.github.com/repos/contentauth/c2pa-python/releases"
+# Oldest release to include in the versioned docs; override with C2PA_DOCS_MIN_VERSION.
+MIN_VERSION = os.environ.get("C2PA_DOCS_MIN_VERSION", "v0.37.0")
 TAG_PATTERN = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?")
 
 
-def load_versions(path: Path) -> list[str]:
-    config = json.loads(path.read_text(encoding="utf-8"))
-    versions = config.get("versions") if isinstance(config, dict) else None
-    if not isinstance(versions, list) or not versions:
-        raise ValueError("Documentation versions must be a non-empty list.")
-    for tag in versions:
-        if not isinstance(tag, str) or not TAG_PATTERN.fullmatch(tag):
-            raise ValueError("Documentation versions must be release tags such as v0.38.0.")
-    if len(set(versions)) != len(versions):
-        raise ValueError("Documentation versions must not contain duplicate tags.")
-    return versions
+def parse_tag(tag: str) -> tuple[int, int, int]:
+    return tuple(int(part) for part in tag.lstrip("v").split("-")[0].split("."))
 
 
-def verify_release(tag: str) -> None:
+def load_versions(min_version: str = MIN_VERSION) -> list[str]:
+    """List published, non-prerelease GitHub releases at or above min_version, newest first."""
+    if not TAG_PATTERN.fullmatch(min_version):
+        raise ValueError("Minimum version must be a release tag such as v0.37.0.")
+    minimum = parse_tag(min_version)
     headers = {"Accept": "application/vnd.github+json"}
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    response = requests.get(
-        f"{RELEASES_URL}/{tag}", headers=headers, timeout=30, allow_redirects=False
-    )
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"Cannot verify GitHub release {tag}: HTTP {response.status_code}."
+    versions = []
+    page = 1
+    while True:
+        response = requests.get(
+            RELEASES_URL, headers=headers, timeout=30,
+            params={"per_page": 100, "page": page},
         )
-    release = response.json()
-    if (
-        not isinstance(release, dict)
-        or release.get("tag_name") != tag
-        or release.get("draft") is not False
-    ):
-        raise ValueError(f"{tag} is not a published GitHub release.")
+        if response.status_code != 200:
+            raise RuntimeError(f"Cannot list GitHub releases: HTTP {response.status_code}.")
+        releases = response.json()
+        if not releases:
+            break
+        for release in releases:
+            tag = release.get("tag_name", "")
+            if (
+                release.get("draft")
+                or release.get("prerelease")
+                or not TAG_PATTERN.fullmatch(tag)
+                or "-" in tag
+                or parse_tag(tag) < minimum
+            ):
+                continue
+            versions.append(tag)
+        page += 1
+    versions = sorted(set(versions), key=parse_tag, reverse=True)
+    if not versions:
+        raise ValueError(f"No published releases found at or above {min_version}.")
+    return versions
 
 
 def export_sources(root: Path, tag: str, destination: Path) -> None:
@@ -92,9 +103,7 @@ def export_sources(root: Path, tag: str, destination: Path) -> None:
 
 def build_site() -> Path:
     docs = ROOT / "api-docs"
-    versions = load_versions(docs / "versions.json")
-    for tag in versions:
-        verify_release(tag)
+    versions = load_versions()
 
     build = docs / "_build"
     build.mkdir(exist_ok=True)
