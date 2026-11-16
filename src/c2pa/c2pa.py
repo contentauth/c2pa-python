@@ -79,6 +79,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_signer_create',
     'c2pa_signer_from_info',
     'c2pa_signer_reserve_size',
+    'c2pa_signer_with_ocsp_response',
     'c2pa_ed25519_sign',
     # Settings bindings
     'c2pa_settings_new',
@@ -1404,6 +1405,10 @@ _setup_function(_lib.c2pa_signer_from_info,
 _setup_function(
     _lib.c2pa_signer_reserve_size, [
         ctypes.POINTER(C2paSigner)], ctypes.c_int64)
+_setup_function(
+    _lib.c2pa_signer_with_ocsp_response,
+    [ctypes.POINTER(C2paSigner), ctypes.c_char_p, ctypes.c_size_t],
+    ctypes.POINTER(C2paSigner))
 _setup_function(
     _lib.c2pa_ed25519_sign, [
         ctypes.POINTER(
@@ -3659,7 +3664,8 @@ class Signer(ManagedResource):
         'callback_error': "Error in signer callback: {}",
         'invalid_certs': "Invalid certificate data: {}",
         'invalid_tsa': "Invalid TSA URL: {}",
-        'encoding_error': "Invalid UTF-8 characters in input: {}"
+        'encoding_error': "Invalid UTF-8 characters in input: {}",
+        'ocsp_error': "Failed to staple the OCSP response: {}",
     }
 
     @classmethod
@@ -3879,6 +3885,50 @@ class Signer(ManagedResource):
                 check=lambda r: r < 0)
 
             return result
+
+    def with_ocsp_response(self, ocsp_response: bytes) -> 'Signer':
+        """Staple a DER-encoded OCSP response into the signatures this
+        signer produces.
+
+        The response is stapled into the `rVals.ocspVals` COSE header.
+        Call once per certificate along the chain, signing certificate
+        first. Consumes the current signer and returns a new one.
+
+        Args:
+            ocsp_response: The DER-encoded OCSP response for the next
+                certificate in the chain (non-empty bytes)
+
+        Returns:
+            A new Signer with the response stapled
+
+        Raises:
+            TypeError: If ocsp_response is not bytes
+            ValueError: If ocsp_response is empty
+            C2paError: If the native call fails; the current
+                signer is not consumed and remains usable in that case
+        """
+        if not isinstance(ocsp_response, (bytes, bytearray)):
+            raise TypeError(
+                f"ocsp_response must be bytes, got {type(ocsp_response)}")
+        ocsp_response = bytes(ocsp_response)
+        if not ocsp_response:
+            raise ValueError("ocsp_response must be non-empty")
+
+        callback_cb = self._callback_cb
+        new_ptr = self._consume_into(
+            lambda handle: _lib.c2pa_signer_with_ocsp_response(
+                handle, ocsp_response, len(ocsp_response)),
+            Signer._ERROR_MESSAGES['ocsp_error'])
+
+        try:
+            stapled = Signer._wrap_native_handle(new_ptr)
+        except Exception:
+            ManagedResource._free_native_ptr(new_ptr)
+            raise
+        # The native signer keeps invoking the same Python callback,
+        # so the reference that pins it must move to the new instance.
+        stapled._callback_cb = callback_cb
+        return stapled
 
 
 class Builder(ManagedResource):
