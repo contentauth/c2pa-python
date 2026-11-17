@@ -12,7 +12,9 @@
 # each license.
 
 import ast
+import base64
 import gc
+import hashlib
 import inspect
 import os
 import io
@@ -147,6 +149,12 @@ class TestC2paSdk(unittest.TestCase):
         self.assertIn(str(Path('/source/c2pa-rs') / 'Cargo.toml'),
                       command.call_args.args[0])
 
+    def test_library_validation_requires_embeddable_symbol(self):
+        # Fail-fast gate: the bundled native library must expose
+        # c2pa_builder_sign_embeddable (stream-less signing); a library
+        # missing it is rejected at import time.
+        for required in ('c2pa_builder_sign_embeddable',):
+            self.assertIn(required, c2pa_module._REQUIRED_FUNCTIONS)
 
 class TestIsReadableStream(unittest.TestCase):
     """ A stream is anything Stream will accept (read/write/seek/tell/flush).
@@ -6191,7 +6199,178 @@ class TestBuilderWithSigner(unittest.TestCase):
         reader.close()
         archive.close()
 
+class TestBuilderSignEmbeddable(unittest.TestCase):
+    """Builder.sign_embeddable: sign and return the composed manifest
+    store bytes without reading the asset (pre-computed hard binding).
+    """
 
+    def setUp(self):
+        self.data_dir = FIXTURES_DIR
+        self.testPath = DEFAULT_TEST_FILE
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            self.certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            self.key = key_file.read()
+
+        with open(self.testPath, "rb") as image_file:
+            self.image = image_file.read()
+
+        # Where the composed store will be embedded in the asset.
+        # For a JPEG this is the APP11 position after the SOI marker;
+        # the direct workflow leaves the choice of O to the caller.
+        self.excl_start = 2
+
+    def _signer(self):
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=None,
+        )
+        signer = Signer.from_info(signer_info)
+        self.addCleanup(signer.close)
+        return signer
+
+    def _definition(self, excl_len, asset_hash):
+        return {
+            "claim_generator_info": [{"name": "python_test", "version": "0.0.1"}],
+            "format": "image/jpeg",
+            "title": "Embeddable Test",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "label": "c2pa.hash.data",
+                    "data": {
+                        "name": "embeddable-test",
+                        "alg": "sha256",
+                        # Byte fields in a C2PA JSON definition use the
+                        # b64'...' marker; a bare base64 string is stored
+                        # verbatim as ASCII text bytes.
+                        "hash": "b64'" + base64.b64encode(asset_hash).decode() + "'",
+                        "exclusions": [
+                            {"start": self.excl_start, "length": excl_len}
+                        ],
+                        "pad": "b64''",
+                    }
+                },
+            ]
+        }
+
+    def _sha256_excluding(self, data, start, length):
+        h = hashlib.sha256()
+        h.update(data[:start])
+        h.update(data[start + length:])
+        return h.digest()
+
+    def _embed(self, store):
+        """Embed the composed store at the exclusion position."""
+        return (self.image[:self.excl_start] + store
+                + self.image[self.excl_start + len(store):])
+
+    def _sign_embeddable_with_excl(self, excl_len):
+        """Sign with a hash computed over `self.image` minus the exclusion."""
+        definition = self._definition(
+            excl_len, self._sha256_excluding(
+                self.image, self.excl_start, excl_len))
+        builder = Builder.from_json(definition, Context(signer=self._signer()))
+        return builder, builder.sign_embeddable("image/jpeg")
+
+    def _failure_codes(self, asset_bytes):
+        reader = Reader("image/jpeg", io.BytesIO(asset_bytes))
+        self.addCleanup(reader.close)
+        detailed = json.loads(reader.detailed_json())
+        results = detailed["validation_results"]["activeManifest"]
+        return [e["code"] for e in results.get("failure", [])]
+
+    def _success_codes(self, asset_bytes):
+        reader = Reader("image/jpeg", io.BytesIO(asset_bytes))
+        self.addCleanup(reader.close)
+        detailed = json.loads(reader.detailed_json())
+        results = detailed["validation_results"]["activeManifest"]
+        return [e["code"] for e in results.get("success", [])]
+
+    def test_embedded_store_verifies(self):
+        # The store size is stable for this definition (32-byte hash,
+        # one fixed-size exclusion), so the slot size can be measured
+        # with a placeholder hash and then filled with the real one.
+        excl_len = 4096
+        _, probe = self._sign_embeddable_with_excl(excl_len)
+        excl_len = len(probe)
+        builder, store = self._sign_embeddable_with_excl(excl_len)
+
+        self.assertEqual(len(store), excl_len)
+        self.assertFalse(builder.is_valid, "Builder must close after signing")
+
+        embedded = self._embed(store)
+        self.assertNotIn(
+            "assertion.dataHash.mismatch", self._failure_codes(embedded))
+        self.assertIn("claimSignature.validated", self._success_codes(embedded))
+
+    def test_tamper_outside_exclusions_breaks_binding(self):
+        excl_len = 4096
+        _, probe = self._sign_embeddable_with_excl(excl_len)
+        excl_len = len(probe)
+        _, store = self._sign_embeddable_with_excl(excl_len)
+        embedded = bytearray(self._embed(store))
+        embedded[self.excl_start + excl_len + 100] ^= 0xFF
+        self.assertIn(
+            "assertion.dataHash.mismatch",
+            self._failure_codes(bytes(embedded)))
+
+    def test_store_slot_corruption_rejected(self):
+        """The store slot is excluded from the DataHash but carries the
+        signature: corrupting a byte inside it makes the manifest
+        undecodable, so the Reader rejects the asset."""
+        excl_len = 4096
+        _, probe = self._sign_embeddable_with_excl(excl_len)
+        excl_len = len(probe)
+        _, store = self._sign_embeddable_with_excl(excl_len)
+        embedded = bytearray(self._embed(store))
+        embedded[self.excl_start + 500] ^= 0xFF
+        with self.assertRaises(Error):
+            Reader("image/jpeg", io.BytesIO(bytes(embedded)))
+
+    def test_requires_context_signer(self):
+        builder = Builder.from_json(self._definition(4096, bytes(32)))
+        self.addCleanup(builder.close)
+        with self.assertRaises(Error) as ctx:
+            builder.sign_embeddable("image/jpeg")
+        self.assertIn("Context", str(ctx.exception))
+
+    def test_without_hard_binding_fails(self):
+        definition = {
+            "claim_generator_info": [{"name": "python_test", "version": "0.0.1"}],
+            "format": "image/jpeg",
+            "title": "Embeddable Test",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                },
+            ]
+        }
+        builder = Builder.from_json(definition, Context(signer=self._signer()))
+        with self.assertRaises(Error) as ctx:
+            builder.sign_embeddable("image/jpeg")
+        self.assertIn("hard binding", str(ctx.exception))
+        self.assertFalse(builder.is_valid, "Builder closes on failed signing")
 class TestStream(unittest.TestCase):
     def setUp(self):
         self.temp_file = io.BytesIO()
