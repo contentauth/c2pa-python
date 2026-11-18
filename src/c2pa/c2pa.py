@@ -26,7 +26,7 @@ import warnings
 import weakref
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional, Union, Callable, Any, overload
+from typing import Optional, Union, Callable, Any, Dict, overload
 import io
 from .lib import dynamically_load_library, record_owner_pid, is_foreign_process
 import mimetypes
@@ -1396,6 +1396,15 @@ _setup_function(_lib.c2pa_signer_create,
                  ctypes.c_char_p,
                  ctypes.c_char_p],
                 ctypes.POINTER(C2paSigner))
+# Optional: native libraries built from c2pa-rs releases before it was added
+# do not export it (Signer.from_callback(tsa_headers=...) then raises).
+_signer_with_tsa_header = getattr(_lib, "c2pa_signer_with_tsa_header", None)
+if _signer_with_tsa_header is not None:
+    _setup_function(_signer_with_tsa_header,
+                    [ctypes.POINTER(C2paSigner),
+                     ctypes.c_char_p,
+                     ctypes.c_char_p],
+                    ctypes.POINTER(C2paSigner))
 _setup_function(_lib.c2pa_signer_from_info,
                 [ctypes.POINTER(C2paSignerInfo)],
                 ctypes.POINTER(C2paSigner))
@@ -3689,13 +3698,44 @@ class Signer(ManagedResource):
             ManagedResource._free_native_ptr(signer_ptr)
             raise
 
+    @staticmethod
+    def _with_tsa_headers(signer_ptr, tsa_headers: Dict[str, str]):
+        """Wrap a native signer so it sends ``tsa_headers`` with its timestamp
+        requests. Each native call consumes the signer it gets on success; on
+        any failure the current signer is freed and the error raised."""
+        if _signer_with_tsa_header is None:
+            ManagedResource._free_native_ptr(signer_ptr)
+            raise C2paError(
+                "tsa_headers needs a c2pa native library that exports "
+                "c2pa_signer_with_tsa_header"
+            )
+        for name, value in tsa_headers.items():
+            try:
+                name_bytes = name.encode('utf-8')
+                value_bytes = value.encode('utf-8')
+            except (AttributeError, UnicodeError) as e:
+                ManagedResource._free_native_ptr(signer_ptr)
+                raise C2paError.Encoding(
+                    f"Invalid TSA header {name!r}: {e}") from e
+            with _native_section():
+                wrapped = _signer_with_tsa_header(
+                    signer_ptr, name_bytes, value_bytes)
+            if not wrapped:
+                # Not consumed on failure: still ours to free.
+                ManagedResource._free_native_ptr(signer_ptr)
+                _check_ffi_operation_result(
+                    wrapped, "Failed to add TSA header: {}")
+            signer_ptr = wrapped
+        return signer_ptr
+
     @classmethod
     def from_callback(
         cls,
         callback: Callable[[bytes], bytes],
         alg: C2paSigningAlg,
         certs: str,
-        tsa_url: Optional[str] = None
+        tsa_url: Optional[str] = None,
+        tsa_headers: Optional[Dict[str, str]] = None,
     ) -> 'Signer':
         """Create a signer from a callback function.
 
@@ -3704,6 +3744,10 @@ class Signer(ManagedResource):
             alg: The signing algorithm to use
             certs: Certificate chain in PEM format
             tsa_url: Optional RFC 3161 timestamp authority URL
+            tsa_headers: Optional headers sent with every timestamp request,
+              for timestamp authorities that authenticate clients (usually
+              an API key, e.g. ``{"X-API-Key": key}``). Needs a native
+              library that exports ``c2pa_signer_with_tsa_header``.
 
         Returns:
             A new Signer instance
@@ -3814,6 +3858,9 @@ class Signer(ManagedResource):
 
             _check_ffi_operation_result(signer_ptr,
                                         "Failed to create signer")
+
+        if tsa_headers:
+            signer_ptr = cls._with_tsa_headers(signer_ptr, tsa_headers)
 
         try:
             # Create and return the signer instance with the callback
