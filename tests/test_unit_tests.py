@@ -147,6 +147,13 @@ class TestC2paSdk(unittest.TestCase):
         self.assertIn(str(Path('/source/c2pa-rs') / 'Cargo.toml'),
                       command.call_args.args[0])
 
+    def test_library_validation_requires_ocsp_symbol(self):
+        # Fail-fast gate: the bundled native library must expose
+        # c2pa_signer_with_ocsp_response (OCSP stapling); a library
+        # missing it is rejected at import time.
+        for required in ('c2pa_signer_with_ocsp_response',):
+            self.assertIn(required, c2pa_module._REQUIRED_FUNCTIONS)
+
 
 class TestIsReadableStream(unittest.TestCase):
     """ A stream is anything Stream will accept (read/write/seek/tell/flush).
@@ -6191,6 +6198,138 @@ class TestBuilderWithSigner(unittest.TestCase):
         reader.close()
         archive.close()
 
+
+class TestSignerOcspStapling(unittest.TestCase):
+    """Signer.with_ocsp_response: stapling consumes the signer and returns a new one."""
+
+    def setUp(self):
+        self.data_dir = FIXTURES_DIR
+        self.testPath = DEFAULT_TEST_FILE
+        with open(os.path.join(self.data_dir, "es256_certs.pem"), "rb") as cert_file:
+            self.certs = cert_file.read()
+        with open(os.path.join(self.data_dir, "es256_private.key"), "rb") as key_file:
+            self.key = key_file.read()
+
+        self.manifestDefinition = {
+            "claim_generator_info": [{"name": "python_test", "version": "0.0.1"}],
+            "format": "image/jpeg",
+            "title": "OC Stapling Test",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        # A minimal DER blob: the native side stores it verbatim in the
+        # rVals.ocspVals COSE header without DER-validating it at staple time.
+        self.ocsp_response = bytes.fromhex("30" * 48)
+
+    def _base_signer(self):
+        """Create a local es256 signer with no TSA (keeps signing local)."""
+        signer_info = C2paSignerInfo(
+            alg=b"es256",
+            sign_cert=self.certs,
+            private_key=self.key,
+            ta_url=None,
+        )
+        signer = Signer.from_info(signer_info)
+        self.addCleanup(signer.close)
+        return signer
+
+    def _sign_bytes(self, signer):
+        """Sign the fixture with `signer` and return the signed bytes."""
+        builder = Builder(self.manifestDefinition)
+        self.addCleanup(builder.close)
+        dest = io.BytesIO()
+        with open(self.testPath, "rb") as source:
+            builder.sign(signer, "image/jpeg", source, dest)
+        return dest.getvalue()
+
+    def _sign_and_read(self, signer):
+        """Sign the fixture with `signer` and return the parsed manifest JSON."""
+        reader = Reader("image/jpeg", io.BytesIO(self._sign_bytes(signer)))
+        self.addCleanup(reader.close)
+        return json.loads(reader.json())
+
+    def test_staple_returns_new_signer(self):
+        base = self._base_signer()
+        stapled = base.with_ocsp_response(self.ocsp_response)
+        self.addCleanup(stapled.close)
+
+        self.assertIsInstance(stapled, Signer)
+        self.assertIsNot(stapled, base)
+        self.assertTrue(stapled.is_valid)
+        self.assertEqual(base._lifecycle_state, LifecycleState.CLOSED)
+
+    def test_stapled_signer_signs(self):
+        base = self._base_signer()
+        stapled = base.with_ocsp_response(self.ocsp_response)
+        self.addCleanup(stapled.close)
+
+        manifest_json = self._sign_and_read(stapled)
+        active = manifest_json["manifests"][manifest_json["active_manifest"]]
+        self.assertIn("signature_info", active)
+
+    def test_staple_chain(self):
+        """Staple once per certificate, signing certificate first."""
+        base = self._base_signer()
+        stapled = base.with_ocsp_response(self.ocsp_response)
+        self.addCleanup(stapled.close)
+        stapled2 = stapled.with_ocsp_response(bytes.fromhex("31" * 48))
+        self.addCleanup(stapled2.close)
+
+        self.assertEqual(stapled._lifecycle_state, LifecycleState.CLOSED)
+        self.assertTrue(stapled2.is_valid)
+
+        manifest_json = self._sign_and_read(stapled2)
+        active = manifest_json["manifests"][manifest_json["active_manifest"]]
+        self.assertIn("signature_info", active)
+
+    def test_empty_response_raises_and_keeps_signer(self):
+        base = self._base_signer()
+        with self.assertRaises(ValueError):
+            base.with_ocsp_response(b"")
+        self.assertTrue(base.is_valid)
+
+    def test_non_bytes_response_raises_and_keeps_signer(self):
+        base = self._base_signer()
+        with self.assertRaises(TypeError):
+            base.with_ocsp_response("not-bytes")
+        self.assertTrue(base.is_valid)
+
+    def test_stapled_response_embedded_in_signature(self):
+        """The stapled response is stored verbatim in the COSE signature; a plain signature carries no such blob."""
+        plain = self._sign_bytes(self._base_signer())
+        base = self._base_signer()
+        stapled = base.with_ocsp_response(self.ocsp_response)
+        self.addCleanup(stapled.close)
+        signed = self._sign_bytes(stapled)
+
+        self.assertNotIn(self.ocsp_response, plain)
+        self.assertIn(self.ocsp_response, signed)
+
+    def test_closed_signer_raises(self):
+        base = self._base_signer()
+        base.close()
+        with self.assertRaises(Error):
+            base.with_ocsp_response(self.ocsp_response)
+
+    def test_consumed_signer_raises(self):
+        base = self._base_signer()
+        stapled = base.with_ocsp_response(self.ocsp_response)
+        self.addCleanup(stapled.close)
+        with self.assertRaises(Error):
+            base.with_ocsp_response(self.ocsp_response)
+        self.assertTrue(stapled.is_valid)
 
 class TestStream(unittest.TestCase):
     def setUp(self):
