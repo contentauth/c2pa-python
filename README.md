@@ -100,7 +100,7 @@ See the [`examples` directory](https://github.com/contentauth/c2pa-python/tree/m
 
 API documentation is published at [github.io/c2pa-python/api/c2pa](https://contentauth.github.io/c2pa-python/api/c2pa/index.html).
 
-Use the documentation version dropdown to choose a published release. 
+Use the documentation version dropdown to choose a published release.
 The versions are selected in `api-docs/versions.json`; the first entry is the default at the existing documentation URL.
 Publishing a stable GitHub release automatically adds its tag as the default while retaining older versions.
 

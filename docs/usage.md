@@ -52,7 +52,7 @@ manifest_json = json.dumps({
 
 ## Settings, Context, and ContextProvider
 
-The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the global `load_settings()` function, which is now deprecated. Without a `Context`, `Reader` and `Builder` use one with SDK default settings.
+The `Settings` and `Context` classes provide per-instance configuration for `Reader` and `Builder` operations, replacing the removed thread-local `load_settings()` function. Without a `Context`, `Reader` and `Builder` use the shared default context.
 
 See [Context and settings](context-settings.md) for details.
 
@@ -144,7 +144,7 @@ The built-in `Context` class is the standard `ContextProvider` implementation. C
 
 ### Migrating from load_settings
 
-The `load_settings()` function is deprecated. Replace it with `Settings` and `Context`. See [Migrating from load_settings](context-settings.md#migrating-from-load_settings) for details.
+The `load_settings()` function has been removed for c2pa-rs 0.92 compatibility. Replace it with `Settings` and `Context`. See [Migrating from load_settings](context-settings.md#migrating-from-load_settings) for details.
 
 ## File-based operation
 
