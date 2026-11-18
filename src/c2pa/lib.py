@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional
 from enum import Enum
 
+from ._library_names import get_library_name
+
 # Debug flag for library loading
 DEBUG_LIBRARY_LOADING = False
 
@@ -219,14 +221,7 @@ def dynamically_load_library(
     Returns:
         The loaded library or None if loading failed
     """
-    if sys.platform == "darwin":
-        c2pa_lib_name = "libc2pa_c.dylib"
-    elif sys.platform == "linux":
-        c2pa_lib_name = "libc2pa_c.so"
-    elif sys.platform == "win32":
-        c2pa_lib_name = "c2pa_c.dll"
-    else:
-        raise RuntimeError(f"Unsupported platform: {sys.platform}")
+    c2pa_lib_name = get_library_name()
 
     if DEBUG_LIBRARY_LOADING:  # pragma: no cover
         logger.info(f"Current working directory: {Path.cwd()}")
