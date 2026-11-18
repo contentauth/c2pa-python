@@ -1825,6 +1825,67 @@ class TestBuilderWithSigner(unittest.TestCase):
                 tsa_url="ftp://timestamp.digicert.com"
             )
 
+    def test_signer_from_callback_tsa_headers_need_native_support(self):
+        with patch.object(c2pa_module, "_signer_with_tsa_header", None):
+            with self.assertRaises(Error):
+                Signer.from_callback(
+                    callback=self.callback_signer_es256,
+                    alg=SigningAlg.ES256,
+                    certs=self.certs.decode('utf-8'),
+                    tsa_url="http://timestamp.digicert.com",
+                    tsa_headers={"X-API-Key": "secret"},
+                )
+
+    def test_signer_from_callback_sends_each_tsa_header_to_the_native_signer(self):
+        calls = []
+
+        def with_header(signer_ptr, name, value):
+            calls.append((name, value))
+            return signer_ptr  # the native call returns the wrapping signer
+
+        with patch.object(c2pa_module, "_signer_with_tsa_header", with_header):
+            signer = Signer.from_callback(
+                callback=self.callback_signer_es256,
+                alg=SigningAlg.ES256,
+                certs=self.certs.decode('utf-8'),
+                tsa_url="http://timestamp.digicert.com",
+                tsa_headers={"X-API-Key": "secret", "X-Tenant": "t1"},
+            )
+        try:
+            self.assertEqual(
+                calls, [(b"X-API-Key", b"secret"), (b"X-Tenant", b"t1")])
+        finally:
+            signer.close()
+
+    def test_signer_from_callback_tsa_header_failure_raises(self):
+        freed = []
+        with patch.object(c2pa_module, "_signer_with_tsa_header",
+                          lambda *_: None), \
+                patch.object(ManagedResource, "_free_native_ptr",
+                             side_effect=freed.append):
+            with self.assertRaises(Error):
+                Signer.from_callback(
+                    callback=self.callback_signer_es256,
+                    alg=SigningAlg.ES256,
+                    certs=self.certs.decode('utf-8'),
+                    tsa_url="http://timestamp.digicert.com",
+                    tsa_headers={"": "secret"},
+                )
+        self.assertEqual(len(freed), 1)  # the signer that was not consumed
+
+    @unittest.skipUnless(
+        getattr(c2pa_module, "_signer_with_tsa_header", None) is not None,
+        "native library without c2pa_signer_with_tsa_header")
+    def test_signer_from_callback_tsa_headers_native(self):
+        signer = Signer.from_callback(
+            callback=self.callback_signer_es256,
+            alg=SigningAlg.ES256,
+            certs=self.certs.decode('utf-8'),
+            tsa_url="http://timestamp.digicert.com",
+            tsa_headers={"X-API-Key": "secret"},
+        )
+        signer.close()
+
     def test_reserve_size_on_closed_signer(self):
         signer_info = C2paSignerInfo(
             alg=b"es256",
