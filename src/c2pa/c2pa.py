@@ -75,6 +75,7 @@ _REQUIRED_FUNCTIONS = [
     'c2pa_builder_with_archive',
     'c2pa_builder_supported_mime_types',
     'c2pa_builder_compose_manifest',
+    'c2pa_builder_sign_embeddable',
     # Signer bindings
     'c2pa_signer_create',
     'c2pa_signer_from_info',
@@ -1389,6 +1390,10 @@ _setup_function(
             ctypes.c_ubyte), ctypes.c_size_t, ctypes.POINTER(
                 ctypes.POINTER(
                     ctypes.c_ubyte))], ctypes.c_int64)
+_setup_function(
+    _lib.c2pa_builder_sign_embeddable, [
+        ctypes.POINTER(C2paBuilder), ctypes.c_char_p, ctypes.POINTER(
+            ctypes.POINTER(ctypes.c_ubyte))], ctypes.c_int64)
 _setup_function(_lib.c2pa_signer_create,
                 [ctypes.c_void_p,
                  SignerCallback,
@@ -3899,6 +3904,7 @@ class Builder(ManagedResource):
         'action_error': "Error adding action: {}",
         'archive_error': "Error writing archive: {}",
         'archive_load_error': "Failed to load archive into builder: {}",
+        'embeddable_error': "Error during embeddable signing: {}",
     }
 
     @classmethod
@@ -4399,6 +4405,79 @@ class Builder(ManagedResource):
             finally:
                 if result_bytes_ptr:
                     _lib.c2pa_free(result_bytes_ptr)
+
+    def sign_embeddable(self, format: str) -> bytes:
+        """Sign the manifest and return the composed bytes ready to
+        embed into the asset.
+
+        Unlike sign(), no stream is involved: the hard binding
+        assertion (e.g. c2pa.hash.data) must already carry the real
+        hash and exclusion ranges. The signer is taken from this
+        builder's Context. Can only be called once; the Builder
+        is closed after signing.
+
+        Args:
+            format: The MIME type of the content.
+
+        Returns:
+            The composed, signed manifest bytes
+
+        Raises:
+            C2paError: If no context signer is configured, if there is
+                no valid hard binding assertion, or if there was an
+                error during signing
+        """
+        self._ensure_valid_state()
+        if not self._has_context_signer:
+            raise C2paError(
+                "No signer configured on the Builder's Context. "
+                "Create the Builder with a Context that has a signer.")
+
+        # allow_autodetect=False, so this never returns None (raises instead).
+        format_arg = _format_ffi_arg(
+            _encode_format(format, "Builder", allow_autodetect=False))
+        manifest_bytes_ptr = ctypes.POINTER(ctypes.c_ubyte)()
+
+        # The Context pins the consumed signer's callback, which
+        # native invokes during this call
+        with self._exclusive_native_call():
+            with _context_guard(self._context):
+                try:
+                    result = _lib.c2pa_builder_sign_embeddable(
+                        self._handle,
+                        format_arg,
+                        ctypes.byref(manifest_bytes_ptr),
+                    )
+                except Exception as e:
+                    self.close()
+                    raise C2paError(f"Error during signing: {e}") from e
+
+                try:
+                    _check_ffi_operation_result(
+                        result,
+                        "Error during signing",
+                        check=lambda r: r < 0)
+                finally:
+                    # Single use for a Builder, once signed, close.
+                    self.close()
+
+        # Capture the manifest bytes if available
+        manifest_bytes = b""
+        if manifest_bytes_ptr and result > 0:
+            try:
+                manifest_bytes = ctypes.string_at(manifest_bytes_ptr, result)
+            except Exception:
+                manifest_bytes = b""
+            finally:
+                # Always free the C-allocated memory,
+                # even if we failed to copy manifest bytes
+                try:
+                    _lib.c2pa_free(manifest_bytes_ptr)
+                except Exception:
+                    logger.error(
+                        "Failed to release native manifest bytes memory")
+
+        return manifest_bytes
 
     def _sign_internal(
             self,
