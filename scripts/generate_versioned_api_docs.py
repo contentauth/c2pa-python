@@ -2,10 +2,11 @@
 """Build a GitHub Pages site from the explicitly selected GitHub releases."""
 
 import io
+import html
 import json
 import os
 from pathlib import Path, PurePosixPath
-import re
+import posixpath
 import shutil
 import stat
 import subprocess
@@ -15,23 +16,18 @@ import zipfile
 
 import requests
 
+if __package__:
+    from .docs_versions import load_manifest, release_line
+else:
+    from docs_versions import load_manifest, release_line
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASES_URL = "https://api.github.com/repos/contentauth/c2pa-python/releases/tags"
-TAG_PATTERN = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?")
 
 
 def load_versions(path: Path) -> list[str]:
-    config = json.loads(path.read_text(encoding="utf-8"))
-    versions = config.get("versions") if isinstance(config, dict) else None
-    if not isinstance(versions, list) or not versions:
-        raise ValueError("Documentation versions must be a non-empty list.")
-    for tag in versions:
-        if not isinstance(tag, str) or not TAG_PATTERN.fullmatch(tag):
-            raise ValueError("Documentation versions must be release tags such as v0.38.0.")
-    if len(set(versions)) != len(versions):
-        raise ValueError("Documentation versions must not contain duplicate tags.")
-    return versions
+    return load_manifest(path)["versions"]
 
 
 def verify_release(tag: str) -> None:
@@ -51,6 +47,8 @@ def verify_release(tag: str) -> None:
         not isinstance(release, dict)
         or release.get("tag_name") != tag
         or release.get("draft") is not False
+        or release.get("prerelease") is not False
+        or not release.get("published_at")
     ):
         raise ValueError(f"{tag} is not a published GitHub release.")
 
@@ -90,9 +88,29 @@ def export_sources(root: Path, tag: str, destination: Path) -> None:
             raise ValueError(f"Release {tag} contains no Python API sources.")
 
 
+def write_aliases(site: Path, aliases: dict[str, str]) -> None:
+    for alias, line in aliases.items():
+        target = site / "versions" / line
+        for page in target.rglob("*.html"):
+            suffix = page.relative_to(target)
+            legacy = site / "versions" / alias / suffix
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            url = posixpath.relpath(page.as_posix(), legacy.parent.as_posix())
+            legacy.write_text(
+                '<!doctype html><meta charset="utf-8"><title>Documentation moved</title>'
+                f'<link rel="canonical" href="{html.escape(url, quote=True)}">'
+                f'<a href="{html.escape(url, quote=True)}">Continue to {line}</a>'
+                '<script>location.replace('
+                + json.dumps(url).replace("<", "\\u003c")
+                + '+location.search+location.hash);</script>',
+                encoding="utf-8",
+            )
+
+
 def build_site() -> Path:
     docs = ROOT / "api-docs"
-    versions = load_versions(docs / "versions.json")
+    manifest = load_manifest(docs / "versions.json")
+    versions = manifest["versions"]
     for tag in versions:
         verify_release(tag)
 
@@ -119,14 +137,14 @@ def build_site() -> Path:
             environment.update(
                 C2PA_DOCS_TAG=tag,
                 C2PA_DOCS_VERSIONS=json.dumps(versions),
-                C2PA_DOCS_PREFIX=f"versions/{tag}",
+                C2PA_DOCS_PREFIX=f"versions/{release_line(tag)}",
             )
             subprocess.run(
                 [sys.executable, str(scripts / "generate_api_docs.py")],
                 cwd=stage, env=environment, check=True,
             )
             html = stage / "api-docs" / "_build" / "html"
-            shutil.copytree(html, site / "versions" / tag)
+            shutil.copytree(html, site / "versions" / release_line(tag))
 
         # Rebuild the default at the root so all switcher links remain relative.
         default = workspace / versions[0]
@@ -139,6 +157,7 @@ def build_site() -> Path:
         shutil.copytree(
             default / "api-docs" / "_build" / "html", site, dirs_exist_ok=True
         )
+        write_aliases(site, manifest["aliases"])
         (site / ".nojekyll").touch()
         if output.exists():
             shutil.rmtree(output)
