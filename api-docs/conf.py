@@ -61,7 +61,7 @@ docs_tag = os.environ.get("C2PA_DOCS_TAG", "")
 docs_prefix = os.environ.get("C2PA_DOCS_PREFIX", "")
 if docs_versions:
     release = docs_tag
-    version = docs_tag
+    version = ".".join(docs_tag.removeprefix("v").split(".")[:2])
     html_sidebars = {
         "**": [
             "sidebar/brand.html",
@@ -108,7 +108,11 @@ def _add_version_selector(app, pagename, templatename, context, doctree):
     context["docs_versions"] = [
         {
             "tag": tag,
-            "url": posixpath.relpath(f"versions/{tag}/index.html", current_directory),
+            "line": ".".join(tag.removeprefix("v").split(".")[:2]),
+            "url": posixpath.relpath(
+                "versions/" + ".".join(tag.removeprefix("v").split(".")[:2]) + "/index.html",
+                current_directory,
+            ),
         }
         for tag in docs_versions
     ]

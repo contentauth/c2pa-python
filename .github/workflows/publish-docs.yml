@@ -6,83 +6,44 @@ on:
 
   workflow_dispatch:
 
-  push:
-    branches: [main]
-    paths:
-      - 'api-docs/**'
-      - 'scripts/generate_api_docs.py'
-      - 'scripts/generate_versioned_api_docs.py'
-      - 'requirements-dev.txt'
-      - '.github/workflows/publish-docs.yml'
-
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-concurrency:
-  group: 'github-pages'
-  cancel-in-progress: false
-
+# Do not queue promotions in a concurrency group: GitHub discards pending runs.
 jobs:
-  deploy:
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  promote:
+    if: github.event_name == 'release' && !github.event.release.prerelease && !github.event.release.draft
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          filter: tree:0
-          fetch-depth: 0
           ref: main
-
-      - name: Add release to versioned documentation
-        if: github.event_name == 'release' && !github.event.release.prerelease
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-            echo "::error::Release tags must use the format vX.Y.Z with an optional prerelease suffix (e.g. v1.2.3-alpha)"
-            exit 1
-          fi
-          jq --arg tag "$RELEASE_TAG" '.versions = [$tag] + (.versions - [$tag])' \
-            api-docs/versions.json > api-docs/versions.json.tmp
-          mv api-docs/versions.json.tmp api-docs/versions.json
-          git add api-docs/versions.json
-          if ! git diff --cached --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "docs: add $RELEASE_TAG to the versioned docs"
-            git push origin HEAD:main
-          fi
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: "pip"
-
-      - name: Install dev deps
-        run: python3 -m pip install -r requirements-dev.txt
-
-      - name: Build docs
+      - name: Require dedicated documentation App
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/generate_versioned_api_docs.py
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+          APP_ID: ${{ vars.C2PA_DOCS_APP_ID }}
+          APP_KEY: ${{ secrets.C2PA_DOCS_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
+            echo "::error::Configure C2PA_DOCS_APP_ID and C2PA_DOCS_APP_PRIVATE_KEY for the repository-scoped docs App; no workflow-token fallback is permitted."
+            exit 1
+          fi
+      - name: Mint manifest writer token
+        id: app
+        uses: actions/create-github-app-token@v2
         with:
-          path: 'api-docs/_build/versioned/'
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          app-id: ${{ vars.C2PA_DOCS_APP_ID }}
+          private-key: ${{ secrets.C2PA_DOCS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Verify and promote stable release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DOCS_WRITE_TOKEN: ${{ steps.app.outputs.token }}
+        run: python scripts/promote_docs_release.py

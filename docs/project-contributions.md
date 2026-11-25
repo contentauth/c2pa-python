@@ -158,12 +158,27 @@ This uses `sphinx-autoapi` to parse `src/c2pa` directly, avoiding imports of nat
 
 ### Versioned release documentation
 
-Edit [api-docs/versions.json](../api-docs/versions.json) to choose the exact
-GitHub release tags shown in the sidebar dropdown. Entries must be unique
-tags such as `v0.38.0`. The first entry is the default served at the existing
-documentation URL. When a stable GitHub release is published, the publishing
-workflow prepends its tag and commits the updated list to `main` before building
-the site. Older entries are retained; pre-releases are not automatically added.
+[api-docs/versions.json](../api-docs/versions.json) is the publication policy:
+`versions` selects one exact stable `vX.Y.Z` tag per retained major/minor line,
+sorted numerically descending. The highest line is the root default. `aliases`
+maps historical exact tags to unprefixed `X.Y` lines; every selected tag must
+have an alias. `retiredLines` records lines automation must never restore.
+The validator rejects empty selections, duplicate lines, prereleases, invalid
+aliases, and active/retired overlap.
+
+On stable release publication, the standard-library-only promoter verifies
+the release tag, event release ID, published timestamp and stable/draft flags.
+It reconciles all published stable releases: retained lines advance to their
+highest patch, and new lines are admitted only above every active or retired
+line. It never backfills unlisted historical lines or regresses a patch/default.
+Migration consolidates only the previously listed lines and preserves their
+exact-tag aliases; it does not discover additional historical lines.
+
+To retire a line, submit a human PR removing its selected tag and every alias
+targeting it, and add its unprefixed `X.Y` to `retiredLines`. Keep at least one
+active line. To deliberately restore or backfill a historical line, use a human
+PR with an exact published tag and matching aliases (remove its retirement
+entry if applicable). Do not manually add a future, unpublished release tag.
 
 Fetch the release tags and build the complete site:
 
@@ -186,15 +201,54 @@ API pages untouched.
 The complete site is written to `api-docs/_build/versioned/`:
 
 - The default version is also served at the root, preserving existing API URLs.
-- Each selected release has a stable URL under `versions/<tag>/`.
-- Switching versions opens that release's documentation home page.
+- Each line has a canonical URL under `versions/X.Y/`; the sidebar displays
+  `X.Y` and the page identifies its exact source patch.
+- Historical `versions/vX.Y.Z/` HTML URLs redirect to equivalent canonical
+  pages, preserving nested suffixes, query strings and fragments. Removed pages
+  without an equivalent are not redirected to an unrelated API.
+- Switching lines opens that line's documentation home page.
 - A regular `make docs` build remains an unversioned working-tree preview.
 
-The publishing workflow always checks out `main` for the release list and
-build tooling, including when triggered by a release. It rebuilds all selected
-versions when a release is published, when relevant documentation files change
-on `main`, or when manually dispatched. The workflow needs permission to push
-the version-list commit to `main`, including under any branch protection rules.
-The same release-triggered run builds and deploys the updated list; it does not
-rely on the bot's push triggering another workflow. Publish manual changes to
-the list on `main` to add, remove, or reorder dropdown entries.
+The workflow uses current `main` tooling, never release-supplied scripts.
+Promotion is an isolated job with no dependency installation or docs build.
+Its only remote write is a Contents API compare-and-swap on the exact allowlisted
+path `api-docs/versions.json` on `main`. Five bounded retries reread and recompute
+against concurrent edits, without force pushes or lost unrelated main changes.
+There is no promotion concurrency group to silently discard burst events;
+release reconciliation also converges when releases arrive out of order.
+
+Organization administrators can share the documentation App across the SDK
+repositories using the Actions organization variable `C2PA_DOCS_APP_ID` and
+organization secret `C2PA_DOCS_APP_PRIVATE_KEY`. Grant both selected-repository
+access to this repository; workflows read them as `vars.C2PA_DOCS_APP_ID` and
+`secrets.C2PA_DOCS_APP_PRIVATE_KEY`. Repository-level values override organization
+values, so remove stale repository overrides when adopting the shared credentials.
+Install the App on each participating repository with Contents write permission,
+and separately authorize it under each repository's applicable main
+protection/ruleset. Configuring credentials alone does not grant installation
+access or protection bypass. The workflow mints a short-lived,
+repository-scoped installation token and fails explicitly if setup is absent.
+It never falls back to the ordinary workflow token for protected-branch writes.
+App permissions are repository-level, not path-level; the writer's fixed API
+endpoint enforces its manifest-only allowlist. Do not expose this credential to
+builds, dependency installation, pull requests or release source code.
+
+The separate `Deploy API docs` workflow starts explicitly on successful
+completion of `Build and publish docs` (`workflow_run`); it does not depend on
+the App push retriggering workflows. Relevant pushes to `main` and manual dispatch
+still publish; App-push and workflow-completion publications may coalesce.
+The complete build/deploy workflow is serialized, but checks out current `main`
+only after admission, so coalescing pending publication events cannot discard
+manifest updates. Failed upstream runs use isolated concurrency groups so they
+cannot displace successful pending publications. Publishing never writes to the
+repository, so it cannot create a push loop. The build remains read-only; only the separate deployment
+job gets Pages write and OIDC permissions. Deployment rejects artifacts whose
+source SHA no longer matches current `main`; rerun publication manually if an
+unrelated main change superseded the latest build. No live deployment or
+App/protection provisioning is part of local validation.
+
+Run the policy, promotion and generator tests with:
+
+```sh
+python -m unittest tests.test_docs_versions tests.test_versioned_docs -v
+```

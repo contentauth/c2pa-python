@@ -12,13 +12,21 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from scripts import generate_versioned_api_docs as docs
+from scripts.docs_versions import release_line
+
+
+def manifest(versions):
+    return {
+        "versions": versions, "retiredLines": [],
+        "aliases": {tag: release_line(tag) for tag in versions},
+    }
 
 
 class VersionedDocsTests(unittest.TestCase):
     def test_version_list_preserves_default_and_order(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "versions.json"
-            config.write_text('{"versions": ["v0.38.0", "v0.37.0"]}')
+            config.write_text(json.dumps(manifest(["v0.38.0", "v0.37.0"])))
             self.assertEqual(docs.load_versions(config), ["v0.38.0", "v0.37.0"])
 
     def test_invalid_versions_are_rejected(self):
@@ -30,7 +38,9 @@ class VersionedDocsTests(unittest.TestCase):
             config = Path(directory) / "versions.json"
             for versions in invalid:
                 with self.subTest(versions=versions):
-                    config.write_text(json.dumps({"versions": versions}))
+                    config.write_text(json.dumps({
+                        "versions": versions, "retiredLines": [], "aliases": {},
+                    }))
                     with self.assertRaises(ValueError):
                         docs.load_versions(config)
             for value in [[], {}, {"versions": "v0.38.0"}]:
@@ -43,7 +53,10 @@ class VersionedDocsTests(unittest.TestCase):
     def test_published_release_is_verified(self, get):
         get.return_value = Mock(
             status_code=200,
-            json=Mock(return_value={"tag_name": "v0.38.0", "draft": False}),
+            json=Mock(return_value={
+                "tag_name": "v0.38.0", "draft": False, "prerelease": False,
+                "published_at": "2026-01-01T00:00:00Z",
+            }),
         )
         docs.verify_release("v0.38.0")
         get.assert_called_once_with(
@@ -123,7 +136,7 @@ class VersionedDocsTests(unittest.TestCase):
 
     def test_switcher_links_resolve_from_root_and_nested_version_pages(self):
         versions = ["v0.38.0", "v0.37.0"]
-        for prefix in ["", "versions/v0.38.0", "versions/v0.37.0"]:
+        for prefix in ["", "versions/0.38", "versions/0.37"]:
             with self.subTest(prefix=prefix), patch.dict(
                 os.environ,
                 {
@@ -140,7 +153,7 @@ class VersionedDocsTests(unittest.TestCase):
                     for item in context["docs_versions"]:
                         self.assertEqual(
                             posixpath.normpath(posixpath.join(parent, item["url"])),
-                            f"versions/{item['tag']}/index.html",
+                            f"versions/{item['line']}/index.html",
                         )
 
     @patch.dict(os.environ, {}, clear=True)
@@ -167,7 +180,7 @@ class VersionedDocsTests(unittest.TestCase):
             root = Path(directory)
             (root / "api-docs").mkdir()
             (root / "api-docs/versions.json").write_text(
-                '{"versions": ["v0.38.0", "v0.37.0"]}'
+                json.dumps(manifest(["v0.38.0", "v0.37.0"]))
             )
             (root / "scripts").mkdir()
             (root / "scripts/generate_api_docs.py").touch()
@@ -176,8 +189,8 @@ class VersionedDocsTests(unittest.TestCase):
             self.assertEqual((site / "index.html").read_text(), "v0.38.0:")
             for tag in ["v0.38.0", "v0.37.0"]:
                 self.assertEqual(
-                    (site / "versions" / tag / "index.html").read_text(),
-                    f"{tag}:versions/{tag}",
+                    (site / "versions" / release_line(tag) / "index.html").read_text(),
+                    f"{tag}:versions/{release_line(tag)}",
                 )
             self.assertTrue((site / ".nojekyll").is_file())
             self.assertEqual(list((root / "api-docs/_build").iterdir()), [site])
@@ -195,7 +208,9 @@ class VersionedDocsTests(unittest.TestCase):
             site = root / "api-docs/_build/versioned"
             site.mkdir(parents=True)
             (site / "index.html").write_text("previous site")
-            (root / "api-docs/versions.json").write_text('{"versions": ["v0.38.0"]}')
+            (root / "api-docs/versions.json").write_text(
+                json.dumps(manifest(["v0.38.0"]))
+            )
             (root / "scripts").mkdir()
             (root / "scripts/generate_api_docs.py").touch()
             with patch.object(docs, "ROOT", root):
@@ -203,6 +218,19 @@ class VersionedDocsTests(unittest.TestCase):
                     docs.build_site()
             self.assertEqual((site / "index.html").read_text(), "previous site")
             self.assertEqual(list((root / "api-docs/_build").iterdir()), [site])
+
+    def test_legacy_html_redirects_preserve_equivalent_suffix_and_fragment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory)
+            page = site / "versions/0.38/api/c2pa/index.html"
+            page.parent.mkdir(parents=True)
+            page.write_text("current")
+            docs.write_aliases(site, {"v0.38.1": "0.38"})
+            redirect = site / "versions/v0.38.1/api/c2pa/index.html"
+            text = redirect.read_text()
+            self.assertIn("../../../0.38/api/c2pa/index.html", text)
+            self.assertIn("+location.search+location.hash", text)
+            self.assertFalse((redirect.parent / "removed.html").exists())
 
 
 if __name__ == "__main__":
